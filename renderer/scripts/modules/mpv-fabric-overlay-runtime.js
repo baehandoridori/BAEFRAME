@@ -45,6 +45,7 @@ const DEFAULT_MAX_ACTIONS = 2048;
 const MAX_STROKE_POINTS = 20000;
 const MAX_LASSO_POINTS = 1024;
 const MAX_PENDING_POINTER_EVENTS = 1024;
+const POINTERDOWN_FRAME_CONFIRMATION_DEADLINE_MS = 3000;
 const DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 250_000;
 const MAX_STROKE_GEOMETRY_CACHE_ENTRIES = 512;
 const MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 250_000;
@@ -2267,6 +2268,12 @@ function createFabricOverlayRuntime(options = {}) {
     windowRef?.queueMicrotask?.bind(windowRef) ||
     globalThis.queueMicrotask?.bind(globalThis) ||
     (callback => Promise.resolve().then(callback));
+  const setTimeoutRef = typeof options.setTimeout === 'function'
+    ? options.setTimeout
+    : globalThis.setTimeout?.bind(globalThis);
+  const clearTimeoutRef = typeof options.clearTimeout === 'function'
+    ? options.clearTimeout
+    : globalThis.clearTimeout?.bind(globalThis);
   const now = () => typeof performanceRef?.now === 'function' ? performanceRef.now() : Date.now();
   const wallNow = typeof options.wallNow === 'function'
     ? options.wallNow
@@ -5375,8 +5382,28 @@ function createFabricOverlayRuntime(options = {}) {
     const pending = pendingPointerdownFrame;
     pendingPointerdownFrame = null;
     if (!pending) return false;
+    if (pending.confirmationDeadline !== null) {
+      try {
+        clearTimeoutRef?.(pending.confirmationDeadline);
+      } catch (_error) { /* deadline cleanup is best-effort */ }
+      pending.confirmationDeadline = null;
+    }
     releasePointerCapture(pending.target, pending.pointerId);
     return true;
+  }
+
+  function schedulePendingPointerdownFrameDeadline(pending) {
+    if (typeof setTimeoutRef !== 'function') return false;
+    try {
+      pending.confirmationDeadline = setTimeoutRef(() => {
+        if (pendingPointerdownFrame !== pending) return;
+        pending.confirmationDeadline = null;
+        cancelPendingPointerdownFrame();
+      }, POINTERDOWN_FRAME_CONFIRMATION_DEADLINE_MS);
+      return true;
+    } catch (_error) {
+      return false;
+    }
   }
 
   function consumePendingPointerEvent(event) {
@@ -5462,8 +5489,10 @@ function createFabricOverlayRuntime(options = {}) {
       request,
       pointerId: event.pointerId,
       target,
-      events: [snapshotPointerEvent(event)]
+      events: [snapshotPointerEvent(event)],
+      confirmationDeadline: null
     };
+    const pending = pendingPointerdownFrame;
     try {
       target?.setPointerCapture?.(event.pointerId);
     } catch (_error) { /* pointer capture is best-effort */ }
@@ -5471,7 +5500,12 @@ function createFabricOverlayRuntime(options = {}) {
     event.stopImmediatePropagation?.();
     event.stopPropagation?.();
     try {
-      if (requestPointerdownFrame(request) !== true) cancelPendingPointerdownFrame();
+      if (requestPointerdownFrame(request) !== true) {
+        cancelPendingPointerdownFrame();
+      } else if (pendingPointerdownFrame === pending &&
+          !schedulePendingPointerdownFrameDeadline(pending)) {
+        cancelPendingPointerdownFrame();
+      }
     } catch (_error) {
       cancelPendingPointerdownFrame();
     }
@@ -5521,6 +5555,12 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: false, reason: retargeted?.reason || 'retarget-failed' };
     }
     pendingPointerdownFrame = null;
+    if (pending.confirmationDeadline !== null) {
+      try {
+        clearTimeoutRef?.(pending.confirmationDeadline);
+      } catch (_error) { /* deadline cleanup is best-effort */ }
+      pending.confirmationDeadline = null;
+    }
     for (const replayEvent of pending.events) {
       if (!dispatchReplayedPointerEvent(pending.target, replayEvent)) {
         cancelActiveStroke();
@@ -5988,6 +6028,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function releaseSurfaceResources() {
+    cancelPendingPointerdownFrame();
     cancelSelectInteraction();
     for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
       try {
@@ -6014,7 +6055,6 @@ function createFabricOverlayRuntime(options = {}) {
     appliedSourceWidth = null;
     appliedSourceHeight = null;
     activeStroke = null;
-    pendingPointerdownFrame = null;
     pendingLassoSelection = null;
     transformStart = null;
     selectGesture = null;

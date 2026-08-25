@@ -101,6 +101,7 @@ synthetic 행은 레이어 잠금 상태를 유지하되 `timelineKeyframesMovab
 - 이동 history 예약이 열린 동안의 undo/redo와 외부 push는 FIFO 장벽을 따르며, owner 상실·이동 실패에서도 대기 action을 유실하지 않는다.
 - pointerdown 프레임 승인 대기 중에도 coalesced 펜 좌표·압력을 순서대로 보존하고, bounded pending buffer를 넘으면 전체 gesture를 실패로 닫는다.
 - buffered pointerup 뒤의 implicit capture loss는 정상 완료로 보존하고, pointerup 전 capture loss는 저장 없이 gesture를 취소한다.
+- pointerdown frame confirm은 3초 local deadline 안에 끝나야 하며, 무응답이면 capture와 pending lock을 해제하고 late response는 폐기한다.
 
 ## RED→GREEN 검증
 
@@ -120,7 +121,8 @@ synthetic 행은 레이어 잠금 상태를 유지하되 `timelineKeyframesMovab
 14. delayed B-on: input 승인 전 playhead가 이동하면 첫 pointerdown과 runtime preview가 승인 시점 live frame을 사용한다.
 15. 입력 정밀도: pointerdown 승인 대기 중 coalesced move 좌표·압력·pointerup 순서를 보존하고, 1,024개 상한 초과 시 저장 없이 capture를 해제한다.
 16. 입력 완료 경합: buffered pointerup 뒤 implicit lostpointercapture는 confirm/replay를 보존하고, pointerup 전 capture loss는 confirm을 거절한다.
-17. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
+17. 입력 확인 timeout: confirm 무응답 뒤 deadline이 capture를 해제하고 다음 gesture를 허용하며, 늦은 confirm·cancel과 disable/session replacement/destroy의 stale timer는 현재 상태를 바꾸지 않는다.
+18. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
 
 ## 릴리스
 

@@ -11792,6 +11792,34 @@ function createPresentationHarness(keyframes, options = {}) {
   };
 }
 
+function createManualTimerHarness() {
+  const scheduled = [];
+  let nextId = 0;
+  return {
+    scheduled,
+    setTimeout(callback, delay) {
+      const timer = {
+        id: ++nextId,
+        callback,
+        delay,
+        cleared: false,
+        fired: false
+      };
+      scheduled.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      if (timer) timer.cleared = true;
+    },
+    fire(timer, { includeCleared = false } = {}) {
+      if (!timer || timer.fired || (timer.cleared && !includeCleared)) return false;
+      timer.fired = true;
+      timer.callback();
+      return true;
+    }
+  };
+}
+
 test('pointerdown confirmation pins the controller-captured frame instead of an older delivered candidate', () => {
   const pointerdownRequests = [];
   const source = makeHistoryStroke('pointerdown-handshake-source');
@@ -12148,6 +12176,249 @@ test('capture loss before any buffered pointerup still cancels the pending gestu
     0
   );
   runtime.destroy();
+});
+
+test('unanswered pointerdown frame request times out and releases the next gesture', () => {
+  const pointerdownRequests = [];
+  const timerHarness = createManualTimerHarness();
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      },
+      setTimeout: timerHarness.setTimeout,
+      clearTimeout: timerHarness.clearTimeout
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1911,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1911,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7
+  });
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 1911,
+    pointerType: 'pen'
+  });
+
+  assert.equal(pointerdownRequests.length, 1);
+  assert.equal(timerHarness.scheduled.length, 1);
+  assert.equal(timerHarness.scheduled[0].delay, 3000);
+  assert.equal(timerHarness.fire(timerHarness.scheduled[0]), true);
+  assert.equal(pointerTarget.capturedPointerIds.has(1911), false);
+  assert.deepEqual(pointerTarget.pointerReleaseRequests, [1911]);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1912,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 50,
+    clientY: 60,
+    pressure: 0.4
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1912,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 70,
+    clientY: 80,
+    pressure: 0.6
+  });
+  assert.equal(pointerdownRequests.length, 2, 'the deadline releases the pending input lock');
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false, 'a late confirmation cannot claim the newer pending gesture');
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    0,
+    'the late confirmation cannot materialize a stroke'
+  );
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[1],
+    targetFrame: 10
+  }).accepted, true);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    1,
+    'the newer gesture remains confirmable'
+  );
+  runtime.destroy();
+});
+
+test('pointerdown frame confirmation before the deadline clears its timer and commits once', () => {
+  const pointerdownRequests = [];
+  const timerHarness = createManualTimerHarness();
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      },
+      setTimeout: timerHarness.setTimeout,
+      clearTimeout: timerHarness.clearTimeout
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1913,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1913,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7
+  });
+
+  assert.equal(timerHarness.scheduled.length, 1);
+  const deadline = timerHarness.scheduled[0];
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    sessionId: 'wrong-session',
+    cancelled: true
+  }).accepted, false, 'a wrong-session cancel cannot clear the pending request');
+  assert.equal(deadline.cleared, false);
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, true);
+  assert.equal(deadline.cleared, true, 'successful confirmation clears the local deadline');
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    1
+  );
+  assert.equal(timerHarness.fire(deadline, { includeCleared: true }), true);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    1,
+    'a stale cleared callback cannot alter the committed gesture'
+  );
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    cancelled: true
+  }).accepted, false, 'a stale cancel remains fenced after confirmation');
+  runtime.destroy();
+});
+
+test('pointerdown frame deadline is cleared by disable, session replacement, and destroy', () => {
+  const createPendingHarness = pointerId => {
+    const pointerdownRequests = [];
+    const timerHarness = createManualTimerHarness();
+    const harness = createPresentationHarness([{
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 0, objects: []
+    }], {
+      runtimeOptions: {
+        requestPointerdownFrame(request) {
+          pointerdownRequests.push(request);
+          return true;
+        },
+        setTimeout: timerHarness.setTimeout,
+        clearTimeout: timerHarness.clearTimeout
+      }
+    });
+    assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+    harness.canvas.upperCanvasEl.dispatch('pointerdown', {
+      pointerId,
+      pointerType: 'pen',
+      button: 0,
+      buttons: 1,
+      clientX: 10,
+      clientY: 20,
+      pressure: 0.3
+    });
+    assert.equal(pointerdownRequests.length, 1);
+    assert.equal(timerHarness.scheduled.length, 1);
+    return { ...harness, pointerdownRequests, timerHarness };
+  };
+
+  const disabled = createPendingHarness(1914);
+  const disabledDeadline = disabled.timerHarness.scheduled[0];
+  assert.equal(disabled.runtime.setDrawingInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: false
+  }).accepted, true);
+  assert.equal(disabledDeadline.cleared, true);
+  assert.equal(disabled.timerHarness.fire(disabledDeadline, { includeCleared: true }), true);
+  assert.equal(disabled.runtime.confirmDrawingPointerdownFrame({
+    ...disabled.pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+  disabled.runtime.destroy();
+
+  const replaced = createPendingHarness(1915);
+  const replacedDeadline = replaced.timerHarness.scheduled[0];
+  assert.equal(replaced.enableHeldFrame(10, 10, 'brush', 2).accepted, true);
+  assert.equal(replacedDeadline.cleared, true);
+  assert.equal(replaced.timerHarness.fire(replacedDeadline, { includeCleared: true }), true);
+  replaced.canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1916,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.4
+  });
+  assert.equal(replaced.pointerdownRequests.length, 2, 'the replacement session remains usable');
+  assert.equal(replaced.runtime.confirmDrawingPointerdownFrame({
+    ...replaced.pointerdownRequests[0],
+    cancelled: true
+  }).accepted, false, 'the replaced session request stays fenced');
+  assert.equal(replaced.runtime.confirmDrawingPointerdownFrame({
+    ...replaced.pointerdownRequests[1],
+    cancelled: true
+  }).accepted, true);
+  replaced.runtime.destroy();
+
+  const destroyed = createPendingHarness(1917);
+  const destroyedDeadline = destroyed.timerHarness.scheduled[0];
+  assert.equal(destroyed.runtime.destroy().destroyed, true);
+  assert.equal(destroyedDeadline.cleared, true);
+  assert.equal(destroyed.timerHarness.fire(destroyedDeadline, { includeCleared: true }), true);
+  assert.equal(destroyed.runtime.confirmDrawingPointerdownFrame({
+    ...destroyed.pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
 });
 
 test('a fenced negative pointerdown acknowledgement releases input while stale cancel leaves the next gesture intact', () => {
