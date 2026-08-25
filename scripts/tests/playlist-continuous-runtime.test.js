@@ -2167,7 +2167,7 @@ function createActualLoadRaceScenario({
     scheduleDeferredCollaborationStart: () => {}, startCollaborationForVideoLoad: async () => true,
     startDeferredReviewFileDiscovery: () => {},
     showToast: (message, type) => { effects.toasts.push({ message, type }); },
-    renderVideoMarkers: () => {},
+    renderVideoMarkers: () => {}, renderActiveDrawingLayers: () => {},
     updateTimelineMarkers: () => {}, updateCommentList: () => {},
     compositionLayerManager: { setVideoInfo: () => {}, setPlaybackState: () => {}, render: () => {} },
     renderCompositionLayerTimeline: () => {}, renderHighlights: () => {},
