@@ -1186,16 +1186,13 @@ async function initApp() {
   const MAX_UNDO_STACK = 50;
   let _isProcessingUndo = false;
   let globalHistoryRevision = 0;
+  let globalHistoryMutationBarrier = null;
 
   function advanceGlobalHistoryRevision() {
     globalHistoryRevision += 1;
   }
 
-  /**
-   * Undo 스택에 작업 추가
-   * @param {Object} action - { type, data, undo, redo }
-   */
-  function pushUndo(action) {
+  function pushUndoNow(action) {
     if (!action.timestamp) action.timestamp = Date.now();
     undoStack.push(action);
     if (undoStack.length > MAX_UNDO_STACK) {
@@ -1205,10 +1202,59 @@ async function initApp() {
     advanceGlobalHistoryRevision();
   }
 
+  function beginGlobalHistoryMutation() {
+    if (globalHistoryMutationBarrier) return null;
+    let resolveBarrier;
+    const barrier = {
+      promise: new Promise(resolve => { resolveBarrier = resolve; }),
+      queuedActions: [],
+      committed: false
+    };
+    globalHistoryMutationBarrier = barrier;
+    let released = false;
+    return {
+      commit(action) {
+        if (released || barrier.committed || globalHistoryMutationBarrier !== barrier) {
+          return false;
+        }
+        barrier.committed = true;
+        pushUndoNow(action);
+        return true;
+      },
+      release() {
+        if (released) return;
+        released = true;
+        for (const action of barrier.queuedActions.splice(0)) {
+          pushUndoNow(action);
+        }
+        if (globalHistoryMutationBarrier === barrier) {
+          globalHistoryMutationBarrier = null;
+        }
+        resolveBarrier();
+      }
+    };
+  }
+
+  /**
+   * Undo 스택에 작업 추가
+   * @param {Object} action - { type, data, undo, redo }
+   */
+  function pushUndo(action) {
+    const pendingHistoryMutation = globalHistoryMutationBarrier;
+    if (pendingHistoryMutation) {
+      if (!action.timestamp) action.timestamp = Date.now();
+      pendingHistoryMutation.queuedActions.push(action);
+      return;
+    }
+    pushUndoNow(action);
+  }
+
   /**
    * 글로벌 Undo 실행 (통합 타임라인)
    */
   async function globalUndo({ fromFabricFallback = false } = {}) {
+    const pendingHistoryMutation = globalHistoryMutationBarrier;
+    if (pendingHistoryMutation) await pendingHistoryMutation.promise;
     if (_isProcessingUndo || undoStack.length === 0) return false;
     _isProcessingUndo = true;
     const advanceHistoryRevision = () => {
@@ -1251,6 +1297,8 @@ async function initApp() {
    * 글로벌 Redo 실행 (통합 타임라인)
    */
   async function globalRedo({ fromFabricFallback = false } = {}) {
+    const pendingHistoryMutation = globalHistoryMutationBarrier;
+    if (pendingHistoryMutation) await pendingHistoryMutation.promise;
     if (_isProcessingUndo || redoStack.length === 0) return false;
     _isProcessingUndo = true;
     const advanceHistoryRevision = () => {
@@ -1641,6 +1689,7 @@ async function initApp() {
       commentManager.setCurrentFrame(currentFrame);
       void handleCutlistPlaybackFrame(currentFrame);
       refreshCurrentCutFromPlayback(currentFrame);
+      void fabricDrawingPilotController.syncDisplayFrame(currentFrame);
     }
 
     if (updatePresence && liveblocksManager.isConnected) {
@@ -1716,6 +1765,7 @@ async function initApp() {
 
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
+    syncCurrentFabricDrawingDisplayFrame({ force: true });
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(true);
     timeline.setPlayingState(true);
@@ -2120,11 +2170,129 @@ async function initApp() {
     deleteDrawingLayer(selectedLayerIdForPopup);
   });
 
-  // 키프레임 이동
-  timeline.addEventListener('keyframesMove', (e) => {
-    // 파일럿 투영 레이어는 읽기 전용 — 드래그 이동이 레거시 undo 히스토리를 오염시키지 않게 차단
-    if (getFabricPilotTimelineLayers()) return;
-    const { keyframes, frameDelta, anchor } = e.detail;
+  let fabricPilotKeyframeMoveInProgress = false;
+
+  function classifyFabricPilotKeyframeMove(keyframes) {
+    if (!Array.isArray(keyframes) || keyframes.length === 0) return 'invalid';
+    const fabricCount = keyframes.filter(
+      keyframe => keyframe?.layerId === 'fabric-pilot-drawing-layer'
+    ).length;
+    if (fabricCount === 0) return 'legacy';
+    return fabricCount === keyframes.length ? 'fabric' : 'mixed';
+  }
+
+  async function moveFabricPilotKeyframes(keyframes, frameDelta, anchor) {
+    if (fabricPilotKeyframeMoveInProgress || _isProcessingUndo) return false;
+    const moves = keyframes.map(keyframe => ({
+      fromFrame: keyframe.fromFrame,
+      toFrame: keyframe.toFrame
+    }));
+    fabricPilotKeyframeMoveInProgress = true;
+    const globalHistoryMutation = beginGlobalHistoryMutation();
+    if (!globalHistoryMutation) {
+      fabricPilotKeyframeMoveInProgress = false;
+      return false;
+    }
+    let moveResult = null;
+    try {
+      const refreshed = await fabricDrawingPilotController.refreshPersistenceSource(() => {
+        moveResult = fabricDrawingPersistenceStore.moveKeyframes(moves);
+        return moveResult?.applied === true;
+      });
+      if (moveResult?.applied !== true || !moveResult.edit) {
+        return false;
+      }
+      const currentDocumentId = fabricDrawingPersistenceStore
+        .getHydrationDocument?.()?.documentId;
+      if (currentDocumentId !== moveResult.edit.documentId) {
+        log.warn('Fabric 키프레임 이동 후 문서 소유자가 바뀌어 결과 반영을 중단했습니다.');
+        return false;
+      }
+      if (refreshed !== true) {
+        // store 반영은 이미 끝났다. 이후 host 재수화/재활성화 실패를 이동 실패로
+        // 되돌리면 global undo 스택과 canonical 문서 상태가 서로 어긋난다.
+        log.warn('Fabric 키프레임 이동은 저장됐지만 화면 갱신이 지연되어 재동기화합니다.');
+        syncCurrentFabricDrawingDisplayFrame({ force: true });
+      }
+
+      const movedSelection = keyframes.map(keyframe => ({
+        layerId: keyframe.layerId,
+        frame: keyframe.toFrame
+      }));
+      timeline.setKeyframeSelection(movedSelection, { anchor });
+      renderActiveDrawingLayers();
+      showToast(`키프레임 ${frameDelta > 0 ? '+' : ''}${frameDelta} 프레임 이동`, 'info');
+
+      const applyHistoryEdit = async direction => {
+        let historyResult = null;
+        const historyRefreshed = await fabricDrawingPilotController.refreshPersistenceSource(() => {
+          historyResult = fabricDrawingPersistenceStore.applyKeyframeEdit(
+            moveResult.edit,
+            direction
+          );
+          return historyResult?.applied === true;
+        });
+        if (historyResult?.applied !== true) {
+          throw new Error(
+            `Fabric keyframe move ${direction} failed: ${historyResult?.reason || 'edit-rejected'}`
+          );
+        }
+        const historyDocumentId = fabricDrawingPersistenceStore
+          .getHydrationDocument?.()?.documentId;
+        if (historyDocumentId !== moveResult.edit.documentId) {
+          // canonical edit는 성공했으므로 global history 이동은 완료한다. 다만 그 사이
+          // 새 문서가 들어왔다면 옛 선택 상태를 새 타임라인에 덮어쓰지 않는다.
+          log.warn(`Fabric 키프레임 이동 ${direction} 후 문서 소유자가 바뀌어 화면만 재동기화합니다.`);
+          syncCurrentFabricDrawingDisplayFrame({ force: true });
+          return true;
+        }
+        if (historyRefreshed !== true) {
+          log.warn(`Fabric 키프레임 이동 ${direction}는 저장됐지만 화면 갱신이 지연되어 재동기화합니다.`);
+          syncCurrentFabricDrawingDisplayFrame({ force: true });
+        }
+        const historySelection = keyframes.map(keyframe => ({
+          layerId: keyframe.layerId,
+          frame: direction === 'undo' ? keyframe.fromFrame : keyframe.toFrame
+        }));
+        const historyAnchor = anchor
+          ? {
+            ...anchor,
+            frame: direction === 'undo' ? anchor.frame - frameDelta : anchor.frame
+          }
+          : null;
+        timeline.setKeyframeSelection(historySelection, { anchor: historyAnchor });
+        renderActiveDrawingLayers();
+        return true;
+      };
+      if (!globalHistoryMutation.commit({
+        type: 'FABRIC_KEYFRAME_MOVE',
+        data: { edit: moveResult.edit },
+        undo: () => applyHistoryEdit('undo'),
+        redo: () => applyHistoryEdit('redo')
+      })) {
+        return false;
+      }
+      return true;
+    } catch (error) {
+      log.warn('Fabric 키프레임 이동 실패', { error: error.message });
+      return false;
+    } finally {
+      globalHistoryMutation.release();
+      fabricPilotKeyframeMoveInProgress = false;
+    }
+  }
+
+  async function handleTimelineKeyframesMove(detail = {}) {
+    const { keyframes, frameDelta, anchor } = detail;
+    const route = classifyFabricPilotKeyframeMove(keyframes);
+    if (route === 'mixed') {
+      log.warn('Fabric/legacy 혼합 키프레임 이동을 차단했습니다.');
+      return false;
+    }
+    if (route === 'fabric') {
+      return moveFabricPilotKeyframes(keyframes, frameDelta, anchor);
+    }
+    if (route !== 'legacy') return false;
     if (drawingManager.moveKeyframes(keyframes)) {
       // 이동 성공 시 선택 상태 업데이트
       const movedSelection = keyframes.map(kf => ({
@@ -2134,7 +2302,15 @@ async function initApp() {
       timeline.setKeyframeSelection(movedSelection, { anchor });
       renderActiveDrawingLayers();
       showToast(`키프레임 ${frameDelta > 0 ? '+' : ''}${frameDelta} 프레임 이동`, 'info');
+      return true;
     }
+    return false;
+  }
+
+  // 키프레임 이동
+  timeline.addEventListener('keyframesMove', (e) => {
+    const { keyframes, frameDelta, anchor } = e.detail;
+    void handleTimelineKeyframesMove({ keyframes, frameDelta, anchor });
   });
 
   function deleteSelectedOrCurrentKeyframes() {
@@ -6231,12 +6407,22 @@ async function initApp() {
       color: '#4f8ef7',
       visible: true,
       locked: true,
+      timelineKeyframesMovable: true,
       opacity: 1,
       keyframes,
       getKeyframeRanges(totalFrames) {
-        return keyframes.map(kf => ({
+        const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
+        return keyframes.map((kf, index) => ({
           start: kf.frame,
-          end: kf.frame,
+          end: Math.max(
+            kf.frame,
+            Math.min(
+              tailFrame,
+              keyframes[index + 1]?.frame !== undefined
+                ? keyframes[index + 1].frame - 1
+                : tailFrame
+            )
+          ),
           keyframe: kf
         }));
       }
@@ -7374,6 +7560,10 @@ async function initApp() {
   let fabricDrawingViewportRevision = 0;
   let fabricDrawingViewportSignature = '';
   let resetMpvOverlayCollaborationDrag = () => {};
+  function syncCurrentFabricDrawingDisplayFrame(options) {
+    const currentFrame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
+    void fabricDrawingPilotController.syncDisplayFrame(currentFrame, options);
+  }
   const mpvOverlayLifecycle = createMpvOverlayLifecycle({
     onWarning: (error) => {
       log.warn('mpv 오버레이 동기화 실패, 호스트 복구를 시도합니다.', {
@@ -7412,6 +7602,7 @@ async function initApp() {
     requestAnimationFrame(() => {
       fabricPilotTimelineRenderQueued = false;
       renderActiveDrawingLayers();
+      syncCurrentFabricDrawingDisplayFrame();
     });
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
@@ -9726,10 +9917,6 @@ async function initApp() {
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
 
-      if (playWhenMediaReady && shouldContinueVideoLoad()) {
-        await playVideoAfterMediaLoad({ silent: true });
-      }
-
       // 폴더 열기 / 다른 파일 열기 버튼 표시
       elements.btnOpenFolder.style.display = 'flex';
       elements.btnOpenOther.style.display = 'flex';
@@ -9822,6 +10009,21 @@ async function initApp() {
       }
       reviewDataManager.setFps(videoPlayer.fps);
 
+      if (!engineSwap && canContinueVideoLoad()) {
+        const fabricDrawingPilotApplies = useMpvPilot && !fileIsAudio &&
+          fabricDrawingPilotController.shouldOwnDrawingShortcut();
+        const fabricDrawingReady = await fabricDrawingPilotController.afterVideoReady({
+          ...getFabricDrawingPilotContext(),
+          loadToken
+        });
+        if (!canContinueVideoLoad()) return false;
+        if (fabricDrawingPilotApplies && fabricDrawingReady !== true) return false;
+      }
+
+      if (playWhenMediaReady && shouldContinueVideoLoad()) {
+        await playVideoAfterMediaLoad({ silent: true });
+      }
+
       // keepVersionContext가 false일 때만 manualVersions 복원
       // (true면 기존 버전 목록 유지)
       if (!keepVersionContext) {
@@ -9892,14 +10094,6 @@ async function initApp() {
           size: fileInfo.size,
           duration: videoPlayer.duration || 0
         });
-      }
-
-      if (!engineSwap && canContinueVideoLoad()) {
-        await fabricDrawingPilotController.afterVideoReady({
-          ...getFabricDrawingPilotContext(),
-          loadToken
-        });
-        if (!canContinueVideoLoad()) return false;
       }
 
       trace.end({ filePath, hasExistingData });
@@ -10310,6 +10504,9 @@ async function initApp() {
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     fabricDrawingPilotStatusSnapshot = snapshot ? { ...snapshot } : null;
+    if (nextState === 'passive') {
+      syncCurrentFabricDrawingDisplayFrame();
+    }
     // persistence 우회/차단 사유가 바뀌는 순간을 파일 로그로 남긴다(이어붙이기 정지 진단용).
     const fabricPersistenceReason = snapshot?.persistenceFailureReason || null;
     if (fabricPersistenceReason !== lastLoggedFabricPersistenceReason) {

@@ -4,6 +4,16 @@ const PERSISTENCE_CHANNEL = 'mpv-overlay:fabric-drawing-persistence';
 const POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
 const COLLABORATION_ACTION_CHANNEL = 'mpv-overlay:collaboration-action';
 const COLLABORATION_DRAG_RESET_CHANNEL = 'mpv-overlay:collaboration-drag-reset';
+const DRAWING_POINTERDOWN_FRAME_REQUEST_CHANNEL =
+  'mpv-overlay:drawing-pointerdown-frame-request';
+const DRAWING_POINTERDOWN_FRAME_REQUEST_KEYS = Object.freeze([
+  'hostGeneration',
+  'videoGeneration',
+  'inputRevision',
+  'sessionId',
+  'pointerdownId',
+  'pointerdownAt'
+]);
 const MAX_TRANSITION_BYTES = 8 * 1024 * 1024;
 const MAX_COLLABORATION_POINTER_COORDINATE = 32768;
 const encoder = new TextEncoder();
@@ -44,12 +54,34 @@ function isExactPlainObject(value, expectedKeys) {
     if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
     const prototype = Object.getPrototypeOf(value);
     if (prototype !== Object.prototype && prototype !== null) return false;
-    const keys = Object.keys(value);
+    const keys = Reflect.ownKeys(value);
     return keys.length === expectedKeys.length &&
-      keys.every(key => expectedKeys.includes(key));
+      keys.every(key => typeof key === 'string' && expectedKeys.includes(key));
   } catch (_error) {
     return false;
   }
+}
+
+function normalizeDrawingPointerdownFrameRequest(value) {
+  if (!isExactPlainObject(value, DRAWING_POINTERDOWN_FRAME_REQUEST_KEYS) ||
+      !Number.isSafeInteger(value.hostGeneration) || value.hostGeneration <= 0 ||
+      !Number.isSafeInteger(value.videoGeneration) || value.videoGeneration <= 0 ||
+      !Number.isSafeInteger(value.inputRevision) || value.inputRevision <= 0 ||
+      typeof value.sessionId !== 'string' || value.sessionId.length === 0 ||
+      value.sessionId.length > 256 ||
+      typeof value.pointerdownId !== 'string' || value.pointerdownId.length === 0 ||
+      value.pointerdownId.length > 256 ||
+      !Number.isSafeInteger(value.pointerdownAt) || value.pointerdownAt < 0) {
+    return null;
+  }
+  return {
+    hostGeneration: value.hostGeneration,
+    videoGeneration: value.videoGeneration,
+    inputRevision: value.inputRevision,
+    sessionId: value.sessionId,
+    pointerdownId: value.pointerdownId,
+    pointerdownAt: value.pointerdownAt
+  };
 }
 
 function readOverlayViewportRect() {
@@ -521,5 +553,18 @@ contextBridge.exposeInMainWorld('mpvOverlayCollaborationActions', Object.freeze(
   },
   cancelActiveDrag() {
     return cancelActiveCollaborationDrag();
+  }
+}));
+
+contextBridge.exposeInMainWorld('mpvOverlayDrawingFrame', Object.freeze({
+  requestPointerdownFrame(value) {
+    const request = normalizeDrawingPointerdownFrameRequest(value);
+    if (!request) return false;
+    try {
+      ipcRenderer.send(DRAWING_POINTERDOWN_FRAME_REQUEST_CHANNEL, request);
+      return true;
+    } catch (_error) {
+      return false;
+    }
   }
 }));

@@ -424,8 +424,17 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.setDrawingInput(request)));
   ipcMain.handle('mpv:update-overlay-drawing-tool', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingTool(request)));
+  ipcMain.handle('mpv:update-overlay-drawing-frame', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingFrame(request)));
   ipcMain.handle('mpv:apply-overlay-drawing-action', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingAction(request)));
+  ipcMain.handle('mpv:confirm-overlay-drawing-pointerdown-frame', (event, request) =>
+    invokeFabricDrawingHost(
+      event,
+      () => mpvOverlayHost.confirmDrawingPointerdownFrame(request)
+    ));
+  ipcMain.handle('mpv:present-overlay-drawing-frame', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.presentDrawingFrame(request)));
   ipcMain.handle('mpv:get-overlay-drawing-diagnostics', (event) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.getDrawingDiagnostics()));
   ipcMain.handle('mpv:hydrate-overlay-drawing-video', (event, request) =>
@@ -445,6 +454,12 @@ function setupIpcHandlers({
     } catch (_error) {
       // Cursor presence is ephemeral; the next pointer event recovers the signal.
     }
+  });
+  ipcMain.on('mpv-overlay:drawing-pointerdown-frame-request', (event, request) => {
+    if (!isFabricDrawingPilotEnabled || !mpvOverlayHost.isCurrentOverlaySender(event)) {
+      return;
+    }
+    mpvOverlayHost.forwardDrawingPointerdownFrameRequest(event, request);
   });
   ipcMain.on('mpv-overlay:collaboration-action', (event, action) => {
     mpvOverlayHost.forwardCollaborationAction(event, action);

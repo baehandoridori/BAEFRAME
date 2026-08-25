@@ -159,6 +159,44 @@ test('reset creates an empty canonical document without reporting a user change'
   assert.deepEqual(changes, []);
 });
 
+test('source-frame resolver preserves empty hold breaks without cloning keyframe payloads', async () => {
+  const { createFabricDrawingPersistenceStore } = await loadModule();
+  const store = createFabricDrawingPersistenceStore();
+  assert.equal(store.importRootValue(rootValue({
+    keyframes: [
+      keyframe(100, [record('held-source')]),
+      keyframe(150, []),
+      keyframe(200, [record('next-source')])
+    ]
+  }), META).accepted, true);
+  assert.equal(typeof store.resolveSourceFrameAtFrame, 'function');
+
+  const originalStructuredClone = globalThis.structuredClone;
+  let structuredCloneCalls = 0;
+  globalThis.structuredClone = () => {
+    structuredCloneCalls += 1;
+    throw new Error('source-frame resolution must not clone object payloads');
+  };
+  try {
+    assert.equal(store.resolveSourceFrameAtFrame(99), null);
+    assert.equal(store.resolveSourceFrameAtFrame(100), 100);
+    assert.equal(store.resolveSourceFrameAtFrame(149), 100);
+    assert.equal(store.resolveSourceFrameAtFrame(150), 150);
+    assert.equal(store.resolveSourceFrameAtFrame(199), 150);
+    assert.equal(store.resolveSourceFrameAtFrame(200), 200);
+    assert.equal(store.resolveSourceFrameAtFrame(-1), null);
+    assert.equal(store.resolveSourceFrameAtFrame(240), null);
+    assert.equal(store.resolveSourceFrameAtFrame(100.5), null);
+    assert.equal(structuredCloneCalls, 0);
+  } finally {
+    globalThis.structuredClone = originalStructuredClone;
+  }
+
+  const emptyBreak = store.resolveKeyframeAtFrame(199);
+  assert.equal(emptyBreak.frame, 150);
+  assert.deepEqual(emptyBreak.objects, []);
+});
+
 test('source epoch changes only when a review root is installed or invalidated', async () => {
   const { createFabricDrawingPersistenceStore } = await loadModule();
   const store = createFabricDrawingPersistenceStore();

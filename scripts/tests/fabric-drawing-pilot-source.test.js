@@ -314,7 +314,7 @@ test('Fabric 툴바 표시는 페이드 없이 한 프레임에 완성된다', (
   assert.equal(iifeSource.includes('opacity 100ms ease'), false);
 });
 
-test('파일럿 드로잉은 타임라인에 읽기 전용으로 투영된다', () => {
+test('파일럿 드로잉은 타임라인에 이동 가능한 합성 행으로 투영된다', () => {
   assert.match(appSource, /function getFabricPilotTimelineLayers\(\)/);
   assert.match(appSource, /function renderActiveDrawingLayers\(\)/);
   assert.match(appSource, /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{/);
@@ -328,11 +328,9 @@ test('파일럿 드로잉은 타임라인에 읽기 전용으로 투영된다', 
     appSource,
     /scheduleMpvOverlayStateSync\(\{ force: true \}\);\n\s+renderActiveDrawingLayers\(\);\n\s+if \(!engaged && !wasEngaged\) \{/
   );
-  // 투영 레이어 드래그·삭제 차단
-  assert.match(
-    appSource,
-    /keyframesMove', \(e\) => \{[\s\S]{0,400}?if \(getFabricPilotTimelineLayers\(\)\) return;/
-  );
+  // 투영 레이어 드래그는 Fabric store 경로로 보내고, 삭제 보호는 유지한다.
+  assert.match(appSource, /async function moveFabricPilotKeyframes\(/);
+  assert.match(appSource, /async function handleTimelineKeyframesMove\(/);
   assert.match(
     appSource,
     /function deleteSelectedOrCurrentKeyframes\(\) \{[\s\S]{0,400}?if \(getFabricPilotTimelineLayers\(\)\) return false;/
@@ -612,7 +610,7 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
   assert.equal(getProjection(), null);
 });
 
-test('파일럿 투영 범위는 저장된 장면의 단일 프레임만 표시한다', () => {
+test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬리까지 hold한다', () => {
   const projectionSource = appSource.match(
     /function getFabricPilotTimelineLayers\(\) \{[\s\S]*?\n  \}\n\n  let lastFabricPilotTimeline/
   )?.[0]?.replace(/\n\n  let lastFabricPilotTimeline$/, '');
@@ -634,7 +632,7 @@ test('파일럿 투영 범위는 저장된 장면의 단일 프레임만 표시�
       getHydrationDocument: () => ({
         keyframes: [
           { frame: 10, objects: [{}] },
-          { frame: 20, objects: [{}] }
+          { frame: 20, objects: [] }
         ]
       })
     },
@@ -653,9 +651,527 @@ test('파일럿 투영 범위는 저장된 장면의 단일 프레임만 표시�
   assert.deepEqual(
     layer.getKeyframeRanges(100).map(range => ({ start: range.start, end: range.end })),
     [
-      { start: 10, end: 10 },
-      { start: 20, end: 20 }
+      { start: 10, end: 19 },
+      { start: 20, end: 99 }
     ]
+  );
+  assert.equal(layer.keyframes[0].isEmpty, false);
+  assert.equal(layer.keyframes[1].isEmpty, true);
+  assert.equal(layer.locked, true);
+  assert.equal(layer.timelineKeyframesMovable, true);
+});
+
+test('Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸고 선택과 전역 undo를 갱신한다', async () => {
+  const moveSource = appSource.match(
+    /async function moveFabricPilotKeyframes\(keyframes, frameDelta, anchor\) \{[\s\S]*?\n  \}\n\n  async function handleTimelineKeyframesMove/
+  )?.[0]?.replace(/\n\n  async function handleTimelineKeyframesMove$/, '');
+  assert.ok(moveSource, 'Fabric keyframe move source should be extractable');
+
+  const edit = {
+    schema: 'baeframe-fabric-keyframe-edit',
+    kind: 'move-keyframes',
+    documentId: 'app-move-document',
+    before: [{ frame: 10, keyframe: { frame: 10 } }, { frame: 20, keyframe: null }],
+    after: [{ frame: 10, keyframe: null }, { frame: 20, keyframe: { frame: 20 } }]
+  };
+  let holdRefresh = true;
+  let failRefreshTail = false;
+  let releaseRefresh;
+  const heldRefresh = new Promise(resolve => {
+    releaseRefresh = resolve;
+  });
+  const storeCalls = [];
+  let applyAccepted = true;
+  let currentDocumentId = edit.documentId;
+  const store = {
+    moveKeyframes(moves) {
+      storeCalls.push(['move', moves]);
+      return { applied: true, revision: 5, edit };
+    },
+    applyKeyframeEdit(receivedEdit, direction) {
+      storeCalls.push(['history', receivedEdit, direction]);
+      return applyAccepted
+        ? { applied: true, revision: direction === 'undo' ? 6 : 7 }
+        : { applied: false, reason: 'edit-state-mismatch' };
+    },
+    getHydrationDocument: () => currentDocumentId
+      ? { documentId: currentDocumentId }
+      : null
+  };
+  const controller = {
+    async refreshPersistenceSource(installSource) {
+      if (holdRefresh) {
+        await heldRefresh;
+        return false;
+      }
+      const installed = (await installSource()) !== false;
+      return failRefreshTail ? false : installed;
+    }
+  };
+  const selections = [];
+  const timelineHarness = {
+    setKeyframeSelection(selection, options) {
+      selections.push({ selection, options });
+    }
+  };
+  const toasts = [];
+  const warnings = [];
+  const displaySyncs = [];
+  const actions = [];
+  let renders = 0;
+  const moveFabricPilotKeyframes = new Function(
+    'fabricDrawingPilotController',
+    'fabricDrawingPersistenceStore',
+    'timeline',
+    'renderActiveDrawingLayers',
+    'showToast',
+    'pushUndo',
+    'fabricPilotKeyframeMoveInProgress',
+    '_isProcessingUndo',
+    'beginGlobalHistoryMutation',
+    'syncCurrentFabricDrawingDisplayFrame',
+    'log',
+    `${moveSource}\nreturn moveFabricPilotKeyframes;`
+  )(
+    controller,
+    store,
+    timelineHarness,
+    () => { renders += 1; },
+    (message, level) => toasts.push([message, level]),
+    action => actions.push(action),
+    false,
+    false,
+    () => ({
+      commit: action => {
+        actions.push(action);
+        return true;
+      },
+      release() {}
+    }),
+    options => displaySyncs.push(options),
+    { warn: (...args) => warnings.push(args) }
+  );
+  const keyframes = [{
+    layerId: 'fabric-pilot-drawing-layer',
+    fromFrame: 10,
+    toFrame: 20
+  }];
+  const anchor = { layerId: 'fabric-pilot-drawing-layer', frame: 20 };
+
+  const heldMove = moveFabricPilotKeyframes(keyframes, 10, anchor);
+  assert.equal(await moveFabricPilotKeyframes(keyframes, 10, anchor), false);
+  holdRefresh = false;
+  releaseRefresh();
+  assert.equal(await heldMove, false);
+
+  // installSource/store commit 이후 host re-enable tail만 실패해도 canonical move는 성공이다.
+  failRefreshTail = true;
+  assert.equal(await moveFabricPilotKeyframes(keyframes, 10, anchor), true);
+  assert.deepEqual(storeCalls[0], ['move', [{ fromFrame: 10, toFrame: 20 }]]);
+  assert.deepEqual(selections[0], {
+    selection: [{ layerId: 'fabric-pilot-drawing-layer', frame: 20 }],
+    options: { anchor }
+  });
+  assert.equal(renders, 1);
+  assert.deepEqual(toasts, [['키프레임 +10 프레임 이동', 'info']]);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].type, 'FABRIC_KEYFRAME_MOVE');
+  assert.equal(warnings.length, 1);
+  assert.deepEqual(displaySyncs, [{ force: true }]);
+
+  // undo도 store commit 이후 refresh tail 실패 때문에 global history가 되감기면 안 된다.
+  await actions[0].undo();
+  assert.equal(warnings.length, 2);
+  assert.deepEqual(displaySyncs, [{ force: true }, { force: true }]);
+  failRefreshTail = false;
+  await actions[0].redo();
+  assert.deepEqual(storeCalls.slice(1).map(call => call[2]), ['undo', 'redo']);
+
+  applyAccepted = false;
+  await assert.rejects(actions[0].undo(), /Fabric keyframe move undo failed/);
+
+  currentDocumentId = null;
+  const actionCountBeforeOwnerLoss = actions.length;
+  assert.equal(await moveFabricPilotKeyframes(keyframes, 10, anchor), false);
+  assert.equal(actions.length, actionCountBeforeOwnerLoss);
+
+  // history edit가 old owner에 적용된 직후 source가 바뀌면 stack 이동은 성공하되
+  // old selection/render를 새 문서에 덮어쓰지 않는다.
+  applyAccepted = true;
+  const selectionCountBeforeHistoryOwnerLoss = selections.length;
+  const renderCountBeforeHistoryOwnerLoss = renders;
+  assert.equal(await actions[0].undo(), true);
+  assert.equal(selections.length, selectionCountBeforeHistoryOwnerLoss);
+  assert.equal(renders, renderCountBeforeHistoryOwnerLoss);
+});
+
+test('Fabric 이동 tail 중 추가된 후속 action은 이동 뒤에 순서대로 Undo된다', async () => {
+  const historyBlock = appSource.match(
+    /  \/\/ ====== 글로벌 Undo\/Redo 시스템 ======\n([\s\S]*?)\n  \/\/ 마커 컨테이너 생성/
+  )?.[1];
+  const moveSource = appSource.match(
+    /async function moveFabricPilotKeyframes\(keyframes, frameDelta, anchor\) \{[\s\S]*?\n  \}\n\n  async function handleTimelineKeyframesMove/
+  )?.[0]?.replace(/\n\n  async function handleTimelineKeyframesMove$/, '');
+  assert.ok(historyBlock, 'global history block should be extractable');
+  assert.ok(moveSource, 'Fabric keyframe move source should be extractable');
+
+  const deferred = () => {
+    let resolve;
+    const promise = new Promise(resolvePromise => { resolve = resolvePromise; });
+    return { promise, resolve };
+  };
+  const committed = deferred();
+  const refreshTail = deferred();
+  const ownerLossCommitted = deferred();
+  const ownerLossRefreshTail = deferred();
+  let refreshCount = 0;
+  const edit = {
+    schema: 'baeframe-fabric-keyframe-edit',
+    kind: 'move-keyframes',
+    documentId: 'atomic-move-document'
+  };
+  const storeCalls = [];
+  let currentDocumentId = edit.documentId;
+  const store = {
+    moveKeyframes(moves) {
+      storeCalls.push(['move', moves]);
+      return { applied: true, edit };
+    },
+    applyKeyframeEdit(receivedEdit, direction) {
+      storeCalls.push(['history', receivedEdit, direction]);
+      return { applied: true };
+    },
+    getHydrationDocument: () => currentDocumentId
+      ? { documentId: currentDocumentId }
+      : null
+  };
+  const controller = {
+    async refreshPersistenceSource(installSource) {
+      refreshCount += 1;
+      const installed = (await installSource()) !== false;
+      if (refreshCount === 1) {
+        committed.resolve();
+        await refreshTail.promise;
+      } else if (refreshCount === 3) {
+        ownerLossCommitted.resolve();
+        await ownerLossRefreshTail.promise;
+      }
+      return installed;
+    }
+  };
+  const createHarness = new Function(
+    'drawingManager',
+    'log',
+    'showToast',
+    'fabricDrawingPilotController',
+    'fabricDrawingPersistenceStore',
+    'timeline',
+    'renderActiveDrawingLayers',
+    'fabricPilotKeyframeMoveInProgress',
+    'syncCurrentFabricDrawingDisplayFrame',
+    `${historyBlock}\n${moveSource}\nreturn {
+      pushUndo,
+      globalUndo,
+      moveFabricPilotKeyframes,
+      getUndoStack: () => [...undoStack],
+      getRedoStack: () => [...redoStack]
+    };`
+  );
+  const harness = createHarness(
+    { _createSnapshot() {}, _restoreSnapshot() {}, _emit() {} },
+    { error() {}, warn() {} },
+    () => {},
+    controller,
+    store,
+    { setKeyframeSelection() {} },
+    () => {},
+    false,
+    () => {}
+  );
+  let previousUndoCount = 0;
+  const previousAction = {
+    type: 'PREVIOUS_ACTION',
+    undo: async () => { previousUndoCount += 1; },
+    redo: async () => {}
+  };
+  harness.pushUndo(previousAction);
+
+  const keyframes = [{
+    layerId: 'fabric-pilot-drawing-layer',
+    fromFrame: 10,
+    toFrame: 20
+  }];
+  const move = harness.moveFabricPilotKeyframes(
+    keyframes,
+    10,
+    { layerId: 'fabric-pilot-drawing-layer', frame: 20 }
+  );
+  await committed.promise;
+
+  let laterUndoCount = 0;
+  const laterAction = {
+    type: 'LATER_EXTERNAL_ACTION',
+    undo: async () => { laterUndoCount += 1; },
+    redo: async () => {}
+  };
+  harness.pushUndo(laterAction);
+
+  let undoSettled = false;
+  const undoDuringRefreshTail = harness.globalUndo().then(result => {
+    undoSettled = true;
+    return result;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+
+  assert.equal(undoSettled, false, 'Undo must wait until the committed move owns a history action');
+  assert.equal(previousUndoCount, 0, 'the prior action must stay untouched during the move tail');
+
+  refreshTail.resolve();
+  assert.equal(await move, true);
+  assert.equal(await undoDuringRefreshTail, true);
+  assert.equal(previousUndoCount, 0);
+  assert.equal(laterUndoCount, 1, 'the later external action must be undone before the move');
+  assert.deepEqual(storeCalls.map(call => [call[0], call[2]]), [
+    ['move', undefined]
+  ]);
+
+  assert.equal(await harness.globalUndo(), true);
+  assert.deepEqual(storeCalls.map(call => [call[0], call[2]]), [
+    ['move', undefined],
+    ['history', 'undo']
+  ]);
+  assert.deepEqual(harness.getUndoStack(), [previousAction]);
+  assert.deepEqual(
+    harness.getRedoStack().map(action => action.type),
+    ['LATER_EXTERNAL_ACTION', 'FABRIC_KEYFRAME_MOVE']
+  );
+
+  currentDocumentId = null;
+  let ownerLossExternalUndoCount = 0;
+  const ownerLossMove = harness.moveFabricPilotKeyframes(
+    keyframes,
+    10,
+    { layerId: 'fabric-pilot-drawing-layer', frame: 20 }
+  );
+  await ownerLossCommitted.promise;
+  const ownerLossExternalAction = {
+    type: 'OWNER_LOSS_EXTERNAL_ACTION',
+    undo: async () => { ownerLossExternalUndoCount += 1; },
+    redo: async () => {}
+  };
+  harness.pushUndo(ownerLossExternalAction);
+  const undoAfterOwnerLoss = harness.globalUndo();
+  ownerLossRefreshTail.resolve();
+
+  assert.equal(await ownerLossMove, false);
+  assert.equal(await undoAfterOwnerLoss, true);
+  assert.equal(ownerLossExternalUndoCount, 1);
+  assert.deepEqual(harness.getUndoStack(), [previousAction]);
+  assert.deepEqual(
+    harness.getRedoStack().map(action => action.type),
+    ['OWNER_LOSS_EXTERNAL_ACTION']
+  );
+});
+
+test('전역 Undo가 진행 중이면 Fabric 이동은 store를 commit하지 않고 기존 action을 보존한다', async () => {
+  const historyBlock = appSource.match(
+    /  \/\/ ====== 글로벌 Undo\/Redo 시스템 ======\n([\s\S]*?)\n  \/\/ 마커 컨테이너 생성/
+  )?.[1];
+  const moveSource = appSource.match(
+    /async function moveFabricPilotKeyframes\(keyframes, frameDelta, anchor\) \{[\s\S]*?\n  \}\n\n  async function handleTimelineKeyframesMove/
+  )?.[0]?.replace(/\n\n  async function handleTimelineKeyframesMove$/, '');
+  assert.ok(historyBlock, 'global history block should be extractable');
+  assert.ok(moveSource, 'Fabric keyframe move source should be extractable');
+
+  let rejectUndo;
+  let notifyUndoStarted;
+  const undoStarted = new Promise(resolve => { notifyUndoStarted = resolve; });
+  const heldUndo = new Promise((_resolve, reject) => { rejectUndo = reject; });
+  const edit = {
+    schema: 'baeframe-fabric-keyframe-edit',
+    kind: 'move-keyframes',
+    documentId: 'inverse-race-document'
+  };
+  const storeCalls = [];
+  const store = {
+    moveKeyframes(moves) {
+      storeCalls.push(['move', moves]);
+      return { applied: true, edit };
+    },
+    applyKeyframeEdit() {
+      storeCalls.push(['history']);
+      return { applied: true };
+    },
+    getHydrationDocument: () => ({ documentId: edit.documentId })
+  };
+  const createHarness = new Function(
+    'drawingManager',
+    'log',
+    'showToast',
+    'fabricDrawingPilotController',
+    'fabricDrawingPersistenceStore',
+    'timeline',
+    'renderActiveDrawingLayers',
+    'fabricPilotKeyframeMoveInProgress',
+    'syncCurrentFabricDrawingDisplayFrame',
+    `${historyBlock}\n${moveSource}\nreturn {
+      pushUndo,
+      globalUndo,
+      moveFabricPilotKeyframes,
+      getUndoStack: () => [...undoStack],
+      getRedoStack: () => [...redoStack]
+    };`
+  );
+  const harness = createHarness(
+    { _createSnapshot() {}, _restoreSnapshot() {}, _emit() {} },
+    { error() {}, warn() {} },
+    () => {},
+    { refreshPersistenceSource: async installSource => (await installSource()) !== false },
+    store,
+    { setKeyframeSelection() {} },
+    () => {},
+    false,
+    () => {}
+  );
+  const previousAction = {
+    type: 'PREVIOUS_ACTION',
+    undo: () => {
+      notifyUndoStarted();
+      return heldUndo;
+    },
+    redo: async () => {}
+  };
+  harness.pushUndo(previousAction);
+
+  const inFlightUndo = harness.globalUndo();
+  await undoStarted;
+  const moveResult = await harness.moveFabricPilotKeyframes(
+    [{
+      layerId: 'fabric-pilot-drawing-layer',
+      fromFrame: 10,
+      toFrame: 20
+    }],
+    10,
+    { layerId: 'fabric-pilot-drawing-layer', frame: 20 }
+  );
+  rejectUndo(new Error('expected in-flight undo failure'));
+
+  assert.equal(await inFlightUndo, false);
+  assert.equal(moveResult, false);
+  assert.deepEqual(storeCalls, []);
+  assert.deepEqual(harness.getUndoStack(), [previousAction]);
+  assert.deepEqual(harness.getRedoStack(), []);
+});
+
+test('timeline move router sends only the synthetic layer to Fabric and preserves the legacy route', async () => {
+  const handlerSource = appSource.match(
+    /async function handleTimelineKeyframesMove\(detail = \{\}\) \{[\s\S]*?\n  \}\n\n  \/\/ 키프레임 이동\n  timeline\.addEventListener\('keyframesMove'/
+  )?.[0]?.replace(/\n\n  \/\/ 키프레임 이동\n  timeline\.addEventListener\('keyframesMove'$/, '');
+  assert.ok(handlerSource, 'timeline keyframe move handler should be extractable');
+
+  const routes = [];
+  const selections = [];
+  const warnings = [];
+  const handler = new Function(
+    'classifyFabricPilotKeyframeMove',
+    'moveFabricPilotKeyframes',
+    'drawingManager',
+    'timeline',
+    'renderActiveDrawingLayers',
+    'showToast',
+    'log',
+    `${handlerSource}\nreturn handleTimelineKeyframesMove;`
+  )(
+    keyframes => {
+      const fabricCount = keyframes.filter(
+        keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer'
+      ).length;
+      if (fabricCount === 0) return 'legacy';
+      return fabricCount === keyframes.length ? 'fabric' : 'mixed';
+    },
+    async (...args) => {
+      routes.push(['fabric', ...args]);
+      return true;
+    },
+    {
+      moveKeyframes(keyframes) {
+        routes.push(['legacy', keyframes]);
+        return true;
+      }
+    },
+    {
+      setKeyframeSelection(selection, options) {
+        selections.push({ selection, options });
+      }
+    },
+    () => routes.push(['render']),
+    (message, level) => routes.push(['toast', message, level]),
+    { warn: (...args) => warnings.push(args) }
+  );
+
+  const fabricMove = [{
+    layerId: 'fabric-pilot-drawing-layer',
+    fromFrame: 10,
+    toFrame: 20
+  }];
+  assert.equal(await handler({ keyframes: fabricMove, frameDelta: 10, anchor: null }), true);
+  assert.equal(routes.some(([route]) => route === 'legacy'), false);
+
+  routes.length = 0;
+  const mixedMove = [
+    fabricMove[0],
+    { layerId: 'legacy-layer', fromFrame: 30, toFrame: 40 }
+  ];
+  assert.equal(await handler({ keyframes: mixedMove, frameDelta: 10, anchor: null }), false);
+  assert.deepEqual(routes, []);
+  assert.equal(warnings.length, 1);
+
+  routes.length = 0;
+  const legacyMove = [{ layerId: 'legacy-layer', fromFrame: 2, toFrame: 4 }];
+  const legacyAnchor = { layerId: 'legacy-layer', frame: 4 };
+  assert.equal(await handler({
+    keyframes: legacyMove,
+    frameDelta: 2,
+    anchor: legacyAnchor
+  }), true);
+  assert.deepEqual(routes[0], ['legacy', legacyMove]);
+  assert.deepEqual(selections.at(-1), {
+    selection: [{ layerId: 'legacy-layer', frame: 4 }],
+    options: { anchor: legacyAnchor }
+  });
+});
+
+test('primary play handler force-syncs the current Fabric display frame exactly once at start', () => {
+  const playHandlerSource = appSource.match(
+    /\/\/ 비디오 재생 상태 변경\n  videoPlayer\.addEventListener\('play', \(\) => \{([\s\S]*?)\n  \}\);\n\n  videoPlayer\.addEventListener\('pause'/
+  )?.[1] || '';
+  assert.ok(playHandlerSource, 'primary video play handler source should be extractable');
+
+  const displaySyncCalls = playHandlerSource.match(
+    /syncCurrentFabricDrawingDisplayFrame\([^;]*\);/g
+  ) || [];
+  assert.equal(displaySyncCalls.length, 1);
+  assert.match(
+    playHandlerSource,
+    /^\s*syncCurrentFabricDrawingDisplayFrame\(\{ force: true \}\);/
+  );
+});
+
+test('playback frame consumers and passive landings request the current Fabric display frame', () => {
+  const playbackSyncSource = appSource.match(
+    /function syncPlaybackPositionUI\(currentTime, currentFrame, options = \{\}\) \{[\s\S]*?\n  \}\n\n  function syncCompositionLayerPlaybackState/
+  )?.[0] || '';
+  assert.match(
+    playbackSyncSource,
+    /if \(shouldSyncFrameConsumers\) \{[\s\S]*?fabricDrawingPilotController\.syncDisplayFrame\(currentFrame\)/
+  );
+  assert.match(
+    appSource,
+    /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{[\s\S]*?syncCurrentFabricDrawingDisplayFrame\(\)/
+  );
+  assert.match(
+    appSource,
+    /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*?if \(nextState === 'passive'\)[\s\S]*?syncCurrentFabricDrawingDisplayFrame\(\)/
   );
 });
 

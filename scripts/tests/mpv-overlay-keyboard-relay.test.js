@@ -75,6 +75,18 @@ function validInput(overrides = {}) {
   };
 }
 
+function validPointerdownFrameRequest(overrides = {}) {
+  return {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 11,
+    sessionId: 'main-preload-pointerdown-session',
+    pointerdownId: 'main-preload-pointerdown-1',
+    pointerdownAt: 1234,
+    ...overrides
+  };
+}
+
 test('main preload exposes a narrow validated overlay keyboard subscription', () => {
   const harness = loadMainPreload();
   const electronAPI = harness.exposed.get('electronAPI');
@@ -173,6 +185,52 @@ test('main preload exposes a narrow validated overlay pointer presence subscript
   unsubscribe();
   assert.equal(harness.listeners.has('mpv-overlay:pointer-presence'), false);
   assert.equal(harness.removed.length, 1);
+});
+
+test('main preload validates pointerdown frame subscriptions and exposes the confirm invoke', async () => {
+  const harness = loadMainPreload();
+  const electronAPI = harness.exposed.get('electronAPI');
+  assert.equal(typeof electronAPI.onMpvOverlayDrawingPointerdownFrame, 'function');
+  assert.equal(typeof electronAPI.mpvConfirmOverlayDrawingPointerdownFrame, 'function');
+
+  const received = [];
+  const unsubscribe = electronAPI.onMpvOverlayDrawingPointerdownFrame(request => {
+    received.push(request);
+  });
+  const listener = harness.listeners.get('mpv-overlay:drawing-pointerdown-frame-request');
+  assert.equal(typeof listener, 'function');
+
+  const request = validPointerdownFrameRequest();
+  listener({}, request);
+  assert.deepEqual(received, [request]);
+  assert.notEqual(received[0], request);
+  for (const malformed of [
+    null,
+    validPointerdownFrameRequest({ hostGeneration: 0 }),
+    validPointerdownFrameRequest({ sessionId: '' }),
+    validPointerdownFrameRequest({ pointerdownId: 'p'.repeat(257) }),
+    validPointerdownFrameRequest({ pointerdownAt: Number.POSITIVE_INFINITY }),
+    { ...validPointerdownFrameRequest(), injected: true }
+  ]) {
+    listener({}, malformed);
+  }
+  assert.equal(received.length, 1);
+
+  const confirmation = { ...request, targetFrame: 42 };
+  assert.deepEqual(
+    await electronAPI.mpvConfirmOverlayDrawingPointerdownFrame(confirmation),
+    { success: true }
+  );
+  assert.deepEqual(harness.invoked.at(-1), [
+    'mpv:confirm-overlay-drawing-pointerdown-frame',
+    confirmation
+  ]);
+
+  unsubscribe();
+  assert.equal(
+    harness.listeners.has('mpv-overlay:drawing-pointerdown-frame-request'),
+    false
+  );
 });
 
 test('main preload exposes the dedicated collaboration state invoke channel', async () => {

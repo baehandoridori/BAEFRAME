@@ -209,6 +209,8 @@ class FakeCanvas {
     this.listeners = new Map();
     this.dimensionCalls = [];
     this.calcOffsetCalls = 0;
+    this.renderAllCalls = 0;
+    this.requestRenderAllCalls = 0;
     this.disposed = false;
     FakeCanvas.instances.push(this);
   }
@@ -258,6 +260,12 @@ class FakeCanvas {
     this.activeObject = null;
   }
 
+  setActiveObject(object) {
+    this.activeObject = object;
+    this.activeObjects = object ? [object] : [];
+    return object;
+  }
+
   setTargetFindTolerance(value) {
     this.targetFindTolerance = Math.round(value);
   }
@@ -287,7 +295,13 @@ class FakeCanvas {
     this.calcOffsetCalls += 1;
   }
 
-  requestRenderAll() {}
+  renderAll() {
+    this.renderAllCalls += 1;
+  }
+
+  requestRenderAll() {
+    this.requestRenderAllCalls += 1;
+  }
 
   dispose() {
     this.disposed = true;
@@ -5522,7 +5536,8 @@ test('partial lasso Delete commits one command and round-trips exact ID path and
     const deleted = harness.runtime.applyDrawingAction({
       sessionId: 'real-fabric-session',
       actionId: 'partial-lasso-delete',
-      action: 'delete-selection'
+      action: 'delete-selection',
+      targetFrame: 0
     });
 
     const holed = harness.sceneStore.getActiveSceneSnapshot();
@@ -8266,12 +8281,15 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
 
   assert.deepEqual(Object.keys(runtime).sort(), [
     'applyDrawingAction',
+    'confirmDrawingPointerdownFrame',
     'destroy',
     'exportDrawingVideo',
     'getDiagnostics',
     'hydrateDrawingVideo',
     'prepare',
+    'presentDrawingFrame',
     'setDrawingInput',
+    'updateDrawingFrame',
     'updateDrawingTool',
     'updateViewport'
   ]);
@@ -11705,4 +11723,1975 @@ test('lastPaintedScene이 없는 초기 상태의 disable은 예외 없이 완�
     inputRevision: 1,
     enabled: false
   }).accepted, true);
+});
+
+function createPresentationHarness(keyframes, options = {}) {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const persistenceTransitions = [];
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    ...(options.runtimeOptions || {}),
+    persistenceCommitObserver(event) {
+      persistenceTransitions.push(event);
+    }
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({ keyframes })).accepted, true);
+  const canvas = FakeCanvas.instances[0];
+  const present = (presentationRevision, targetFrame, sourceFrame, overrides = {}) =>
+    runtime.presentDrawingFrame({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      presentationRevision,
+      stableVideoIdentity: 'runtime-video',
+      storeRevision: 11,
+      targetFrame,
+      sourceFrame,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+      viewportRevision: 1,
+      viewportTransform: { scale: 1, panX: 0, panY: 0 },
+      ...overrides
+    });
+  const enableHeldFrame = (targetFrame, sourceFrame, tool = 'brush', inputRevision = 1) =>
+    runtime.setDrawingInput(makeInput({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision,
+      session: {
+        ...makeInput().session,
+        sessionId: `held-session-${targetFrame}-${inputRevision}`,
+        targetFrame,
+        sourceFrame,
+        tool
+      }
+    }));
+  const updateFrame = (frameRevision, targetFrame, overrides = {}) =>
+    runtime.updateDrawingFrame({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision: 1,
+      sessionId: 'active-frame-session',
+      frameRevision,
+      targetFrame,
+      ...overrides
+    });
+  return {
+    runtime,
+    root,
+    canvas,
+    persistenceTransitions,
+    present,
+    enableHeldFrame,
+    updateFrame,
+    options
+  };
+}
+
+function createManualTimerHarness() {
+  const scheduled = [];
+  let nextId = 0;
+  return {
+    scheduled,
+    setTimeout(callback, delay) {
+      const timer = {
+        id: ++nextId,
+        callback,
+        delay,
+        cleared: false,
+        fired: false
+      };
+      scheduled.push(timer);
+      return timer;
+    },
+    clearTimeout(timer) {
+      if (timer) timer.cleared = true;
+    },
+    fire(timer, { includeCleared = false } = {}) {
+      if (!timer || timer.fired || (timer.cleared && !includeCleared)) return false;
+      timer.fired = true;
+      timer.callback();
+      return true;
+    }
+  };
+}
+
+test('pointerdown confirmation pins the controller-captured frame instead of an older delivered candidate', () => {
+  const pointerdownRequests = [];
+  const source = makeHistoryStroke('pointerdown-handshake-source');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [source]
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 20
+  }).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1901,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3,
+    timeStamp: 1
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  assert.equal(runtime.getDiagnostics().targetFrame, 10, 'no old-frame COW before confirmation');
+  assert.deepEqual(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 21
+  }), {
+    accepted: true,
+    pointerdownId: pointerdownRequests[0].pointerdownId,
+    targetFrame: 21
+  });
+  assert.deepEqual(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 2,
+    targetFrame: 22
+  }), {
+    accepted: true,
+    frameRevision: 2,
+    targetFrame: 22,
+    sourceFrame: 10,
+    deferred: true,
+    repainted: false
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 1901,
+    pointerType: 'pen',
+    buttons: 1,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.5,
+    timeStamp: 2
+  });
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1901,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 40,
+    clientY: 50,
+    pressure: 0.4,
+    timeStamp: 3
+  });
+
+  let snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 21]);
+  assert.deepEqual(snapshot.scenes[0].objects, [source]);
+  assert.equal(snapshot.scenes[1].objects.length, 2);
+  assert.equal(runtime.getDiagnostics().targetFrame, 21);
+  assert.equal(runtime.getDiagnostics().armedTargetFrame, 22);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1902,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 50,
+    clientY: 60,
+    pressure: 0.3,
+    timeStamp: 4
+  });
+  assert.equal(pointerdownRequests.length, 2);
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 21
+  }).accepted, false, 'a prior pointerdown cannot confirm the next gesture');
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[1],
+    targetFrame: 22
+  }).accepted, true);
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1902,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 70,
+    clientY: 80,
+    pressure: 0.4,
+    timeStamp: 5
+  });
+  snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 21, 22]);
+  assert.equal(snapshot.scenes[2].objects.length, 3);
+  runtime.destroy();
+});
+
+test('pending pointerdown replays every coalesced move sample before its buffered pointerup', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1907,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 1907,
+    pointerType: 'pen',
+    buttons: 1,
+    clientX: 999,
+    clientY: 999,
+    pressure: 1,
+    getCoalescedEvents: () => [
+      {
+        type: 'pointermove', pointerId: 1907, pointerType: 'pen', buttons: 1,
+        clientX: 20, clientY: 30, pressure: 0.2
+      },
+      {
+        type: 'pointermove', pointerId: 1907, pointerType: 'pen', buttons: 1,
+        clientX: 40, clientY: 50, pressure: 0.8
+      }
+    ]
+  });
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1907,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 60,
+    clientY: 70,
+    pressure: 0.4
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, true);
+  const stroke = runtime.exportDrawingVideo(makePersistenceExport())
+    .snapshot.scenes[0].objects[0];
+  assert.deepEqual(
+    stroke.sourcePoints.map(({ x, y, pressure }) => ({ x, y, pressure })),
+    [
+      { x: 20, y: 40, pressure: 0.3 },
+      { x: 40, y: 60, pressure: 0.2 },
+      { x: 80, y: 100, pressure: 0.8 },
+      { x: 120, y: 140, pressure: 0.4 }
+    ]
+  );
+  runtime.destroy();
+});
+
+test('a coalesced pending move cannot exceed the existing pointer event buffer limit', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1908,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 1908,
+    pointerType: 'pen',
+    buttons: 1,
+    clientX: 20,
+    clientY: 30,
+    pressure: 0.4,
+    getCoalescedEvents: () => Array.from({ length: 1024 }, (_value, index) => ({
+      type: 'pointermove',
+      pointerId: 1908,
+      pointerType: 'pen',
+      buttons: 1,
+      clientX: 20 + index,
+      clientY: 30 + index,
+      pressure: 0.4
+    }))
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+  assert.deepEqual(canvas.upperCanvasEl.pointerReleaseRequests, [1908]);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    0
+  );
+  runtime.destroy();
+});
+
+test('implicit capture loss after buffered pointerup preserves the fenced pending gesture', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1909,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 9999,
+    pointerType: 'pen'
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1909,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7
+  });
+  pointerTarget.capturedPointerIds.delete(1909);
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 1909,
+    pointerType: 'pen'
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    sessionId: 'wrong-session',
+    targetFrame: 10
+  }).accepted, false);
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, true);
+  const stroke = runtime.exportDrawingVideo(makePersistenceExport())
+    .snapshot.scenes[0].objects[0];
+  assert.deepEqual(
+    stroke.sourcePoints.map(({ x, y, pressure }) => ({ x, y, pressure })),
+    [
+      { x: 20, y: 40, pressure: 0.3 },
+      { x: 60, y: 80, pressure: 0.7 }
+    ]
+  );
+  runtime.destroy();
+});
+
+test('capture loss before any buffered pointerup still cancels the pending gesture', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1910,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  pointerTarget.capturedPointerIds.delete(1910);
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 1910,
+    pointerType: 'pen'
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    0
+  );
+  runtime.destroy();
+});
+
+test('unanswered pointerdown frame request times out and releases the next gesture', () => {
+  const pointerdownRequests = [];
+  const timerHarness = createManualTimerHarness();
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      },
+      setTimeout: timerHarness.setTimeout,
+      clearTimeout: timerHarness.clearTimeout
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1911,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1911,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7
+  });
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 1911,
+    pointerType: 'pen'
+  });
+
+  assert.equal(pointerdownRequests.length, 1);
+  assert.equal(timerHarness.scheduled.length, 1);
+  assert.equal(timerHarness.scheduled[0].delay, 3000);
+  assert.equal(timerHarness.fire(timerHarness.scheduled[0]), true);
+  assert.equal(pointerTarget.capturedPointerIds.has(1911), false);
+  assert.deepEqual(pointerTarget.pointerReleaseRequests, [1911]);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1912,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 50,
+    clientY: 60,
+    pressure: 0.4
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1912,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 70,
+    clientY: 80,
+    pressure: 0.6
+  });
+  assert.equal(pointerdownRequests.length, 2, 'the deadline releases the pending input lock');
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false, 'a late confirmation cannot claim the newer pending gesture');
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    0,
+    'the late confirmation cannot materialize a stroke'
+  );
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[1],
+    targetFrame: 10
+  }).accepted, true);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    1,
+    'the newer gesture remains confirmable'
+  );
+  runtime.destroy();
+});
+
+test('pointerdown frame confirmation before the deadline clears its timer and commits once', () => {
+  const pointerdownRequests = [];
+  const timerHarness = createManualTimerHarness();
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      },
+      setTimeout: timerHarness.setTimeout,
+      clearTimeout: timerHarness.clearTimeout
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1913,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1913,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7
+  });
+
+  assert.equal(timerHarness.scheduled.length, 1);
+  const deadline = timerHarness.scheduled[0];
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    sessionId: 'wrong-session',
+    cancelled: true
+  }).accepted, false, 'a wrong-session cancel cannot clear the pending request');
+  assert.equal(deadline.cleared, false);
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, true);
+  assert.equal(deadline.cleared, true, 'successful confirmation clears the local deadline');
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    1
+  );
+  assert.equal(timerHarness.fire(deadline, { includeCleared: true }), true);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    1,
+    'a stale cleared callback cannot alter the committed gesture'
+  );
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    cancelled: true
+  }).accepted, false, 'a stale cancel remains fenced after confirmation');
+  runtime.destroy();
+});
+
+test('pointerdown frame deadline is cleared by disable, session replacement, and destroy', () => {
+  const createPendingHarness = pointerId => {
+    const pointerdownRequests = [];
+    const timerHarness = createManualTimerHarness();
+    const harness = createPresentationHarness([{
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 0, objects: []
+    }], {
+      runtimeOptions: {
+        requestPointerdownFrame(request) {
+          pointerdownRequests.push(request);
+          return true;
+        },
+        setTimeout: timerHarness.setTimeout,
+        clearTimeout: timerHarness.clearTimeout
+      }
+    });
+    assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+    harness.canvas.upperCanvasEl.dispatch('pointerdown', {
+      pointerId,
+      pointerType: 'pen',
+      button: 0,
+      buttons: 1,
+      clientX: 10,
+      clientY: 20,
+      pressure: 0.3
+    });
+    assert.equal(pointerdownRequests.length, 1);
+    assert.equal(timerHarness.scheduled.length, 1);
+    return { ...harness, pointerdownRequests, timerHarness };
+  };
+
+  const disabled = createPendingHarness(1914);
+  const disabledDeadline = disabled.timerHarness.scheduled[0];
+  assert.equal(disabled.runtime.setDrawingInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: false
+  }).accepted, true);
+  assert.equal(disabledDeadline.cleared, true);
+  assert.equal(disabled.timerHarness.fire(disabledDeadline, { includeCleared: true }), true);
+  assert.equal(disabled.runtime.confirmDrawingPointerdownFrame({
+    ...disabled.pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+  disabled.runtime.destroy();
+
+  const replaced = createPendingHarness(1915);
+  const replacedDeadline = replaced.timerHarness.scheduled[0];
+  assert.equal(replaced.enableHeldFrame(10, 10, 'brush', 2).accepted, true);
+  assert.equal(replacedDeadline.cleared, true);
+  assert.equal(replaced.timerHarness.fire(replacedDeadline, { includeCleared: true }), true);
+  replaced.canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1916,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.4
+  });
+  assert.equal(replaced.pointerdownRequests.length, 2, 'the replacement session remains usable');
+  assert.equal(replaced.runtime.confirmDrawingPointerdownFrame({
+    ...replaced.pointerdownRequests[0],
+    cancelled: true
+  }).accepted, false, 'the replaced session request stays fenced');
+  assert.equal(replaced.runtime.confirmDrawingPointerdownFrame({
+    ...replaced.pointerdownRequests[1],
+    cancelled: true
+  }).accepted, true);
+  replaced.runtime.destroy();
+
+  const destroyed = createPendingHarness(1917);
+  const destroyedDeadline = destroyed.timerHarness.scheduled[0];
+  assert.equal(destroyed.runtime.destroy().destroyed, true);
+  assert.equal(destroyedDeadline.cleared, true);
+  assert.equal(destroyed.timerHarness.fire(destroyedDeadline, { includeCleared: true }), true);
+  assert.equal(destroyed.runtime.confirmDrawingPointerdownFrame({
+    ...destroyed.pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+});
+
+test('a fenced negative pointerdown acknowledgement releases input while stale cancel leaves the next gesture intact', () => {
+  const pointerdownRequests = [];
+  const source = makeHistoryStroke('pointerdown-cancel-source');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [source]
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1905,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  const firstRequest = pointerdownRequests[0];
+  assert.deepEqual(runtime.confirmDrawingPointerdownFrame({
+    ...firstRequest,
+    cancelled: true
+  }), {
+    accepted: true,
+    cancelled: true,
+    hostGeneration: firstRequest.hostGeneration,
+    videoGeneration: firstRequest.videoGeneration,
+    inputRevision: firstRequest.inputRevision,
+    sessionId: firstRequest.sessionId,
+    pointerdownId: firstRequest.pointerdownId,
+    pointerdownAt: firstRequest.pointerdownAt
+  });
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1906,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.4
+  });
+  assert.equal(pointerdownRequests.length, 2, 'negative acknowledgement releases the input lock');
+  const secondRequest = pointerdownRequests[1];
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...firstRequest,
+    cancelled: true
+  }).accepted, false, 'a stale cancel cannot clear a newer pending pointerdown');
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...secondRequest,
+    targetFrame: 10
+  }).accepted, true, 'the newer gesture remains confirmable');
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1906,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 40,
+    clientY: 50,
+    pressure: 0.4
+  });
+  runtime.destroy();
+});
+
+test('B-off drops a pending pointerdown confirmation without materializing its armed frame', () => {
+  const pointerdownRequests = [];
+  const source = makeHistoryStroke('pointerdown-disable-source');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [source]
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 20
+  }).accepted, true);
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1904,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+  }).accepted, true);
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 20
+  }).accepted, false);
+  assert.deepEqual(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes.map(scene => scene.targetFrame),
+    [10]
+  );
+  assert.equal(runtime.getDiagnostics().cache.sceneCount, 1);
+  runtime.destroy();
+});
+
+test('passive presentation applies viewport geometry and B-off viewport updates without mutating scenes', () => {
+  const source = makeHistoryStroke('passive-viewport');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [source]
+  }]);
+  const { runtime, root, canvas, present, persistenceTransitions } = harness;
+  const before = structuredClone(runtime.exportDrawingVideo(makePersistenceExport()).snapshot);
+  const viewport = root.querySelectorAllByClass('mpv-fabric-pilot-viewport')[0];
+
+  assert.deepEqual(present(1, 100, 100, {
+    sourceWidth: 2048,
+    sourceHeight: 1152,
+    canvasRect: { left: 12, top: 18, width: 900, height: 506.25 },
+    viewportRevision: 3,
+    viewportTransform: { scale: 1.25, panX: 14, panY: -8 }
+  }), { accepted: true, targetFrame: 100, sourceFrame: 100 });
+  assert.deepEqual(canvas.dimensionCalls.slice(-2), [
+    { dimensions: { width: 2048, height: 1152 }, options: { backstoreOnly: true } },
+    { dimensions: { width: 900, height: 506.25 }, options: { cssOnly: true } }
+  ]);
+  assert.equal(viewport.style.left, '12px');
+  assert.equal(viewport.style.top, '18px');
+  assert.equal(viewport.style.transform, 'scale(1.25) translate(14px, -8px)');
+  assert.equal(runtime.getDiagnostics().viewportRevision, 3);
+
+  const shownObject = canvas.getObjects()[0];
+  assert.deepEqual(runtime.updateViewport({
+    revision: 4,
+    canvasRect: { left: 20, top: 30, width: 800, height: 450 },
+    scale: 1.5,
+    panX: -6,
+    panY: 10
+  }), { accepted: true, revision: 4 });
+  assert.equal(canvas.getObjects()[0], shownObject);
+  assert.equal(viewport.style.left, '20px');
+  assert.equal(viewport.style.top, '30px');
+  assert.equal(viewport.style.transform, 'scale(1.5) translate(-6px, 10px)');
+  assert.equal(runtime.getDiagnostics().viewportRevision, 4);
+  assert.deepEqual(runtime.updateViewport({
+    revision: 4,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    scale: 1,
+    panX: 0,
+    panY: 0
+  }), { accepted: false, reason: 'stale-viewport' });
+  assert.deepEqual(runtime.exportDrawingVideo(makePersistenceExport()).snapshot, before);
+  assert.equal(persistenceTransitions.length, 0);
+  runtime.destroy();
+});
+
+test('passive viewport ownership survives same-video disable and resets on identity, generation, and release boundaries', () => {
+  const makeHarness = () => createPresentationHarness([{
+    id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [makeHistoryStroke('passive-boundary')]
+  }]);
+  const viewportUpdate = revision => ({
+    revision,
+    canvasRect: { left: 5, top: 6, width: 800, height: 450 },
+    scale: 1.1,
+    panX: 2,
+    panY: -3
+  });
+
+  const sameOwner = makeHarness();
+  assert.equal(sameOwner.runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 1, enabled: false
+  }).accepted, true);
+  assert.equal(sameOwner.present(1, 100, 100).accepted, true);
+  assert.equal(sameOwner.runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+  }).accepted, true);
+  assert.deepEqual(sameOwner.runtime.updateViewport(viewportUpdate(2)), {
+    accepted: true, revision: 2
+  });
+  assert.equal(sameOwner.runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 8, inputRevision: 3, enabled: false
+  }).accepted, true);
+  assert.deepEqual(sameOwner.runtime.updateViewport(viewportUpdate(3)), {
+    accepted: false, reason: 'input-disabled'
+  });
+  sameOwner.runtime.destroy();
+
+  const identity = makeHarness();
+  assert.equal(identity.present(1, 100, 100).accepted, true);
+  assert.equal(identity.runtime.hydrateDrawingVideo(makePersistenceHydration({
+    stableVideoIdentity: 'replacement-video',
+    keyframes: []
+  })).accepted, true);
+  assert.deepEqual(identity.runtime.updateViewport(viewportUpdate(2)), {
+    accepted: false, reason: 'input-disabled'
+  });
+  identity.runtime.destroy();
+
+  const released = makeHarness();
+  assert.equal(released.present(1, 100, 100).accepted, true);
+  released.runtime.destroy();
+  assert.deepEqual(released.runtime.updateViewport(viewportUpdate(2)), {
+    accepted: false, reason: 'input-disabled'
+  });
+});
+
+test('passive frame presentation follows exact, held, empty-break, and reverse-seek sources without mutation', () => {
+  const exact100 = makeHistoryStroke('scene-100');
+  const exact200 = makeHistoryStroke('scene-200', { style: { color: '#18a058' } });
+  const harness = createPresentationHarness([
+    {
+      id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 4, objects: [exact100]
+    },
+    {
+      id: 'keyframe-150-empty', frame: 150, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 5, objects: []
+    },
+    {
+      id: 'keyframe-200', frame: 200, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 6, objects: [exact200]
+    }
+  ]);
+  const { runtime, canvas, present } = harness;
+  const beforeExport = structuredClone(runtime.exportDrawingVideo(makePersistenceExport()).snapshot);
+  const beforeDiagnostics = runtime.getDiagnostics();
+
+  assert.deepEqual(present(1, 99, null), {
+    accepted: true, targetFrame: 99, sourceFrame: null
+  });
+  assert.equal(canvas.getObjects().length, 0);
+
+  assert.deepEqual(present(2, 100, 100), {
+    accepted: true, targetFrame: 100, sourceFrame: 100
+  });
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['scene-100']);
+  assert.equal(canvas.getObjects()[0].selectable, false);
+  assert.equal(canvas.getObjects()[0].evented, false);
+  const heldObject = canvas.getObjects()[0];
+  const renderCount = canvas.renderAllCalls;
+
+  assert.deepEqual(present(3, 101, 100), {
+    accepted: true, targetFrame: 101, sourceFrame: 100
+  });
+  assert.equal(canvas.getObjects()[0], heldObject, 'same source must reuse the existing Fabric object');
+  assert.equal(canvas.renderAllCalls, renderCount + 1, 'accepted presentation renders synchronously');
+
+  assert.deepEqual(present(4, 150, 150), {
+    accepted: true, targetFrame: 150, sourceFrame: 150
+  });
+  assert.equal(canvas.getObjects().length, 0, 'empty exact keyframe breaks the previous hold');
+  assert.deepEqual(present(5, 199, 150), {
+    accepted: true, targetFrame: 199, sourceFrame: 150
+  });
+  assert.equal(canvas.getObjects().length, 0);
+
+  assert.deepEqual(present(6, 200, 200), {
+    accepted: true, targetFrame: 200, sourceFrame: 200
+  });
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['scene-200']);
+  assert.deepEqual(present(7, 101, 100), {
+    accepted: true, targetFrame: 101, sourceFrame: 100
+  });
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['scene-100']);
+  assert.deepEqual(present(8, 99, null), {
+    accepted: true, targetFrame: 99, sourceFrame: null
+  });
+  assert.equal(canvas.getObjects().length, 0);
+
+  assert.deepEqual(runtime.exportDrawingVideo(makePersistenceExport()).snapshot, beforeExport);
+  const afterDiagnostics = runtime.getDiagnostics();
+  assert.equal(afterDiagnostics.mutationCount, beforeDiagnostics.mutationCount);
+  assert.equal(afterDiagnostics.undoDepth, beforeDiagnostics.undoDepth);
+  assert.equal(afterDiagnostics.redoDepth, beforeDiagnostics.redoDepth);
+  assert.equal(afterDiagnostics.presentedTargetFrame, 99);
+  assert.equal(afterDiagnostics.presentedSourceFrame, null);
+  assert.equal(afterDiagnostics.presentedStoreRevision, 11);
+  assert.equal(afterDiagnostics.provisional, false);
+  runtime.destroy();
+});
+
+test('frame presentation is passive-only and rejects stale revisions, identities, and invalid source frames', () => {
+  const harness = createPresentationHarness([{
+    id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [makeHistoryStroke('presentation-fence')]
+  }]);
+  const { runtime, canvas, present, enableHeldFrame } = harness;
+
+  assert.equal(present(1, 100, 100).accepted, true);
+  const shownObject = canvas.getObjects()[0];
+  assert.deepEqual(present(1, 101, 100), {
+    accepted: false, reason: 'stale-presentation-revision'
+  });
+  assert.equal(canvas.getObjects()[0], shownObject);
+  assert.equal(present(2, 99, 100).accepted, false, 'source after target is invalid');
+  assert.equal(present(2, 100, 100, { stableVideoIdentity: 'other-video' }).accepted, false);
+
+  assert.equal(enableHeldFrame(101, 100).accepted, true);
+  assert.deepEqual(present(2, 101, 100), {
+    accepted: false, reason: 'input-enabled'
+  });
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+  }).accepted, true);
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 4, videoGeneration: 8, inputRevision: 3, enabled: false
+  }).accepted, true);
+  assert.deepEqual(present(2, 100, 100), {
+    accepted: false, reason: 'stale-presentation-fence'
+  });
+  runtime.destroy();
+});
+
+test('held frame first stroke materializes the target while preserving the source and undo base', () => {
+  const source = makeHistoryStroke('held-source');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 7, objects: [source]
+  }]);
+  const { runtime, canvas, persistenceTransitions, enableHeldFrame } = harness;
+  const before = structuredClone(runtime.exportDrawingVideo(makePersistenceExport()).snapshot);
+
+  assert.deepEqual(enableHeldFrame(101, 100), {
+    accepted: true, enabled: true, restored: false
+  });
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['held-source']);
+  assert.equal(runtime.getDiagnostics().provisional, true);
+  assert.equal(runtime.getDiagnostics().presentedTargetFrame, 101);
+  assert.equal(runtime.getDiagnostics().presentedSourceFrame, 100);
+  assert.deepEqual(runtime.exportDrawingVideo(makePersistenceExport()).snapshot, before);
+  assert.equal(persistenceTransitions.length, 0);
+
+  drawStroke(canvas.upperCanvasEl, 1201);
+  const afterStroke = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(afterStroke.scenes.map(scene => scene.targetFrame), [100, 101]);
+  assert.deepEqual(afterStroke.scenes[0].objects, [source], 'source keyframe stays immutable');
+  assert.equal(afterStroke.scenes[1].objects.length, 2);
+  assert.equal(afterStroke.scenes[1].objects[0].id, 'held-source');
+  assert.equal(runtime.getDiagnostics().provisional, false);
+  assert.deepEqual(persistenceTransitions.map(event => ({
+    targetFrame: event.scene.targetFrame,
+    mutationSequence: event.mutationSequence,
+    kind: event.kind
+  })), [
+    { targetFrame: 101, mutationSequence: 1, kind: 'add-objects' },
+    { targetFrame: 101, mutationSequence: 2, kind: 'add-objects' }
+  ]);
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'held-session-101-1', actionId: 'undo-held-stroke', action: 'undo'
+  }).applied, true);
+  const afterUndo = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(afterUndo.scenes[0].objects, [source]);
+  assert.deepEqual(afterUndo.scenes[1].objects, [source], 'undo returns to the held base at target');
+  runtime.destroy();
+});
+
+test('held materialization keeps the Drawing V3 shadow sequence aligned without duplicate base insertion', () => {
+  FakeCanvas.instances = [];
+  const observed = createObservedDrawingV3Adapter();
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    drawingV3ShadowEnabled: true,
+    drawingV3AdapterFactory: () => observed.observer
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  const source = makeHistoryStroke('held-shadow-source');
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 5, objects: [source]
+    }]
+  })).accepted, true);
+  assert.equal(runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    session: {
+      ...makeInput().session,
+      sessionId: 'held-shadow-session',
+      targetFrame: 101,
+      sourceFrame: 100
+    }
+  })).accepted, true);
+
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 1203);
+  observed.flushAll();
+  const projection = getObservedProjection(observed);
+  assert.equal(projection.headSequence, 2);
+  assert.deepEqual(
+    projection.document.layers[0].keyframes[0].objects.map(object => object.id),
+    FakeCanvas.instances[0].getObjects().map(object => object.__baeframeObjectId)
+  );
+  const diagnostics = runtime.getDiagnostics();
+  assert.equal(diagnostics.drawingV3Shadow.gapCount, 0);
+  assert.equal(diagnostics.drawingV3Shadow.divergenceCount, 0);
+  runtime.destroy();
+});
+
+test('held frame first transform and clear materialize only the target scene', async t => {
+  await t.test('transform', () => {
+    const source = makeHistoryStroke('held-transform-source');
+    const harness = createPresentationHarness([{
+      id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 3, objects: [source]
+    }]);
+    const { runtime, canvas, persistenceTransitions, enableHeldFrame } = harness;
+    assert.equal(enableHeldFrame(101, 100, 'select').accepted, true);
+    const path = canvas.getObjects()[0];
+    canvas.activeObject = path;
+    canvas.activeObjects = [path];
+    canvas.emit('selection:created', { selected: [path] });
+    canvas.emit('before:transform', { transform: { target: path } });
+    path.left = 18;
+    canvas.emit('object:modified', { target: path });
+
+    const snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+    assert.equal(snapshot.scenes[0].objects[0].transform.left, 0);
+    assert.equal(snapshot.scenes[1].objects[0].transform.left, 18);
+    assert.deepEqual(persistenceTransitions.map(event => event.kind), [
+      'add-objects', 'transform-objects'
+    ]);
+    runtime.destroy();
+  });
+
+  await t.test('clear', () => {
+    const source = makeHistoryStroke('held-clear-source');
+    const harness = createPresentationHarness([{
+      id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 3, objects: [source]
+    }]);
+    const { runtime, persistenceTransitions, enableHeldFrame } = harness;
+    assert.equal(enableHeldFrame(101, 100).accepted, true);
+    assert.equal(runtime.applyDrawingAction({
+      sessionId: 'held-session-101-1', actionId: 'clear-held-frame', action: 'clear-session'
+    }).applied, true);
+
+    const snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+    assert.deepEqual(snapshot.scenes[0].objects, [source]);
+    assert.deepEqual(snapshot.scenes[1].objects, []);
+    assert.deepEqual(persistenceTransitions.map(event => event.kind), [
+      'add-objects', 'clear-keyframe'
+    ]);
+    runtime.destroy();
+  });
+});
+
+test('no-edit disable discards held provisional state and an empty held source waits for a real object', () => {
+  const source = makeHistoryStroke('held-no-edit-source');
+  const noEdit = createPresentationHarness([{
+    id: 'keyframe-100', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [source]
+  }]);
+  const noEditBefore = structuredClone(noEdit.runtime.exportDrawingVideo(makePersistenceExport()).snapshot);
+  assert.equal(noEdit.enableHeldFrame(101, 100).accepted, true);
+  assert.equal(noEdit.runtime.getDiagnostics().provisional, true);
+  assert.equal(noEdit.runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+  }).accepted, true);
+  assert.equal(noEdit.runtime.getDiagnostics().provisional, false);
+  assert.deepEqual(noEdit.runtime.exportDrawingVideo(makePersistenceExport()).snapshot, noEditBefore);
+  assert.equal(noEdit.persistenceTransitions.length, 0);
+  assert.equal(noEdit.runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'keyframe-100-refreshed', frame: 100, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 3,
+      objects: [makeHistoryStroke('held-no-edit-source', { transform: { left: 25 } })]
+    }]
+  })).accepted, true);
+  assert.deepEqual(
+    noEdit.canvas.getObjects().map(object => [object.__baeframeObjectId, object.left]),
+    [['held-no-edit-source', 25]],
+    'passive rehydrate repaints the held source after provisional target disposal'
+  );
+  noEdit.runtime.destroy();
+
+  const emptyHeld = createPresentationHarness([{
+    id: 'keyframe-150-empty', frame: 150, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 4, objects: []
+  }]);
+  const emptyBefore = structuredClone(emptyHeld.runtime.exportDrawingVideo(makePersistenceExport()).snapshot);
+  assert.equal(emptyHeld.enableHeldFrame(151, 150).accepted, true);
+  assert.equal(emptyHeld.canvas.getObjects().length, 0);
+  assert.deepEqual(emptyHeld.runtime.exportDrawingVideo(makePersistenceExport()).snapshot, emptyBefore);
+  drawStroke(emptyHeld.canvas.upperCanvasEl, 1202);
+
+  const emptyAfter = emptyHeld.runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(emptyAfter.scenes.map(scene => scene.targetFrame), [150, 151]);
+  assert.deepEqual(emptyAfter.scenes[0].objects, []);
+  assert.equal(emptyAfter.scenes[1].objects.length, 1);
+  assert.deepEqual(emptyHeld.persistenceTransitions.map(event => ({
+    targetFrame: event.scene.targetFrame,
+    mutationSequence: event.mutationSequence,
+    kind: event.kind
+  })), [{ targetFrame: 151, mutationSequence: 1, kind: 'add-objects' }]);
+  emptyHeld.runtime.destroy();
+});
+
+test('active playback previews runtime-local held sources without mutation and retargets each gesture at pointerdown', () => {
+  const source10 = makeHistoryStroke('source-10');
+  const source15 = makeHistoryStroke('source-15', { style: { color: '#26de81' } });
+  const harness = createPresentationHarness([
+    {
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 2, objects: [source10]
+    },
+    {
+      id: 'keyframe-15', frame: 15, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 3, objects: [source15]
+    }
+  ]);
+  const { runtime, canvas, persistenceTransitions } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  const sessionId = 'held-session-10-1';
+  const update = (frameRevision, targetFrame, overrides = {}) => runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId,
+    frameRevision,
+    targetFrame,
+    ...overrides
+  });
+  const before = structuredClone(runtime.exportDrawingVideo(makePersistenceExport()).snapshot);
+  const beforeDiagnostics = runtime.getDiagnostics();
+
+  for (let frameRevision = 1; frameRevision <= 300; frameRevision += 1) {
+    const targetFrame = 11 + ((frameRevision - 1) % 9);
+    assert.equal(update(frameRevision, targetFrame).accepted, true);
+  }
+  assert.equal(update(301, 19).accepted, true);
+  assert.deepEqual(
+    canvas.getObjects().map(object => object.__baeframeObjectId),
+    ['source-15'],
+    'an intermediate real keyframe becomes the held read-only preview'
+  );
+  assert.equal(canvas.getObjects()[0].selectable, false);
+  assert.deepEqual(runtime.exportDrawingVideo(makePersistenceExport()).snapshot, before);
+  assert.equal(persistenceTransitions.length, 0);
+  const afterPlayback = runtime.getDiagnostics();
+  assert.equal(afterPlayback.cache.sceneCount, beforeDiagnostics.cache.sceneCount);
+  assert.equal(afterPlayback.undoDepth, beforeDiagnostics.undoDepth);
+  assert.equal(afterPlayback.redoDepth, beforeDiagnostics.redoDepth);
+
+  assert.equal(update(302, 20).accepted, true);
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1501,
+    pointerType: 'pen',
+    button: 0,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3,
+    timeStamp: 1
+  });
+  assert.equal(runtime.getDiagnostics().targetFrame, 20);
+  assert.equal(update(303, 21).accepted, true, 'a newer frame may arm while the stroke is active');
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 1501,
+    pointerType: 'pen',
+    button: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.5,
+    timeStamp: 2
+  });
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1501,
+    pointerType: 'pen',
+    button: 0,
+    clientX: 40,
+    clientY: 50,
+    pressure: 0.4,
+    timeStamp: 3
+  });
+
+  let snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 15, 20]);
+  assert.deepEqual(snapshot.scenes[0].objects, [source10]);
+  assert.deepEqual(snapshot.scenes[1].objects, [source15]);
+  assert.equal(snapshot.scenes[2].objects.length, 2);
+  assert.equal(runtime.getDiagnostics().targetFrame, 20, 'the whole stroke stays pinned to pointerdown');
+  assert.equal(runtime.getDiagnostics().armedTargetFrame, 21);
+
+  drawStroke(canvas.upperCanvasEl, 1502);
+  snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 15, 20, 21]);
+  assert.equal(snapshot.scenes[3].objects.length, 3);
+  assert.equal(runtime.getDiagnostics().targetFrame, 21);
+  assert.equal(persistenceTransitions.every(event => [20, 21].includes(event.scene.targetFrame)), true);
+  runtime.destroy();
+});
+
+test('active frame candidates are fenced by the current input session and are dropped on disable', () => {
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [makeHistoryStroke('frame-fence')]
+  }]);
+  const { runtime } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  const request = {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 20
+  };
+  assert.equal(runtime.updateDrawingFrame(request).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({ ...request, targetFrame: 21 }).accepted, false);
+  assert.equal(runtime.updateDrawingFrame({ ...request, frameRevision: 2, sessionId: 'stale' }).accepted, false);
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+  }).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    ...request, inputRevision: 2, frameRevision: 1
+  }).accepted, false);
+  assert.equal(runtime.getDiagnostics().armedTargetFrame, null);
+  runtime.destroy();
+});
+
+test('toolbar clear undo and redo retarget the armed frame without changing the held source keyframe', () => {
+  const source = makeHistoryStroke('toolbar-source');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [source]
+  }]);
+  const { runtime } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 20
+  }).accepted, true);
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'held-session-10-1', actionId: 'clear-armed-20', action: 'clear-session'
+  }).applied, true);
+  let snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 20]);
+  assert.deepEqual(snapshot.scenes[0].objects, [source]);
+  assert.deepEqual(snapshot.scenes[1].objects, []);
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'held-session-10-1', actionId: 'undo-clear-armed-20', action: 'undo'
+  }).applied, true);
+  snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes[1].objects, [source]);
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'held-session-10-1', actionId: 'redo-clear-armed-20', action: 'redo'
+  }).applied, true);
+  snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes[1].objects, []);
+  runtime.destroy();
+});
+
+test('select pointerdown retargets before transform hit-testing and writes only the armed frame', () => {
+  const source = makeHistoryStroke('select-source');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [source]
+  }]);
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'select', 1).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 20
+  }).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1601,
+    pointerType: 'mouse',
+    button: 0,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.5,
+    timeStamp: 1
+  });
+  const path = canvas.getObjects()[0];
+  canvas.activeObject = path;
+  canvas.activeObjects = [path];
+  canvas.emit('selection:created', { selected: [path] });
+  canvas.emit('before:transform', { transform: { target: path } });
+  path.left = 25;
+  canvas.emit('object:modified', { target: path });
+
+  const snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 20]);
+  assert.equal(snapshot.scenes[0].objects[0].transform.left, 0);
+  assert.equal(snapshot.scenes[1].objects[0].transform.left, 25);
+  assert.equal(runtime.getDiagnostics().targetFrame, 20);
+  runtime.destroy();
+});
+
+test('pointer and toolbar mutations fail closed when an armed frame cannot be materialized', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const transitions = [];
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    sceneStoreOptions: {
+      maxBytes: 15,
+      estimateObjectBytes: () => 10
+    },
+    persistenceCommitObserver: event => transitions.push(event)
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  const source = makeHistoryStroke('capacity-source');
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [source]
+    }]
+  })).accepted, true);
+  assert.equal(runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    session: {
+      ...makeInput().session,
+      sessionId: 'capacity-session',
+      targetFrame: 10,
+      sourceFrame: 10
+    }
+  })).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'capacity-session',
+    frameRevision: 1,
+    targetFrame: 20
+  }).accepted, true);
+
+  drawStroke(FakeCanvas.instances[0].upperCanvasEl, 1701);
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'capacity-session', actionId: 'capacity-clear', action: 'clear-session'
+  }).applied, false);
+  const snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10]);
+  assert.deepEqual(snapshot.scenes[0].objects, [source]);
+  assert.equal(transitions.length, 0);
+  assert.equal(runtime.getDiagnostics().targetFrame, 10);
+  runtime.destroy();
+});
+
+test('enabled session replacement drops only the old provisional scene and preserves it on failure', async t => {
+  await t.test('successful replacement', () => {
+    const source = makeHistoryStroke('replacement-source');
+    const harness = createPresentationHarness([{
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [source]
+    }]);
+    const { runtime } = harness;
+    assert.equal(harness.enableHeldFrame(11, 10, 'brush', 1).accepted, true);
+    assert.equal(runtime.getDiagnostics().cache.sceneCount, 2);
+
+    assert.equal(runtime.setDrawingInput(makeInput({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision: 2,
+      session: {
+        ...makeInput().session,
+        sessionId: 'replacement-session-20',
+        targetFrame: 20,
+        sourceFrame: 10
+      }
+    })).accepted, true);
+    const diagnostics = runtime.getDiagnostics();
+    assert.equal(diagnostics.activeSessionId, 'replacement-session-20');
+    assert.equal(diagnostics.targetFrame, 20);
+    assert.equal(diagnostics.cache.sceneCount, 2);
+    runtime.destroy();
+  });
+
+  await t.test('failed replacement', () => {
+    FakeCanvas.instances = [];
+    const document = new FakeDocument();
+    const root = document.createElement('div');
+    const runtime = createFabricOverlayRuntime({
+      fabric: { Canvas: FakeCanvas, Path: FakePath },
+      document,
+      sceneStoreOptions: {
+        maxBytes: 25,
+        estimateObjectBytes: () => 10
+      }
+    });
+    assert.equal(runtime.prepare(root).prepared, true);
+    assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+      keyframes: [{
+        id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1, objects: [makeHistoryStroke('replacement-capacity')]
+      }]
+    })).accepted, true);
+    assert.equal(runtime.setDrawingInput(makeInput({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision: 1,
+      session: {
+        ...makeInput().session,
+        sessionId: 'replacement-old-session',
+        targetFrame: 11,
+        sourceFrame: 10
+      }
+    })).accepted, true);
+    const before = runtime.getDiagnostics();
+
+    assert.deepEqual(runtime.setDrawingInput(makeInput({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision: 2,
+      session: {
+        ...makeInput().session,
+        sessionId: 'replacement-failed-session',
+        targetFrame: 20,
+        sourceFrame: 10
+      }
+    })), { accepted: false, reason: 'scene-capacity-exceeded' });
+    const after = runtime.getDiagnostics();
+    assert.equal(after.activeSessionId, before.activeSessionId);
+    assert.equal(after.targetFrame, before.targetFrame);
+    assert.equal(after.cache.sceneCount, before.cache.sceneCount);
+    assert.equal(after.provisional, true);
+    runtime.destroy();
+  });
+});
+
+test('active preview skips same-version held sources and repaints when source or mutation changes', () => {
+  const harness = createPresentationHarness([
+    {
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [makeHistoryStroke('preview-source-10')]
+    },
+    {
+      id: 'keyframe-15', frame: 15, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [makeHistoryStroke('preview-source-15')]
+    }
+  ]);
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  const firstObject = canvas.getObjects()[0];
+  const renderAllBefore = canvas.renderAllCalls;
+  const requestedBefore = canvas.requestRenderAllCalls;
+  const update = (frameRevision, targetFrame) => runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision,
+    targetFrame
+  });
+
+  assert.equal(update(1, 11).repainted, false);
+  assert.equal(update(2, 12).repainted, false);
+  assert.equal(canvas.getObjects()[0], firstObject);
+  assert.equal(canvas.renderAllCalls, renderAllBefore);
+  assert.equal(canvas.requestRenderAllCalls, requestedBefore);
+  assert.equal(update(3, 15).repainted, true);
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['preview-source-15']);
+  assert.equal(canvas.renderAllCalls, renderAllBefore + 1);
+  runtime.destroy();
+
+  const mutated = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [makeHistoryStroke('preview-mutated-source')]
+  }]);
+  assert.equal(mutated.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  drawStroke(mutated.canvas.upperCanvasEl, 1801);
+  const afterCommitRenders = mutated.canvas.renderAllCalls;
+  assert.equal(mutated.runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 11
+  }).repainted, true, 'a local commit changes the same source signature');
+  assert.equal(mutated.canvas.renderAllCalls, afterCommitRenders + 1);
+  mutated.runtime.destroy();
+});
+
+test('failed active preview rendering leaves the prior armed frame and canvas intact', () => {
+  class ThrowingPreviewPath extends FakePath {
+    constructor(pathData, options) {
+      if (pathData === 'THROW_PREVIEW') throw new Error('synthetic preview render failure');
+      super(pathData, options);
+    }
+  }
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: ThrowingPreviewPath },
+    document
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [
+      {
+        id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1, objects: [makeHistoryStroke('preview-safe')]
+      },
+      {
+        id: 'keyframe-15', frame: 15, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1,
+        objects: [makeHistoryStroke('preview-throws', { pathData: 'THROW_PREVIEW' })]
+      }
+    ]
+  })).accepted, true);
+  assert.equal(runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    session: {
+      ...makeInput().session,
+      sessionId: 'preview-rollback-session',
+      targetFrame: 10,
+      sourceFrame: 10
+    }
+  })).accepted, true);
+  const canvas = FakeCanvas.instances[0];
+  const shownObject = canvas.getObjects()[0];
+
+  assert.deepEqual(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'preview-rollback-session',
+    frameRevision: 1,
+    targetFrame: 15
+  }), { accepted: false, reason: 'active-frame-preview-failed' });
+  assert.equal(runtime.getDiagnostics().armedTargetFrame, 10);
+  assert.equal(runtime.getDiagnostics().activeFrameRevision, -1);
+  assert.equal(canvas.getObjects()[0], shownObject);
+  runtime.destroy();
+});
+
+test('canvas add failure rolls active preview objects and scene selection back atomically', () => {
+  class ThrowingAddCanvas extends FakeCanvas {
+    add(object) {
+      if (object?.__baeframeObjectId === this.failObjectId) {
+        throw new Error('synthetic canvas add failure');
+      }
+      return super.add(object);
+    }
+  }
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: ThrowingAddCanvas, Path: FakePath },
+    document
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [
+      {
+        id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1, objects: [makeHistoryStroke('rollback-old')]
+      },
+      {
+        id: 'keyframe-15', frame: 15, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1, objects: [makeHistoryStroke('rollback-new')]
+      }
+    ]
+  })).accepted, true);
+  assert.equal(runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    session: {
+      ...makeInput().session,
+      sessionId: 'canvas-rollback-session',
+      targetFrame: 10,
+      sourceFrame: 10,
+      tool: 'select'
+    }
+  })).accepted, true);
+  const canvas = FakeCanvas.instances[0];
+  const selected = canvas.getObjects()[0];
+  canvas.setActiveObject(selected);
+  canvas.emit('selection:created', { selected: [selected], deselected: [] });
+  assert.equal(runtime.getDiagnostics().selectionCount, 1);
+  canvas.failObjectId = 'rollback-new';
+
+  assert.deepEqual(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'canvas-rollback-session',
+    frameRevision: 1,
+    targetFrame: 15
+  }), { accepted: false, reason: 'active-frame-preview-failed' });
+  assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['rollback-old']);
+  assert.equal(canvas.getActiveObject(), selected);
+  assert.equal(runtime.getDiagnostics().selectionCount, 1);
+  assert.equal(runtime.getDiagnostics().armedTargetFrame, 10);
+  runtime.destroy();
+});
+
+test('source-changing preview failure restores the same pending partial-lasso proxy and delete path', async () => {
+  const sceneStore = createSessionSceneStore();
+  assert.equal(sceneStore.hydrateVideo(makePersistenceHydration({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    stableVideoIdentity: 'real-fabric-video',
+    keyframes: [{
+      id: 'preview-keyframe-10',
+      frame: 10,
+      sourceWidth: 200,
+      sourceHeight: 200,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('pending-preview-source-10')]
+    }]
+  })).accepted, true);
+  const harness = createRealFabricHarness({ sceneStore });
+  try {
+    stageCrossingLasso(harness, 1902);
+    const pendingBefore = pendingLassoObjects(harness.canvas);
+    assert.equal(pendingBefore.length, 1);
+    const activeBefore = harness.canvas.getActiveObjects();
+    const selectionBefore = harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds;
+    const historyBefore = lassoHistoryState(harness.runtime);
+    const realAdd = harness.canvas.add.bind(harness.canvas);
+    harness.canvas.add = (...objects) => {
+      if (objects.some(object => object?.__baeframeObjectId === 'pending-preview-source-10')) {
+        throw new Error('synthetic pending preview add failure');
+      }
+      return realAdd(...objects);
+    };
+
+    assert.deepEqual(harness.runtime.updateDrawingFrame({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 1,
+      sessionId: 'real-fabric-session',
+      frameRevision: 1,
+      targetFrame: 10
+    }), { accepted: false, reason: 'active-frame-preview-failed' });
+    harness.canvas.add = realAdd;
+
+    assert.deepEqual(pendingLassoObjects(harness.canvas), pendingBefore);
+    assert.deepEqual(harness.canvas.getActiveObjects(), activeBefore);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      selectionBefore
+    );
+    assert.deepEqual(lassoHistoryState(harness.runtime), historyBefore);
+    const deletion = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'delete-after-pending-preview-rollback',
+      action: 'delete-selection',
+      targetFrame: 0
+    });
+    assert.equal(deletion.applied, true);
+    assert.equal(pendingLassoObjects(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('B-off preserves the active held or blank preview when passive force-present fails', async t => {
+  await t.test('held source', () => {
+    const harness = createPresentationHarness([
+      {
+        id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1, objects: [makeHistoryStroke('disable-source-10')]
+      },
+      {
+        id: 'keyframe-15', frame: 15, sourceWidth: 1920, sourceHeight: 1080,
+        mutationSequence: 1, objects: [makeHistoryStroke('disable-source-15')]
+      }
+    ]);
+    const { runtime, canvas } = harness;
+    assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+    assert.equal(runtime.updateDrawingFrame({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision: 1,
+      sessionId: 'held-session-10-1',
+      frameRevision: 1,
+      targetFrame: 16
+    }).accepted, true);
+    assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['disable-source-15']);
+    assert.equal(runtime.setDrawingInput({
+      hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+    }).accepted, true);
+    assert.equal(harness.present(1, 16, 15, { stableVideoIdentity: 'wrong-video' }).accepted, false);
+    assert.deepEqual(canvas.getObjects().map(object => object.__baeframeObjectId), ['disable-source-15']);
+    assert.equal(runtime.getDiagnostics().presentedTargetFrame, 16);
+    assert.equal(runtime.getDiagnostics().presentedSourceFrame, 15);
+    runtime.destroy();
+  });
+
+  await t.test('blank hold', () => {
+    const harness = createPresentationHarness([{
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [makeHistoryStroke('disable-blank-source')]
+    }]);
+    const { runtime, canvas } = harness;
+    assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+    assert.equal(runtime.updateDrawingFrame({
+      hostGeneration: 3,
+      videoGeneration: 7,
+      inputRevision: 1,
+      sessionId: 'held-session-10-1',
+      frameRevision: 1,
+      targetFrame: 5
+    }).accepted, true);
+    assert.equal(canvas.getObjects().length, 0);
+    assert.equal(runtime.setDrawingInput({
+      hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+    }).accepted, true);
+    assert.equal(harness.present(1, 5, null, { stableVideoIdentity: 'wrong-video' }).accepted, false);
+    assert.equal(canvas.getObjects().length, 0);
+    assert.equal(runtime.getDiagnostics().presentedTargetFrame, 5);
+    assert.equal(runtime.getDiagnostics().presentedSourceFrame, null);
+    runtime.destroy();
+  });
+});
+
+test('B-off rejects a stale persisted source after a just-committed local stroke', () => {
+  const source10 = makeHistoryStroke('disable-lag-source-10');
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 1, objects: [source10]
+  }]);
+  const { runtime, canvas } = harness;
+  assert.equal(harness.enableHeldFrame(20, 10, 'brush', 1).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 1903);
+  const committedIds = canvas.getObjects().map(object => object.__baeframeObjectId);
+  assert.equal(committedIds.length, 2);
+  assert.equal(runtime.setDrawingInput({
+    hostGeneration: 3, videoGeneration: 7, inputRevision: 2, enabled: false
+  }).accepted, true);
+
+  assert.deepEqual(harness.present(1, 20, 10), {
+    accepted: false,
+    reason: 'stale-presentation-source'
+  });
+  assert.deepEqual(
+    canvas.getObjects().map(object => object.__baeframeObjectId),
+    committedIds
+  );
+  assert.equal(runtime.getDiagnostics().presentedTargetFrame, 20);
+  assert.equal(runtime.getDiagnostics().presentedSourceFrame, 20);
+  assert.deepEqual(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes.map(scene => scene.targetFrame),
+    [10, 20]
+  );
+  runtime.destroy();
+});
+
+test('controller action targets its captured frame while duplicate actions never retarget', () => {
+  const source10 = makeHistoryStroke('action-source-10');
+  const source15 = makeHistoryStroke('action-source-15');
+  const harness = createPresentationHarness([
+    {
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [source10]
+    },
+    {
+      id: 'keyframe-15', frame: 15, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [source15]
+    }
+  ]);
+  const { runtime } = harness;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  assert.equal(runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'held-session-10-1',
+    frameRevision: 1,
+    targetFrame: 20
+  }).accepted, true);
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'held-session-10-1',
+    actionId: 'captured-frame-clear',
+    action: 'clear-session',
+    targetFrame: 10
+  }).applied, true);
+  let snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 15]);
+  assert.deepEqual(snapshot.scenes[0].objects, []);
+  assert.deepEqual(snapshot.scenes[1].objects, [source15]);
+
+  const beforeDuplicate = runtime.getDiagnostics();
+  assert.deepEqual(runtime.applyDrawingAction({
+    sessionId: 'held-session-10-1',
+    actionId: 'captured-frame-clear',
+    action: 'clear-session',
+    targetFrame: 20
+  }), { applied: false, duplicate: true });
+  const afterDuplicate = runtime.getDiagnostics();
+  assert.equal(afterDuplicate.targetFrame, beforeDuplicate.targetFrame);
+  assert.equal(afterDuplicate.cache.sceneCount, beforeDuplicate.cache.sceneCount);
+  snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 15]);
+  runtime.destroy();
+});
+
+test('a failed explicit action retarget releases its action id for a safe retry', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    sceneStoreOptions: {
+      maxBytes: 15,
+      estimateObjectBytes: () => 10
+    }
+  });
+  assert.equal(runtime.prepare(root).prepared, true);
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+      mutationSequence: 1, objects: [makeHistoryStroke('action-retry-source')]
+    }]
+  })).accepted, true);
+  assert.equal(runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    session: {
+      ...makeInput().session,
+      sessionId: 'action-retry-session',
+      targetFrame: 10,
+      sourceFrame: 10
+    }
+  })).accepted, true);
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'action-retry-session',
+    actionId: 'retry-after-retarget-failure',
+    action: 'clear-session',
+    targetFrame: 20
+  }).applied, false);
+  assert.deepEqual(runtime.applyDrawingAction({
+    sessionId: 'action-retry-session',
+    actionId: 'retry-after-retarget-failure',
+    action: 'clear-session',
+    targetFrame: 10
+  }), { applied: false, reason: 'history-capacity-exceeded' });
+  runtime.destroy();
 });

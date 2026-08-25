@@ -1,6 +1,52 @@
 const DRAWING_PROTOCOL = 'baeframe-drawing-surface';
 const DRAWING_PROTOCOL_VERSION = 1;
 const CONTROLLER_DRAWING_ACTIONS = new Set(['delete-selection', 'undo', 'redo']);
+const ACTIVE_FRAME_MAX_IN_FLIGHT = 2;
+const ACTIVE_FRAME_OBSERVATION_LIMIT = 64;
+const POINTERDOWN_FRAME_REQUEST_KEYS = [
+  'hostGeneration',
+  'videoGeneration',
+  'inputRevision',
+  'sessionId',
+  'pointerdownId',
+  'pointerdownAt'
+];
+
+function exactKeys(value, expectedKeys) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) return false;
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some(key => typeof key !== 'string')) return false;
+  const actualKeys = ownKeys.sort();
+  const sortedExpectedKeys = [...expectedKeys].sort();
+  return actualKeys.length === sortedExpectedKeys.length &&
+    actualKeys.every((key, index) => key === sortedExpectedKeys[index]);
+}
+
+function normalizePointerdownFrameRequest(value) {
+  if (!exactKeys(value, POINTERDOWN_FRAME_REQUEST_KEYS)) return null;
+  const hostGeneration = value.hostGeneration;
+  const videoGeneration = value.videoGeneration;
+  const inputRevision = value.inputRevision;
+  const pointerdownAt = value.pointerdownAt;
+  if (![hostGeneration, videoGeneration, inputRevision].every(
+    number => Number.isSafeInteger(number) && number > 0
+  ) || !Number.isSafeInteger(pointerdownAt) || pointerdownAt < 0 ||
+      typeof value.sessionId !== 'string' || value.sessionId.length < 1 ||
+      value.sessionId.length > 256 || typeof value.pointerdownId !== 'string' ||
+      value.pointerdownId.length < 1 || value.pointerdownId.length > 256) {
+    return null;
+  }
+  return {
+    hostGeneration,
+    videoGeneration,
+    inputRevision,
+    sessionId: value.sessionId,
+    pointerdownId: value.pointerdownId,
+    pointerdownAt
+  };
+}
 
 function copyRect(rect) {
   return rect && typeof rect === 'object' ? { ...rect } : null;
@@ -91,6 +137,16 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.persistenceSessionIdFactory === 'function'
       ? options.persistenceSessionIdFactory
       : () => globalThis.crypto?.randomUUID?.() || uuid();
+  const wallNow = typeof options.wallNow === 'function'
+    ? options.wallNow
+    : () => {
+      const performanceValue = globalThis.performance;
+      const epochMilliseconds = Number(performanceValue?.timeOrigin) +
+        Number(performanceValue?.now?.());
+      return Number.isFinite(epochMilliseconds)
+        ? Math.floor(epochMilliseconds * 1000)
+        : Date.now() * 1000;
+    };
   // 오버레이 호스트 IPC 응답 데드라인. 호스트가 응답하지 않으면 게이트가 영구 pending이 되어
   // 이어붙이기 전환 전체가 침묵 정지하므로(2026-08-21), 경계에서 유한 시간으로 자른다.
   const persistenceIpcDeadlineMs =
@@ -141,6 +197,17 @@ export function createFabricDrawingPilotController(options = {}) {
   let persistenceFailureReason = null;
   let persistenceVideoContext = null;
   let persistenceBoundSourceEpoch = null;
+  let presentationRevision = 0;
+  let passivePresentationInFlight = null;
+  let passivePresentationTrailing = null;
+  let lastAcceptedPresentationSignature = null;
+  let activeFrameRevision = 0;
+  const activeFrameInFlight = new Set();
+  let activeFramePending = null;
+  let activeFrameDispatchScheduled = false;
+  let lastAcceptedActiveFrameSignature = null;
+  let activeFrameObservations = [];
+  let passivePresentationBlock = null;
 
   function contextSnapshot(overrides) {
     let current = {};
@@ -152,6 +219,550 @@ export function createFabricDrawingPilotController(options = {}) {
     return overrides && typeof overrides === 'object'
       ? { ...current, ...overrides }
       : { ...current };
+  }
+
+  function isPassivePresentationBlocked() {
+    return !!(
+      passivePresentationBlock &&
+      passivePresentationBlock.hostGeneration === hostGeneration &&
+      passivePresentationBlock.videoGeneration === videoGeneration &&
+      passivePresentationBlock.inputRevision === inputRevision
+    );
+  }
+
+  function releasePassivePresentationBlock(block) {
+    if (passivePresentationBlock !== block) return false;
+    passivePresentationBlock = null;
+    return true;
+  }
+
+  function readPersistenceRevision() {
+    let value = null;
+    try {
+      value = persistenceStore?.getRevision?.();
+      if (value === null || value === undefined) {
+        value = persistenceStore?.getStatus?.()?.revision;
+      }
+    } catch {
+      value = null;
+    }
+    return Number.isSafeInteger(value) && value >= 0 ? value : null;
+  }
+
+  function resolveSourceFrame(targetFrame) {
+    if (typeof persistenceStore?.resolveSourceFrameAtFrame === 'function') {
+      let sourceFrame = null;
+      try {
+        sourceFrame = persistenceStore.resolveSourceFrameAtFrame(targetFrame);
+      } catch {
+        return null;
+      }
+      if (sourceFrame === null) return { sourceFrame: null };
+      const normalizedSourceFrame = Number(sourceFrame);
+      if (!Number.isSafeInteger(normalizedSourceFrame) || normalizedSourceFrame < 0 ||
+          normalizedSourceFrame > targetFrame) {
+        return null;
+      }
+      return { sourceFrame: normalizedSourceFrame };
+    }
+    if (typeof persistenceStore?.resolveKeyframeAtFrame !== 'function') return null;
+    let keyframe = null;
+    try {
+      keyframe = persistenceStore.resolveKeyframeAtFrame(targetFrame);
+    } catch {
+      return null;
+    }
+    if (keyframe === null) return { sourceFrame: null };
+    const sourceFrame = Number(keyframe?.frame);
+    if (!Number.isSafeInteger(sourceFrame) || sourceFrame < 0 || sourceFrame > targetFrame) {
+      return null;
+    }
+    return { sourceFrame };
+  }
+
+  function readPassiveViewport(context) {
+    const sourceWidth = Number(context.sourceWidth);
+    const sourceHeight = Number(context.sourceHeight);
+    const rect = context.canvasRect;
+    const canvasRect = {
+      left: Number(rect?.left),
+      top: Number(rect?.top),
+      width: Number(rect?.width),
+      height: Number(rect?.height)
+    };
+    const viewportRevision = Number(context.viewportRevision);
+    const viewportTransform = copyViewportTransform(context.viewportTransform);
+    if (!Number.isFinite(sourceWidth) || sourceWidth <= 0 ||
+        !Number.isFinite(sourceHeight) || sourceHeight <= 0 ||
+        !Object.values(canvasRect).every(Number.isFinite) ||
+        canvasRect.width <= 0 || canvasRect.height <= 0 ||
+        !Number.isSafeInteger(viewportRevision) || viewportRevision < 0 ||
+        !Number.isFinite(viewportTransform.scale) || viewportTransform.scale <= 0 ||
+        !Number.isFinite(viewportTransform.panX) ||
+        !Number.isFinite(viewportTransform.panY)) {
+      return null;
+    }
+    return {
+      sourceWidth,
+      sourceHeight,
+      canvasRect,
+      viewportRevision,
+      viewportTransform
+    };
+  }
+
+  function createPassivePresentationEntry(targetFrame, { force = false } = {}) {
+    if (!pilotEnabled || state !== 'passive' || desiredInputEnabled ||
+        isPassivePresentationBlocked() ||
+        !videoReady || !hostGeneration || !videoGeneration) {
+      return null;
+    }
+    let presentFrame;
+    try {
+      presentFrame = electronAPI.mpvPresentOverlayDrawingFrame;
+    } catch {
+      presentFrame = null;
+    }
+    if (typeof presentFrame !== 'function') return null;
+    const context = contextSnapshot();
+    const stableVideoIdentity = String(context.stableVideoIdentity || '');
+    if (!validPilotContext(context) || !stableVideoIdentity ||
+        stableVideoIdentity !== confirmedVideoIdentity) {
+      return null;
+    }
+    const normalizedTargetFrame = Math.max(0, Math.trunc(Number(targetFrame) || 0));
+    const totalFrames = Number(context.totalFrames);
+    if (Number.isSafeInteger(totalFrames) && totalFrames > 0 &&
+        normalizedTargetFrame >= totalFrames) {
+      return null;
+    }
+    const resolved = resolveSourceFrame(normalizedTargetFrame);
+    const storeRevision = readPersistenceRevision();
+    const viewport = readPassiveViewport(context);
+    if (!resolved || storeRevision === null || !viewport ||
+        presentationRevision >= Number.MAX_SAFE_INTEGER) {
+      return null;
+    }
+    const signature = JSON.stringify([
+      hostGeneration,
+      videoGeneration,
+      stableVideoIdentity,
+      storeRevision,
+      resolved.sourceFrame,
+      viewport.sourceWidth,
+      viewport.sourceHeight,
+      viewport.canvasRect.left,
+      viewport.canvasRect.top,
+      viewport.canvasRect.width,
+      viewport.canvasRect.height,
+      viewport.viewportRevision,
+      viewport.viewportTransform.scale,
+      viewport.viewportTransform.panX,
+      viewport.viewportTransform.panY
+    ]);
+    if (!force) {
+      if (passivePresentationTrailing?.signature === signature) {
+        return { existingPromise: passivePresentationTrailing.promise };
+      }
+      if (passivePresentationInFlight?.signature === signature &&
+          !passivePresentationTrailing) {
+        return { existingPromise: passivePresentationInFlight.promise };
+      }
+      if (signature === lastAcceptedPresentationSignature &&
+          !passivePresentationInFlight) {
+        return { deduped: true };
+      }
+    }
+    presentationRevision += 1;
+    let resolveEntry;
+    const promise = new Promise(resolve => {
+      resolveEntry = resolve;
+    });
+    const request = {
+      hostGeneration,
+      videoGeneration,
+      presentationRevision,
+      stableVideoIdentity,
+      storeRevision,
+      targetFrame: normalizedTargetFrame,
+      sourceFrame: resolved.sourceFrame,
+      ...viewport
+    };
+    return {
+      force,
+      signature,
+      request,
+      presentFrame,
+      promise,
+      resolve: resolveEntry
+    };
+  }
+
+  function passivePresentationEntryIsCurrent(entry) {
+    const request = entry?.request;
+    if (!request || state !== 'passive' || desiredInputEnabled || !videoReady ||
+        request.hostGeneration !== hostGeneration ||
+        request.videoGeneration !== videoGeneration ||
+        request.presentationRevision !== presentationRevision ||
+        request.stableVideoIdentity !== confirmedVideoIdentity) {
+      return false;
+    }
+    const context = contextSnapshot();
+    const viewport = readPassiveViewport(context);
+    if (!validPilotContext(context) ||
+        String(context.stableVideoIdentity || '') !== request.stableVideoIdentity ||
+        readPersistenceRevision() !== request.storeRevision ||
+        !viewport ||
+        JSON.stringify(viewport) !== JSON.stringify({
+          sourceWidth: request.sourceWidth,
+          sourceHeight: request.sourceHeight,
+          canvasRect: request.canvasRect,
+          viewportRevision: request.viewportRevision,
+          viewportTransform: request.viewportTransform
+        })) {
+      return false;
+    }
+    const resolved = resolveSourceFrame(request.targetFrame);
+    return resolved !== null && resolved.sourceFrame === request.sourceFrame;
+  }
+
+  function responseMatchesPassivePresentation(response, request) {
+    return response?.success === true &&
+      response.accepted === true &&
+      response.presentationRevision === request.presentationRevision &&
+      response.targetFrame === request.targetFrame &&
+      response.sourceFrame === request.sourceFrame;
+  }
+
+  function runPassivePresentationEntry(entry) {
+    passivePresentationInFlight = entry;
+    void (async () => {
+      let accepted = false;
+      try {
+        const response = await withPersistenceIpcDeadline(
+          entry.presentFrame(entry.request),
+          {
+            success: false,
+            accepted: false,
+            presentationRevision: entry.request.presentationRevision,
+            targetFrame: entry.request.targetFrame,
+            sourceFrame: entry.request.sourceFrame,
+            reason: 'passive-presentation-ipc-timeout'
+          }
+        );
+        accepted = responseMatchesPassivePresentation(response, entry.request) &&
+          passivePresentationEntryIsCurrent(entry);
+        if (accepted) lastAcceptedPresentationSignature = entry.signature;
+      } catch {
+        accepted = false;
+      } finally {
+        if (passivePresentationInFlight === entry) {
+          passivePresentationInFlight = null;
+        }
+        entry.resolve(accepted);
+        const trailing = passivePresentationTrailing;
+        passivePresentationTrailing = null;
+        if (!trailing) return;
+        if (!passivePresentationEntryIsCurrent(trailing)) {
+          trailing.resolve(false);
+          return;
+        }
+        if (!trailing.force && trailing.signature === lastAcceptedPresentationSignature) {
+          trailing.resolve(true);
+          return;
+        }
+        runPassivePresentationEntry(trailing);
+      }
+    })();
+  }
+
+  function syncDisplayFrame(targetFrame, options = {}) {
+    if (state === 'active') return syncActiveDrawingFrame(targetFrame, options);
+    const entry = createPassivePresentationEntry(targetFrame, options);
+    if (!entry) return Promise.resolve(false);
+    if (entry.deduped) return Promise.resolve(true);
+    if (entry.existingPromise) return entry.existingPromise;
+    if (passivePresentationInFlight) {
+      if (passivePresentationTrailing) passivePresentationTrailing.resolve(false);
+      passivePresentationTrailing = entry;
+      return entry.promise;
+    }
+    runPassivePresentationEntry(entry);
+    return entry.promise;
+  }
+
+  function pushActiveFrameObservation(targetFrame, observedAt = wallNow()) {
+    if (!currentSession || !Number.isSafeInteger(targetFrame) || targetFrame < 0 ||
+        !Number.isSafeInteger(observedAt) || observedAt < 0) {
+      return false;
+    }
+    const observation = {
+      hostGeneration,
+      videoGeneration,
+      inputRevision,
+      sessionId: currentSession.sessionId,
+      targetFrame,
+      observedAt
+    };
+    const previous = activeFrameObservations.at(-1);
+    if (previous && previous.hostGeneration === observation.hostGeneration &&
+        previous.videoGeneration === observation.videoGeneration &&
+        previous.inputRevision === observation.inputRevision &&
+        previous.sessionId === observation.sessionId &&
+        previous.targetFrame === observation.targetFrame &&
+        previous.observedAt === observation.observedAt) {
+      return true;
+    }
+    activeFrameObservations.push(observation);
+    if (activeFrameObservations.length > ACTIVE_FRAME_OBSERVATION_LIMIT) {
+      activeFrameObservations.splice(
+        0,
+        activeFrameObservations.length - ACTIVE_FRAME_OBSERVATION_LIMIT
+      );
+    }
+    return true;
+  }
+
+  function recordActiveFrameObservation(targetFrame) {
+    if (state !== 'active' || !desiredInputEnabled || !currentSession || !videoReady) {
+      return false;
+    }
+    const context = contextSnapshot();
+    const normalizedTargetFrame = Math.max(0, Math.trunc(Number(targetFrame) || 0));
+    const totalFrames = Number(context.totalFrames);
+    if (!validPilotContext(context) ||
+        String(context.stableVideoIdentity || '') !== confirmedVideoIdentity ||
+        (Number.isSafeInteger(totalFrames) && totalFrames > 0 &&
+          normalizedTargetFrame >= totalFrames)) {
+      return false;
+    }
+    return pushActiveFrameObservation(normalizedTargetFrame);
+  }
+
+  function resolvePointerdownFrame(request) {
+    for (let index = activeFrameObservations.length - 1; index >= 0; index -= 1) {
+      const observation = activeFrameObservations[index];
+      if (observation.observedAt <= request.pointerdownAt &&
+          observation.hostGeneration === request.hostGeneration &&
+          observation.videoGeneration === request.videoGeneration &&
+          observation.inputRevision === request.inputRevision &&
+          observation.sessionId === request.sessionId) {
+        return observation.targetFrame;
+      }
+    }
+    return null;
+  }
+
+  async function cancelPointerdownFrame(request, confirmPointerdownFrame) {
+    try {
+      await withPersistenceIpcDeadline(
+        confirmPointerdownFrame({ ...request, cancelled: true }),
+        { success: false, accepted: false, reason: 'pointerdown-cancel-ipc-timeout' }
+      );
+    } catch { /* cancellation is best-effort and runtime-fenced */ }
+    return false;
+  }
+
+  async function handlePointerdownFrameRequest(value) {
+    const request = normalizePointerdownFrameRequest(value);
+    let confirmPointerdownFrame;
+    try {
+      confirmPointerdownFrame = electronAPI.mpvConfirmOverlayDrawingPointerdownFrame;
+    } catch {
+      confirmPointerdownFrame = null;
+    }
+    if (!request || typeof confirmPointerdownFrame !== 'function') {
+      return false;
+    }
+    if (state !== 'active' || !desiredInputEnabled || !currentSession ||
+        request.hostGeneration !== hostGeneration ||
+        request.videoGeneration !== videoGeneration ||
+        request.inputRevision !== inputRevision ||
+        request.sessionId !== currentSession.sessionId) {
+      return cancelPointerdownFrame(request, confirmPointerdownFrame);
+    }
+    const targetFrame = resolvePointerdownFrame(request);
+    if (!Number.isSafeInteger(targetFrame)) {
+      return cancelPointerdownFrame(request, confirmPointerdownFrame);
+    }
+    const confirmation = { ...request, targetFrame };
+    try {
+      const response = await withPersistenceIpcDeadline(
+        confirmPointerdownFrame(confirmation),
+        { success: false, accepted: false, reason: 'pointerdown-frame-ipc-timeout' }
+      );
+      const accepted = response?.success === true && response.accepted === true &&
+        response.pointerdownId === request.pointerdownId &&
+        response.targetFrame === targetFrame && state === 'active' &&
+        desiredInputEnabled && currentSession?.sessionId === request.sessionId &&
+        hostGeneration === request.hostGeneration &&
+        videoGeneration === request.videoGeneration &&
+        inputRevision === request.inputRevision;
+      return accepted
+        ? true
+        : cancelPointerdownFrame(request, confirmPointerdownFrame);
+    } catch {
+      return cancelPointerdownFrame(request, confirmPointerdownFrame);
+    }
+  }
+
+  function createActiveFrameEntry(targetFrame, { force = false } = {}) {
+    if (!pilotEnabled || state !== 'active' || !desiredInputEnabled ||
+        !currentSession || !videoReady || !hostGeneration || !videoGeneration) {
+      return null;
+    }
+    let updateFrame;
+    try {
+      updateFrame = electronAPI.mpvUpdateOverlayDrawingFrame;
+    } catch {
+      updateFrame = null;
+    }
+    if (typeof updateFrame !== 'function') return null;
+    const context = contextSnapshot();
+    if (!validPilotContext(context) ||
+        String(context.stableVideoIdentity || '') !== confirmedVideoIdentity) {
+      return null;
+    }
+    const normalizedTargetFrame = Math.max(0, Math.trunc(Number(targetFrame) || 0));
+    const totalFrames = Number(context.totalFrames);
+    if (Number.isSafeInteger(totalFrames) && totalFrames > 0 &&
+        normalizedTargetFrame >= totalFrames) {
+      return null;
+    }
+    const signature = JSON.stringify([
+      hostGeneration,
+      videoGeneration,
+      inputRevision,
+      currentSession.sessionId,
+      normalizedTargetFrame
+    ]);
+    if (!force) {
+      if (activeFramePending?.signature === signature) {
+        return { existingPromise: activeFramePending.promise };
+      }
+      const matchingInFlight = [...activeFrameInFlight]
+        .find(candidate => candidate.signature === signature);
+      if (matchingInFlight && !activeFramePending) {
+        return { existingPromise: matchingInFlight.promise };
+      }
+      if (signature === lastAcceptedActiveFrameSignature &&
+          activeFrameInFlight.size === 0 && !activeFramePending) {
+        return { deduped: true };
+      }
+    }
+    if (activeFrameRevision >= Number.MAX_SAFE_INTEGER) return null;
+    activeFrameRevision += 1;
+    let resolveEntry;
+    const promise = new Promise(resolve => {
+      resolveEntry = resolve;
+    });
+    let settled = false;
+    return {
+      force,
+      signature,
+      request: {
+        hostGeneration,
+        videoGeneration,
+        inputRevision,
+        sessionId: currentSession.sessionId,
+        frameRevision: activeFrameRevision,
+        targetFrame: normalizedTargetFrame
+      },
+      updateFrame,
+      promise,
+      resolve(value) {
+        if (settled) return;
+        settled = true;
+        resolveEntry(value);
+      }
+    };
+  }
+
+  function activeFrameEntryIsCurrent(entry) {
+    const request = entry?.request;
+    if (!request || state !== 'active' || !desiredInputEnabled || !currentSession ||
+        !videoReady || request.hostGeneration !== hostGeneration ||
+        request.videoGeneration !== videoGeneration ||
+        request.inputRevision !== inputRevision ||
+        request.sessionId !== currentSession.sessionId ||
+        request.frameRevision !== activeFrameRevision) {
+      return false;
+    }
+    const context = contextSnapshot();
+    return validPilotContext(context) &&
+      String(context.stableVideoIdentity || '') === confirmedVideoIdentity;
+  }
+
+  function runActiveFrameEntry(entry) {
+    activeFrameInFlight.add(entry);
+    void (async () => {
+      let accepted = false;
+      try {
+        const response = await withPersistenceIpcDeadline(
+          entry.updateFrame(entry.request),
+          {
+            success: false,
+            accepted: false,
+            frameRevision: entry.request.frameRevision,
+            targetFrame: entry.request.targetFrame,
+            reason: 'active-frame-ipc-timeout'
+          }
+        );
+        accepted = response?.success === true &&
+          response.accepted === true &&
+          response.frameRevision === entry.request.frameRevision &&
+          response.targetFrame === entry.request.targetFrame &&
+          activeFrameEntryIsCurrent(entry);
+        if (accepted) lastAcceptedActiveFrameSignature = entry.signature;
+      } catch {
+        accepted = false;
+      } finally {
+        activeFrameInFlight.delete(entry);
+        entry.resolve(accepted);
+        scheduleActiveFrameDispatch();
+      }
+    })();
+  }
+
+  function scheduleActiveFrameDispatch() {
+    if (activeFrameDispatchScheduled || !activeFramePending) return;
+    activeFrameDispatchScheduled = true;
+    queueMicrotask(() => {
+      activeFrameDispatchScheduled = false;
+      if (!activeFramePending ||
+          activeFrameInFlight.size >= ACTIVE_FRAME_MAX_IN_FLIGHT) {
+        return;
+      }
+      const pending = activeFramePending;
+      activeFramePending = null;
+      if (!activeFrameEntryIsCurrent(pending)) {
+        pending.resolve(false);
+        scheduleActiveFrameDispatch();
+        return;
+      }
+      if (!pending.force && pending.signature === lastAcceptedActiveFrameSignature) {
+        pending.resolve(true);
+        scheduleActiveFrameDispatch();
+        return;
+      }
+      runActiveFrameEntry(pending);
+    });
+  }
+
+  function syncActiveDrawingFrame(targetFrame, options = {}) {
+    recordActiveFrameObservation(targetFrame);
+    const entry = createActiveFrameEntry(targetFrame, options);
+    if (!entry) return Promise.resolve(false);
+    if (entry.deduped) return Promise.resolve(true);
+    if (entry.existingPromise) return entry.existingPromise;
+    if (activeFrameInFlight.size > 0) {
+      if (activeFramePending) activeFramePending.resolve(false);
+      activeFramePending = entry;
+      scheduleActiveFrameDispatch();
+      return entry.promise;
+    }
+    runActiveFrameEntry(entry);
+    return entry.promise;
   }
 
   function readHistoryRevision() {
@@ -183,6 +794,8 @@ export function createFabricDrawingPilotController(options = {}) {
       persistenceBlocked,
       persistenceFailureReason,
       persistenceSourceRefreshInProgress,
+      presentationRevision,
+      activeFrameRevision,
       persistenceQuitPrepared: persistenceQuitSuspension !== null,
       persistenceReady: persistenceStore === null ||
         (persistenceBridgeReady && persistenceSessionId !== null),
@@ -236,8 +849,33 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function setState(nextState) {
     if (state === nextState) return;
+    if (nextState !== 'passive') invalidatePassivePresentationOwner();
+    if (nextState !== 'active') invalidateActiveFrameOwner();
     state = nextState;
     notifyStateChange();
+  }
+
+  function invalidatePassivePresentationOwner() {
+    presentationRevision += 1;
+    lastAcceptedPresentationSignature = null;
+    if (passivePresentationTrailing) {
+      passivePresentationTrailing.resolve(false);
+      passivePresentationTrailing = null;
+    }
+  }
+
+  function invalidateActiveFrameOwner() {
+    activeFrameRevision += 1;
+    lastAcceptedActiveFrameSignature = null;
+    activeFrameObservations = [];
+    if (activeFramePending) {
+      activeFramePending.resolve(false);
+      activeFramePending = null;
+    }
+    for (const entry of activeFrameInFlight) {
+      entry.resolve(false);
+    }
+    activeFrameInFlight.clear();
   }
 
   function syncExplicitResumeIntent() {
@@ -534,11 +1172,14 @@ export function createFabricDrawingPilotController(options = {}) {
 
   function buildSession(context) {
     const sessionId = uuid();
+    const targetFrame = Math.max(0, Math.trunc(Number(context.targetFrame) || 0));
+    const resolved = resolveSourceFrame(targetFrame);
     return {
       sessionId,
       persistenceSessionId,
       stableVideoIdentity: String(context.stableVideoIdentity || ''),
-      targetFrame: Math.max(0, Math.trunc(Number(context.targetFrame) || 0)),
+      targetFrame,
+      sourceFrame: resolved?.sourceFrame ?? null,
       sourceWidth: Number(context.sourceWidth),
       sourceHeight: Number(context.sourceHeight),
       canvasRect: copyRect(context.canvasRect),
@@ -582,6 +1223,13 @@ export function createFabricDrawingPilotController(options = {}) {
       return null;
     }
     const sessionId = currentSession.sessionId;
+    const context = contextSnapshot();
+    const targetFrame = Math.max(0, Math.trunc(Number(context.targetFrame) || 0));
+    const totalFrames = Number(context.totalFrames);
+    if (!validPilotContext(context) ||
+        (Number.isSafeInteger(totalFrames) && totalFrames > 0 && targetFrame >= totalFrames)) {
+      return null;
+    }
     const request = {
       ...makeEnvelope('drawing-action', { action }),
       hostGeneration,
@@ -589,7 +1237,8 @@ export function createFabricDrawingPilotController(options = {}) {
       inputRevision,
       sessionId,
       actionId: uuid(),
-      action
+      action,
+      targetFrame
     };
     return { ...request };
   }
@@ -1404,6 +2053,7 @@ export function createFabricDrawingPilotController(options = {}) {
     const context = contextSnapshot(contextOverrides);
     if (!validPilotContext(context) || !context.stableVideoIdentity) return false;
 
+    passivePresentationBlock = null;
     resumeRequested = false;
     const session = buildSession(context);
     currentSession = session;
@@ -1411,6 +2061,7 @@ export function createFabricDrawingPilotController(options = {}) {
       sessionId: session.sessionId,
       stableVideoIdentity: session.stableVideoIdentity,
       targetFrame: session.targetFrame,
+      sourceFrame: session.sourceFrame,
       sourceWidth: session.sourceWidth,
       sourceHeight: session.sourceHeight,
       canvasRect: copyRect(session.canvasRect),
@@ -1439,6 +2090,15 @@ export function createFabricDrawingPilotController(options = {}) {
 
     lastError = null;
     setState('active');
+    const acceptedTargetFrame = Math.max(
+      0,
+      Math.trunc(Number(contextSnapshot().targetFrame) || 0)
+    );
+    if (acceptedTargetFrame === session.targetFrame) {
+      recordActiveFrameObservation(acceptedTargetFrame);
+    } else {
+      runDetached(syncActiveDrawingFrame(acceptedTargetFrame, { force: true }));
+    }
     if (desiredTool !== session.tool) {
       await sendTool(desiredTool);
     }
@@ -1538,6 +2198,17 @@ export function createFabricDrawingPilotController(options = {}) {
         }
       }
       pilotEnabled = enabled;
+      let subscribePointerdownFrame;
+      try {
+        subscribePointerdownFrame = electronAPI.onMpvOverlayDrawingPointerdownFrame;
+      } catch {
+        subscribePointerdownFrame = null;
+      }
+      if (enabled && typeof subscribePointerdownFrame === 'function') {
+        try {
+          subscribePointerdownFrame(handlePointerdownFrameRequest);
+        } catch { /* optional pointerdown frame bridge */ }
+      }
       setState(enabled ? 'passive' : 'disabled');
       return enabled;
     })();
@@ -1757,23 +2428,41 @@ export function createFabricDrawingPilotController(options = {}) {
     return true;
   }
 
-  function disable() {
+  async function disable() {
     persistenceQuitSuspension = null;
     resumeRequested = false;
     syncExplicitResumeIntent();
     desiredInputEnabled = false;
     currentSession = null;
+    const presentationBlock = {
+      hostGeneration,
+      videoGeneration,
+      inputRevision
+    };
+    passivePresentationBlock = presentationBlock;
     setState(pilotEnabled ? 'passive' : 'disabled');
-    if (!pilotEnabled || !hostGeneration || !videoGeneration) return Promise.resolve(false);
+    if (!pilotEnabled || !hostGeneration || !videoGeneration) {
+      releasePassivePresentationBlock(presentationBlock);
+      return false;
+    }
 
     const request = makeInputRequest(false);
-    return invokeInput(request).then(async response => {
+    presentationBlock.inputRevision = request.inputRevision;
+    let shouldPresent = false;
+    try {
+      const response = await invokeInput(request);
       if (!isCurrentInputRequest(request)) return false;
       if (!isAcceptedInputResponse(response, false)) {
         return enterFailure(response?.error);
       }
+      shouldPresent = true;
       return true;
-    });
+    } finally {
+      const released = releasePassivePresentationBlock(presentationBlock);
+      if (released && shouldPresent && state === 'passive' && !desiredInputEnabled) {
+        runDetached(syncDisplayFrame(contextSnapshot().targetFrame, { force: true }));
+      }
+    }
   }
 
   function toggle() {
@@ -1940,6 +2629,7 @@ export function createFabricDrawingPilotController(options = {}) {
     flushPersistenceBeforeLeave,
     abandonPersistenceForVideoChange,
     refreshPersistenceSource,
+    syncDisplayFrame,
     preparePersistenceForQuit,
     resumeAfterQuitCancelled,
     shouldOwnDrawingShortcut,

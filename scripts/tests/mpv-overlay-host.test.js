@@ -599,6 +599,64 @@ function makePersistenceExport(hostGeneration, overrides = {}) {
   return request;
 }
 
+function makeDrawingPresentation(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 7,
+    presentationRevision: 1,
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    storeRevision: 3,
+    targetFrame: 24,
+    sourceFrame: 12,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 8, top: 12, width: 960, height: 540 },
+    viewportRevision: 4,
+    viewportTransform: { scale: 1.25, panX: 16, panY: -9 },
+    ...overrides
+  };
+}
+
+function makeDrawingFrameUpdate(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 7,
+    inputRevision: 2,
+    sessionId: 'active-frame-session',
+    frameRevision: 1,
+    targetFrame: 20,
+    ...overrides
+  };
+}
+
+function makeDrawingPointerdownFrameRequest(hostGeneration, overrides = {}) {
+  return {
+    hostGeneration,
+    videoGeneration: 7,
+    inputRevision: 2,
+    sessionId: 'pointerdown-frame-session',
+    pointerdownId: 'pointerdown-frame-1',
+    pointerdownAt: 1234,
+    ...overrides
+  };
+}
+
+function makeDrawingPointerdownFrameConfirmation(hostGeneration, overrides = {}) {
+  return {
+    ...makeDrawingPointerdownFrameRequest(hostGeneration),
+    targetFrame: 42,
+    ...overrides
+  };
+}
+
+function makeDrawingPointerdownFrameCancellation(hostGeneration, overrides = {}) {
+  return {
+    ...makeDrawingPointerdownFrameRequest(hostGeneration),
+    cancelled: true,
+    ...overrides
+  };
+}
+
 function makePersistenceTransform(overrides = {}) {
   return {
     left: 0,
@@ -746,6 +804,7 @@ test('exposes the MPV overlay Fabric drawing host capability API', () => {
   assert.equal(typeof host.getDrawingCapability, 'function');
   assert.equal(typeof host.setDrawingInput, 'function');
   assert.equal(typeof host.updateDrawingTool, 'function');
+  assert.equal(typeof host.updateDrawingFrame, 'function');
   assert.equal(typeof host.applyDrawingAction, 'function');
   assert.equal(typeof host.getDrawingDiagnostics, 'function');
   assert.equal(typeof host.configureDrawingV3Shadow, 'function');
@@ -2875,6 +2934,29 @@ test('drawing action response forwards history-empty reason', async () => {
   assert.equal(result.success, false);
 });
 
+test('drawing actions preserve the controller-captured target frame through the host queue', async () => {
+  const payloads = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyDrawingAction(')) return undefined;
+      payloads.push(readFabricMethodPayload(script, 'applyDrawingAction'));
+      return { applied: true, deletedCount: 1 };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 8,
+    sessionId: 'session-captured-action-frame'
+  });
+  assert.equal((await harness.host.applyDrawingAction({
+    ...tokens,
+    action: 'delete-selection',
+    actionId: 'captured-action-frame-1',
+    targetFrame: 42
+  })).applied, true);
+  assert.equal(payloads.length, 1);
+  assert.equal(payloads[0].targetFrame, 42);
+});
+
 test('overlay history relay does not await or invoke host Fabric history', async () => {
   const delayedHistory = createDeferred();
   let hostHistoryCallCount = 0;
@@ -4506,6 +4588,717 @@ test('standard mpv suite includes the hidden Fabric toolbar Chromium layout regr
   assert.match(
     packageJson.scripts['test:mpv'],
     /mpv-fabric-overlay-toolbar-layout\.test\.js/
+  );
+});
+
+test('current overlay pointerdown request relays only the exact active drawing session to main', async () => {
+  const harness = createDrawingHostHarness();
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 7,
+    sessionId: 'pointerdown-frame-session'
+  });
+  const currentEvent = { sender: harness.windows[0].webContents };
+  const request = makeDrawingPointerdownFrameRequest(tokens.hostGeneration);
+  harness.events.length = 0;
+
+  assert.deepEqual(
+    harness.host.forwardDrawingPointerdownFrameRequest(currentEvent, request),
+    { success: true, accepted: true }
+  );
+  assert.deepEqual(harness.events, [[
+    'mainWindow.send',
+    'mpv-overlay:drawing-pointerdown-frame-request',
+    request
+  ]]);
+  assert.notEqual(harness.events[0][2], request);
+
+  for (const invalid of [
+    makeDrawingPointerdownFrameRequest(tokens.hostGeneration, { sessionId: 'stale' }),
+    makeDrawingPointerdownFrameRequest(tokens.hostGeneration, { hostGeneration: 0 }),
+    makeDrawingPointerdownFrameRequest(tokens.hostGeneration, { pointerdownAt: 1.5 }),
+    makeDrawingPointerdownFrameRequest(tokens.hostGeneration, { pointerdownId: '' }),
+    { ...request, injected: true }
+  ]) {
+    assert.equal(
+      harness.host.forwardDrawingPointerdownFrameRequest(currentEvent, invalid).accepted,
+      false
+    );
+  }
+  assert.equal(
+    harness.host.forwardDrawingPointerdownFrameRequest({ sender: {} }, request).accepted,
+    false
+  );
+  assert.equal(
+    harness.events.filter(([name]) => name === 'mainWindow.send').length,
+    1
+  );
+
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 3,
+    enabled: false
+  }));
+  assert.equal(
+    harness.host.forwardDrawingPointerdownFrameRequest(currentEvent, {
+      ...request,
+      inputRevision: 3
+    }).accepted,
+    false
+  );
+});
+
+test('pointerdown frame confirmation reaches runtime only for the exact current active session', async () => {
+  const confirmations = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.confirmDrawingPointerdownFrame(')) return undefined;
+      const request = readFabricMethodPayload(script, 'confirmDrawingPointerdownFrame');
+      confirmations.push(request);
+      return {
+        accepted: true,
+        pointerdownId: request.pointerdownId,
+        targetFrame: request.targetFrame
+      };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 7,
+    sessionId: 'pointerdown-frame-session'
+  });
+  const confirmation = makeDrawingPointerdownFrameConfirmation(tokens.hostGeneration);
+
+  assert.deepEqual(await harness.host.confirmDrawingPointerdownFrame(confirmation), {
+    success: true,
+    accepted: true,
+    pointerdownId: 'pointerdown-frame-1',
+    targetFrame: 42
+  });
+  assert.deepEqual(confirmations, [confirmation]);
+
+  for (const invalid of [
+    { ...confirmation, injected: true },
+    makeDrawingPointerdownFrameConfirmation(tokens.hostGeneration, { targetFrame: -1 }),
+    makeDrawingPointerdownFrameConfirmation(tokens.hostGeneration, { sessionId: 'stale' }),
+    makeDrawingPointerdownFrameConfirmation(tokens.hostGeneration, { pointerdownId: '' })
+  ]) {
+    assert.equal((await harness.host.confirmDrawingPointerdownFrame(invalid)).accepted, false);
+  }
+  assert.equal(confirmations.length, 1);
+});
+
+test('pointerdown frame cancellation reaches runtime and requires the exact echoed owner and time', async () => {
+  const cancellations = [];
+  let responseOverrides = {};
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.confirmDrawingPointerdownFrame(')) return undefined;
+      const request = readFabricMethodPayload(script, 'confirmDrawingPointerdownFrame');
+      cancellations.push(request);
+      return {
+        accepted: true,
+        cancelled: true,
+        hostGeneration: request.hostGeneration,
+        videoGeneration: request.videoGeneration,
+        inputRevision: request.inputRevision,
+        sessionId: request.sessionId,
+        pointerdownId: request.pointerdownId,
+        pointerdownAt: request.pointerdownAt,
+        ...responseOverrides
+      };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 7,
+    sessionId: 'pointerdown-frame-session'
+  });
+  const cancellation = makeDrawingPointerdownFrameCancellation(tokens.hostGeneration);
+
+  assert.deepEqual(await harness.host.confirmDrawingPointerdownFrame(cancellation), {
+    success: true,
+    accepted: true,
+    cancelled: true,
+    hostGeneration: tokens.hostGeneration,
+    videoGeneration: 7,
+    inputRevision: 2,
+    sessionId: 'pointerdown-frame-session',
+    pointerdownId: 'pointerdown-frame-1',
+    pointerdownAt: 1234
+  });
+  assert.deepEqual(cancellations, [cancellation]);
+
+  for (const mismatch of [
+    { hostGeneration: tokens.hostGeneration + 1 },
+    { videoGeneration: 8 },
+    { inputRevision: 3 },
+    { sessionId: 'other-session' },
+    { pointerdownId: 'other-pointerdown' },
+    { pointerdownAt: 1235 },
+    { cancelled: false }
+  ]) {
+    responseOverrides = mismatch;
+    assert.deepEqual(await harness.host.confirmDrawingPointerdownFrame(cancellation), {
+      success: false,
+      accepted: false,
+      reason: 'drawing-pointerdown-frame-cancel-rejected'
+    });
+  }
+  assert.equal(cancellations.length, 8);
+});
+
+test('pointerdown frame cancellation rejects non-exact tags and stale owners without runtime side effects', async () => {
+  let runtimeCalls = 0;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.confirmDrawingPointerdownFrame(')) runtimeCalls += 1;
+      return { accepted: true };
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 7,
+    sessionId: 'pointerdown-frame-session'
+  });
+  const base = makeDrawingPointerdownFrameCancellation(tokens.hostGeneration);
+
+  for (const invalid of [
+    { ...base, cancelled: false },
+    { ...base, targetFrame: 42 },
+    { ...base, injected: true },
+    makeDrawingPointerdownFrameCancellation(tokens.hostGeneration, { pointerdownAt: -1 }),
+    makeDrawingPointerdownFrameCancellation(tokens.hostGeneration, { sessionId: 'stale' }),
+    makeDrawingPointerdownFrameCancellation(tokens.hostGeneration, { pointerdownId: '' })
+  ]) {
+    assert.equal((await harness.host.confirmDrawingPointerdownFrame(invalid)).accepted, false);
+  }
+  assert.equal(runtimeCalls, 0);
+});
+
+test('late pointerdown cancellation response is rejected after input ownership changes', async () => {
+  const delayed = createDeferred();
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.confirmDrawingPointerdownFrame(')) return delayed.promise;
+      return undefined;
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 7,
+    sessionId: 'pointerdown-frame-session'
+  });
+  const cancellation = makeDrawingPointerdownFrameCancellation(tokens.hostGeneration);
+  const pending = harness.host.confirmDrawingPointerdownFrame(cancellation);
+  await new Promise(resolve => setImmediate(resolve));
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 3,
+    enabled: false
+  }));
+  delayed.resolve({
+    accepted: true,
+    cancelled: true,
+    hostGeneration: cancellation.hostGeneration,
+    videoGeneration: cancellation.videoGeneration,
+    inputRevision: cancellation.inputRevision,
+    sessionId: cancellation.sessionId,
+    pointerdownId: cancellation.pointerdownId,
+    pointerdownAt: cancellation.pointerdownAt
+  });
+
+  assert.deepEqual(await pending, {
+    success: false,
+    accepted: false,
+    reason: 'stale-drawing-pointerdown-frame-response'
+  });
+});
+
+test('late pointerdown confirmation is rejected after input ownership changes', async () => {
+  const delayed = createDeferred();
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.confirmDrawingPointerdownFrame(')) return delayed.promise;
+      return undefined;
+    }
+  });
+  const tokens = await activateDrawingHost(harness, {
+    videoGeneration: 7,
+    sessionId: 'pointerdown-frame-session'
+  });
+  const confirmation = makeDrawingPointerdownFrameConfirmation(tokens.hostGeneration);
+  const pending = harness.host.confirmDrawingPointerdownFrame(confirmation);
+  await new Promise(resolve => setImmediate(resolve));
+  await harness.host.setDrawingInput(makeDrawingInput(tokens.hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 3,
+    enabled: false
+  }));
+  delayed.resolve({
+    accepted: true,
+    pointerdownId: confirmation.pointerdownId,
+    targetFrame: confirmation.targetFrame
+  });
+
+  assert.deepEqual(await pending, {
+    success: false,
+    accepted: false,
+    reason: 'stale-drawing-pointerdown-frame-response'
+  });
+});
+
+test('accepted passive frame presentation executes runtime, restacks, then invalidates', async () => {
+  const presented = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 0, objectCount: 0 };
+      }
+      if (script.includes('.presentDrawingFrame(')) {
+        const request = readFabricMethodPayload(script, 'presentDrawingFrame');
+        presented.push(request);
+        return { accepted: true };
+      }
+      return undefined;
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
+  harness.events.length = 0;
+
+  assert.deepEqual(
+    await harness.host.presentDrawingFrame(makeDrawingPresentation(hostGeneration)),
+    {
+      success: true,
+      accepted: true,
+      presentationRevision: 1,
+      targetFrame: 24,
+      sourceFrame: 12
+    }
+  );
+  assert.deepEqual(presented, [makeDrawingPresentation(hostGeneration)]);
+  assert.deepEqual(
+    harness.events
+      .filter(([name, script]) =>
+        (name === 'executeJavaScript' && script.includes?.('.presentDrawingFrame(')) ||
+        name === 'moveTop' ||
+        name === 'webContents.invalidate')
+      .map(([name]) => name === 'executeJavaScript' ? 'runtime.presentDrawingFrame' : name),
+    ['runtime.presentDrawingFrame', 'moveTop', 'webContents.invalidate']
+  );
+  assert.equal(harness.events.some(([name]) => name === 'overlay.focus'), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
+});
+
+test('rejected and failed passive frame presentations never restack or invalidate', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 0, objectCount: 0 };
+      }
+      if (!script.includes('.presentDrawingFrame(')) return undefined;
+      const request = readFabricMethodPayload(script, 'presentDrawingFrame');
+      if (request.presentationRevision === 1) return { accepted: false };
+      throw new Error('passive presentation failed');
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
+  harness.events.length = 0;
+
+  assert.deepEqual(
+    await harness.host.presentDrawingFrame(makeDrawingPresentation(hostGeneration)),
+    {
+      success: false,
+      accepted: false,
+      reason: 'drawing-presentation-rejected',
+      presentationRevision: 1,
+      targetFrame: 24,
+      sourceFrame: 12
+    }
+  );
+  assert.deepEqual(
+    await harness.host.presentDrawingFrame(makeDrawingPresentation(hostGeneration, {
+      presentationRevision: 2
+    })),
+    {
+      success: false,
+      accepted: false,
+      reason: 'drawing-presentation-failed',
+      presentationRevision: 2,
+      targetFrame: 24,
+      sourceFrame: 12
+    }
+  );
+  assert.equal(harness.events.some(([name]) => name === 'moveTop'), false);
+  assert.equal(harness.events.some(([name]) => name === 'webContents.invalidate'), false);
+});
+
+test('passive frame presentation strictly rejects missing, extra, and malformed viewport geometry', async () => {
+  let presentCalls = 0;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 0, objectCount: 0 };
+      }
+      if (script.includes('.presentDrawingFrame(')) presentCalls += 1;
+      return { accepted: true };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
+
+  const missing = makeDrawingPresentation(hostGeneration);
+  delete missing.viewportTransform;
+  const invalidRequests = [
+    missing,
+    makeDrawingPresentation(hostGeneration, { extra: true }),
+    makeDrawingPresentation(hostGeneration, {
+      canvasRect: { left: 8, top: 12, width: 0, height: 540 }
+    }),
+    makeDrawingPresentation(hostGeneration, {
+      viewportTransform: { scale: 0, panX: 16, panY: -9 }
+    })
+  ];
+  for (const request of invalidRequests) {
+    assert.equal((await harness.host.presentDrawingFrame(request)).reason, 'invalid-presentation-request');
+  }
+  assert.equal(presentCalls, 0);
+});
+
+test('passive frame presentation rejects active input and a mismatched video identity before runtime execution', async () => {
+  let presentCalls = 0;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 0, objectCount: 0 };
+      }
+      if (script.includes('.presentDrawingFrame(')) {
+        presentCalls += 1;
+        return { accepted: true };
+      }
+      return undefined;
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
+
+  assert.deepEqual(
+    await harness.host.presentDrawingFrame(makeDrawingPresentation(hostGeneration, {
+      stableVideoIdentity: 'C:/shots/other-video.mov'
+    })),
+    {
+      success: false,
+      accepted: false,
+      reason: 'stale-presentation-fence',
+      presentationRevision: 1,
+      targetFrame: 24,
+      sourceFrame: 12
+    }
+  );
+
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'active-presentation-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 24,
+      sourceFrame: 12,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { x: 0, y: 0, width: 640, height: 360 },
+      viewportRevision: 0,
+      viewportTransform: { scale: 1, panX: 0, panY: 0 },
+      tool: 'brush'
+    }
+  }));
+  assert.deepEqual(
+    await harness.host.presentDrawingFrame(makeDrawingPresentation(hostGeneration, {
+      presentationRevision: 2
+    })),
+    {
+      success: false,
+      accepted: false,
+      reason: 'drawing-input-enabled',
+      presentationRevision: 2,
+      targetFrame: 24,
+      sourceFrame: 12
+    }
+  );
+  assert.equal(presentCalls, 0);
+});
+
+test('newer passive presentation supersedes an older in-flight response and owns the only invalidation', async () => {
+  const first = createDeferred();
+  const runtimeRevisions = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 0, objectCount: 0 };
+      }
+      if (script.includes('.presentDrawingFrame(')) {
+        const request = readFabricMethodPayload(script, 'presentDrawingFrame');
+        runtimeRevisions.push(request.presentationRevision);
+        if (request.presentationRevision === 1) return first.promise;
+        return { accepted: true };
+      }
+      return undefined;
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration));
+  harness.events.length = 0;
+
+  const older = harness.host.presentDrawingFrame(makeDrawingPresentation(hostGeneration));
+  await new Promise(resolve => setImmediate(resolve));
+  const newerRequest = makeDrawingPresentation(hostGeneration, {
+    presentationRevision: 2,
+    targetFrame: 30,
+    sourceFrame: 30
+  });
+  assert.deepEqual(await harness.host.presentDrawingFrame(newerRequest), {
+    success: true,
+    accepted: true,
+    presentationRevision: 2,
+    targetFrame: 30,
+    sourceFrame: 30
+  });
+
+  first.resolve({ accepted: true });
+  assert.deepEqual(await older, {
+    success: false,
+    accepted: false,
+    reason: 'stale-presentation-response',
+    presentationRevision: 1,
+    targetFrame: 24,
+    sourceFrame: 12
+  });
+  assert.deepEqual(runtimeRevisions, [1, 2]);
+  assert.equal(
+    harness.events.filter(([name]) => name === 'webContents.invalidate').length,
+    1
+  );
+  assert.equal(
+    harness.events.filter(([name]) => name === 'moveTop').length,
+    1
+  );
+});
+
+test('active frame updates accept only the current active session and strictly increasing revisions', async () => {
+  const updates = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingFrame(')) return undefined;
+      const request = readFabricMethodPayload(script, 'updateDrawingFrame');
+      updates.push(request);
+      return {
+        accepted: true,
+        sourceFrame: request.targetFrame === 20 ? 10 : 20,
+        repainted: request.targetFrame === 20
+      };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'active-frame-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 10,
+      sourceFrame: 10,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      viewportRevision: 0,
+      viewportTransform: { scale: 1, panX: 0, panY: 0 },
+      tool: 'brush'
+    }
+  }));
+  harness.events.length = 0;
+
+  assert.deepEqual(await harness.host.updateDrawingFrame(
+    makeDrawingFrameUpdate(hostGeneration)
+  ), {
+    success: true,
+    accepted: true,
+    frameRevision: 1,
+    targetFrame: 20,
+    sourceFrame: 10
+  });
+  for (const invalid of [
+    makeDrawingFrameUpdate(hostGeneration, { frameRevision: 1, targetFrame: 21 }),
+    makeDrawingFrameUpdate(hostGeneration, { frameRevision: 2, inputRevision: 1 }),
+    makeDrawingFrameUpdate(hostGeneration, { frameRevision: 2, sessionId: 'other-session' }),
+    { ...makeDrawingFrameUpdate(hostGeneration, { frameRevision: 2 }), extra: true }
+  ]) {
+    assert.equal((await harness.host.updateDrawingFrame(invalid)).accepted, false);
+  }
+  assert.equal(updates.length, 1);
+  assert.equal(
+    harness.events.filter(([name]) => name === 'webContents.invalidate').length,
+    1
+  );
+
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 3,
+    enabled: false
+  }));
+  assert.equal((await harness.host.updateDrawingFrame(
+    makeDrawingFrameUpdate(hostGeneration, { inputRevision: 3, frameRevision: 1 })
+  )).accepted, false);
+});
+
+test('a late active frame response cannot supersede a newer accepted revision', async () => {
+  const first = createDeferred();
+  const runtimeRevisions = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingFrame(')) return undefined;
+      const request = readFabricMethodPayload(script, 'updateDrawingFrame');
+      runtimeRevisions.push(request.frameRevision);
+      if (request.frameRevision === 1) return first.promise;
+      return { accepted: true, sourceFrame: 20, repainted: true };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'active-frame-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 10,
+      sourceFrame: 10,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      viewportRevision: 0,
+      viewportTransform: { scale: 1, panX: 0, panY: 0 },
+      tool: 'brush'
+    }
+  }));
+  harness.events.length = 0;
+
+  const older = harness.host.updateDrawingFrame(makeDrawingFrameUpdate(hostGeneration));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(await harness.host.updateDrawingFrame(
+    makeDrawingFrameUpdate(hostGeneration, { frameRevision: 2, targetFrame: 21 })
+  ), {
+    success: true,
+    accepted: true,
+    frameRevision: 2,
+    targetFrame: 21,
+    sourceFrame: 20
+  });
+
+  first.resolve({ accepted: true, sourceFrame: 10, repainted: true });
+  assert.deepEqual(await older, {
+    success: false,
+    accepted: false,
+    reason: 'stale-active-frame-response'
+  });
+  assert.deepEqual(runtimeRevisions, [1, 2]);
+  assert.equal(
+    harness.events.filter(([name]) => name === 'webContents.invalidate').length,
+    1
+  );
+});
+
+test('active frame updates invalidate the host only when the runtime repaints', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingFrame(')) return undefined;
+      const request = readFabricMethodPayload(script, 'updateDrawingFrame');
+      return {
+        accepted: true,
+        sourceFrame: 10,
+        repainted: request.frameRevision === 2
+      };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'active-frame-session',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 10,
+      sourceFrame: 10,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      viewportRevision: 0,
+      viewportTransform: { scale: 1, panX: 0, panY: 0 },
+      tool: 'brush'
+    }
+  }));
+  harness.events.length = 0;
+
+  assert.equal((await harness.host.updateDrawingFrame(
+    makeDrawingFrameUpdate(hostGeneration)
+  )).accepted, true);
+  assert.equal(
+    harness.events.filter(([name]) => name === 'webContents.invalidate').length,
+    0
+  );
+  assert.equal((await harness.host.updateDrawingFrame(
+    makeDrawingFrameUpdate(hostGeneration, { frameRevision: 2, targetFrame: 21 })
+  )).accepted, true);
+  assert.equal(
+    harness.events.filter(([name]) => name === 'webContents.invalidate').length,
+    1
   );
 });
 

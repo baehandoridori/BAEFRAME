@@ -12,6 +12,10 @@ const controllerPath = path.join(
   rootDir,
   'renderer/scripts/modules/fabric-drawing-pilot-controller.js'
 );
+const persistenceStorePath = path.join(
+  rootDir,
+  'renderer/scripts/modules/fabric-drawing-persistence-store.js'
+);
 const diagnosticsRunnerPath = path.join(rootDir, 'scripts/run-fabric-drawing-pilot-diagnostics.js');
 const {
   createFabricOverlayRuntime
@@ -24,9 +28,13 @@ const { validateDiagnostics, runCli } = require('../run-fabric-drawing-pilot-dia
 const appPackage = require('../../package.json');
 
 let createFabricDrawingPilotController;
+let createFabricDrawingPersistenceStore;
 
 before(async () => {
   ({ createFabricDrawingPilotController } = await import(pathToFileURL(controllerPath).href));
+  ({ createFabricDrawingPersistenceStore } = await import(
+    pathToFileURL(persistenceStorePath).href
+  ));
 });
 
 class FakeElement {
@@ -313,7 +321,8 @@ function createRuntimeControllerHarness(runtimeOptions = {}) {
     timelineMutation: 0,
     input: 0,
     tool: 0,
-    action: 0
+    action: 0,
+    frame: 0
   };
   const playbackCanaries = {
     owner: { identity: 'mpv-playback-owner-1' },
@@ -350,6 +359,14 @@ function createRuntimeControllerHarness(runtimeOptions = {}) {
         success: result.accepted === true,
         accepted: result.accepted === true,
         tool: result.tool
+      };
+    },
+    async mpvUpdateOverlayDrawingFrame(request) {
+      ledger.frame += 1;
+      const result = runtime.updateDrawingFrame(request);
+      return {
+        success: result.accepted === true,
+        ...result
       };
     },
     async mpvApplyOverlayDrawingAction(request) {
@@ -394,6 +411,253 @@ function createRuntimeControllerHarness(runtimeOptions = {}) {
     playbackCanaries,
     root,
     runtime
+  };
+}
+
+function makePassivePlaybackRecord(id, color) {
+  return {
+    id,
+    type: 'stroke',
+    pathData: 'M 0 0 Q 5 10 10 10 Z',
+    sourcePoints: [
+      { x: 0, y: 0, pressure: 0.25, time: 0, pointerType: 'pen' },
+      { x: 10, y: 10, pressure: 0.75, time: 8, pointerType: 'pen' }
+    ],
+    strokeCaps: { start: true, end: true },
+    style: { color, size: 7.5, opacity: 0.65 },
+    transform: {
+      left: 0,
+      top: 0,
+      scaleX: 1,
+      scaleY: 1,
+      angle: 0,
+      skewX: 0,
+      skewY: 0,
+      flipX: false,
+      flipY: false
+    }
+  };
+}
+
+function createPassivePlaybackIntegrationHarness() {
+  FakeCanvas.instances = [];
+  const events = [];
+  const windows = [];
+  const inputRequests = [];
+  const presentationRequests = [];
+  const presentationResponses = [];
+  const bundleSource = '/* bounded passive playback integration bundle */';
+  const stableVideoIdentity = 'C:/shots/passive-playback.mov';
+  const documentRef = new FakeDocument();
+  const root = documentRef.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document: documentRef,
+    now: () => 1
+  });
+  const persistenceStore = createFabricDrawingPersistenceStore({
+    createId: (() => {
+      let id = 0;
+      return (prefix) => `${prefix}-passive-${++id}`;
+    })()
+  });
+  const imported = persistenceStore.importRootValue({
+    storageSchema: 'baeframe-fabric-scenes',
+    storageVersion: '1.0.0',
+    engine: 'fabric-7',
+    documentId: 'passive-playback-document',
+    revision: 7,
+    fps: 24,
+    totalFrames: 240,
+    keyframes: [
+      {
+        id: 'keyframe-100',
+        frame: 100,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 1,
+        objects: [makePassivePlaybackRecord('A', '#ff4757')]
+      },
+      {
+        id: 'keyframe-150-empty',
+        frame: 150,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 2,
+        objects: []
+      },
+      {
+        id: 'keyframe-200',
+        frame: 200,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 3,
+        objects: [makePassivePlaybackRecord('B', '#2ed573')]
+      }
+    ]
+  }, {
+    fps: 24,
+    totalFrames: 240,
+    stableVideoIdentity
+  });
+  assert.equal(imported.accepted, true);
+  assert.equal(imported.compatible, true);
+
+  const fakeMainWindow = {
+    isDestroyed: () => false,
+    isMinimized: () => false,
+    getContentBounds: () => ({ x: 100, y: 80, width: 1200, height: 800 }),
+    on() {},
+    off() {},
+    webContents: {
+      isDestroyed: () => false,
+      send() {}
+    }
+  };
+
+  class FakeBrowserWindow {
+    constructor(options) {
+      this.options = options;
+      this.destroyed = false;
+      this.listeners = new Map();
+      this.webContentsListeners = new Map();
+      this.webContents = {
+        on: (eventName, handler) => {
+          this.webContentsListeners.set(eventName, handler);
+        },
+        executeJavaScript: async (script) => {
+          if (script.includes('__mpvFabricOverlayBootstrap')) return true;
+          if (script.includes("typeof window.__applyMpvOverlayState === 'function'")) {
+            return true;
+          }
+          if (script === bundleSource) return true;
+          if (script.includes(".prepare(document.getElementById('root'))")) {
+            return runtime.prepare(root);
+          }
+          const methodMatch = script.match(
+            /^window\.__mpvFabricOverlay\.([A-Za-z0-9]+)\((.*)\);$/
+          );
+          if (!methodMatch) return undefined;
+          const [, methodName, argument] = methodMatch;
+          const method = runtime[methodName];
+          if (typeof method !== 'function') return undefined;
+          return argument ? method(JSON.parse(argument)) : method();
+        },
+        invalidate: () => events.push(['invalidate'])
+      };
+      windows.push(this);
+      events.push(['construct']);
+    }
+
+    loadURL() {
+      events.push(['loadURL']);
+      return Promise.resolve();
+    }
+
+    setBounds() {
+      events.push(['setBounds']);
+    }
+
+    setIgnoreMouseEvents(value) {
+      events.push(['setIgnoreMouseEvents', value]);
+    }
+
+    setFocusable(value) {
+      events.push(['setFocusable', value]);
+    }
+
+    showInactive() {
+      events.push(['show']);
+    }
+
+    hide() {
+      events.push(['hide']);
+    }
+
+    moveTop() {
+      events.push(['moveTop']);
+    }
+
+    isDestroyed() {
+      return this.destroyed;
+    }
+
+    on(eventName, handler) {
+      this.listeners.set(eventName, handler);
+    }
+
+    destroy() {
+      this.destroyed = true;
+      events.push(['destroy']);
+    }
+  }
+
+  const host = new MPVOverlayHost({
+    BrowserWindow: FakeBrowserWindow,
+    getMainWindow: () => fakeMainWindow,
+    fabricBundlePath: 'fixed/passive-playback-bundle.js',
+    readFile: async () => bundleSource
+  });
+  const context = {
+    isMpvActive: true,
+    isAudio: false,
+    stableVideoIdentity,
+    targetFrame: 99,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+    viewportRevision: 1,
+    viewportTransform: { scale: 1, panX: 0, panY: 0 },
+    fps: 24,
+    totalFrames: 240
+  };
+  const electronAPI = {
+    async getFabricDrawingPilotState() {
+      return true;
+    },
+    onFabricDrawingPersistenceEvent() {
+      return () => {};
+    },
+    async mpvSetOverlayDrawingInput(request) {
+      inputRequests.push(structuredClone(request));
+      return host.setDrawingInput(request);
+    },
+    async mpvHydrateOverlayDrawingVideo(request) {
+      return host.hydrateDrawingVideo(request);
+    },
+    async mpvExportOverlayDrawingVideo(request) {
+      return host.exportDrawingVideo(request);
+    },
+    async mpvPresentOverlayDrawingFrame(request) {
+      presentationRequests.push(structuredClone(request));
+      const response = await host.presentDrawingFrame(request);
+      presentationResponses.push(structuredClone(response));
+      return response;
+    }
+  };
+  const controller = createFabricDrawingPilotController({
+    electronAPI,
+    getContext: () => context,
+    persistenceStore,
+    persistenceSessionIdFactory: () => 'passive-playback-persistence-session',
+    uuid: (() => {
+      let id = 0;
+      return () => `passive-playback-${++id}`;
+    })()
+  });
+
+  return {
+    controller,
+    events,
+    host,
+    inputRequests,
+    objectIds: () => (
+      FakeCanvas.instances.at(-1)?.getObjects().map(object => object.__baeframeObjectId) || []
+    ),
+    presentationRequests,
+    presentationResponses,
+    runtime,
+    windows
   };
 }
 
@@ -719,6 +983,104 @@ test('controller history shortcuts round-trip a real Fabric stroke without persi
   assert.equal(harness.runtime.getDiagnostics().lastError, null);
 });
 
+test('passive playback without enabling B presents held and empty keyframes through controller host and runtime', async () => {
+  const harness = createPassivePlaybackIntegrationHarness();
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 960, height: 540 });
+  assert.equal(ensured.success, true);
+  assert.equal(ensured.drawingCapability.passiveReady, true);
+
+  assert.equal(await harness.controller.initialize(), true);
+  assert.equal(
+    await harness.controller.adoptOverlayCapability(ensured.drawingCapability),
+    true
+  );
+  assert.equal(
+    await harness.controller.afterVideoReady({ loadToken: 'passive-playback-load' }),
+    true
+  );
+  assert.equal(harness.controller.getState(), 'passive');
+  const invalidationsBeforePlayback = harness.events.filter(
+    ([name]) => name === 'invalidate'
+  ).length;
+  const moveTopBeforePlayback = harness.events.filter(
+    ([name]) => name === 'moveTop'
+  ).length;
+  const eventIndexBeforePlayback = harness.events.length;
+
+  const forwardFrames = [99, 100, 149, 150, 199, 200];
+  const forwardObjectIds = [];
+  for (const frame of forwardFrames) {
+    assert.equal(
+      await harness.controller.syncDisplayFrame(frame),
+      true,
+      JSON.stringify(harness.presentationResponses.at(-1))
+    );
+    forwardObjectIds.push(harness.objectIds());
+  }
+  assert.deepEqual(forwardObjectIds, [[], ['A'], ['A'], [], [], ['B']]);
+
+  const reverseFrames = [199, 149, 99];
+  const reverseObjectIds = [];
+  for (const frame of reverseFrames) {
+    assert.equal(await harness.controller.syncDisplayFrame(frame), true);
+    reverseObjectIds.push(harness.objectIds());
+  }
+  assert.deepEqual(
+    [...forwardObjectIds, ...reverseObjectIds],
+    [[], ['A'], ['A'], [], [], ['B'], [], ['A'], []]
+  );
+  const expectedPresentedFrames = [
+    { targetFrame: 99, sourceFrame: null },
+    { targetFrame: 100, sourceFrame: 100 },
+    { targetFrame: 150, sourceFrame: 150 },
+    { targetFrame: 200, sourceFrame: 200 },
+    { targetFrame: 199, sourceFrame: 150 },
+    { targetFrame: 149, sourceFrame: 100 },
+    { targetFrame: 99, sourceFrame: null }
+  ];
+  assert.deepEqual(
+    harness.presentationRequests.map(request => ({
+      targetFrame: request.targetFrame,
+      sourceFrame: request.sourceFrame
+    })),
+    expectedPresentedFrames,
+    'same-source holds at 149 and 199 are controller-deduped without changing the canvas'
+  );
+
+  assert.equal(
+    harness.inputRequests.filter(request => request.enabled === true).length,
+    0,
+    'passive playback must never request B/input enable'
+  );
+  assert.equal(harness.inputRequests.every(request => request.enabled === false), true);
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(harness.runtime.getDiagnostics().state, 'passive');
+  assert.equal(harness.runtime.getDiagnostics().inputEnabled, false);
+  assert.equal(harness.windows.length, 1);
+  assert.equal(
+    harness.events.filter(([name]) => name === 'moveTop').length - moveTopBeforePlayback,
+    expectedPresentedFrames.length,
+    'each accepted passive frame is restacked above the sibling video host'
+  );
+  assert.equal(
+    harness.events.filter(([name]) => name === 'invalidate').length -
+      invalidationsBeforePlayback,
+    expectedPresentedFrames.length,
+    'each accepted host presentation invalidates exactly one frame'
+  );
+  assert.deepEqual(
+    harness.events
+      .slice(eventIndexBeforePlayback)
+      .filter(([name]) => name === 'moveTop' || name === 'invalidate')
+      .map(([name]) => name),
+    Array.from(
+      { length: expectedPresentedFrames.length },
+      () => ['moveTop', 'invalidate']
+    ).flat(),
+    'the host restacks before invalidating every accepted passive frame'
+  );
+});
+
 test('synthetic controller/runtime boundary restores native stack order and preserves all other canaries', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baeframe-fabric-drawing-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
@@ -887,6 +1249,7 @@ test('synthetic controller/runtime boundary restores native stack order and pres
   });
   assert.equal(harness.ledger.input, 101, 'one setup disable plus exactly 100 controller toggles');
   assert.equal(harness.ledger.tool, 1, 'V crosses the real controller/runtime bridge once');
+  assert.equal(harness.ledger.frame, 0, 'Delete must not force a preview that clears selection');
   assert.equal(harness.ledger.action, 1, 'Delete crosses the real controller/runtime bridge once');
   assert.equal(
     runtimeMutationEvidence >= 4,
@@ -1259,7 +1622,7 @@ test('CLI reads raw JSON, emits only the bounded summary, and exits 1 for violat
 test('package exposes focused Fabric pilot test and diagnostics commands', () => {
   assert.equal(
     appPackage.scripts['test:fabric-drawing-pilot'],
-    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-persistence-controller.test.js scripts/tests/mpv-fabric-overlay-runtime.test.js'
+    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-pilot-display-controller.test.js scripts/tests/fabric-drawing-persistence-controller.test.js scripts/tests/mpv-fabric-overlay-runtime.test.js'
   );
   assert.equal(
     appPackage.scripts['test:fabric-drawing-persistence'],

@@ -13127,6 +13127,8 @@ void main() {
       var DEFAULT_MAX_ACTIONS = 2048;
       var MAX_STROKE_POINTS = 2e4;
       var MAX_LASSO_POINTS = 1024;
+      var MAX_PENDING_POINTER_EVENTS = 1024;
+      var POINTERDOWN_FRAME_CONFIRMATION_DEADLINE_MS = 3e3;
       var DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 25e4;
       var MAX_STROKE_GEOMETRY_CACHE_ENTRIES = 512;
       var MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 25e4;
@@ -13221,6 +13223,66 @@ void main() {
       var PERSISTENCE_EXPORT_KEYS = Object.freeze(
         PERSISTENCE_HYDRATE_KEYS.filter((key) => key !== "keyframes")
       );
+      var PRESENTATION_REQUEST_KEYS = Object.freeze([
+        "hostGeneration",
+        "videoGeneration",
+        "presentationRevision",
+        "stableVideoIdentity",
+        "storeRevision",
+        "targetFrame",
+        "sourceFrame",
+        "sourceWidth",
+        "sourceHeight",
+        "canvasRect",
+        "viewportRevision",
+        "viewportTransform"
+      ]);
+      var PRESENTATION_CANVAS_RECT_KEYS = Object.freeze(["left", "top", "width", "height"]);
+      var PRESENTATION_VIEWPORT_TRANSFORM_KEYS = Object.freeze(["scale", "panX", "panY"]);
+      var ACTIVE_FRAME_REQUEST_KEYS = Object.freeze([
+        "hostGeneration",
+        "videoGeneration",
+        "inputRevision",
+        "sessionId",
+        "frameRevision",
+        "targetFrame"
+      ]);
+      var POINTERDOWN_FRAME_BASE_KEYS = Object.freeze([
+        "hostGeneration",
+        "videoGeneration",
+        "inputRevision",
+        "sessionId",
+        "pointerdownId",
+        "pointerdownAt"
+      ]);
+      var POINTERDOWN_FRAME_CONFIRMATION_KEYS = Object.freeze([
+        ...POINTERDOWN_FRAME_BASE_KEYS,
+        "targetFrame"
+      ]);
+      var POINTERDOWN_FRAME_CANCELLATION_KEYS = Object.freeze([
+        ...POINTERDOWN_FRAME_BASE_KEYS,
+        "cancelled"
+      ]);
+      var REPLAYED_POINTERDOWN = Symbol("baeframe-replayed-pointerdown");
+      var POINTER_EVENT_SNAPSHOT_FIELDS = Object.freeze([
+        "pointerId",
+        "pointerType",
+        "button",
+        "buttons",
+        "clientX",
+        "clientY",
+        "pressure",
+        "width",
+        "height",
+        "tiltX",
+        "tiltY",
+        "twist",
+        "isPrimary",
+        "ctrlKey",
+        "shiftKey",
+        "altKey",
+        "metaKey"
+      ]);
       var PERSISTENCE_KEYFRAME_KEYS = Object.freeze([
         "id",
         "frame",
@@ -13545,6 +13607,7 @@ void main() {
         let accessClock = 0;
         let latestVideoGeneration = -1;
         let latestPersistenceHostGeneration = -1;
+        let latestPersistenceVideoIdentity = null;
         let activeSession = null;
         let evictionCount = 0;
         let commandSequence = 0;
@@ -13614,7 +13677,7 @@ void main() {
             if (typeof activate !== "function") return;
             activate.call(drawingEngineObserver, {
               ...sceneDescriptor(scene, incomingSession),
-              mutationSequence: scene.mutationSequence
+              mutationSequence: scene.mutationSequence + (scene.provisional === true && scene.objects.size > 0 ? 1 : 0)
             }, activationObjectView(scene, alreadySeeded));
           } catch (_error) {
             recordObserverFailure(scene.sceneInstanceId);
@@ -13715,6 +13778,9 @@ void main() {
           }
           videoAccess.delete(stableVideoIdentity);
           persistenceByVideo.delete(stableVideoIdentity);
+          if (latestPersistenceVideoIdentity === stableVideoIdentity) {
+            latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
+          }
           evictionCount += 1;
           notifyScenesDropped(droppedSceneInstanceIds);
         }
@@ -13939,8 +14005,29 @@ void main() {
           }
           return command;
         }
+        function materializeProvisionalScene(scene) {
+          if (scene?.provisional !== true) return;
+          scene.provisional = false;
+          scene.provisionalSourceFrame = null;
+          if (scene.objects.size === 0) return;
+          const objectIds = [...scene.objects.keys()];
+          const emptyObjects = /* @__PURE__ */ new Map();
+          noteMutation(scene);
+          touchVideo(scene.stableVideoIdentity);
+          notifyPersistenceTransition(scene, () => makeTransitionEvent(scene, {
+            origin: "live",
+            kind: "add-objects",
+            estimatedBytes: scene.estimatedBytes,
+            beforeState: makeObjectsState(emptyObjects, objectIds, []),
+            afterState: makeObjectsState(scene.objects, objectIds, objectIds),
+            baseTransforms: new Map(
+              [...scene.objects].map(([id, object]) => [id, clonePlain(object.transform || {})])
+            )
+          }));
+        }
         function commitStagedMutation(scene, change) {
-          if (!isSafeCount(scene.mutationSequence) || scene.mutationSequence >= Number.MAX_SAFE_INTEGER) {
+          const requiredMutationSequence = scene.provisional === true && scene.objects.size > 0 ? 2 : 1;
+          if (!isSafeCount(scene.mutationSequence) || scene.mutationSequence > Number.MAX_SAFE_INTEGER - requiredMutationSequence) {
             return { applied: false, reason: "mutation-sequence-overflow" };
           }
           const previousEstimatedBytes = scene.estimatedBytes;
@@ -13981,6 +14068,7 @@ void main() {
             return { applied: false, reason: recorded.reason || "history-record-failed" };
           }
           for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
+          materializeProvisionalScene(scene);
           scene.historyEntries = { undo: projectedHistory.undo, redo: projectedHistory.redo };
           scene.objects = change.nextObjects;
           scene.selectedObjectIds = new Set(change.nextSelection || []);
@@ -14103,7 +14191,9 @@ void main() {
               mutationCount: 0,
               mutationSequence: frame.mutationSequence,
               estimatedBytes: frame.estimatedBytes,
-              drawingObserverSeeded: false
+              drawingObserverSeeded: false,
+              provisional: false,
+              provisionalSourceFrame: null
             });
           }
           const droppedSceneInstanceIds = [];
@@ -14130,6 +14220,7 @@ void main() {
             latestPersistenceHostGeneration,
             request.hostGeneration
           );
+          latestPersistenceVideoIdentity = request.stableVideoIdentity;
           touchVideo(request.stableVideoIdentity);
           for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
           notifyScenesDropped(droppedSceneInstanceIds);
@@ -14152,7 +14243,7 @@ void main() {
             return { accepted: false, reason: "timeline-mismatch" };
           }
           try {
-            const scenesForVideo = [...scenes.values()].filter((scene) => scene.stableVideoIdentity === request.stableVideoIdentity).sort((left, right) => left.targetFrame - right.targetFrame).map((scene) => ({
+            const scenesForVideo = [...scenes.values()].filter((scene) => scene.stableVideoIdentity === request.stableVideoIdentity && scene.provisional !== true).sort((left, right) => left.targetFrame - right.targetFrame).map((scene) => ({
               sceneInstanceId: scene.sceneInstanceId,
               targetFrame: scene.targetFrame,
               sourceWidth: scene.sourceWidth,
@@ -14187,8 +14278,12 @@ void main() {
           const targetFrame = Number(session.targetFrame);
           const videoGeneration = Number(session.videoGeneration);
           const hostGeneration = Number(session.hostGeneration);
+          const sourceFrame = session.sourceFrame === null || session.sourceFrame === void 0 ? null : Number(session.sourceFrame);
           if (!Number.isInteger(targetFrame) || targetFrame < 0 || !Number.isInteger(videoGeneration) || videoGeneration < 0) {
             return { accepted: false, reason: "invalid-session-coordinates" };
+          }
+          if (sourceFrame !== null && (!Number.isSafeInteger(sourceFrame) || sourceFrame < 0 || sourceFrame > targetFrame)) {
+            return { accepted: false, reason: "invalid-session-source-frame" };
           }
           if (videoGeneration < latestVideoGeneration) {
             return { accepted: false, reason: "stale-video-generation" };
@@ -14200,7 +14295,28 @@ void main() {
           latestVideoGeneration = Math.max(latestVideoGeneration, videoGeneration);
           const sceneKey = makeSceneKey(session.stableVideoIdentity, targetFrame);
           const restored = scenes.has(sceneKey);
+          const sourceScene = sourceFrame === null ? null : scenes.get(makeSceneKey(session.stableVideoIdentity, sourceFrame));
+          if (!restored && sourceFrame !== null && (!sourceScene || sourceScene.provisional === true)) {
+            return { accepted: false, reason: "missing-source-scene" };
+          }
           if (!restored) {
+            const objects = new Map(
+              [...(sourceScene?.objects || /* @__PURE__ */ new Map()).entries()].map(([id, object]) => [id, clonePlain(object)])
+            );
+            const estimatedBytes = estimateObjectsBytes(objects);
+            let projectedBytes = calculateEstimatedBytes() + estimatedBytes;
+            let projectedVideoCount = videoAccess.size + (videoAccess.has(session.stableVideoIdentity) ? 0 : 1);
+            const plannedEvictions = [];
+            for (const candidate of videoAccess.keys()) {
+              if (projectedBytes <= maxBytes && projectedVideoCount <= maxVideos) break;
+              if (candidate === session.stableVideoIdentity) continue;
+              projectedBytes -= estimateVideoBytes(candidate);
+              projectedVideoCount -= 1;
+              plannedEvictions.push(candidate);
+            }
+            if (objects.size > maxObjects || projectedBytes > maxBytes || projectedVideoCount > maxVideos) {
+              return { accepted: false, reason: "scene-capacity-exceeded" };
+            }
             scenes.set(sceneKey, {
               key: sceneKey,
               sceneInstanceId: allocateSceneInstanceId(),
@@ -14208,7 +14324,7 @@ void main() {
               targetFrame,
               sourceWidth: sourceDimension(session.sourceWidth),
               sourceHeight: sourceDimension(session.sourceHeight),
-              objects: /* @__PURE__ */ new Map(),
+              objects,
               selectedObjectIds: /* @__PURE__ */ new Set(),
               history: createDrawingCommandHistory({
                 maxEntries: maxHistory,
@@ -14219,14 +14335,18 @@ void main() {
               dirty: false,
               mutationCount: 0,
               mutationSequence: 0,
-              estimatedBytes: 0,
-              drawingObserverSeeded: false
+              estimatedBytes,
+              drawingObserverSeeded: false,
+              provisional: true,
+              provisionalSourceFrame: sourceScene ? sourceFrame : null
             });
+            for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
           }
           activeSession = {
             sessionId: session.sessionId,
             stableVideoIdentity: session.stableVideoIdentity,
             targetFrame,
+            sourceFrame: restored ? sourceFrame : sourceScene ? sourceFrame : null,
             sceneKey,
             videoGeneration,
             tool: session.tool === "select" ? "select" : "brush",
@@ -14237,7 +14357,24 @@ void main() {
           touchVideo(session.stableVideoIdentity);
           enforceLimits();
           notifySceneActivation(scene, session);
-          return { accepted: true, restored, sceneKey };
+          return {
+            accepted: true,
+            restored,
+            sceneKey,
+            provisional: scene.provisional === true,
+            sourceFrame: activeSession.sourceFrame
+          };
+        }
+        function replaceActiveSession(session) {
+          const previousScene = activeScene();
+          const activation = activateSession(session);
+          if (!activation.accepted) return activation;
+          previousScene?.selectedObjectIds.clear();
+          if (previousScene?.provisional === true && previousScene.key !== activeSession.sceneKey) {
+            scenes.delete(previousScene.key);
+            notifyScenesDropped([previousScene.sceneInstanceId]);
+          }
+          return activation;
         }
         function deactivateSession(sessionId) {
           if (!activeSession) return { accepted: true, active: false };
@@ -14246,6 +14383,10 @@ void main() {
           }
           const scene = activeScene();
           scene?.selectedObjectIds.clear();
+          if (scene?.provisional === true) {
+            scenes.delete(scene.key);
+            notifyScenesDropped([scene.sceneInstanceId]);
+          }
           activeSession = null;
           return { accepted: true, active: false };
         }
@@ -14592,6 +14733,86 @@ void main() {
         function getSceneSnapshot(stableVideoIdentity, targetFrame) {
           return snapshotScene(scenes.get(makeSceneKey(stableVideoIdentity, targetFrame)));
         }
+        function getPresentationScene(request = {}) {
+          const binding = persistenceByVideo.get(request.stableVideoIdentity);
+          if (!binding || request.stableVideoIdentity !== latestPersistenceVideoIdentity || request.hostGeneration !== latestPersistenceHostGeneration || request.videoGeneration !== latestVideoGeneration || binding.hostGeneration !== request.hostGeneration || binding.videoGeneration !== request.videoGeneration) {
+            return { accepted: false, reason: "stale-presentation-fence" };
+          }
+          if (request.targetFrame >= binding.totalFrames || request.sourceFrame !== null && request.sourceFrame >= binding.totalFrames) {
+            return { accepted: false, reason: "invalid-presentation-frame" };
+          }
+          const scene = resolveCommittedSceneAtFrame(
+            request.stableVideoIdentity,
+            request.targetFrame
+          );
+          if ((scene?.targetFrame ?? null) !== request.sourceFrame) {
+            return { accepted: false, reason: "stale-presentation-source" };
+          }
+          return {
+            accepted: true,
+            snapshot: snapshotScene(scene)
+          };
+        }
+        function resolveCommittedSceneAtFrame(stableVideoIdentity, targetFrame) {
+          let resolved = null;
+          for (const scene of scenes.values()) {
+            if (scene.stableVideoIdentity !== stableVideoIdentity || scene.provisional === true || scene.targetFrame > targetFrame || resolved && scene.targetFrame <= resolved.targetFrame) {
+              continue;
+            }
+            resolved = scene;
+          }
+          return resolved;
+        }
+        function getActiveFrameCandidate(targetFrame, options2 = {}) {
+          if (!activeSession || !Number.isSafeInteger(targetFrame) || targetFrame < 0) {
+            return { accepted: false, reason: "invalid-active-frame" };
+          }
+          const binding = persistenceByVideo.get(activeSession.stableVideoIdentity);
+          if (!binding || binding.videoGeneration !== activeSession.videoGeneration || targetFrame >= binding.totalFrames) {
+            return { accepted: false, reason: "stale-active-frame-session" };
+          }
+          const sourceScene = resolveCommittedSceneAtFrame(
+            activeSession.stableVideoIdentity,
+            targetFrame
+          );
+          return {
+            accepted: true,
+            sourceFrame: sourceScene?.targetFrame ?? null,
+            sceneInstanceId: sourceScene?.sceneInstanceId ?? null,
+            mutationSequence: sourceScene?.mutationSequence ?? 0,
+            ...options2.includeSnapshot === true ? { snapshot: snapshotScene(sourceScene) } : {}
+          };
+        }
+        function retargetActiveSession(session = {}) {
+          if (!activeSession || session.sessionId !== activeSession.sessionId) {
+            return { accepted: false, reason: "stale-session" };
+          }
+          const targetFrame = Number(session.targetFrame);
+          if (targetFrame === activeSession.targetFrame) {
+            return {
+              accepted: true,
+              restored: true,
+              sourceFrame: activeSession.sourceFrame,
+              targetFrame
+            };
+          }
+          const candidate = getActiveFrameCandidate(targetFrame);
+          if (!candidate.accepted) return candidate;
+          const previousSession = { ...activeSession };
+          const activation = replaceActiveSession({
+            ...session,
+            targetFrame,
+            sourceFrame: candidate.sourceFrame,
+            tool: previousSession.tool
+          });
+          if (!activation.accepted) return activation;
+          activeSession.toolRevision = previousSession.toolRevision;
+          return {
+            ...activation,
+            targetFrame,
+            sourceFrame: activeSession.sourceFrame
+          };
+        }
         function getActiveSceneSnapshot() {
           return snapshotScene(activeScene());
         }
@@ -14618,6 +14839,7 @@ void main() {
             persistenceVideoCount: persistenceByVideo.size,
             latestPersistenceHostGeneration,
             latestVideoGeneration,
+            latestPersistenceVideoIdentity,
             activeSessionId: activeSession?.sessionId || null,
             activeSceneKey: activeSession?.sceneKey || null,
             tool: activeSession?.tool || null,
@@ -14626,6 +14848,8 @@ void main() {
             selectionCount: scene?.selectedObjectIds.size || 0,
             mutationCount: scene?.mutationCount || 0,
             dirty: scene?.dirty || false,
+            provisional: scene?.provisional === true,
+            provisionalSourceFrame: scene?.provisionalSourceFrame ?? null,
             undoDepth: history.undoDepth,
             redoDepth: history.redoDepth,
             undoBytes: history.undoBytes,
@@ -14640,11 +14864,13 @@ void main() {
           scenes.clear();
           videoAccess.clear();
           persistenceByVideo.clear();
+          latestPersistenceVideoIdentity = null;
           activeSession = null;
           notifyScenesDropped(droppedSceneInstanceIds);
         }
         return {
           activateSession,
+          replaceActiveSession,
           deactivateSession,
           hydrateVideo,
           exportVideo,
@@ -14659,6 +14885,9 @@ void main() {
           updateTool,
           setLocalTool,
           getSceneSnapshot,
+          getPresentationScene,
+          getActiveFrameCandidate,
+          retargetActiveSession,
           getActiveSceneSnapshot,
           hasScene,
           getDiagnostics,
@@ -14738,6 +14967,9 @@ void main() {
             while (entries.size > maxEntries) entries.delete(entries.keys().next().value);
             return true;
           },
+          release(actionId) {
+            entries.delete(actionId);
+          },
           clear() {
             entries.clear();
           },
@@ -14762,6 +14994,28 @@ void main() {
         if (request.enabled && currentVideo >= 0 && videoGeneration > currentVideo) return false;
         return true;
       }
+      function validatePresentationRequest(request = {}) {
+        if (!hasExactKeys(request, PRESENTATION_REQUEST_KEYS) || !isSafeCount(request.hostGeneration) || !isSafeCount(request.videoGeneration) || !isSafeCount(request.presentationRevision) || !isBoundedPersistenceString(request.stableVideoIdentity) || !isSafeCount(request.storeRevision) || !isSafeCount(request.targetFrame) || !Number.isFinite(request.sourceWidth) || request.sourceWidth <= 0 || request.sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(request.sourceHeight) || request.sourceHeight <= 0 || request.sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION || !hasExactKeys(request.canvasRect, PRESENTATION_CANVAS_RECT_KEYS) || !PRESENTATION_CANVAS_RECT_KEYS.every((key) => Number.isFinite(request.canvasRect[key])) || request.canvasRect.width <= 0 || request.canvasRect.height <= 0 || request.canvasRect.width > MAX_PERSISTED_SOURCE_DIMENSION || request.canvasRect.height > MAX_PERSISTED_SOURCE_DIMENSION || !isSafeCount(request.viewportRevision) || !hasExactKeys(
+          request.viewportTransform,
+          PRESENTATION_VIEWPORT_TRANSFORM_KEYS
+        ) || !PRESENTATION_VIEWPORT_TRANSFORM_KEYS.every(
+          (key) => Number.isFinite(request.viewportTransform[key]) && Math.abs(request.viewportTransform[key]) <= MAX_PERSISTED_TRANSFORM_MAGNITUDE
+        ) || request.viewportTransform.scale <= 0) {
+          return false;
+        }
+        return request.sourceFrame === null || isSafeCount(request.sourceFrame) && request.sourceFrame <= request.targetFrame;
+      }
+      function validateActiveFrameRequest(request = {}) {
+        return hasExactKeys(request, ACTIVE_FRAME_REQUEST_KEYS) && isSafeCount(request.hostGeneration) && isSafeCount(request.videoGeneration) && isSafeCount(request.inputRevision) && isBoundedPersistenceString(request.sessionId) && isSafeCount(request.frameRevision) && request.frameRevision > 0 && isSafeCount(request.targetFrame);
+      }
+      function validatePointerdownFrameConfirmation(request = {}) {
+        const validBase = isSafeCount(request.hostGeneration) && request.hostGeneration > 0 && isSafeCount(request.videoGeneration) && request.videoGeneration > 0 && isSafeCount(request.inputRevision) && request.inputRevision > 0 && isBoundedPersistenceString(request.sessionId) && isBoundedPersistenceString(request.pointerdownId) && isSafeCount(request.pointerdownAt);
+        if (!validBase) return false;
+        if (hasExactKeys(request, POINTERDOWN_FRAME_CANCELLATION_KEYS)) {
+          return request.cancelled === true;
+        }
+        return hasExactKeys(request, POINTERDOWN_FRAME_CONFIRMATION_KEYS) && isSafeCount(request.targetFrame);
+      }
       function resolvePersistenceCommitObserver(options, windowRef) {
         if (typeof options.persistenceCommitObserver === "function") {
           return options.persistenceCommitObserver;
@@ -14778,11 +15032,25 @@ void main() {
         const windowRef = options.window || (typeof window !== "undefined" ? window : null);
         const performanceRef = options.performance || (typeof performance !== "undefined" ? performance : null);
         const queueMicrotaskRef = options.queueMicrotask || windowRef?.queueMicrotask?.bind(windowRef) || globalThis.queueMicrotask?.bind(globalThis) || ((callback) => Promise.resolve().then(callback));
+        const setTimeoutRef = typeof options.setTimeout === "function" ? options.setTimeout : globalThis.setTimeout?.bind(globalThis);
+        const clearTimeoutRef = typeof options.clearTimeout === "function" ? options.clearTimeout : globalThis.clearTimeout?.bind(globalThis);
         const now = () => typeof performanceRef?.now === "function" ? performanceRef.now() : Date.now();
+        const wallNow = typeof options.wallNow === "function" ? options.wallNow : () => {
+          const epochMilliseconds = Number(performanceRef?.timeOrigin) + Number(performanceRef?.now?.());
+          return Number.isFinite(epochMilliseconds) ? Math.floor(epochMilliseconds * 1e3) : Date.now() * 1e3;
+        };
         const devicePixelRatio = finiteNumber(options.devicePixelRatio ?? windowRef?.devicePixelRatio, 1) || 1;
         const metrics = options.metrics || createFabricDrawingPilotMetrics(options.metricsOptions);
         const drawingV3ShadowRequested = options.drawingV3ShadowEnabled === true;
         const persistenceCommitObserver = resolvePersistenceCommitObserver(options, windowRef);
+        const requestPointerdownFrame = typeof options.requestPointerdownFrame === "function" ? options.requestPointerdownFrame : (() => {
+          try {
+            const bridge = windowRef?.mpvOverlayDrawingFrame;
+            return typeof bridge?.requestPointerdownFrame === "function" ? bridge.requestPointerdownFrame.bind(bridge) : null;
+          } catch (_error) {
+            return null;
+          }
+        })();
         const customSceneStore = options.sceneStore || null;
         let drawingV3Adapter = null;
         let drawingV3ShadowStartupFailed = false;
@@ -14820,6 +15088,30 @@ void main() {
           DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS
         );
         const tokenState = { hostGeneration: -1, videoGeneration: -1, inputRevision: -1 };
+        const presentationState = {
+          hostGeneration: -1,
+          videoGeneration: -1,
+          presentationRevision: -1,
+          stableVideoIdentity: null,
+          storeRevision: -1,
+          targetFrame: null,
+          sourceFrame: null
+        };
+        const activeFrameState = {
+          hostGeneration: -1,
+          videoGeneration: -1,
+          inputRevision: -1,
+          sessionId: null,
+          frameRevision: -1,
+          targetFrame: null,
+          sourceFrame: null,
+          sourceSceneInstanceId: null,
+          sourceMutationSequence: 0,
+          renderedSourceFrame: null,
+          renderedSceneInstanceId: null,
+          renderedMutationSequence: 0,
+          previewed: false
+        };
         const domListeners = [];
         const fabricListeners = [];
         let fabricModule = null;
@@ -14835,9 +15127,11 @@ void main() {
         let destroyed = false;
         let inputEnabled = false;
         let currentSession = null;
+        let passiveDisplaySession = null;
         let lastPaintedScene = null;
         let activeStroke = null;
         let activeLasso = null;
+        let pendingPointerdownFrame = null;
         let lastSelectionGesture = null;
         let pendingLassoSelection = null;
         let preservingPendingLassoSelectionEvent = false;
@@ -15448,6 +15742,251 @@ void main() {
             fabricCanvas.requestRenderAll();
           }
           updateObjectMetric();
+          rememberRenderedActiveScene();
+        }
+        function rememberRenderedActiveScene() {
+          if (!currentSession) return;
+          const candidate = sceneStore.getActiveFrameCandidate(currentSession.targetFrame);
+          if (!candidate?.accepted) return;
+          activeFrameState.renderedSourceFrame = candidate.sourceFrame;
+          activeFrameState.renderedSceneInstanceId = candidate.sceneInstanceId;
+          activeFrameState.renderedMutationSequence = candidate.mutationSequence;
+        }
+        function resetActiveFrameState(session = null) {
+          const candidate = session ? sceneStore.getActiveFrameCandidate(session.targetFrame) : null;
+          activeFrameState.hostGeneration = session?.hostGeneration ?? -1;
+          activeFrameState.videoGeneration = session?.videoGeneration ?? -1;
+          activeFrameState.inputRevision = session ? tokenState.inputRevision : -1;
+          activeFrameState.sessionId = session?.sessionId || null;
+          activeFrameState.frameRevision = -1;
+          activeFrameState.targetFrame = session?.targetFrame ?? null;
+          activeFrameState.sourceFrame = candidate?.accepted ? candidate.sourceFrame : session?.sourceFrame ?? null;
+          activeFrameState.sourceSceneInstanceId = candidate?.accepted ? candidate.sceneInstanceId : null;
+          activeFrameState.sourceMutationSequence = candidate?.accepted ? candidate.mutationSequence : 0;
+          activeFrameState.renderedSourceFrame = candidate?.accepted ? candidate.sourceFrame : session?.sourceFrame ?? null;
+          activeFrameState.renderedSceneInstanceId = candidate?.accepted ? candidate.sceneInstanceId : null;
+          activeFrameState.renderedMutationSequence = candidate?.accepted ? candidate.mutationSequence : 0;
+          activeFrameState.previewed = false;
+        }
+        function activeFrameInteractionInProgress() {
+          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart);
+        }
+        function renderedCandidateMatches(candidate) {
+          return candidate.sourceFrame === activeFrameState.renderedSourceFrame && candidate.sceneInstanceId === activeFrameState.renderedSceneInstanceId && candidate.mutationSequence === activeFrameState.renderedMutationSequence;
+        }
+        function renderArmedFramePreview(frameState = activeFrameState) {
+          if (!inputEnabled || !currentSession || !fabricCanvas || frameState.sessionId !== currentSession.sessionId) {
+            return { accepted: false, reason: "stale-active-frame" };
+          }
+          if (activeFrameInteractionInProgress()) {
+            return {
+              accepted: true,
+              deferred: true,
+              repainted: false,
+              previewed: activeFrameState.previewed,
+              sourceFrame: frameState.sourceFrame,
+              sourceSceneInstanceId: frameState.sourceSceneInstanceId,
+              sourceMutationSequence: frameState.sourceMutationSequence,
+              renderedSourceFrame: activeFrameState.renderedSourceFrame,
+              renderedSceneInstanceId: activeFrameState.renderedSceneInstanceId,
+              renderedMutationSequence: activeFrameState.renderedMutationSequence
+            };
+          }
+          const candidate = sceneStore.getActiveFrameCandidate(frameState.targetFrame);
+          if (!candidate?.accepted) return candidate;
+          const isPreview = frameState.targetFrame !== currentSession.targetFrame;
+          if (renderedCandidateMatches(candidate)) {
+            if (isPreview) {
+              if (pendingLassoSelection) abortPendingLassoSelection();
+              fabricCanvas.discardActiveObject();
+              sceneStore.selectObjects([]);
+              for (const object of fabricCanvas.getObjects()) {
+                object.set?.({ selectable: false, evented: false });
+              }
+            } else {
+              refreshSelectionInteractionPolicy();
+            }
+            return {
+              accepted: true,
+              deferred: false,
+              repainted: false,
+              previewed: isPreview,
+              sourceFrame: candidate.sourceFrame,
+              sourceSceneInstanceId: candidate.sceneInstanceId,
+              sourceMutationSequence: candidate.mutationSequence,
+              renderedSourceFrame: candidate.sourceFrame,
+              renderedSceneInstanceId: candidate.sceneInstanceId,
+              renderedMutationSequence: candidate.mutationSequence
+            };
+          }
+          let preparedCandidate;
+          let paths;
+          try {
+            preparedCandidate = sceneStore.getActiveFrameCandidate(frameState.targetFrame, {
+              includeSnapshot: true
+            });
+            if (!preparedCandidate?.accepted || preparedCandidate.sourceFrame !== candidate.sourceFrame || preparedCandidate.sceneInstanceId !== candidate.sceneInstanceId || preparedCandidate.mutationSequence !== candidate.mutationSequence) {
+              return { accepted: false, reason: "stale-active-frame-preview" };
+            }
+            paths = (preparedCandidate.snapshot?.objects || []).map((record) => makeFabricPath(record));
+            if (isPreview) {
+              for (const path of paths) path.set({ selectable: false, evented: false });
+            }
+          } catch (error) {
+            lastError = error.message;
+            metrics.recordSurfaceError();
+            return { accepted: false, reason: "active-frame-preview-failed" };
+          }
+          const previousObjects = [...fabricCanvas.getObjects()];
+          const previousActiveObject = fabricCanvas.getActiveObject?.() || null;
+          const previousSelection = sceneStore.getActiveSceneSnapshot()?.selectedObjectIds || [];
+          const previousPendingLassoSelection = pendingLassoSelection;
+          const previousObjectStates = previousObjects.map((object) => ({
+            object,
+            transform: captureTransform(object),
+            opacity: object.opacity,
+            selectable: object.selectable,
+            evented: object.evented,
+            perPixelTargetFind: object.perPixelTargetFind,
+            padding: object.padding,
+            hoverCursor: object.hoverCursor,
+            moveCursor: object.moveCursor,
+            pendingLasso: object.__baeframePendingLasso
+          }));
+          try {
+            if (pendingLassoSelection) abortPendingLassoSelection();
+            fabricCanvas.discardActiveObject();
+            sceneStore.selectObjects([]);
+            fabricCanvas.clear();
+            for (const path of paths) fabricCanvas.add(path);
+            if (!isPreview) refreshSelectionInteractionPolicy();
+            if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+            else fabricCanvas.requestRenderAll();
+          } catch (error) {
+            pendingLassoSelection = previousPendingLassoSelection;
+            try {
+              fabricCanvas.clear();
+              for (const state of previousObjectStates) {
+                state.object.set?.({
+                  ...state.transform,
+                  opacity: state.opacity,
+                  selectable: state.selectable,
+                  evented: state.evented,
+                  perPixelTargetFind: state.perPixelTargetFind,
+                  padding: state.padding,
+                  hoverCursor: state.hoverCursor,
+                  moveCursor: state.moveCursor
+                });
+                state.object.__baeframePendingLasso = state.pendingLasso;
+                state.object.setCoords?.();
+                fabricCanvas.add(state.object);
+              }
+              if (previousActiveObject && typeof fabricCanvas.setActiveObject === "function") {
+                fabricCanvas.setActiveObject(previousActiveObject);
+              }
+            } catch (_rollbackError) {
+            }
+            try {
+              sceneStore.selectObjects(previousSelection);
+            } catch (_rollbackError) {
+            }
+            lastError = error.message;
+            metrics.recordSurfaceError();
+            return { accepted: false, reason: "active-frame-preview-failed" };
+          }
+          updateObjectMetric();
+          return {
+            accepted: true,
+            deferred: false,
+            repainted: true,
+            previewed: isPreview,
+            sourceFrame: preparedCandidate.sourceFrame,
+            sourceSceneInstanceId: preparedCandidate.sceneInstanceId,
+            sourceMutationSequence: preparedCandidate.mutationSequence,
+            renderedSourceFrame: preparedCandidate.sourceFrame,
+            renderedSceneInstanceId: preparedCandidate.sceneInstanceId,
+            renderedMutationSequence: preparedCandidate.mutationSequence
+          };
+        }
+        function publishActiveFramePreview(frameState, preview) {
+          activeFrameState.hostGeneration = frameState.hostGeneration;
+          activeFrameState.videoGeneration = frameState.videoGeneration;
+          activeFrameState.inputRevision = frameState.inputRevision;
+          activeFrameState.sessionId = frameState.sessionId;
+          activeFrameState.frameRevision = frameState.frameRevision;
+          activeFrameState.targetFrame = frameState.targetFrame;
+          activeFrameState.sourceFrame = preview.sourceFrame;
+          activeFrameState.sourceSceneInstanceId = preview.sourceSceneInstanceId;
+          activeFrameState.sourceMutationSequence = preview.sourceMutationSequence;
+          activeFrameState.renderedSourceFrame = preview.renderedSourceFrame;
+          activeFrameState.renderedSceneInstanceId = preview.renderedSceneInstanceId;
+          activeFrameState.renderedMutationSequence = preview.renderedMutationSequence;
+          activeFrameState.previewed = preview.previewed === true;
+          if (preview.deferred !== true) {
+            lastPaintedScene = preview.sourceFrame === null ? null : {
+              stableVideoIdentity: currentSession.stableVideoIdentity,
+              targetFrame: preview.sourceFrame
+            };
+            presentationState.hostGeneration = frameState.hostGeneration;
+            presentationState.videoGeneration = frameState.videoGeneration;
+            presentationState.stableVideoIdentity = currentSession.stableVideoIdentity;
+            presentationState.targetFrame = frameState.targetFrame;
+            presentationState.sourceFrame = preview.sourceFrame;
+            syncPersistenceBadge(frameState.targetFrame);
+          }
+        }
+        function retargetFrameForMutation(targetFrame) {
+          if (!inputEnabled || !currentSession || !Number.isSafeInteger(targetFrame) || targetFrame < 0) {
+            return { accepted: false, reason: "stale-active-frame" };
+          }
+          if (targetFrame === currentSession.targetFrame && activeFrameState.previewed !== true) {
+            return {
+              accepted: true,
+              restored: true,
+              targetFrame: currentSession.targetFrame,
+              sourceFrame: currentSession.sourceFrame
+            };
+          }
+          if (targetFrame !== currentSession.targetFrame && pendingLassoSelection) {
+            abortPendingLassoSelection();
+          }
+          const result = sceneStore.retargetActiveSession({
+            ...currentSession,
+            targetFrame
+          });
+          if (!result?.accepted) return result || { accepted: false, reason: "retarget-failed" };
+          currentSession.targetFrame = result.targetFrame;
+          currentSession.sourceFrame = result.sourceFrame;
+          if (activeFrameState.targetFrame === targetFrame) {
+            const candidate = sceneStore.getActiveFrameCandidate(targetFrame);
+            activeFrameState.sourceFrame = result.sourceFrame;
+            activeFrameState.sourceSceneInstanceId = candidate?.sceneInstanceId ?? null;
+            activeFrameState.sourceMutationSequence = candidate?.mutationSequence ?? 0;
+          }
+          activeFrameState.previewed = false;
+          renderActiveScene({ immediate: true });
+          setToolMode(currentSession.tool);
+          lastPaintedScene = {
+            stableVideoIdentity: currentSession.stableVideoIdentity,
+            targetFrame: currentSession.targetFrame
+          };
+          syncPersistenceBadge(currentSession.targetFrame);
+          return result;
+        }
+        function retargetArmedFrameForMutation() {
+          if (!inputEnabled || !currentSession || activeFrameState.hostGeneration !== tokenState.hostGeneration || activeFrameState.videoGeneration !== tokenState.videoGeneration || activeFrameState.inputRevision !== tokenState.inputRevision || activeFrameState.sessionId !== currentSession.sessionId || !Number.isSafeInteger(activeFrameState.targetFrame)) {
+            return { accepted: false, reason: "stale-active-frame" };
+          }
+          return retargetFrameForMutation(activeFrameState.targetFrame);
+        }
+        function settleArmedFramePreview() {
+          if (!inputEnabled || !currentSession || activeFrameInteractionInProgress() || activeFrameState.targetFrame === currentSession.targetFrame) {
+            return false;
+          }
+          const preview = renderArmedFramePreview(activeFrameState);
+          if (preview?.accepted !== true) return false;
+          publishActiveFramePreview(activeFrameState, preview);
+          return true;
         }
         function repaintLastPaintedScene(options2 = {}) {
           if (destroyed || !fabricCanvas || inputEnabled || !lastPaintedScene) return;
@@ -16984,6 +17523,7 @@ void main() {
             selectedCount: Array.isArray(result?.selectedObjectIds) ? result.selectedObjectIds.length : 0,
             reason: typeof result?.reason === "string" ? result.reason.slice(0, 128) : null
           };
+          settleArmedFramePreview();
           return result;
         }
         function pointerTargetsActiveSelection(event) {
@@ -17024,6 +17564,7 @@ void main() {
             lastError = error.message;
             metrics.recordSurfaceError();
             activeStroke = null;
+            settleArmedFramePreview();
             return { applied: false, reason: "stroke-path-error" };
           }
           const record = {
@@ -17037,10 +17578,14 @@ void main() {
           record.transform = captureTransform(path);
           const result = sceneStore.addStroke(record);
           activeStroke = null;
-          if (!result.applied) return result;
+          if (!result.applied) {
+            settleArmedFramePreview();
+            return result;
+          }
           fabricCanvas.add(path);
           fabricCanvas.requestRenderAll();
           updateObjectMetric();
+          settleArmedFramePreview();
           return result;
         }
         function releasePointerCapture(target, pointerId) {
@@ -17147,10 +17692,19 @@ void main() {
             transformStart = null;
             selectGesture = null;
             settleDeferredViewport(gesture.sessionId, gesture.inputRevision);
+            settleArmedFramePreview();
           });
         }
-        function onPointerDown(event) {
+        function beginPointerDown(event, retargetArmed = true) {
           if (!inputEnabled || event.button !== 0) return;
+          if (retargetArmed) {
+            const retargeted = retargetArmedFrameForMutation();
+            if (!retargeted?.accepted) {
+              event.preventDefault?.();
+              event.stopImmediatePropagation?.();
+              return;
+            }
+          }
           const tool = sceneStore.getDiagnostics().tool;
           if (tool === "brush") {
             if (activeStroke || selectGesture) return;
@@ -17230,7 +17784,199 @@ void main() {
           } catch (_error) {
           }
         }
+        function snapshotPointerEvent(event) {
+          const snapshot = { type: String(event.type || "") };
+          for (const field of POINTER_EVENT_SNAPSHOT_FIELDS) {
+            const value = event[field];
+            if (value !== void 0) snapshot[field] = value;
+          }
+          return snapshot;
+        }
+        function cancelPendingPointerdownFrame() {
+          const pending = pendingPointerdownFrame;
+          pendingPointerdownFrame = null;
+          if (!pending) return false;
+          if (pending.confirmationDeadline !== null) {
+            try {
+              clearTimeoutRef?.(pending.confirmationDeadline);
+            } catch (_error) {
+            }
+            pending.confirmationDeadline = null;
+          }
+          releasePointerCapture(pending.target, pending.pointerId);
+          return true;
+        }
+        function schedulePendingPointerdownFrameDeadline(pending) {
+          if (typeof setTimeoutRef !== "function") return false;
+          try {
+            pending.confirmationDeadline = setTimeoutRef(() => {
+              if (pendingPointerdownFrame !== pending) return;
+              pending.confirmationDeadline = null;
+              cancelPendingPointerdownFrame();
+            }, POINTERDOWN_FRAME_CONFIRMATION_DEADLINE_MS);
+            return true;
+          } catch (_error) {
+            return false;
+          }
+        }
+        function consumePendingPointerEvent(event) {
+          const pending = pendingPointerdownFrame;
+          if (!pending || event.pointerId !== void 0 && event.pointerId !== pending.pointerId) {
+            return false;
+          }
+          event.preventDefault?.();
+          event.stopImmediatePropagation?.();
+          event.stopPropagation?.();
+          const coalesced = event.type === "pointermove" && typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+          const samples = coalesced.length > 0 ? coalesced : [event];
+          if (pending.events.length + samples.length > MAX_PENDING_POINTER_EVENTS) {
+            cancelPendingPointerdownFrame();
+            return true;
+          }
+          for (const sample of samples) pending.events.push(snapshotPointerEvent(sample));
+          return true;
+        }
+        function dispatchReplayedPointerEvent(target, snapshot) {
+          if (typeof target?.dispatchEvent === "function" && windowRef?.Event) {
+            const EventConstructor = typeof windowRef.PointerEvent === "function" ? windowRef.PointerEvent : windowRef.Event;
+            let event;
+            if (EventConstructor === windowRef.PointerEvent) {
+              event = new EventConstructor(snapshot.type, {
+                bubbles: true,
+                cancelable: true,
+                ...snapshot
+              });
+            } else {
+              event = new EventConstructor(snapshot.type, { bubbles: true, cancelable: true });
+              for (const [field, value] of Object.entries(snapshot)) {
+                if (field === "type") continue;
+                Object.defineProperty(event, field, { value });
+              }
+            }
+            Object.defineProperty(event, REPLAYED_POINTERDOWN, { value: true });
+            target.dispatchEvent(event);
+            return true;
+          }
+          if (typeof target?.dispatch === "function") {
+            target.dispatch(snapshot.type, { ...snapshot, [REPLAYED_POINTERDOWN]: true });
+            return true;
+          }
+          return false;
+        }
+        function onPointerDown(event) {
+          if (event?.[REPLAYED_POINTERDOWN] === true) {
+            beginPointerDown(event, false);
+            return;
+          }
+          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture) {
+            return;
+          }
+          if (!requestPointerdownFrame) {
+            beginPointerDown(event, true);
+            return;
+          }
+          const pointerdownAt = Number(wallNow());
+          if (!currentSession || !Number.isSafeInteger(pointerdownAt) || pointerdownAt < 0) {
+            event.preventDefault?.();
+            event.stopImmediatePropagation?.();
+            return;
+          }
+          const request = {
+            hostGeneration: tokenState.hostGeneration,
+            videoGeneration: tokenState.videoGeneration,
+            inputRevision: tokenState.inputRevision,
+            sessionId: currentSession.sessionId,
+            pointerdownId: createId("pointerdown"),
+            pointerdownAt
+          };
+          const target = event.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement;
+          pendingPointerdownFrame = {
+            request,
+            pointerId: event.pointerId,
+            target,
+            events: [snapshotPointerEvent(event)],
+            confirmationDeadline: null
+          };
+          const pending = pendingPointerdownFrame;
+          try {
+            target?.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
+          event.preventDefault?.();
+          event.stopImmediatePropagation?.();
+          event.stopPropagation?.();
+          try {
+            if (requestPointerdownFrame(request) !== true) {
+              cancelPendingPointerdownFrame();
+            } else if (pendingPointerdownFrame === pending && !schedulePendingPointerdownFrameDeadline(pending)) {
+              cancelPendingPointerdownFrame();
+            }
+          } catch (_error) {
+            cancelPendingPointerdownFrame();
+          }
+        }
+        function confirmDrawingPointerdownFrame(request = {}) {
+          if (!validatePointerdownFrameConfirmation(request)) {
+            return { accepted: false, reason: "invalid-pointerdown-frame-confirmation" };
+          }
+          const pending = pendingPointerdownFrame;
+          if (!pending || !inputEnabled || !currentSession || request.hostGeneration !== tokenState.hostGeneration || request.videoGeneration !== tokenState.videoGeneration || request.inputRevision !== tokenState.inputRevision || request.sessionId !== currentSession.sessionId || request.pointerdownId !== pending.request.pointerdownId || request.pointerdownAt !== pending.request.pointerdownAt) {
+            return { accepted: false, reason: "stale-pointerdown-frame-confirmation" };
+          }
+          if (request.cancelled === true) {
+            cancelPendingPointerdownFrame();
+            return {
+              accepted: true,
+              cancelled: true,
+              hostGeneration: request.hostGeneration,
+              videoGeneration: request.videoGeneration,
+              inputRevision: request.inputRevision,
+              sessionId: request.sessionId,
+              pointerdownId: request.pointerdownId,
+              pointerdownAt: request.pointerdownAt
+            };
+          }
+          const previousFrameState = { ...activeFrameState };
+          const candidate = sceneStore.getActiveFrameCandidate(request.targetFrame);
+          if (!candidate?.accepted) {
+            cancelPendingPointerdownFrame();
+            return { accepted: false, reason: candidate?.reason || "retarget-failed" };
+          }
+          activeFrameState.targetFrame = request.targetFrame;
+          activeFrameState.sourceFrame = candidate.sourceFrame;
+          activeFrameState.sourceSceneInstanceId = candidate.sceneInstanceId;
+          activeFrameState.sourceMutationSequence = candidate.mutationSequence;
+          const retargeted = retargetFrameForMutation(request.targetFrame);
+          if (!retargeted?.accepted) {
+            Object.assign(activeFrameState, previousFrameState);
+            cancelPendingPointerdownFrame();
+            return { accepted: false, reason: retargeted?.reason || "retarget-failed" };
+          }
+          pendingPointerdownFrame = null;
+          if (pending.confirmationDeadline !== null) {
+            try {
+              clearTimeoutRef?.(pending.confirmationDeadline);
+            } catch (_error) {
+            }
+            pending.confirmationDeadline = null;
+          }
+          for (const replayEvent of pending.events) {
+            if (!dispatchReplayedPointerEvent(pending.target, replayEvent)) {
+              cancelActiveStroke();
+              cancelActiveLasso();
+              cancelSelectInteraction();
+              releasePointerCapture(pending.target, pending.pointerId);
+              return { accepted: false, reason: "pointerdown-replay-failed" };
+            }
+          }
+          return {
+            accepted: true,
+            pointerdownId: request.pointerdownId,
+            targetFrame: request.targetFrame
+          };
+        }
         function onPointerMove(event) {
+          if (consumePendingPointerEvent(event)) return;
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             appendLassoPoint(event);
@@ -17246,6 +17992,7 @@ void main() {
           event.preventDefault?.();
         }
         function onPointerUp(event) {
+          if (consumePendingPointerEvent(event)) return;
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             const { sessionId, inputRevision } = activeLasso;
@@ -17272,6 +18019,16 @@ void main() {
           scheduleSelectGestureSettle(gesture);
         }
         function onPointerCancel(event) {
+          if (pendingPointerdownFrame) {
+            if (event.pointerId !== void 0 && event.pointerId !== pendingPointerdownFrame.pointerId) return;
+            if (event.type === "lostpointercapture" && pendingPointerdownFrame.events.some((pendingEvent) => pendingEvent.type === "pointerup")) {
+              return;
+            }
+            event.preventDefault?.();
+            event.stopImmediatePropagation?.();
+            cancelPendingPointerdownFrame();
+            return;
+          }
           if (activeLasso) {
             if (event.pointerId !== void 0 && event.pointerId !== activeLasso.pointerId) return;
             if (event.type === "lostpointercapture" && activeLasso.phase === "settling") return;
@@ -17295,6 +18052,10 @@ void main() {
           cancelSelectInteraction(event);
         }
         function onDocumentPointerUp(event) {
+          if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
+            consumePendingPointerEvent(event);
+            return;
+          }
           if (activeLasso && event.pointerId === activeLasso.pointerId) {
             onPointerUp(event);
             return;
@@ -17303,6 +18064,10 @@ void main() {
           onPointerUp(event);
         }
         function onDocumentPointerCancel(event) {
+          if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
           if (activeLasso && event.pointerId === activeLasso.pointerId) {
             onPointerCancel(event);
             return;
@@ -17392,6 +18157,7 @@ void main() {
             const result2 = commitPendingLassoMove(target);
             transformStart = null;
             if (result2.applied) updateObjectMetric();
+            settleArmedFramePreview();
             return;
           }
           const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
@@ -17420,20 +18186,22 @@ void main() {
           }
           if (!result.applied) {
             rollbackSelectTransform(event, false);
+            settleArmedFramePreview();
             return;
           }
           const shouldReleaseMultiSelection = result.applied && children.length > 1;
           transformStart = null;
           if (result.applied) updateObjectMetric();
           if (shouldReleaseMultiSelection) scheduleMovedMultiSelectionRelease(target, ids);
+          settleArmedFramePreview();
         }
         function configureCanvasEvents() {
           const pointerTarget = fabricCanvas.upperCanvasEl || canvasElement;
           addDomListener(pointerTarget, "pointerdown", onPointerDown, true);
-          addDomListener(pointerTarget, "pointermove", onPointerMove);
-          addDomListener(pointerTarget, "pointerup", onPointerUp);
-          addDomListener(pointerTarget, "pointercancel", onPointerCancel);
-          addDomListener(pointerTarget, "lostpointercapture", onPointerCancel);
+          addDomListener(pointerTarget, "pointermove", onPointerMove, true);
+          addDomListener(pointerTarget, "pointerup", onPointerUp, true);
+          addDomListener(pointerTarget, "pointercancel", onPointerCancel, true);
+          addDomListener(pointerTarget, "lostpointercapture", onPointerCancel, true);
           addDomListener(documentRef, "pointerup", onDocumentPointerUp);
           addDomListener(documentRef, "pointercancel", onDocumentPointerCancel);
           addDomListener(windowRef, "blur", onPointerCancel);
@@ -17526,10 +18294,30 @@ void main() {
           currentSession.viewportRevision = command.revision;
           applyViewport(currentSession);
         }
-        function validateSession(session) {
-          return !!session && typeof session.sessionId === "string" && session.sessionId.length > 0 && typeof session.stableVideoIdentity === "string" && session.stableVideoIdentity.length > 0 && Number.isInteger(Number(session.targetFrame)) && Number(session.targetFrame) >= 0 && finiteNumber(session.sourceWidth) > 0 && finiteNumber(session.sourceHeight) > 0 && finiteNumber(session.canvasRect?.width) > 0 && finiteNumber(session.canvasRect?.height) > 0;
+        function resetPassivePresentationState() {
+          passiveDisplaySession = null;
+          presentationState.hostGeneration = -1;
+          presentationState.videoGeneration = -1;
+          presentationState.presentationRevision = -1;
+          presentationState.stableVideoIdentity = null;
+          presentationState.storeRevision = -1;
+          presentationState.targetFrame = null;
+          presentationState.sourceFrame = null;
         }
-        function disableInput() {
+        function validateSession(session) {
+          const targetFrame = Number(session?.targetFrame);
+          const sourceFrame = session?.sourceFrame;
+          return !!session && typeof session.sessionId === "string" && session.sessionId.length > 0 && typeof session.stableVideoIdentity === "string" && session.stableVideoIdentity.length > 0 && Number.isInteger(targetFrame) && targetFrame >= 0 && (sourceFrame === void 0 || sourceFrame === null || Number.isSafeInteger(Number(sourceFrame)) && Number(sourceFrame) >= 0 && Number(sourceFrame) <= targetFrame) && finiteNumber(session.sourceWidth) > 0 && finiteNumber(session.sourceHeight) > 0 && finiteNumber(session.canvasRect?.width) > 0 && finiteNumber(session.canvasRect?.height) > 0;
+        }
+        function disableInput({ preservePassiveDisplay = true } = {}) {
+          const disabledSession = currentSession;
+          const disabledFrameState = { ...activeFrameState };
+          const previewWasDisplayed = disabledSession && disabledFrameState.sessionId === disabledSession.sessionId && disabledFrameState.previewed === true;
+          const disabledTargetFrame = previewWasDisplayed ? disabledFrameState.targetFrame : disabledSession?.targetFrame;
+          const disabledCandidate = disabledSession && Number.isSafeInteger(disabledTargetFrame) ? sceneStore.getActiveFrameCandidate(disabledTargetFrame) : null;
+          const disabledSourceFrame = disabledCandidate?.accepted === true ? disabledCandidate.sourceFrame : previewWasDisplayed ? disabledFrameState.sourceFrame : disabledSession?.sourceFrame ?? null;
+          const discardedProvisional = sceneStore.getDiagnostics().provisional === true;
+          cancelPendingPointerdownFrame();
           abortPendingLassoSelection();
           cancelActiveLasso();
           cancelSelectInteraction();
@@ -17542,10 +18330,49 @@ void main() {
           inputEnabled = false;
           currentSession = null;
           sceneStore.deactivateSession();
-          repaintLastPaintedScene();
+          resetActiveFrameState();
+          if (preservePassiveDisplay && disabledSession) {
+            passiveDisplaySession = {
+              hostGeneration: disabledSession.hostGeneration,
+              videoGeneration: disabledSession.videoGeneration,
+              stableVideoIdentity: disabledSession.stableVideoIdentity,
+              targetFrame: disabledTargetFrame,
+              sourceFrame: disabledSourceFrame,
+              sourceWidth: disabledSession.sourceWidth,
+              sourceHeight: disabledSession.sourceHeight,
+              canvasRect: { ...disabledSession.canvasRect },
+              viewportRevision: disabledSession.viewportRevision,
+              viewportTransform: { ...disabledSession.viewportTransform }
+            };
+            presentationState.hostGeneration = disabledSession.hostGeneration;
+            presentationState.videoGeneration = disabledSession.videoGeneration;
+            presentationState.stableVideoIdentity = disabledSession.stableVideoIdentity;
+            presentationState.targetFrame = passiveDisplaySession.targetFrame;
+            presentationState.sourceFrame = passiveDisplaySession.sourceFrame;
+          } else if (!preservePassiveDisplay) {
+            passiveDisplaySession = null;
+          }
+          if (previewWasDisplayed) {
+            lastPaintedScene = disabledSourceFrame === null ? null : {
+              stableVideoIdentity: disabledSession.stableVideoIdentity,
+              targetFrame: disabledSourceFrame
+            };
+          } else if (disabledCandidate?.accepted === true) {
+            lastPaintedScene = disabledSourceFrame === null ? null : {
+              stableVideoIdentity: disabledSession.stableVideoIdentity,
+              targetFrame: disabledSourceFrame
+            };
+          } else if (discardedProvisional && disabledSession) {
+            lastPaintedScene = disabledSession.sourceFrame === null ? null : {
+              stableVideoIdentity: disabledSession.stableVideoIdentity,
+              targetFrame: disabledSession.sourceFrame
+            };
+          }
+          if (!previewWasDisplayed) repaintLastPaintedScene();
           syncPersistenceBadge();
         }
         function releaseSurfaceResources() {
+          cancelPendingPointerdownFrame();
           cancelSelectInteraction();
           for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
             try {
@@ -17583,6 +18410,7 @@ void main() {
           deferredViewport = null;
           inputEnabled = false;
           currentSession = null;
+          resetPassivePresentationState();
           viewportElement = null;
           canvasElement = null;
           toolbar = null;
@@ -17720,22 +18548,29 @@ void main() {
           if (request.enabled && !validateSession(request.session)) {
             return { accepted: false, reason: "invalid-session" };
           }
+          cancelPendingPointerdownFrame();
           abortPendingLassoSelection();
           if (activeStroke) cancelActiveStroke();
           if (activeLasso) cancelActiveLasso();
           if (selectGesture || transformStart || deferredViewport) cancelSelectInteraction();
           if (!request.enabled) {
+            const ownerChanged = Number(request.hostGeneration) !== tokenState.hostGeneration || Number(request.videoGeneration) !== tokenState.videoGeneration;
             tokenState.hostGeneration = Number(request.hostGeneration);
             tokenState.videoGeneration = Number(request.videoGeneration);
             tokenState.inputRevision = Number(request.inputRevision);
             const lastTool = currentSession?.tool === "select" ? "select" : "brush";
-            disableInput();
+            disableInput({ preservePassiveDisplay: !ownerChanged });
+            if (ownerChanged) {
+              resetPassivePresentationState();
+            }
+            resetActiveFrameState();
             metrics.recordToggleLatency(now() - startedAt);
             return { accepted: true, enabled: false, tool: lastTool };
           }
           const session = {
             ...clonePlain(request.session),
             targetFrame: Number(request.session.targetFrame),
+            sourceFrame: request.session.sourceFrame === null || request.session.sourceFrame === void 0 ? null : Number(request.session.sourceFrame),
             sourceWidth: Number(request.session.sourceWidth),
             sourceHeight: Number(request.session.sourceHeight),
             hostGeneration: Number(request.hostGeneration),
@@ -17744,15 +18579,23 @@ void main() {
             viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
             tool: request.session.tool === "select" ? "select" : "brush"
           };
-          const activation = sceneStore.activateSession(session);
+          const activation = typeof sceneStore.replaceActiveSession === "function" ? sceneStore.replaceActiveSession(session) : sceneStore.activateSession(session);
           if (!activation.accepted) {
             metrics.recordStaleMessageDrop();
             return activation;
           }
+          session.sourceFrame = activation.sourceFrame;
           tokenState.hostGeneration = Number(request.hostGeneration);
           tokenState.videoGeneration = Number(request.videoGeneration);
           tokenState.inputRevision = Number(request.inputRevision);
           currentSession = session;
+          passiveDisplaySession = null;
+          resetActiveFrameState(session);
+          presentationState.hostGeneration = session.hostGeneration;
+          presentationState.videoGeneration = session.videoGeneration;
+          presentationState.stableVideoIdentity = session.stableVideoIdentity;
+          presentationState.targetFrame = session.targetFrame;
+          presentationState.sourceFrame = session.sourceFrame;
           applyViewport(session);
           renderActiveScene({ immediate: true });
           lastPaintedScene = {
@@ -17780,6 +18623,9 @@ void main() {
           try {
             const result = sceneStore.hydrateVideo(clonePlain(request));
             if (result?.accepted === true) {
+              if (passiveDisplaySession && passiveDisplaySession.stableVideoIdentity !== String(request?.stableVideoIdentity || "")) {
+                resetPassivePresentationState();
+              }
               if (lastPaintedScene && lastPaintedScene.stableVideoIdentity === String(request?.stableVideoIdentity || "")) {
                 repaintLastPaintedScene({ force: true, clearWhenMissing: true });
               } else if (lastPaintedScene) {
@@ -17795,6 +18641,124 @@ void main() {
           } catch (_error) {
             return { accepted: false, reason: "invalid-hydration-request" };
           }
+        }
+        function presentDrawingFrame(request = {}) {
+          if (destroyed || !prepared) {
+            return { accepted: false, reason: destroyed ? "destroyed" : "not-prepared" };
+          }
+          if (inputEnabled) return { accepted: false, reason: "input-enabled" };
+          if (!validatePresentationRequest(request)) {
+            return { accepted: false, reason: "invalid-presentation-request" };
+          }
+          if (request.presentationRevision <= presentationState.presentationRevision) {
+            return { accepted: false, reason: "stale-presentation-revision" };
+          }
+          if (tokenState.hostGeneration >= 0 && request.hostGeneration !== tokenState.hostGeneration || tokenState.videoGeneration >= 0 && request.videoGeneration !== tokenState.videoGeneration) {
+            return { accepted: false, reason: "stale-presentation-fence" };
+          }
+          if (typeof sceneStore.getPresentationScene !== "function") {
+            return { accepted: false, reason: "persistence-unavailable" };
+          }
+          let resolved;
+          try {
+            resolved = sceneStore.getPresentationScene(request);
+          } catch (_error) {
+            return { accepted: false, reason: "invalid-presentation-request" };
+          }
+          if (resolved?.accepted !== true) return resolved;
+          try {
+            const displaySession = {
+              hostGeneration: request.hostGeneration,
+              videoGeneration: request.videoGeneration,
+              stableVideoIdentity: request.stableVideoIdentity,
+              targetFrame: request.targetFrame,
+              sourceFrame: request.sourceFrame,
+              sourceWidth: request.sourceWidth,
+              sourceHeight: request.sourceHeight,
+              canvasRect: { ...request.canvasRect },
+              viewportRevision: request.viewportRevision,
+              viewportTransform: { ...request.viewportTransform }
+            };
+            applyViewport(displaySession);
+            const sameSource = presentationState.hostGeneration === request.hostGeneration && presentationState.videoGeneration === request.videoGeneration && presentationState.stableVideoIdentity === request.stableVideoIdentity && presentationState.storeRevision === request.storeRevision && presentationState.sourceFrame === request.sourceFrame;
+            const snapshot = resolved.snapshot;
+            const records = snapshot?.objects || [];
+            if (!sameSource) {
+              const paths = records.map((record) => makeFabricPath(record));
+              for (const path of paths) path.set({ selectable: false, evented: false });
+              fabricCanvas.clear();
+              for (const path of paths) fabricCanvas.add(path);
+            } else {
+              for (const object of fabricCanvas.getObjects()) {
+                object.set?.({ selectable: false, evented: false });
+              }
+            }
+            fabricCanvas.discardActiveObject();
+            if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+            else fabricCanvas.requestRenderAll();
+            presentationState.hostGeneration = request.hostGeneration;
+            presentationState.videoGeneration = request.videoGeneration;
+            presentationState.presentationRevision = request.presentationRevision;
+            presentationState.stableVideoIdentity = request.stableVideoIdentity;
+            presentationState.storeRevision = request.storeRevision;
+            presentationState.targetFrame = request.targetFrame;
+            presentationState.sourceFrame = request.sourceFrame;
+            passiveDisplaySession = displaySession;
+            lastPaintedScene = request.sourceFrame === null ? null : {
+              stableVideoIdentity: request.stableVideoIdentity,
+              targetFrame: request.sourceFrame
+            };
+            return {
+              accepted: true,
+              targetFrame: request.targetFrame,
+              sourceFrame: request.sourceFrame
+            };
+          } catch (error) {
+            lastError = error.message;
+            metrics.recordSurfaceError();
+            return { accepted: false, reason: "presentation-render-failed" };
+          }
+        }
+        function updateDrawingFrame(request = {}) {
+          if (destroyed || !prepared) {
+            return { accepted: false, reason: destroyed ? "destroyed" : "not-prepared" };
+          }
+          if (!inputEnabled || !currentSession) {
+            return { accepted: false, reason: "input-disabled" };
+          }
+          if (!validateActiveFrameRequest(request)) {
+            return { accepted: false, reason: "invalid-active-frame-request" };
+          }
+          if (request.hostGeneration !== tokenState.hostGeneration || request.videoGeneration !== tokenState.videoGeneration || request.inputRevision !== tokenState.inputRevision || request.sessionId !== currentSession.sessionId) {
+            return { accepted: false, reason: "stale-active-frame-fence" };
+          }
+          if (request.frameRevision <= activeFrameState.frameRevision) {
+            return { accepted: false, reason: "stale-active-frame-revision" };
+          }
+          const candidate = sceneStore.getActiveFrameCandidate(request.targetFrame);
+          if (!candidate?.accepted) return candidate;
+          const stagedFrameState = {
+            hostGeneration: request.hostGeneration,
+            videoGeneration: request.videoGeneration,
+            inputRevision: request.inputRevision,
+            sessionId: request.sessionId,
+            frameRevision: request.frameRevision,
+            targetFrame: request.targetFrame,
+            sourceFrame: candidate.sourceFrame,
+            sourceSceneInstanceId: candidate.sceneInstanceId,
+            sourceMutationSequence: candidate.mutationSequence
+          };
+          const preview = renderArmedFramePreview(stagedFrameState);
+          if (!preview?.accepted) return preview;
+          publishActiveFramePreview(stagedFrameState, preview);
+          return {
+            accepted: true,
+            frameRevision: request.frameRevision,
+            targetFrame: request.targetFrame,
+            sourceFrame: preview.sourceFrame,
+            deferred: preview.deferred === true,
+            repainted: preview.repainted === true
+          };
         }
         function exportDrawingVideo(request = {}) {
           if (destroyed || !prepared) {
@@ -17813,14 +18777,15 @@ void main() {
           }
         }
         function updateViewport(command = {}) {
-          if (!inputEnabled || !currentSession) return { accepted: false, reason: "input-disabled" };
+          const viewportSession = inputEnabled ? currentSession : passiveDisplaySession;
+          if (!viewportSession) return { accepted: false, reason: "input-disabled" };
           const revision = Number(command.revision);
           const rect = command.canvasRect;
           if (!Number.isInteger(revision) || revision < 0 || !rect || finiteNumber(rect.width) <= 0 || finiteNumber(rect.height) <= 0) {
             return { accepted: false, reason: "invalid-viewport" };
           }
-          const pendingRevision = deferredViewport?.command?.revision ?? -1;
-          if (revision <= Math.max(currentSession.viewportRevision, pendingRevision)) {
+          const pendingRevision = inputEnabled ? deferredViewport?.command?.revision ?? -1 : -1;
+          if (revision <= Math.max(viewportSession.viewportRevision, pendingRevision)) {
             return { accepted: false, reason: "stale-viewport" };
           }
           const normalizedCommand = {
@@ -17833,6 +18798,13 @@ void main() {
             },
             ...normalizeViewportTransform(command)
           };
+          if (!inputEnabled) {
+            passiveDisplaySession.canvasRect = { ...normalizedCommand.canvasRect };
+            passiveDisplaySession.viewportTransform = normalizeViewportTransform(normalizedCommand);
+            passiveDisplaySession.viewportRevision = revision;
+            applyViewport(passiveDisplaySession);
+            return { accepted: true, revision };
+          }
           if (activeLasso || selectGesture || transformStart !== null) {
             deferredViewport = {
               sessionId: currentSession.sessionId,
@@ -17873,12 +18845,26 @@ void main() {
           if (!DRAWING_ACTIONS.has(action)) {
             return { applied: false, reason: "invalid-action" };
           }
+          const hasExplicitTarget = command.targetFrame !== void 0;
+          const targetFrame = hasExplicitTarget ? Number(command.targetFrame) : activeFrameState.targetFrame;
+          if (!Number.isSafeInteger(targetFrame) || targetFrame < 0) {
+            return { applied: false, reason: "invalid-action-target" };
+          }
           if (!actionDeduper.accept(command.actionId)) {
             metrics.recordDuplicateAction();
             return { applied: false, duplicate: true };
           }
+          const retargeted = hasExplicitTarget ? retargetFrameForMutation(targetFrame) : retargetArmedFrameForMutation();
+          if (!retargeted?.accepted) {
+            actionDeduper.release?.(command.actionId);
+            return { applied: false, reason: retargeted?.reason || "retarget-failed" };
+          }
           if (pendingLassoSelection) {
-            if (action === "delete-selection") return commitPendingLassoDelete();
+            if (action === "delete-selection") {
+              const result2 = commitPendingLassoDelete();
+              settleArmedFramePreview();
+              return result2;
+            }
             abortPendingLassoSelection();
           }
           if ((action === "undo" || action === "redo") && (selectGesture || transformStart)) {
@@ -17893,6 +18879,7 @@ void main() {
               sceneStore.selectObjects([]);
               setToolMode(currentSession?.tool || "brush");
               updateObjectMetric();
+              settleArmedFramePreview();
               return result;
             }
             const deletedIds = new Set(result.deletedIds);
@@ -17904,6 +18891,7 @@ void main() {
             fabricCanvas.requestRenderAll();
             updateObjectMetric();
           }
+          settleArmedFramePreview();
           return result;
         }
         function getDrawingV3Diagnostics() {
@@ -17929,10 +18917,19 @@ void main() {
             inputEnabled,
             devicePixelRatio,
             tokens: { ...tokenState },
+            presentationRevision: presentationState.presentationRevision,
+            presentedStableVideoIdentity: currentSession?.stableVideoIdentity ?? presentationState.stableVideoIdentity,
+            presentedStoreRevision: presentationState.storeRevision,
+            presentedTargetFrame: currentSession?.targetFrame ?? presentationState.targetFrame,
+            presentedSourceFrame: currentSession ? currentSession.sourceFrame : presentationState.sourceFrame,
+            activeFrameRevision: activeFrameState.frameRevision,
+            armedTargetFrame: activeFrameState.targetFrame,
+            armedSourceFrame: activeFrameState.sourceFrame,
+            provisional: scene.provisional === true,
             activeSessionId: scene.activeSessionId,
             activeSceneKey: scene.activeSceneKey,
             targetFrame: currentSession?.targetFrame ?? null,
-            viewportRevision: currentSession?.viewportRevision ?? null,
+            viewportRevision: currentSession?.viewportRevision ?? passiveDisplaySession?.viewportRevision ?? null,
             tool: scene.tool,
             selectionTarget,
             selectionShape,
@@ -17988,6 +18985,9 @@ void main() {
           prepare,
           setDrawingInput,
           hydrateDrawingVideo,
+          presentDrawingFrame,
+          updateDrawingFrame,
+          confirmDrawingPointerdownFrame,
           exportDrawingVideo,
           updateDrawingTool,
           updateViewport,

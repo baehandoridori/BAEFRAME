@@ -105,6 +105,8 @@ export class Timeline extends EventTarget {
     this.dragGhostItems = [];
     this.dragSourceElements = [];
     this.dragGhostKeyframes = [];
+    this._drawingLayerRenderRevision = 0;
+    this.dragDrawingLayerRenderRevision = null;
 
     // 다중 선택 상태
     this.selectedKeyframes = [];  // [ { layerId, frame } ]
@@ -1434,6 +1436,7 @@ export class Timeline extends EventTarget {
   renderDrawingLayers(layers, activeLayerId) {
     if (!this.tracksContainer || !this.layerHeaders) return;
 
+    this._drawingLayerRenderRevision += 1;
     this._lastDrawingLayers = layers;
     this._lastDrawingActiveLayerId = activeLayerId;
 
@@ -1736,6 +1739,7 @@ export class Timeline extends EventTarget {
    * 키프레임 드래그 시작
    */
   _startKeyframeDrag(e, layerId, frame, clipElement) {
+    if (!this._isKeyframeLayerMovable(layerId, frame)) return;
     this.isDraggingKeyframe = true;
     this.draggedKeyframe = { layerId, frame, element: clipElement };
     this.dragStartX = e.clientX;
@@ -1748,6 +1752,8 @@ export class Timeline extends EventTarget {
     if (!isSelected && !e.ctrlKey && !e.metaKey) {
       this._selectKeyframe(layerId, frame, false);
     }
+
+    this.dragDrawingLayerRenderRevision = this._drawingLayerRenderRevision;
 
     // 고스트 요소 생성
     this._createDragGhost(e, frame);
@@ -1801,6 +1807,8 @@ export class Timeline extends EventTarget {
 
     const targetFrame = parseInt(this.dragGhost?.dataset.targetFrame || this.dragStartFrame);
     const frameDelta = targetFrame - this.dragStartFrame;
+    const isCurrentDrawingLayerRender =
+      this.dragDrawingLayerRenderRevision === this._drawingLayerRenderRevision;
 
     // 원본 키프레임 투명도 복원
     this.dragSourceElements.forEach(element => {
@@ -1824,18 +1832,21 @@ export class Timeline extends EventTarget {
     document.body.style.cursor = 'default';
 
     // 이동량이 있으면 이벤트 발생
-    if (frameDelta !== 0) {
+    if (frameDelta !== 0 && isCurrentDrawingLayerRender) {
       // 선택된 모든 키프레임 이동
-      const keyframesToMove = this.dragGhostKeyframes.map(kf => ({
-        layerId: kf.layerId,
-        fromFrame: kf.frame,
-        toFrame: kf.frame + frameDelta
-      }));
-      const selectionAnchor = this.draggedKeyframe
-        ? {
-          layerId: this.draggedKeyframe.layerId,
-          frame: this.draggedKeyframe.frame + frameDelta
-        }
+      const keyframesToMove = this.dragGhostKeyframes
+        .filter(kf => this._isKeyframeLayerMovable(kf.layerId, kf.frame))
+        .map(kf => ({
+          layerId: kf.layerId,
+          fromFrame: kf.frame,
+          toFrame: kf.frame + frameDelta
+        }));
+      const anchorMove = keyframesToMove.find(keyframe =>
+        keyframe.layerId === this.draggedKeyframe?.layerId &&
+        keyframe.fromFrame === this.draggedKeyframe?.frame
+      );
+      const selectionAnchor = anchorMove
+        ? { layerId: anchorMove.layerId, frame: anchorMove.toFrame }
         : null;
 
       if (keyframesToMove.length > 0) {
@@ -1846,6 +1857,7 @@ export class Timeline extends EventTarget {
 
     this.dragGhostKeyframes = [];
     this.draggedKeyframe = null;
+    this.dragDrawingLayerRenderRevision = null;
   }
 
   /**
@@ -1918,13 +1930,24 @@ export class Timeline extends EventTarget {
     const keyframes = isDraggedKeyframeSelected && this.selectedKeyframes.length > 0
       ? this.selectedKeyframes.map(keyframe => ({ ...keyframe }))
       : [{ layerId, frame }];
-    return keyframes.filter(keyframe => this._isKeyframeLayerMovable(keyframe.layerId));
+    return keyframes.filter(keyframe =>
+      this._isKeyframeLayerMovable(keyframe.layerId, keyframe.frame)
+    );
   }
 
-  _isKeyframeLayerMovable(layerId) {
-    if (!Array.isArray(this._lastDrawingLayers)) return true;
+  _isKeyframeLayerMovable(layerId, frame = null) {
+    if (!Array.isArray(this._lastDrawingLayers)) return false;
     const layer = this._lastDrawingLayers.find(item => item.id === layerId);
-    return layer?.locked !== true;
+    if (!layer) return false;
+    const hasFrame = frame !== null &&
+      frame !== undefined &&
+      Number.isFinite(Number(frame));
+    if (hasFrame &&
+        (!Array.isArray(layer.keyframes) ||
+         !layer.keyframes.some(keyframe => Number(keyframe?.frame) === Number(frame)))) {
+      return false;
+    }
+    return layer.locked !== true || layer.timelineKeyframesMovable === true;
   }
 
   _clampKeyframeDragDelta(frameDelta) {
