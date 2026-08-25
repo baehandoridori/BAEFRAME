@@ -12040,6 +12040,116 @@ test('a coalesced pending move cannot exceed the existing pointer event buffer l
   runtime.destroy();
 });
 
+test('implicit capture loss after buffered pointerup preserves the fenced pending gesture', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1909,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 9999,
+    pointerType: 'pen'
+  });
+  pointerTarget.dispatch('pointerup', {
+    pointerId: 1909,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 0,
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.7
+  });
+  pointerTarget.capturedPointerIds.delete(1909);
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 1909,
+    pointerType: 'pen'
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    sessionId: 'wrong-session',
+    targetFrame: 10
+  }).accepted, false);
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, true);
+  const stroke = runtime.exportDrawingVideo(makePersistenceExport())
+    .snapshot.scenes[0].objects[0];
+  assert.deepEqual(
+    stroke.sourcePoints.map(({ x, y, pressure }) => ({ x, y, pressure })),
+    [
+      { x: 20, y: 40, pressure: 0.3 },
+      { x: 60, y: 80, pressure: 0.7 }
+    ]
+  );
+  runtime.destroy();
+});
+
+test('capture loss before any buffered pointerup still cancels the pending gesture', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 0, objects: []
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  const { runtime, canvas } = harness;
+  const pointerTarget = canvas.upperCanvasEl;
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  pointerTarget.dispatch('pointerdown', {
+    pointerId: 1910,
+    pointerType: 'pen',
+    button: 0,
+    buttons: 1,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.3
+  });
+  pointerTarget.capturedPointerIds.delete(1910);
+  pointerTarget.dispatch('lostpointercapture', {
+    pointerId: 1910,
+    pointerType: 'pen'
+  });
+
+  assert.equal(runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0],
+    targetFrame: 10
+  }).accepted, false);
+  assert.equal(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes[0].objects.length,
+    0
+  );
+  runtime.destroy();
+});
+
 test('a fenced negative pointerdown acknowledgement releases input while stale cancel leaves the next gesture intact', () => {
   const pointerdownRequests = [];
   const source = makeHistoryStroke('pointerdown-cancel-source');

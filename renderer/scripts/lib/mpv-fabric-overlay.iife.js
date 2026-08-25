@@ -17985,6 +17985,9 @@ void main() {
         function onPointerCancel(event) {
           if (pendingPointerdownFrame) {
             if (event.pointerId !== void 0 && event.pointerId !== pendingPointerdownFrame.pointerId) return;
+            if (event.type === "lostpointercapture" && pendingPointerdownFrame.events.some((pendingEvent) => pendingEvent.type === "pointerup")) {
+              return;
+            }
             event.preventDefault?.();
             event.stopImmediatePropagation?.();
             cancelPendingPointerdownFrame();

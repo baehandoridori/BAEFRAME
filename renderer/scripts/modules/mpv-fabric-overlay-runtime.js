@@ -5586,6 +5586,10 @@ function createFabricOverlayRuntime(options = {}) {
     if (pendingPointerdownFrame) {
       if (event.pointerId !== undefined &&
           event.pointerId !== pendingPointerdownFrame.pointerId) return;
+      if (event.type === 'lostpointercapture' &&
+          pendingPointerdownFrame.events.some(pendingEvent => pendingEvent.type === 'pointerup')) {
+        return;
+      }
       event.preventDefault?.();
       event.stopImmediatePropagation?.();
       cancelPendingPointerdownFrame();
