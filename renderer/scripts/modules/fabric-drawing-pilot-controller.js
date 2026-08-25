@@ -2089,8 +2089,16 @@ export function createFabricDrawingPilotController(options = {}) {
     }
 
     lastError = null;
-    pushActiveFrameObservation(session.targetFrame);
     setState('active');
+    const acceptedTargetFrame = Math.max(
+      0,
+      Math.trunc(Number(contextSnapshot().targetFrame) || 0)
+    );
+    if (acceptedTargetFrame === session.targetFrame) {
+      recordActiveFrameObservation(acceptedTargetFrame);
+    } else {
+      runDetached(syncActiveDrawingFrame(acceptedTargetFrame, { force: true }));
+    }
     if (desiredTool !== session.tool) {
       await sendTool(desiredTool);
     }

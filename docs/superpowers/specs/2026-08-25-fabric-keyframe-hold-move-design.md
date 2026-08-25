@@ -46,6 +46,7 @@ controller는 passive 표시 요청과 active 프레임 후보 요청을 각각 
 - passive controller는 host/runtime가 허용하는 표시 전용 exact-key DTO만 전송하며 공통 protocol envelope를 섞지 않는다.
 - passive 표시 요청은 영상 원본 크기, 캔버스 영역, zoom/pan 정보를 함께 보내 fresh host와 B-off resize에서도 같은 좌표를 유지한다.
 - B active 재생 중 runtime은 자기 최신 committed scene으로 hold source를 찾아 읽기 전용 미리보기만 갱신한다. 이 프레임 알림만으로 keyframe·transition·provisional scene을 만들지 않는다.
+- B-on input 승인이 비동기로 지연되면 승인 시점의 live playhead를 다시 샘플한다. 진입 때 캡처한 frame과 달라졌으면 active observation과 runtime preview를 forced frame sync로 즉시 맞춘다.
 - 실제 pointerdown 또는 mutation action 직전에 최신 후보 프레임으로 copy-on-write 전환한다. 한 획이 진행되는 동안 들어온 다음 프레임은 보류해 획 전체를 pointerdown 프레임에 고정하고, 다음 입력부터 최신 프레임을 사용한다.
 - B를 끄거나 수화·영상 전환이 끝나 passive가 되면 현재 playhead를 다시 동기화한다.
 - passive 장면 렌더가 현재 요청으로 승인되면 overlay host는 `moveTop()` 뒤 Chromium 합성을 무효화한다. stale·reject·실패 응답은 창 순서를 바꾸지 않는다.
@@ -114,7 +115,8 @@ synthetic 행은 레이어 잠금 상태를 유지하되 `timelineKeyframesMovab
 11. history 순서: 이동 tail 중 Undo 대기, 이동 뒤 외부 push FIFO, owner 상실 시 대기 action 보존, 진행 중 global Undo와 inverse 이동의 store commit 차단.
 12. playback hot path: held source frame 해석이 object payload를 clone하지 않고 exact/hold/empty-break를 보존한다.
 13. passive IPC deadline: 미응답 요청 뒤 최신 trailing이 진행되고, 늦은 응답·자동 retry가 현재 표시를 덮지 않는다.
-14. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
+14. delayed B-on: input 승인 전 playhead가 이동하면 첫 pointerdown과 runtime preview가 승인 시점 live frame을 사용한다.
+15. 회귀: B toggle z-order, mpv runtime/host, HTML5 legacy, playlist/cutlist, 전체 테스트.
 
 ## 릴리스
 

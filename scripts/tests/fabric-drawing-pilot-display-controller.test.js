@@ -657,6 +657,49 @@ test('pointerdown handshake confirms the current renderer frame and drops a stal
   });
 });
 
+test('B-on activation samples the live frame after a delayed input acknowledgement', async () => {
+  const enableGate = deferred();
+  const harness = createHarness({
+    context: { targetFrame: 10 },
+    onInput(request) {
+      if (request.enabled === true) return enableGate.promise;
+      return { success: true, accepted: true, enabled: false };
+    }
+  });
+  await preparePassive(harness);
+
+  const enabling = harness.controller.toggle();
+  await new Promise(resolve => setImmediate(resolve));
+  const enableRequest = harness.calls.input.at(-1);
+  assert.equal(enableRequest.enabled, true);
+
+  harness.setWallTime(200);
+  harness.setContext({ targetFrame: 20 });
+  assert.equal(await harness.controller.syncDisplayFrame(20), false);
+
+  enableGate.resolve({ success: true, accepted: true, enabled: true });
+  assert.equal(await enabling, true);
+  assert.deepEqual(
+    harness.calls.frame.map(request => request.targetFrame),
+    [20],
+    'the accepted runtime session must immediately preview the live frame'
+  );
+
+  const pointerdown = {
+    hostGeneration: enableRequest.hostGeneration,
+    videoGeneration: enableRequest.videoGeneration,
+    inputRevision: enableRequest.inputRevision,
+    sessionId: enableRequest.session.sessionId,
+    pointerdownId: 'pointerdown-after-delayed-enable',
+    pointerdownAt: 200
+  };
+  assert.equal(await harness.emitPointerdownFrame(pointerdown), true);
+  assert.deepEqual(harness.calls.pointerdownConfirm.at(-1), {
+    ...pointerdown,
+    targetFrame: 20
+  });
+});
+
 for (const failure of ['rejected', 'timeout', 'throw']) {
   test(`pointerdown ${failure} sends a fenced negative acknowledgement`, async () => {
     const harness = createHarness({
