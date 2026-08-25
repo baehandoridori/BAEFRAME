@@ -1870,7 +1870,7 @@ test('injects and prepares Fabric once per host generation before enabling nativ
   assert.equal(getReadCount(), 1);
 });
 
-test('successful drawing activation repaints before pointer input without z-order churn', async () => {
+test('successful drawing activation repaints and restores the overlay above the video host', async () => {
   const { host, events } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
   const { hostGeneration } = ensured.drawingCapability;
@@ -1902,6 +1902,7 @@ test('successful drawing activation repaints before pointer input without z-orde
     name === 'setFocusable' && value === true);
   const nativeEnableIndex = events.findIndex(([name, value]) =>
     name === 'setIgnoreMouseEvents' && value === false);
+  const moveTopIndex = events.findIndex(([name]) => name === 'moveTop');
   assert.ok(runtimeEnableIndex >= 0);
   assert.ok(
     repaintIndex > runtimeEnableIndex,
@@ -1912,18 +1913,17 @@ test('successful drawing activation repaints before pointer input without z-orde
     'pointer activation must wait until the visible toolbar repaint is scheduled'
   );
   assert.ok(nativeEnableIndex > focusableEnableIndex);
-  assert.equal(
-    events.filter(([name]) => name === 'moveTop').length,
-    0,
-    'toggling drawing input must not restack the native window or reintroduce flicker'
+  assert.ok(
+    moveTopIndex > nativeEnableIndex,
+    'B-on must restore the overlay above the sibling mpv video host after native flags change'
   );
   const repaintIndices = events
     .map(([name], index) => (name === 'webContents.invalidate' ? index : -1))
     .filter(index => index >= 0);
   assert.ok(repaintIndices.length >= 2, '활성화 시퀀스는 강제 재합성을 두 번 이상 예약해야 한다');
   assert.ok(
-    repaintIndices[repaintIndices.length - 1] > nativeEnableIndex,
-    '네이티브 플래그 확정 뒤에도 재합성이 한 번 더 강제되어야 한다'
+    repaintIndices[repaintIndices.length - 1] > moveTopIndex,
+    '창 순서 복원 뒤에도 재합성이 한 번 더 강제되어야 한다'
   );
 });
 
@@ -1993,9 +1993,28 @@ test('relays keyboard input through the focused main renderer and restores main 
   const mainFocusIndex = events.findIndex(([name]) => name === 'mainWindow.focus');
   const focusableDisableIndex = events.findIndex(([name, value]) =>
     name === 'setFocusable' && value === false);
+  const runtimeDisableIndex = events.findIndex(([name, value]) =>
+    name === 'executeJavaScript' &&
+    value.includes?.('.setDrawingInput(') &&
+    value.includes('"enabled":false'));
+  const moveTopAfterRuntimeDisableIndex = events.findIndex(
+    ([name], index) => name === 'moveTop' && index > runtimeDisableIndex
+  );
+  const repaintAfterRuntimeDisableIndex = events.findIndex(
+    ([name], index) => name === 'webContents.invalidate' && index > runtimeDisableIndex
+  );
   assert.ok(ignoreIndex >= 0);
   assert.ok(focusableDisableIndex > ignoreIndex);
   assert.ok(mainFocusIndex > focusableDisableIndex);
+  assert.ok(runtimeDisableIndex > focusableDisableIndex);
+  assert.ok(
+    moveTopAfterRuntimeDisableIndex > runtimeDisableIndex,
+    'B-off must restore the passive drawing overlay above the sibling mpv video host'
+  );
+  assert.ok(
+    repaintAfterRuntimeDisableIndex > moveTopAfterRuntimeDisableIndex,
+    'B-off must present the Fabric repaint after restoring the native window order'
+  );
 });
 
 test('V Delete Space and repeat relay keep the active drawing overlay focused', async () => {
@@ -3242,6 +3261,12 @@ test('a later disable keeps click-through when an older enable finishes late', a
     executeDrawing(script) {
       if (!script.includes('.setDrawingInput(')) return undefined;
       const request = readFabricMethodPayload(script, 'setDrawingInput');
+      const duplicateDisable = !request.enabled && runtimeRequests.some(previous => (
+        !previous.enabled &&
+        previous.hostGeneration === request.hostGeneration &&
+        previous.videoGeneration === request.videoGeneration &&
+        previous.inputRevision === request.inputRevision
+      ));
       runtimeRequests.push(request);
       if (request.enabled) {
         return lateEnable.promise.then((result) => {
@@ -3250,7 +3275,7 @@ test('a later disable keeps click-through when an older enable finishes late', a
         });
       }
       runtimeEnabled = false;
-      return { accepted: true, enabled: false };
+      return { accepted: !duplicateDisable, enabled: false };
     }
   });
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
@@ -3294,6 +3319,30 @@ test('a later disable keeps click-through when an older enable finishes late', a
     inputRevision: 3,
     enabled: false
   });
+  const compensationDisableIndex = events
+    .map(([name, value], index) => (
+      name === 'executeJavaScript' &&
+      value.includes?.('.setDrawingInput(') &&
+      value.includes('"enabled":false')
+        ? index
+        : -1
+    ))
+    .filter(index => index >= 0)
+    .at(-1);
+  const compensationMoveTopIndex = events.findIndex(
+    ([name], index) => name === 'moveTop' && index > compensationDisableIndex
+  );
+  const compensationRepaintIndex = events.findIndex(
+    ([name], index) => name === 'webContents.invalidate' && index > compensationMoveTopIndex
+  );
+  assert.ok(
+    compensationMoveTopIndex > compensationDisableIndex,
+    'stale enable compensation must restore the passive overlay above the video host'
+  );
+  assert.ok(
+    compensationRepaintIndex > compensationMoveTopIndex,
+    'stale enable compensation must repaint after restoring the native window order'
+  );
 });
 
 test('revalidates desired input tokens after Fabric preparation before invoking the runtime', async () => {

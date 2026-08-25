@@ -271,10 +271,18 @@ function validateDiagnostics(raw) {
   }
 
   for (const field of HOST_LIFECYCLE_FIELDS) {
+    if (field === 'moveTop') continue;
     const delta = after.host[field] - before.host[field];
     if (delta !== 0) {
       violations.push(`host lifecycle changed: ${field} delta ${delta}`);
     }
+  }
+  const moveTopDelta = after.host.moveTop - before.host.moveTop;
+  const expectedMoveTopDelta = Math.max(0, toggleCount - 1);
+  if (moveTopDelta !== expectedMoveTopDelta) {
+    violations.push(
+      `overlay restack delta must match prepared input transitions; expected ${expectedMoveTopDelta}, received ${moveTopDelta}`
+    );
   }
   if (after.host.construct < 1) {
     violations.push('host was not constructed before the lifecycle baseline');

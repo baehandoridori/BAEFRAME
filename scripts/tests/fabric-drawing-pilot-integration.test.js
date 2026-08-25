@@ -660,6 +660,7 @@ function makeValidRawDiagnostics() {
   const after = structuredClone(before);
   after.controller.inputRevision = 101;
   after.counters.toggleCount = 100;
+  after.host.moveTop = before.host.moveTop + 99;
 
   return {
     before,
@@ -718,7 +719,7 @@ test('controller history shortcuts round-trip a real Fabric stroke without persi
   assert.equal(harness.runtime.getDiagnostics().lastError, null);
 });
 
-test('synthetic controller/runtime boundary preserves no-save, playback, owner, media, and timeline canaries', async (t) => {
+test('synthetic controller/runtime boundary restores native stack order and preserves all other canaries', async (t) => {
   const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'baeframe-fabric-drawing-'));
   t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
   const bframePath = path.join(tempDir, 'integration-evidence.bframe');
@@ -755,7 +756,10 @@ test('synthetic controller/runtime boundary preserves no-save, playback, owner, 
   const hostAfter = hostHarness.snapshot();
   assert.equal(hostHarness.windows.length, 1);
   assert.equal(hostHarness.host.window, hostWindow);
-  assert.deepEqual(hostAfter, hostBefore);
+  assert.deepEqual(hostAfter, {
+    ...hostBefore,
+    moveTop: hostBefore.moveTop + 99
+  });
 
   const shadowObserver = createThrowingDrawingV3Observer();
   const harness = createRuntimeControllerHarness({
@@ -936,6 +940,13 @@ test('validator rejects playback, save, host, file, owner, media, timeline, cont
       /host/i,
       (raw) => {
         raw.after.host.construct += 1;
+      }
+    ],
+    [
+      'overlay restack count',
+      /restack/i,
+      (raw) => {
+        raw.after.host.moveTop -= 1;
       }
     ],
     [
