@@ -800,3 +800,50 @@ test('a malformed main is restored from valid .bak through the store transaction
     assert.notEqual(sidecar.state, 'prepared');
   }
 });
+
+test('a malformed target defers the save instead of throwing out of the lock', async t => {
+  const {
+    createReviewFileStore,
+    createReviewVersionToken
+  } = require(reviewFileStorePath);
+  const { filePath } = await createReviewFixture(t, {
+    reviewDocumentId: 'malformed-save-defer',
+    revision: 1
+  });
+  const malformedContent = '{"reviewDocumentId":"malformed-save-defer"';
+  await fsp.writeFile(filePath, malformedContent, 'utf8');
+  const store = createReviewFileStore({ renameRetryDelaysMs: [0] });
+
+  const result = await saveResultWithoutThrow(store.saveReviewFile(
+    filePath,
+    { reviewDocumentId: 'malformed-save-defer', revision: 2 },
+    { expectedVersionToken: createReviewVersionToken(malformedContent) }
+  ));
+
+  assert.equal(result?.thrownError, undefined);
+  assert.equal(result?.success, false);
+  assert.equal(result?.retryable, true);
+  assert.equal(result?.reason, 'malformed-target');
+  assert.equal(await fsp.readFile(filePath, 'utf8'), malformedContent);
+});
+
+test('a malformed target with failIfExists reports exists without parsing', async t => {
+  const { createReviewFileStore } = require(reviewFileStorePath);
+  const { filePath } = await createReviewFixture(t, {
+    reviewDocumentId: 'malformed-first-create',
+    revision: 1
+  });
+  const malformedContent = '{"reviewDocumentId":"malformed-first-create"';
+  await fsp.writeFile(filePath, malformedContent, 'utf8');
+  const store = createReviewFileStore({ renameRetryDelaysMs: [0] });
+
+  const result = await saveResultWithoutThrow(store.saveReviewFile(
+    filePath,
+    { reviewDocumentId: 'malformed-first-create', revision: 2 },
+    { failIfExists: true }
+  ));
+
+  assert.equal(result?.thrownError, undefined);
+  assert.deepEqual(result, { success: false, exists: true });
+  assert.equal(await fsp.readFile(filePath, 'utf8'), malformedContent);
+});
