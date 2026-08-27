@@ -1187,12 +1187,16 @@ test('synthetic controller/runtime boundary restores native stack order and pres
     assert.equal(harness.runtime.getDiagnostics().objectCount, 0);
 
     const toolbar = harness.root.children[0].children[1];
-    const brushButton = toolbar.children.find(
-      (child) => child.dataset.fabricPilotAction === 'brush'
-    );
-    const clearButton = toolbar.children.find(
-      (child) => child.dataset.fabricPilotAction === 'clear-session'
-    );
+    const findPaletteControl = (node, action) => {
+      if (node?.dataset?.fabricPilotAction === action) return node;
+      for (const child of node?.children || []) {
+        const found = findPaletteControl(child, action);
+        if (found) return found;
+      }
+      return null;
+    };
+    const brushButton = findPaletteControl(toolbar, 'brush');
+    const clearButton = findPaletteControl(toolbar, 'clear-session');
     brushButton.dispatch('click');
     drawStroke(canvas.upperCanvasEl, 2);
     assert.equal(harness.runtime.getDiagnostics().objectCount, 1);
