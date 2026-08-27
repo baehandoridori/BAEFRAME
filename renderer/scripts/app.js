@@ -10571,6 +10571,8 @@ async function initApp() {
       ownsDrawingShortcut
     );
     const active = nextState === 'active';
+    // 파일럿이 활성 진입에 성공하면 이전 실패 안내 래치를 해제해 다음 실패를 다시 안내한다.
+    if (active) fabricDrawingPilotFailureToastShown = false;
     const preparing = nextState === 'preparing';
     if (!active) resetMpvOverlayCollaborationDrag();
     const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;

@@ -278,10 +278,12 @@ function validateDiagnostics(raw) {
     }
   }
   const moveTopDelta = after.host.moveTop - before.host.moveTop;
-  const expectedMoveTopDelta = Math.max(0, toggleCount - 1);
+  // (2026-08-27) 초기 미준비 disable도 focusable:false 전환을 수행하므로 restack 대상이다.
+  // 이제 모든 입력 전환이 정확히 한 번씩 overlay 순서를 복원한다.
+  const expectedMoveTopDelta = toggleCount;
   if (moveTopDelta !== expectedMoveTopDelta) {
     violations.push(
-      `overlay restack delta must match prepared input transitions; expected ${expectedMoveTopDelta}, received ${moveTopDelta}`
+      `overlay restack delta must match every input transition; expected ${expectedMoveTopDelta}, received ${moveTopDelta}`
     );
   }
   if (after.host.construct < 1) {

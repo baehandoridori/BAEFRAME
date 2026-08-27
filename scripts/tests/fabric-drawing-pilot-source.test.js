@@ -1380,3 +1380,104 @@ test('투영된 레거시 행은 읽기 전용 표식을 달고 편집 핸들러
     /return layer\.locked !== true \|\| layer\.timelineKeyframesMovable === true;/
   );
 });
+
+test('B 토글 상태기계는 정착 지점마다 예약을 소비하고 창 순서를 대칭으로 복원한다', () => {
+  const controllerSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'),
+    'utf8'
+  ));
+  const overlayHostSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'main/mpv-overlay-host.js'),
+    'utf8'
+  ));
+
+  // 예약 소비는 단일 함수로만 존재한다
+  assert.match(controllerSource, /function consumePendingResumeRequest\(/);
+  assert.match(
+    controllerSource,
+    /if \(canResume\) return startEnable\(enableContext, isStillCurrent, onInputFailure\);/
+  );
+  assert.match(controllerSource, /resumeRequested = false;\n\s+syncExplicitResumeIntent\(\);/);
+
+  // 정착 지점 1: reconcileCurrentVideo — 수화 실패 취소와 재개 소비 둘 다
+  const reconcileSource = controllerSource.match(
+    /\n  async function reconcileCurrentVideo\([\s\S]*?\n  \}\n/
+  )?.[0] || '';
+  assert.notEqual(reconcileSource, '');
+  assert.match(reconcileSource, /consumePendingResumeRequest\(\s*enableContext/);
+  // allowResume:false 호출은 settleState를 넘기지 않고, 정착은 뒤따르는 setState가 맡는다
+  assert.match(reconcileSource, /allowResume: false\n\s+\}\);\n\s+setState\('passive'\);/);
+  assert.doesNotMatch(
+    reconcileSource,
+    /if \(shouldResume \|\| resumeRequested\) \{\n\s+return startEnable\(/
+  );
+
+  // 정착 지점 2: runPersistenceSourceRefresh finally (quit 유예는 제외)
+  const refreshSource = controllerSource.match(
+    /\n  async function runPersistenceSourceRefresh\([\s\S]*?\n  \}\n/
+  )?.[0] || '';
+  assert.notEqual(refreshSource, '');
+  assert.match(
+    refreshSource,
+    /persistenceSourceRefreshInProgress = false;[\s\S]*?persistenceQuitSuspension === null &&[\s\S]*?consumePendingResumeRequest\(/
+  );
+
+  // 정착 지점 3: cancelVideoChange 롤백 복구
+  const cancelSource = controllerSource.match(
+    /\n  async function cancelVideoChange\([\s\S]*?\n  \}\n/
+  )?.[0] || '';
+  assert.notEqual(cancelSource, '');
+  assert.match(cancelSource, /consumePendingResumeRequest\(rollback\.context, isStillCurrent/);
+  assert.doesNotMatch(cancelSource, /return startEnable\(rollback\.context, isStillCurrent\);/);
+
+  // preparing 고착 해소
+  const startEnableSource = controllerSource.match(
+    /\n  async function startEnable\([\s\S]*?\n  \}\n/
+  )?.[0] || '';
+  assert.notEqual(startEnableSource, '');
+  assert.match(
+    startEnableSource,
+    /if \(!stillCurrent\) \{[\s\S]*?state === 'preparing' && currentSession\?\.sessionId === session\.sessionId[\s\S]*?setState\('passive'\);/
+  );
+
+  // B 키 경로는 toggle 이전에 상태를 선발행하지 않는다
+  const routeKeydownSource = controllerSource.match(
+    /\n  function routeKeydown\(event = \{\}\) \{[\s\S]*?\n  \}\n/
+  )?.[0] || '';
+  assert.notEqual(routeKeydownSource, '');
+  assert.match(
+    routeKeydownSource,
+    /bInputAttempted \+= 1;\n(?:\s*\/\/[^\n]*\n)*\s+runDetached\(Promise\.resolve\(toggle\(\)\)/
+  );
+
+  // 오버레이 호스트: 모든 disable 요청이 창 순서를 복원한다
+  const setDrawingInputSource = overlayHostSource.match(
+    /\n  async setDrawingInput\(\) \{[\s\S]*?\n  \}\n/
+  )?.[0] || '';
+  assert.notEqual(setDrawingInputSource, '');
+  assert.match(
+    setDrawingInputSource,
+    /if \(!request\.enabled && this\.fabricReadyGeneration !== this\.hostGeneration\) \{[\s\S]*?hostWindow\.moveTop\?\.\(\);[\s\S]*?return \{ success: true, accepted: true, enabled: false, fabricReady: false \};/
+  );
+  // runtime 준비 실패 disable도 창 순서를 복원한다 (h-2)
+  assert.match(
+    setDrawingInputSource,
+    /if \(!prepared\.success\) \{\n\s+if \(!request\.enabled\) \{[\s\S]*?hostWindow\.moveTop\?\.\(\);[\s\S]*?return \{ success: true, accepted: true, enabled: false, fabricReady: false \};/
+  );
+  assert.match(setDrawingInputSource, /if \(!request\.enabled && stillCurrent\) \{/);
+  assert.doesNotMatch(
+    setDrawingInputSource,
+    /if \(!request\.enabled && runtimeResult\?\.accepted === true && stillCurrent\) \{/
+  );
+  // restack 지점은 정확히 세 곳이다
+  assert.equal(
+    (setDrawingInputSource.match(/hostWindow\.moveTop\?\.\(\);/g) || []).length,
+    3
+  );
+
+  // 실패 안내 래치는 활성 진입에서 해제된다
+  assert.match(
+    appSource,
+    /const active = nextState === 'active';\n\s+\/\/[^\n]*\n\s+if \(active\) fabricDrawingPilotFailureToastShown = false;/
+  );
+});

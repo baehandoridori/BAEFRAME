@@ -2786,12 +2786,20 @@ class MPVOverlayHost {
     // 준비된 Fabric surface가 없다면 disable은 native click-through만 보장하면 된다.
     // 영구적인 bundle 오류 상태에서 B-off가 또 read/injection을 시작하지 않게 한다.
     if (!request.enabled && this.fabricReadyGeneration !== this.hostGeneration) {
+      // 2767-2769행에서 이미 focusable:false로 전환했으므로 sibling mpv 창이
+      // 위로 올라올 수 있다. Fabric 준비 여부와 무관하게 창 순서를 복원한다.
+      hostWindow.moveTop?.();
+      hostWindow.webContents?.invalidate?.();
       return { success: true, accepted: true, enabled: false, fabricReady: false };
     }
 
     const prepared = await this._ensureFabricRuntime();
     if (!prepared.success) {
       if (!request.enabled) {
+        // (g)와 동일 — focusable:false 전환은 이미 끝났으므로 준비 실패로 되돌아가도
+        // 창 순서는 반드시 복원한다. (j)의 restack 완전일치 계약이 이 경로를 포함한다.
+        hostWindow.moveTop?.();
+        hostWindow.webContents?.invalidate?.();
         return { success: true, accepted: true, enabled: false, fabricReady: false };
       }
       return { success: false, accepted: false, enabled: false, error: prepared.error };
@@ -2810,9 +2818,10 @@ class MPVOverlayHost {
     }
 
     const stillCurrent = this._inputRequestStillDesired(hostWindow, request);
-    if (!request.enabled && runtimeResult?.accepted === true && stillCurrent) {
+    if (!request.enabled && stillCurrent) {
       // focusable:false 전환은 Windows에서 sibling mpv 창을 위로 올릴 수 있다.
-      // passive 장면을 다시 그린 뒤 overlay의 순서를 복원하고 즉시 present한다.
+      // runtime이 passive 장면을 거부해도 focusable 전환은 이미 일어났으므로,
+      // 창 순서 복원은 승인 여부와 무관하게 disable 요청마다 대칭으로 수행한다.
       hostWindow.moveTop?.();
       hostWindow.webContents?.invalidate?.();
     }
