@@ -104,6 +104,7 @@ BAEFRAME/
 | `docs/roadmap.md` | 개발 로드맵 및 진행 상황 |
 | `docs/web-viewer.md` | 웹 뷰어 아키텍처 및 배포 |
 | `docs/collaboration.md` | 실시간 협업 시스템 |
+| `docs/drawing-keyframe-features.md` | **드로잉 키프레임 단축키·표시 대조표.** mpv(fabric 파일럿) 모드에서 어떤 키프레임 기능이 어떤 데이터를 보고 왜 안 되는지의 단일 참조. 키프레임/드로잉 레이어 단축키나 타임라인 표시를 건드리기 전에 반드시 먼저 읽을 것 |
 | `docs/integration.md` | Windows 통합 가이드 |
 
 ---

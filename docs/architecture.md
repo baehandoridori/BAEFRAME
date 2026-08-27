@@ -533,6 +533,8 @@ graph TB
 
 ## 11. 드로잉 스택 현황과 소유권 규칙
 
+> 키프레임 단축키·타임라인 표시가 mpv 모드에서 어떤 데이터를 보고 왜 동작하지 않는지는 **[`drawing-keyframe-features.md`](drawing-keyframe-features.md)** 의 대조표를 먼저 볼 것. 매번 코드를 다시 뒤지지 않기 위한 단일 참조다.
+
 ### 11.1 드로잉 스택 2벌
 
 BAEFRAME에는 드로잉 엔진이 두 벌 존재합니다.
