@@ -13977,3 +13977,63 @@ test('Alt/Ctrl 제스처는 select 도구와 pointerdown 프레임 확정 왕복
   });
   assert.equal(replayRuntime.getDiagnostics().gestures.ctrlStrokeEraseActive, false);
 });
+
+test('전역 modifier 래치가 stuck이어도 마우스 브러시 입력은 획을 그린다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    // Ctrl keydown 만 도착하고 keyup 을 놓친 상태를 만든다 —
+    // 오버레이는 별도 창이라 호스트가 키를 가로채거나 포커스가 옮겨가면 실제로 발생한다.
+    const keydown = new harness.environment.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(keydown, 'key', { value: 'Control' });
+    harness.environment.document.dispatchEvent(keydown);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierCtrl, true);
+
+    // 마우스로 그리면 이벤트의 ctrlKey(false)를 신뢰해 정상적으로 획이 생겨야 한다.
+    harness.drawStrokeAt(60, 970);
+    const afterDraw = harness.runtime.getDiagnostics();
+    assert.equal(afterDraw.objectCount, 1, '래치가 stuck이어도 브러시는 획을 그린다');
+    assert.equal(afterDraw.gestures.ctrlStrokeEraseActive, false);
+    // 마우스 이벤트가 래치를 자가 복구시킨다
+    assert.equal(afterDraw.gestures.modifierCtrl, false, '마우스 입력이 stuck 래치를 되돌린다');
+
+    // Alt 래치도 같은 규칙이다
+    const altDown = new harness.environment.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(altDown, 'key', { value: 'Alt' });
+    harness.environment.document.dispatchEvent(altDown);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierAlt, true);
+    harness.drawStrokeAt(120, 971);
+    const afterAlt = harness.runtime.getDiagnostics();
+    assert.equal(afterAlt.objectCount, 2, '래치가 stuck이어도 Alt가 브러시를 가로채지 않는다');
+    assert.equal(afterAlt.gestures.altSizeAdjustActive, false);
+    assert.equal(afterAlt.gestures.modifierAlt, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('펜 입력은 modifier가 비어 와도 전역 래치를 계속 신뢰한다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const keydown = new harness.environment.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(keydown, 'key', { value: 'Control' });
+    harness.environment.document.dispatchEvent(keydown);
+
+    harness.drawStrokeAt(60, 980);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 1);
+    // 위 drawStrokeAt은 마우스라 래치를 지웠으므로 다시 세운다
+    harness.environment.document.dispatchEvent(keydown);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierCtrl, true);
+
+    // 펜은 ctrlKey를 비워 보내므로 래치로 지우개를 연다
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, 981, 1,
+      { pointerType: 'pen', ctrlKey: false });
+    assert.equal(harness.runtime.getDiagnostics().gestures.ctrlStrokeEraseActive, true);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, 981, 1,
+      { pointerType: 'pen', ctrlKey: false });
+    assert.equal(harness.runtime.getDiagnostics().gestures.strokeEraseCandidateCount, 1);
+    harness.dispatchCapturedPointerUp(60, 60, 981);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 0);
+  } finally {
+    await harness.destroy();
+  }
+});

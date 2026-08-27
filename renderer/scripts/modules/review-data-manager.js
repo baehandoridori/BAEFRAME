@@ -45,7 +45,10 @@ const TRANSIENT_SAVE_FAILURE_MESSAGES = Object.freeze([
 ]);
 
 // 원본 보호를 위해 재시도해서는 안 되는 영구 차단 사유.
+// 'fabric-drawing-blocked'는 컨트롤러의 저장 차단 래치다 — 재수화·영상 전환 전까지
+// 회수가 영구히 실패하므로 재시도가 성공할 수 없다(2026-08-27 무한 토스트 회귀).
 const BLOCKING_SAVE_FAILURE_REASONS = new Set([
+  'fabric-drawing-blocked',
   'invalid-review-document-id',
   'review-document-id-missing',
   'review-document-id-mismatch',

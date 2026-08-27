@@ -17913,10 +17913,19 @@ void main() {
           }
         }
         function isAltActive(event) {
-          return event?.altKey === true || overlayModifierState.alt === true;
+          if (event?.altKey === true) return true;
+          if (event?.pointerType === "mouse") return false;
+          return overlayModifierState.alt === true;
         }
         function isCtrlActive(event) {
-          return event?.ctrlKey === true || overlayModifierState.ctrl === true;
+          if (event?.ctrlKey === true) return true;
+          if (event?.pointerType === "mouse") return false;
+          return overlayModifierState.ctrl === true;
+        }
+        function syncOverlayModifierStateFromPointer(event) {
+          if (event?.pointerType !== "mouse") return;
+          if (event.altKey !== true) overlayModifierState.alt = false;
+          if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
         }
         function resetOverlayModifierState() {
           overlayModifierState.alt = false;
@@ -18437,6 +18446,7 @@ void main() {
           return false;
         }
         function onPointerDown(event) {
+          syncOverlayModifierStateFromPointer(event);
           if (event?.[REPLAYED_POINTERDOWN] === true) {
             beginPointerDown(event, false);
             return;
