@@ -5730,6 +5730,299 @@
     }
   });
 
+  // renderer/scripts/modules/mpv-fabric-toolbar.js
+  var require_mpv_fabric_toolbar = __commonJS({
+    "renderer/scripts/modules/mpv-fabric-toolbar.js"(exports, module) {
+      "use strict";
+      var PALETTE_STORAGE_KEY = "baeframe.mpvFabricPalette.v1";
+      var PALETTE_MARGIN = 12;
+      var PALETTE_FALLBACK_WIDTH = 220;
+      var PALETTE_FALLBACK_HEIGHT = 120;
+      var DEFAULT_PALETTE_STATE = Object.freeze({
+        left: PALETTE_MARGIN,
+        top: PALETTE_MARGIN,
+        collapsed: false
+      });
+      var DRAG_HANDLE_SVG = '<svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor" aria-hidden="true"><circle cx="9" cy="5" r="1.5"/><circle cx="15" cy="5" r="1.5"/><circle cx="9" cy="12" r="1.5"/><circle cx="15" cy="12" r="1.5"/><circle cx="9" cy="19" r="1.5"/><circle cx="15" cy="19" r="1.5"/></svg>';
+      var COLLAPSE_ICON_SVG = '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><polyline points="6 9 12 15 18 9"/></svg>';
+      var memoryPaletteStates = /* @__PURE__ */ new WeakMap();
+      var detachedPaletteState = { ...DEFAULT_PALETTE_STATE };
+      function finitePaletteNumber(value, fallback) {
+        const parsed = Number(value);
+        return Number.isFinite(parsed) ? parsed : fallback;
+      }
+      function normalizePaletteState(value) {
+        if (!value || typeof value !== "object") return { ...DEFAULT_PALETTE_STATE };
+        return {
+          left: finitePaletteNumber(value.left, DEFAULT_PALETTE_STATE.left),
+          top: finitePaletteNumber(value.top, DEFAULT_PALETTE_STATE.top),
+          collapsed: value.collapsed === true
+        };
+      }
+      function readMemoryPaletteState(windowRef) {
+        if (!windowRef || typeof windowRef !== "object") return { ...detachedPaletteState };
+        const stored = memoryPaletteStates.get(windowRef);
+        return stored ? { ...stored } : { ...DEFAULT_PALETTE_STATE };
+      }
+      function writeMemoryPaletteState(windowRef, state) {
+        if (!windowRef || typeof windowRef !== "object") {
+          detachedPaletteState = { ...state };
+          return;
+        }
+        memoryPaletteStates.set(windowRef, { ...state });
+      }
+      function readStoredPaletteState(windowRef) {
+        let state = normalizePaletteState(readMemoryPaletteState(windowRef));
+        try {
+          const raw = windowRef?.localStorage?.getItem?.(PALETTE_STORAGE_KEY);
+          if (typeof raw === "string" && raw.length > 0) {
+            state = normalizePaletteState(JSON.parse(raw));
+          }
+        } catch (_error) {
+        }
+        writeMemoryPaletteState(windowRef, state);
+        return { ...state };
+      }
+      function writeStoredPaletteState(windowRef, state) {
+        const normalized = normalizePaletteState(state);
+        writeMemoryPaletteState(windowRef, normalized);
+        try {
+          windowRef?.localStorage?.setItem?.(
+            PALETTE_STORAGE_KEY,
+            JSON.stringify(normalized)
+          );
+        } catch (_error) {
+        }
+        return { ...normalized };
+      }
+      function readPaletteViewport(windowRef) {
+        return {
+          width: finitePaletteNumber(windowRef?.innerWidth, 0),
+          height: finitePaletteNumber(windowRef?.innerHeight, 0)
+        };
+      }
+      function clampPalettePosition(position, viewport, size) {
+        const maxLeft = Math.max(PALETTE_MARGIN, viewport.width - size.width - PALETTE_MARGIN);
+        const maxTop = Math.max(PALETTE_MARGIN, viewport.height - size.height - PALETTE_MARGIN);
+        return {
+          left: Math.min(Math.max(PALETTE_MARGIN, position.left), maxLeft),
+          top: Math.min(Math.max(PALETTE_MARGIN, position.top), maxTop)
+        };
+      }
+      function createFabricDrawingPalette(options = {}) {
+        const {
+          documentRef,
+          windowRef = null,
+          element,
+          setStyles,
+          addDomListener,
+          sections = []
+        } = options;
+        if (!documentRef?.createElement || !element) {
+          throw new Error("Fabric palette requires a document and a root element");
+        }
+        const applyStyles = typeof setStyles === "function" ? setStyles : (target, styles) => {
+          if (target?.style) Object.assign(target.style, styles);
+        };
+        const listen = typeof addDomListener === "function" ? addDomListener : (target, type, listener) => target?.addEventListener?.(type, listener);
+        let state = readStoredPaletteState(windowRef);
+        let dragOrigin = null;
+        let dragPointerId = null;
+        applyStyles(element, {
+          position: "absolute",
+          left: `${state.left}px`,
+          top: `${state.top}px`,
+          zIndex: "2",
+          pointerEvents: "none"
+        });
+        const header = documentRef.createElement("div");
+        header.className = "mpv-fabric-pilot-toolbar-header";
+        header.dataset.fabricPilotDragHandle = "true";
+        const handle = documentRef.createElement("span");
+        handle.className = "mpv-fabric-pilot-toolbar-handle";
+        handle.innerHTML = DRAG_HANDLE_SVG;
+        handle.setAttribute?.("aria-hidden", "true");
+        handle.setAttribute?.("title", "\uB4DC\uB798\uADF8\uD558\uC5EC \uC774\uB3D9");
+        const title = documentRef.createElement("span");
+        title.className = "mpv-fabric-pilot-toolbar-title";
+        title.textContent = "\uADF8\uB9AC\uAE30 \uB3C4\uAD6C";
+        const collapseButton = documentRef.createElement("button");
+        collapseButton.type = "button";
+        collapseButton.className = "mpv-fabric-pilot-collapse-button";
+        collapseButton.dataset.fabricPilotAction = "toggle-collapse";
+        collapseButton.innerHTML = COLLAPSE_ICON_SVG;
+        collapseButton.setAttribute?.("aria-label", "\uADF8\uB9AC\uAE30 \uB3C4\uAD6C \uC811\uAE30/\uD3B4\uAE30");
+        collapseButton.setAttribute?.("title", "\uADF8\uB9AC\uAE30 \uB3C4\uAD6C \uC811\uAE30/\uD3B4\uAE30");
+        header.appendChild(handle);
+        header.appendChild(title);
+        header.appendChild(collapseButton);
+        const content = documentRef.createElement("div");
+        content.className = "mpv-fabric-pilot-toolbar-content";
+        for (const section of sections) {
+          const items = Array.isArray(section?.items) ? section.items : [];
+          const appended = Array.isArray(section?.appended) ? section.appended : [];
+          if (!section?.label) {
+            for (const item of items) content.appendChild(item);
+            for (const item of appended) content.appendChild(item);
+            continue;
+          }
+          const sectionElement = documentRef.createElement("div");
+          sectionElement.className = "mpv-fabric-pilot-section";
+          sectionElement.dataset.fabricPilotSection = String(section.id || section.label);
+          const label = documentRef.createElement("div");
+          label.className = "mpv-fabric-pilot-section-label";
+          label.textContent = section.label;
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-section-row";
+          for (const item of items) row.appendChild(item);
+          sectionElement.appendChild(label);
+          sectionElement.appendChild(row);
+          for (const item of appended) sectionElement.appendChild(item);
+          content.appendChild(sectionElement);
+        }
+        element.appendChild(header);
+        element.appendChild(content);
+        function applyCollapsedState() {
+          element.dataset.collapsed = String(state.collapsed);
+          collapseButton.setAttribute?.("aria-expanded", String(!state.collapsed));
+          applyStyles(content, { display: state.collapsed ? "none" : "flex" });
+        }
+        function applyPosition(position) {
+          const size = {
+            width: finitePaletteNumber(element.offsetWidth, 0) || PALETTE_FALLBACK_WIDTH,
+            height: finitePaletteNumber(element.offsetHeight, 0) || PALETTE_FALLBACK_HEIGHT
+          };
+          const clamped = clampPalettePosition(position, readPaletteViewport(windowRef), size);
+          state = { ...state, ...clamped };
+          applyStyles(element, { left: `${clamped.left}px`, top: `${clamped.top}px` });
+          return clamped;
+        }
+        function persist() {
+          writeStoredPaletteState(windowRef, state);
+        }
+        function setCollapsed(collapsed) {
+          state = { ...state, collapsed: collapsed === true };
+          applyCollapsedState();
+          applyPosition(state);
+          persist();
+          return state.collapsed;
+        }
+        function isCollapseTarget(target) {
+          if (!target) return false;
+          if (target === collapseButton) return true;
+          if (typeof target.closest === "function") {
+            return target.closest(".mpv-fabric-pilot-collapse-button") !== null;
+          }
+          return target.parentNode === collapseButton;
+        }
+        function endDrag(event) {
+          if (!dragOrigin) return;
+          if (dragPointerId !== null && event?.pointerId !== void 0 && event.pointerId !== dragPointerId) return;
+          try {
+            header.releasePointerCapture?.(dragPointerId);
+          } catch (_error) {
+          }
+          dragOrigin = null;
+          dragPointerId = null;
+          persist();
+        }
+        listen(collapseButton, "click", () => setCollapsed(!state.collapsed));
+        listen(header, "pointerdown", (event) => {
+          if (event?.button !== void 0 && event.button !== 0) return;
+          if (isCollapseTarget(event?.target)) return;
+          dragPointerId = event?.pointerId === void 0 ? null : event.pointerId;
+          dragOrigin = {
+            pointerX: finitePaletteNumber(event?.clientX, 0),
+            pointerY: finitePaletteNumber(event?.clientY, 0),
+            left: state.left,
+            top: state.top
+          };
+          try {
+            header.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
+          event?.preventDefault?.();
+        });
+        listen(documentRef, "pointermove", (event) => {
+          if (!dragOrigin) return;
+          if (dragPointerId !== null && event?.pointerId !== void 0 && event.pointerId !== dragPointerId) return;
+          applyPosition({
+            left: dragOrigin.left + (finitePaletteNumber(event?.clientX, 0) - dragOrigin.pointerX),
+            top: dragOrigin.top + (finitePaletteNumber(event?.clientY, 0) - dragOrigin.pointerY)
+          });
+        });
+        listen(documentRef, "pointerup", endDrag);
+        listen(documentRef, "pointercancel", endDrag);
+        listen(windowRef, "resize", () => applyPosition(state));
+        applyCollapsedState();
+        return {
+          element,
+          header,
+          content,
+          collapseButton,
+          restore() {
+            applyCollapsedState();
+            return applyPosition(state);
+          },
+          setCollapsed,
+          isCollapsed: () => state.collapsed,
+          getState: () => ({ ...state })
+        };
+      }
+      module.exports = {
+        createFabricDrawingPalette,
+        clampPalettePosition,
+        normalizePaletteState,
+        PALETTE_STORAGE_KEY,
+        PALETTE_MARGIN
+      };
+    }
+  });
+
+  // shared/fabric-drawing-limits.js
+  var require_fabric_drawing_limits = __commonJS({
+    "shared/fabric-drawing-limits.js"(exports, module) {
+      "use strict";
+      var FABRIC_DRAWING_MAX_DOCUMENT_BYTES = 128 * 1024 * 1024;
+      var FABRIC_DRAWING_MAX_TRANSITION_BYTES = 8 * 1024 * 1024;
+      var FABRIC_DRAWING_MAX_KEYFRAMES = 1e4;
+      var FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME = 1e4;
+      var FABRIC_DRAWING_MAX_OBJECTS_TOTAL = 1e5;
+      var FABRIC_DRAWING_MAX_POINTS_PER_STROKE = 2e4;
+      var FABRIC_DRAWING_MAX_SOURCE_DIMENSION = 1e6;
+      var FABRIC_DRAWING_MAX_TOTAL_FRAMES = 1e9;
+      var FABRIC_DRAWING_MAX_POINT_COORDINATE = 1e9;
+      var FABRIC_DRAWING_MAX_POINT_TIME = 1e12;
+      var FABRIC_DRAWING_MAX_BRUSH_SIZE = 1e6;
+      var FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE = 1e9;
+      var FABRIC_DRAWING_MAX_STRING_LENGTH = 32768;
+      var FABRIC_DRAWING_STORE_LIMITS = Object.freeze({
+        maxDocumentBytes: FABRIC_DRAWING_MAX_DOCUMENT_BYTES,
+        maxTransitionBytes: FABRIC_DRAWING_MAX_TRANSITION_BYTES,
+        maxKeyframes: FABRIC_DRAWING_MAX_KEYFRAMES,
+        maxObjectsPerKeyframe: FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME,
+        maxObjectsTotal: FABRIC_DRAWING_MAX_OBJECTS_TOTAL,
+        maxPointsPerStroke: FABRIC_DRAWING_MAX_POINTS_PER_STROKE
+      });
+      module.exports = {
+        FABRIC_DRAWING_MAX_BRUSH_SIZE,
+        FABRIC_DRAWING_MAX_DOCUMENT_BYTES,
+        FABRIC_DRAWING_MAX_KEYFRAMES,
+        FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME,
+        FABRIC_DRAWING_MAX_OBJECTS_TOTAL,
+        FABRIC_DRAWING_MAX_POINTS_PER_STROKE,
+        FABRIC_DRAWING_MAX_POINT_COORDINATE,
+        FABRIC_DRAWING_MAX_POINT_TIME,
+        FABRIC_DRAWING_MAX_SOURCE_DIMENSION,
+        FABRIC_DRAWING_MAX_STRING_LENGTH,
+        FABRIC_DRAWING_MAX_TOTAL_FRAMES,
+        FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE,
+        FABRIC_DRAWING_MAX_TRANSITION_BYTES,
+        FABRIC_DRAWING_STORE_LIMITS
+      };
+    }
+  });
+
   // node_modules/fabric/dist/index.min.js
   var require_index_min = __commonJS({
     "node_modules/fabric/dist/index.min.js"(exports, module) {
@@ -13119,8 +13412,22 @@ void main() {
         createDrawingEngineAdapter
       } = require_drawing_engine_adapter();
       var {
+        createFabricDrawingPalette
+      } = require_mpv_fabric_toolbar();
+      var {
         validateDrawingRenderGeometry
       } = require_drawing_render_geometry();
+      var {
+        FABRIC_DRAWING_MAX_KEYFRAMES: MAX_PERSISTED_KEYFRAMES,
+        FABRIC_DRAWING_MAX_OBJECTS_TOTAL: MAX_PERSISTED_OBJECTS_TOTAL,
+        FABRIC_DRAWING_MAX_SOURCE_DIMENSION: MAX_PERSISTED_SOURCE_DIMENSION,
+        FABRIC_DRAWING_MAX_TOTAL_FRAMES: MAX_PERSISTED_TOTAL_FRAMES,
+        FABRIC_DRAWING_MAX_POINT_COORDINATE: MAX_PERSISTED_POINT_COORDINATE,
+        FABRIC_DRAWING_MAX_POINT_TIME: MAX_PERSISTED_POINT_TIME,
+        FABRIC_DRAWING_MAX_BRUSH_SIZE: MAX_PERSISTED_BRUSH_SIZE,
+        FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE: MAX_PERSISTED_TRANSFORM_MAGNITUDE,
+        FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH
+      } = require_fabric_drawing_limits();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -13133,15 +13440,6 @@ void main() {
       var MAX_STROKE_GEOMETRY_CACHE_ENTRIES = 512;
       var MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 25e4;
       var DEFAULT_MAX_OBJECTS = 1e4;
-      var MAX_PERSISTED_KEYFRAMES = 1e4;
-      var MAX_PERSISTED_OBJECTS_TOTAL = 1e5;
-      var MAX_PERSISTED_SOURCE_DIMENSION = 1e6;
-      var MAX_PERSISTED_TOTAL_FRAMES = 1e9;
-      var MAX_PERSISTED_POINT_COORDINATE = 1e9;
-      var MAX_PERSISTED_POINT_TIME = 1e12;
-      var MAX_PERSISTED_BRUSH_SIZE = 1e6;
-      var MAX_PERSISTED_TRANSFORM_MAGNITUDE = 1e9;
-      var MAX_PERSISTENCE_STRING_LENGTH = 32768;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var BRUSH_COLORS = Object.freeze([
@@ -13169,6 +13467,9 @@ void main() {
       var MAX_BRUSH_SIZE = 50;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
+      var SIZE_ADJUST_PIXELS_PER_STEP = 4;
+      var SIZE_ADJUST_HUD_OFFSET_X = 16;
+      var SIZE_ADJUST_HUD_OFFSET_Y = 28;
       var FABRIC_PERSISTENCE_BADGE_PREFIX = "\uC0C8 \uB4DC\uB85C\uC789 \xB7 \uB9AC\uBDF0 \uC790\uB3D9 \uC800\uC7A5";
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
       var MIN_SELECTION_HIT_TOLERANCE = 2;
@@ -15120,6 +15421,7 @@ void main() {
         let viewportElement = null;
         let canvasElement = null;
         let toolbar = null;
+        let paletteShell = null;
         let badge = null;
         const toolButtons = /* @__PURE__ */ new Map();
         let fabricCanvas = null;
@@ -15131,6 +15433,10 @@ void main() {
         let lastPaintedScene = null;
         let activeStroke = null;
         let activeLasso = null;
+        let sizeAdjustGesture = null;
+        let strokeEraseGesture = null;
+        let sizeAdjustHud = null;
+        const overlayModifierState = { alt: false, ctrl: false };
         let pendingPointerdownFrame = null;
         let lastSelectionGesture = null;
         let pendingLassoSelection = null;
@@ -15273,9 +15579,10 @@ void main() {
           group.setAttribute?.("aria-label", "\uC120\uD0DD \uC124\uC815");
           setStyles(group, {
             display: "none",
-            alignItems: "center",
-            gap: "8px",
-            padding: "3px",
+            flexDirection: "column",
+            alignItems: "stretch",
+            gap: "6px",
+            padding: "6px",
             borderRadius: "8px",
             background: "rgba(255, 255, 255, 0.08)"
           });
@@ -15285,15 +15592,17 @@ void main() {
           targetGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uB300\uC0C1");
           setStyles(targetGroup, {
             display: "flex",
+            flexFlow: "row wrap",
             alignItems: "center",
             gap: "4px",
-            paddingRight: "8px",
-            borderRight: "1px solid rgba(255, 255, 255, 0.18)"
+            paddingBottom: "6px",
+            borderBottom: "1px solid rgba(255, 255, 255, 0.18)"
           });
           const targetLabel = documentRef.createElement("span");
           targetLabel.dataset.fabricPilotLabel = "selection-target";
           targetLabel.textContent = "\uC120\uD0DD \uB300\uC0C1";
           setStyles(targetLabel, {
+            flex: "1 1 100%",
             color: "rgba(255, 255, 255, 0.64)",
             fontSize: "11px",
             fontWeight: "600",
@@ -15320,11 +15629,17 @@ void main() {
           shapeGroup.dataset.fabricPilotGroup = "selection-shape";
           shapeGroup.setAttribute?.("role", "group");
           shapeGroup.setAttribute?.("aria-label", "\uC120\uD0DD \uBAA8\uC591");
-          setStyles(shapeGroup, { display: "flex", alignItems: "center", gap: "4px" });
+          setStyles(shapeGroup, {
+            display: "flex",
+            flexFlow: "row wrap",
+            alignItems: "center",
+            gap: "4px"
+          });
           const shapeLabel = documentRef.createElement("span");
           shapeLabel.dataset.fabricPilotLabel = "selection-shape";
           shapeLabel.textContent = "\uC601\uC5ED \uBAA8\uC591";
           setStyles(shapeLabel, {
+            flex: "1 1 100%",
             color: "rgba(255, 255, 255, 0.64)",
             fontSize: "11px",
             fontWeight: "600",
@@ -15352,11 +15667,11 @@ void main() {
           summary.setAttribute?.("role", "status");
           summary.setAttribute?.("aria-live", "polite");
           setStyles(summary, {
-            minWidth: "150px",
+            minWidth: "0",
             color: "rgba(255, 255, 255, 0.76)",
             fontSize: "11px",
             fontWeight: "650",
-            whiteSpace: "nowrap"
+            whiteSpace: "normal"
           });
           group.appendChild(targetGroup);
           group.appendChild(shapeGroup);
@@ -15437,7 +15752,9 @@ void main() {
           setStyles(settingsButton, {
             display: "inline-flex",
             alignItems: "center",
+            justifyContent: "space-between",
             gap: "8px",
+            width: "100%",
             minHeight: "40px"
           });
           const colorPreview = documentRef.createElement("span");
@@ -15459,20 +15776,18 @@ void main() {
           panel.setAttribute?.("aria-label", "\uBE0C\uB7EC\uC2DC \uC124\uC815");
           setStyles(panel, {
             display: "none",
-            position: "absolute",
-            top: "calc(100% + 6px)",
-            left: "0",
-            width: "360px",
-            maxWidth: "calc(100vw - 24px)",
-            maxHeight: "calc(100vh - 100% - 30px)",
+            position: "static",
+            width: "100%",
+            maxHeight: "210px",
             overflowY: "auto",
             overscrollBehavior: "contain",
             flexDirection: "column",
-            gap: "12px",
-            padding: "12px",
+            gap: "10px",
+            marginTop: "6px",
+            padding: "8px",
             boxSizing: "border-box",
             borderRadius: "8px",
-            background: "rgba(24, 24, 28, 0.96)",
+            background: "rgba(255, 255, 255, 0.05)",
             color: "#fff"
           });
           const previewRow = documentRef.createElement("div");
@@ -15533,11 +15848,13 @@ void main() {
             const row = documentRef.createElement("div");
             setStyles(row, {
               display: "flex",
+              flexFlow: "row wrap",
               alignItems: "center",
               gap: "6px"
             });
             const labelElement = documentRef.createElement("span");
             labelElement.textContent = label;
+            setStyles(labelElement, { flex: "1 1 100%", fontSize: "11px" });
             const decrease = createButton("\u2212", decreaseAction);
             decrease.setAttribute?.("aria-label", decreaseLabel);
             const input = documentRef.createElement("input");
@@ -15769,7 +16086,7 @@ void main() {
           activeFrameState.previewed = false;
         }
         function activeFrameInteractionInProgress() {
-          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart);
+          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture);
         }
         function renderedCandidateMatches(candidate) {
           return candidate.sourceFrame === activeFrameState.renderedSourceFrame && candidate.sceneInstanceId === activeFrameState.renderedSceneInstanceId && candidate.mutationSequence === activeFrameState.renderedMutationSequence;
@@ -17595,6 +17912,242 @@ void main() {
           } catch (_error) {
           }
         }
+        function isAltActive(event) {
+          return event?.altKey === true || overlayModifierState.alt === true;
+        }
+        function isCtrlActive(event) {
+          return event?.ctrlKey === true || overlayModifierState.ctrl === true;
+        }
+        function resetOverlayModifierState() {
+          overlayModifierState.alt = false;
+          overlayModifierState.ctrl = false;
+        }
+        function onOverlayKeyDown(event) {
+          if (event?.key === "Alt") overlayModifierState.alt = true;
+          if (event?.key === "Control") overlayModifierState.ctrl = true;
+        }
+        function onOverlayKeyUp(event) {
+          if (event?.key === "Alt") overlayModifierState.alt = false;
+          if (event?.key === "Control") overlayModifierState.ctrl = false;
+        }
+        function onOverlayWindowBlur(event) {
+          resetOverlayModifierState();
+          endSizeAdjustGesture(event);
+          cancelStrokeEraseGesture(event);
+          onPointerCancel(event);
+        }
+        function onCanvasContextMenu(event) {
+          if (!isAltActive(event) && !sizeAdjustGesture) return;
+          event.preventDefault?.();
+        }
+        function createSizeAdjustHud() {
+          const hud = documentRef.createElement("div");
+          hud.className = "mpv-fabric-pilot-size-hud";
+          hud.dataset.fabricPilotOutput = "size-adjust";
+          hud.setAttribute?.("role", "status");
+          hud.setAttribute?.("aria-live", "polite");
+          hud.setAttribute?.("aria-atomic", "true");
+          setStyles(hud, {
+            position: "fixed",
+            display: "none",
+            left: "0px",
+            top: "0px",
+            zIndex: "3",
+            pointerEvents: "none",
+            padding: "4px 8px",
+            borderRadius: "6px",
+            font: "600 12px/1 sans-serif",
+            whiteSpace: "nowrap",
+            background: "rgba(24, 24, 28, 0.92)",
+            color: "#fff"
+          });
+          return hud;
+        }
+        function showSizeAdjustHud(clientX, clientY, size) {
+          if (!sizeAdjustHud) return;
+          sizeAdjustHud.textContent = `${size}px`;
+          setStyles(sizeAdjustHud, {
+            display: "block",
+            left: `${Math.round(finiteNumber(clientX) + SIZE_ADJUST_HUD_OFFSET_X)}px`,
+            top: `${Math.round(finiteNumber(clientY) - SIZE_ADJUST_HUD_OFFSET_Y)}px`
+          });
+        }
+        function hideSizeAdjustHud() {
+          if (!sizeAdjustHud) return;
+          setStyles(sizeAdjustHud, { display: "none" });
+        }
+        function beginSizeAdjustGesture(event) {
+          sizeAdjustGesture = {
+            pointerId: event.pointerId,
+            startClientX: finiteNumber(event.clientX),
+            startClientY: finiteNumber(event.clientY),
+            startSize: boundedInteger(
+              brushStyle.size,
+              MIN_BRUSH_SIZE,
+              MAX_BRUSH_SIZE,
+              DEFAULT_BRUSH_STYLE.size
+            )
+          };
+          try {
+            event.currentTarget?.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
+          showSizeAdjustHud(
+            sizeAdjustGesture.startClientX,
+            sizeAdjustGesture.startClientY,
+            sizeAdjustGesture.startSize
+          );
+          event.preventDefault?.();
+          event.stopImmediatePropagation?.();
+        }
+        function updateSizeAdjustGesture(event) {
+          const gesture = sizeAdjustGesture;
+          if (!gesture) return brushStyle.size;
+          const delta = finiteNumber(event.clientX) - gesture.startClientX;
+          const requested = Math.round(gesture.startSize + delta / SIZE_ADJUST_PIXELS_PER_STEP);
+          const size = setBrushSize(requested);
+          showSizeAdjustHud(gesture.startClientX, gesture.startClientY, size);
+          return size;
+        }
+        function endSizeAdjustGesture(event) {
+          const gesture = sizeAdjustGesture;
+          sizeAdjustGesture = null;
+          if (!gesture) return false;
+          hideSizeAdjustHud();
+          releasePointerCapture(
+            event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+            gesture.pointerId
+          );
+          return true;
+        }
+        function strokeErasePoint(event) {
+          if (!currentSession) return null;
+          return mapClientPointToSource(
+            event,
+            currentSession.canvasRect,
+            currentSession.viewportTransform,
+            { width: currentSession.sourceWidth, height: currentSession.sourceHeight }
+          );
+        }
+        function strokeEraseRadius() {
+          return Math.max(1, resolveSelectionHitTolerance(currentSession || {}) / 2);
+        }
+        function strokeEraseSweepPolygon(previous, current, radius) {
+          const dx = current.x - finiteNumber(previous?.x, current.x);
+          const dy = current.y - finiteNumber(previous?.y, current.y);
+          const length = Math.hypot(dx, dy);
+          if (!previous || length < 1e-6) {
+            return rectanglePolygon(
+              { x: current.x - radius, y: current.y - radius },
+              { x: current.x + radius, y: current.y + radius }
+            );
+          }
+          const ux = dx / length * radius;
+          const uy = dy / length * radius;
+          const nx = -uy;
+          const ny = ux;
+          return [
+            { x: previous.x - ux + nx, y: previous.y - uy + ny },
+            { x: current.x + ux + nx, y: current.y + uy + ny },
+            { x: current.x + ux - nx, y: current.y + uy - ny },
+            { x: previous.x - ux - nx, y: previous.y - uy - ny }
+          ];
+        }
+        function createStrokeEraseContext() {
+          if (!fabricCanvas) return null;
+          return {
+            snapshot: sceneStore.getActiveSceneSnapshot(),
+            canvasObjects: new Map(
+              fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
+            ),
+            budget: createGeometryBudget(maxSelectionGeometryOperations),
+            radius: strokeEraseRadius(),
+            hidden: 0
+          };
+        }
+        function collectErasedStrokesAt(event, context) {
+          const gesture = strokeEraseGesture;
+          if (!gesture || !fabricCanvas || !context) return 0;
+          const point = strokeErasePoint(event);
+          if (!point) return 0;
+          const polygon = strokeEraseSweepPolygon(gesture.lastPoint, point, context.radius);
+          gesture.lastPoint = point;
+          if (!polygonHasArea(polygon, 1)) return 0;
+          const polygonBounds = boundsForPoints(polygon);
+          let hidden = 0;
+          for (const record of context.snapshot?.objects || []) {
+            if (record.type !== "stroke" || gesture.erasedIds.has(record.id)) continue;
+            const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
+            const object = context.canvasObjects.get(record.id);
+            if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+              continue;
+            }
+            const sourceSelection = createSourcePolygonQuery(object, polygon, context.budget);
+            if (!sourceSelection.query || sourceSelection.reason) continue;
+            const fillSelection = createStoredPathFillQuery(record, object, sourceSelection, context.budget);
+            if (!fillSelection.query || fillSelection.reason) continue;
+            const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
+            if (touch.limitExceeded || !touch.hit) continue;
+            gesture.erasedIds.add(record.id);
+            if (object) {
+              gesture.hiddenObjects.push(object);
+              object.set?.({ visible: false });
+              hidden += 1;
+            }
+          }
+          context.hidden += hidden;
+          return hidden;
+        }
+        function restoreErasedStrokeVisibility(gesture) {
+          if (!gesture) return;
+          for (const object of gesture.hiddenObjects) object.set?.({ visible: true });
+          gesture.hiddenObjects = [];
+          fabricCanvas?.requestRenderAll();
+        }
+        function cancelStrokeEraseGesture(event) {
+          const gesture = strokeEraseGesture;
+          strokeEraseGesture = null;
+          if (!gesture) return false;
+          restoreErasedStrokeVisibility(gesture);
+          releasePointerCapture(
+            event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+            gesture.pointerId
+          );
+          return true;
+        }
+        function finalizeStrokeEraseGesture() {
+          const gesture = strokeEraseGesture;
+          strokeEraseGesture = null;
+          if (!gesture) return { applied: false, reason: "no-stroke-erase-gesture" };
+          if (gesture.erasedIds.size === 0) {
+            settleArmedFramePreview();
+            return { applied: false, deletedCount: 0, deletedIds: [] };
+          }
+          if (!inputEnabled || !currentSession || currentSession.sessionId !== gesture.sessionId || tokenState.inputRevision !== gesture.inputRevision) {
+            restoreErasedStrokeVisibility(gesture);
+            return { applied: false, reason: "stale-stroke-erase-gesture" };
+          }
+          const retargeted = retargetArmedFrameForMutation();
+          if (!retargeted?.accepted) {
+            restoreErasedStrokeVisibility(gesture);
+            return { applied: false, reason: retargeted?.reason || "retarget-failed" };
+          }
+          const selection = sceneStore.selectObjects([...gesture.erasedIds]);
+          if (selection.selection.length === 0) {
+            restoreErasedStrokeVisibility(gesture);
+            return { applied: false, reason: "stroke-erase-target-missing" };
+          }
+          const result = applyDrawingAction({
+            sessionId: currentSession.sessionId,
+            actionId: createId("stroke-erase"),
+            action: "delete-selection"
+          });
+          if (!result.applied) {
+            sceneStore.selectObjects([]);
+            restoreErasedStrokeVisibility(gesture);
+          }
+          return result;
+        }
         function rollbackSelectTransform(event, shouldEndTransform) {
           const start = transformStart;
           if (!start?.target) {
@@ -17706,6 +18259,26 @@ void main() {
             }
           }
           const tool = sceneStore.getDiagnostics().tool;
+          if (tool === "brush" && isCtrlActive(event)) {
+            if (activeStroke || selectGesture || strokeEraseGesture) return;
+            strokeEraseGesture = {
+              pointerId: event.pointerId,
+              sessionId: currentSession?.sessionId,
+              inputRevision: tokenState.inputRevision,
+              lastPoint: null,
+              erasedIds: /* @__PURE__ */ new Set(),
+              hiddenObjects: []
+            };
+            try {
+              event.currentTarget?.setPointerCapture?.(event.pointerId);
+            } catch (_error) {
+            }
+            const eraseContext = createStrokeEraseContext();
+            collectErasedStrokesAt(event, eraseContext);
+            if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
+            event.preventDefault?.();
+            return;
+          }
           if (tool === "brush") {
             if (activeStroke || selectGesture) return;
             activeStroke = {
@@ -17868,7 +18441,11 @@ void main() {
             beginPointerDown(event, false);
             return;
           }
-          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture) {
+          if (inputEnabled && isAltActive(event) && (event.button === 0 || event.button === 2) && !sizeAdjustGesture && !strokeEraseGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
+            beginSizeAdjustGesture(event);
+            return;
+          }
+          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture) {
             return;
           }
           if (!requestPointerdownFrame) {
@@ -17976,7 +18553,23 @@ void main() {
           };
         }
         function onPointerMove(event) {
+          if (sizeAdjustGesture) {
+            if (event.pointerId !== sizeAdjustGesture.pointerId) return;
+            updateSizeAdjustGesture(event);
+            event.preventDefault?.();
+            return;
+          }
           if (consumePendingPointerEvent(event)) return;
+          if (strokeEraseGesture) {
+            if (event.pointerId !== strokeEraseGesture.pointerId) return;
+            const coalesced2 = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+            const samples2 = coalesced2.length > 0 ? coalesced2 : [event];
+            const eraseContext = createStrokeEraseContext();
+            for (const sample of samples2) collectErasedStrokesAt(sample, eraseContext);
+            if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
+            event.preventDefault?.();
+            return;
+          }
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             appendLassoPoint(event);
@@ -17992,7 +18585,23 @@ void main() {
           event.preventDefault?.();
         }
         function onPointerUp(event) {
+          if (sizeAdjustGesture) {
+            if (event.pointerId !== sizeAdjustGesture.pointerId) return;
+            endSizeAdjustGesture(event);
+            event.preventDefault?.();
+            return;
+          }
           if (consumePendingPointerEvent(event)) return;
+          if (strokeEraseGesture) {
+            if (event.pointerId !== strokeEraseGesture.pointerId) return;
+            const eraseContext = createStrokeEraseContext();
+            collectErasedStrokesAt(event, eraseContext);
+            if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
+            finalizeStrokeEraseGesture();
+            releasePointerCapture(event.currentTarget, event.pointerId);
+            event.preventDefault?.();
+            return;
+          }
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             const { sessionId, inputRevision } = activeLasso;
@@ -18019,6 +18628,16 @@ void main() {
           scheduleSelectGestureSettle(gesture);
         }
         function onPointerCancel(event) {
+          if (sizeAdjustGesture) {
+            if (event.pointerId !== void 0 && event.pointerId !== sizeAdjustGesture.pointerId) return;
+            endSizeAdjustGesture(event);
+            return;
+          }
+          if (strokeEraseGesture) {
+            if (event.pointerId !== void 0 && event.pointerId !== strokeEraseGesture.pointerId) return;
+            cancelStrokeEraseGesture(event);
+            return;
+          }
           if (pendingPointerdownFrame) {
             if (event.pointerId !== void 0 && event.pointerId !== pendingPointerdownFrame.pointerId) return;
             if (event.type === "lostpointercapture" && pendingPointerdownFrame.events.some((pendingEvent) => pendingEvent.type === "pointerup")) {
@@ -18052,6 +18671,14 @@ void main() {
           cancelSelectInteraction(event);
         }
         function onDocumentPointerUp(event) {
+          if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+            onPointerUp(event);
+            return;
+          }
+          if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+            onPointerUp(event);
+            return;
+          }
           if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
             consumePendingPointerEvent(event);
             return;
@@ -18064,6 +18691,14 @@ void main() {
           onPointerUp(event);
         }
         function onDocumentPointerCancel(event) {
+          if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
+          if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
           if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
             onPointerCancel(event);
             return;
@@ -18202,9 +18837,12 @@ void main() {
           addDomListener(pointerTarget, "pointerup", onPointerUp, true);
           addDomListener(pointerTarget, "pointercancel", onPointerCancel, true);
           addDomListener(pointerTarget, "lostpointercapture", onPointerCancel, true);
+          addDomListener(pointerTarget, "contextmenu", onCanvasContextMenu, true);
           addDomListener(documentRef, "pointerup", onDocumentPointerUp);
           addDomListener(documentRef, "pointercancel", onDocumentPointerCancel);
-          addDomListener(windowRef, "blur", onPointerCancel);
+          addDomListener(documentRef, "keydown", onOverlayKeyDown, true);
+          addDomListener(documentRef, "keyup", onOverlayKeyUp, true);
+          addDomListener(windowRef, "blur", onOverlayWindowBlur);
           addFabricListener("selection:created", onSelectionChanged);
           addFabricListener("selection:updated", onSelectionChanged);
           addFabricListener("selection:cleared", onSelectionCleared);
@@ -18372,6 +19010,9 @@ void main() {
           syncPersistenceBadge();
         }
         function releaseSurfaceResources() {
+          endSizeAdjustGesture();
+          cancelStrokeEraseGesture();
+          resetOverlayModifierState();
           cancelPendingPointerdownFrame();
           cancelSelectInteraction();
           for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
@@ -18414,9 +19055,11 @@ void main() {
           viewportElement = null;
           canvasElement = null;
           toolbar = null;
+          paletteShell = null;
           brushControls = null;
           selectionControls = null;
           badge = null;
+          sizeAdjustHud = null;
           container = null;
           root = null;
           prepared = false;
@@ -18449,24 +19092,16 @@ void main() {
             canvasElement.className = "mpv-fabric-delta-canvas";
             toolbar = documentRef.createElement("div");
             toolbar.className = "mpv-fabric-pilot-toolbar";
-            setStyles(toolbar, {
-              position: "absolute",
-              top: "12px",
-              left: "12px",
-              display: "flex",
-              zIndex: "2",
-              pointerEvents: "none"
-            });
-            const brushButton = labelToolbarButton(createButton("Brush", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
-            const selectButton = labelToolbarButton(createButton("V", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
-            const undoButton = labelToolbarButton(createButton("Undo", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
-            const redoButton = labelToolbarButton(createButton("Redo", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
+            const brushButton = labelToolbarButton(createButton("\uBE0C\uB7EC\uC2DC", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
+            const selectButton = labelToolbarButton(createButton("\uC120\uD0DD", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
+            const undoButton = labelToolbarButton(createButton("\uC2E4\uD589 \uCDE8\uC18C", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
+            const redoButton = labelToolbarButton(createButton("\uB2E4\uC2DC \uC2E4\uD589", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
             const deleteButton = labelToolbarButton(
-              createButton("Delete", "delete-selection"),
+              createButton("\uC120\uD0DD \uC0AD\uC81C", "delete-selection"),
               "\uC120\uD0DD\uD55C \uD68D \uC0AD\uC81C (Delete)"
             );
             const clearButton = labelToolbarButton(
-              createButton("Clear", "clear-session"),
+              createButton("\uC804\uCCB4 \uC9C0\uC6B0\uAE30", "clear-session"),
               "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C"
             );
             brushControls = createBrushSettingsControls();
@@ -18477,20 +19112,36 @@ void main() {
             badge.setAttribute?.("aria-live", "polite");
             badge.setAttribute?.("aria-atomic", "true");
             syncPersistenceBadge();
-            toolbar.appendChild(brushButton);
-            toolbar.appendChild(selectButton);
-            toolbar.appendChild(selectionControls.group);
-            toolbar.appendChild(undoButton);
-            toolbar.appendChild(redoButton);
-            toolbar.appendChild(deleteButton);
-            toolbar.appendChild(clearButton);
-            toolbar.appendChild(brushControls.settingsButton);
-            toolbar.appendChild(brushControls.panel);
-            toolbar.appendChild(badge);
+            sizeAdjustHud = createSizeAdjustHud();
+            paletteShell = createFabricDrawingPalette({
+              documentRef,
+              windowRef,
+              element: toolbar,
+              setStyles,
+              addDomListener,
+              sections: [
+                { id: "tools", label: "\uB3C4\uAD6C", items: [brushButton, selectButton] },
+                { id: "selection", items: [selectionControls.group] },
+                {
+                  id: "brush",
+                  label: "\uBE0C\uB7EC\uC2DC \uC124\uC815",
+                  items: [brushControls.settingsButton],
+                  appended: [brushControls.panel]
+                },
+                {
+                  id: "actions",
+                  label: "\uD3B8\uC9D1",
+                  items: [undoButton, redoButton, deleteButton, clearButton]
+                },
+                { id: "status", items: [badge] }
+              ]
+            });
             viewportElement.appendChild(canvasElement);
             container.appendChild(viewportElement);
             container.appendChild(toolbar);
+            container.appendChild(sizeAdjustHud);
             root.appendChild(container);
+            paletteShell.restore();
             const { Canvas } = resolveFabric();
             fabricCanvas = new Canvas(canvasElement, {
               selection: true,
@@ -18548,6 +19199,9 @@ void main() {
           if (request.enabled && !validateSession(request.session)) {
             return { accepted: false, reason: "invalid-session" };
           }
+          endSizeAdjustGesture();
+          cancelStrokeEraseGesture();
+          resetOverlayModifierState();
           cancelPendingPointerdownFrame();
           abortPendingLassoSelection();
           if (activeStroke) cancelActiveStroke();
@@ -18917,6 +19571,13 @@ void main() {
             inputEnabled,
             devicePixelRatio,
             tokens: { ...tokenState },
+            gestures: {
+              altSizeAdjustActive: !!sizeAdjustGesture,
+              ctrlStrokeEraseActive: !!strokeEraseGesture,
+              strokeEraseCandidateCount: strokeEraseGesture ? strokeEraseGesture.erasedIds.size : 0,
+              modifierAlt: overlayModifierState.alt,
+              modifierCtrl: overlayModifierState.ctrl
+            },
             presentationRevision: presentationState.presentationRevision,
             presentedStableVideoIdentity: currentSession?.stableVideoIdentity ?? presentationState.stableVideoIdentity,
             presentedStoreRevision: presentationState.storeRevision,

@@ -35,8 +35,22 @@ const {
   createDrawingEngineAdapter
 } = require('./drawing-v3/drawing-engine-adapter.js');
 const {
+  createFabricDrawingPalette
+} = require('./mpv-fabric-toolbar.js');
+const {
   validateDrawingRenderGeometry
 } = require('../../../shared/drawing-render-geometry.js');
+const {
+  FABRIC_DRAWING_MAX_KEYFRAMES: MAX_PERSISTED_KEYFRAMES,
+  FABRIC_DRAWING_MAX_OBJECTS_TOTAL: MAX_PERSISTED_OBJECTS_TOTAL,
+  FABRIC_DRAWING_MAX_SOURCE_DIMENSION: MAX_PERSISTED_SOURCE_DIMENSION,
+  FABRIC_DRAWING_MAX_TOTAL_FRAMES: MAX_PERSISTED_TOTAL_FRAMES,
+  FABRIC_DRAWING_MAX_POINT_COORDINATE: MAX_PERSISTED_POINT_COORDINATE,
+  FABRIC_DRAWING_MAX_POINT_TIME: MAX_PERSISTED_POINT_TIME,
+  FABRIC_DRAWING_MAX_BRUSH_SIZE: MAX_PERSISTED_BRUSH_SIZE,
+  FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE: MAX_PERSISTED_TRANSFORM_MAGNITUDE,
+  FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH
+} = require('../../../shared/fabric-drawing-limits.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -50,15 +64,6 @@ const DEFAULT_MAX_SELECTION_GEOMETRY_OPERATIONS = 250_000;
 const MAX_STROKE_GEOMETRY_CACHE_ENTRIES = 512;
 const MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 250_000;
 const DEFAULT_MAX_OBJECTS = 10000;
-const MAX_PERSISTED_KEYFRAMES = 10000;
-const MAX_PERSISTED_OBJECTS_TOTAL = 100000;
-const MAX_PERSISTED_SOURCE_DIMENSION = 1_000_000;
-const MAX_PERSISTED_TOTAL_FRAMES = 1_000_000_000;
-const MAX_PERSISTED_POINT_COORDINATE = 1_000_000_000;
-const MAX_PERSISTED_POINT_TIME = 1_000_000_000_000;
-const MAX_PERSISTED_BRUSH_SIZE = 1_000_000;
-const MAX_PERSISTED_TRANSFORM_MAGNITUDE = 1_000_000_000;
-const MAX_PERSISTENCE_STRING_LENGTH = 32768;
 const TRANSFORM_FIELDS = ['left', 'top', 'scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 const UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 const BRUSH_COLORS = Object.freeze([
@@ -86,6 +91,10 @@ const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
+// 레거시 Canvas2D 엔진(drawing-canvas.js `_updateSizeAdjust`)의 delta/4 감도를 그대로 계승한다.
+const SIZE_ADJUST_PIXELS_PER_STEP = 4;
+const SIZE_ADJUST_HUD_OFFSET_X = 16;
+const SIZE_ADJUST_HUD_OFFSET_Y = 28;
 const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 · 리뷰 자동 저장';
 const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
@@ -2371,6 +2380,7 @@ function createFabricOverlayRuntime(options = {}) {
   let viewportElement = null;
   let canvasElement = null;
   let toolbar = null;
+  let paletteShell = null;
   let badge = null;
   const toolButtons = new Map();
   let fabricCanvas = null;
@@ -2382,6 +2392,11 @@ function createFabricOverlayRuntime(options = {}) {
   let lastPaintedScene = null;
   let activeStroke = null;
   let activeLasso = null;
+  // Alt 드래그 크기 조절 / Ctrl 임시 획 지우개 — 씬 스키마와 무관한 순수 입력 계층 상태
+  let sizeAdjustGesture = null;
+  let strokeEraseGesture = null;
+  let sizeAdjustHud = null;
+  const overlayModifierState = { alt: false, ctrl: false };
   let pendingPointerdownFrame = null;
   let lastSelectionGesture = null;
   let pendingLassoSelection = null;
@@ -2543,9 +2558,10 @@ function createFabricOverlayRuntime(options = {}) {
     group.setAttribute?.('aria-label', '선택 설정');
     setStyles(group, {
       display: 'none',
-      alignItems: 'center',
-      gap: '8px',
-      padding: '3px',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: '6px',
+      padding: '6px',
       borderRadius: '8px',
       background: 'rgba(255, 255, 255, 0.08)'
     });
@@ -2556,16 +2572,18 @@ function createFabricOverlayRuntime(options = {}) {
     targetGroup.setAttribute?.('aria-label', '선택 대상');
     setStyles(targetGroup, {
       display: 'flex',
+      flexFlow: 'row wrap',
       alignItems: 'center',
       gap: '4px',
-      paddingRight: '8px',
-      borderRight: '1px solid rgba(255, 255, 255, 0.18)'
+      paddingBottom: '6px',
+      borderBottom: '1px solid rgba(255, 255, 255, 0.18)'
     });
 
     const targetLabel = documentRef.createElement('span');
     targetLabel.dataset.fabricPilotLabel = 'selection-target';
     targetLabel.textContent = '선택 대상';
     setStyles(targetLabel, {
+      flex: '1 1 100%',
       color: 'rgba(255, 255, 255, 0.64)',
       fontSize: '11px',
       fontWeight: '600',
@@ -2594,12 +2612,18 @@ function createFabricOverlayRuntime(options = {}) {
     shapeGroup.dataset.fabricPilotGroup = 'selection-shape';
     shapeGroup.setAttribute?.('role', 'group');
     shapeGroup.setAttribute?.('aria-label', '선택 모양');
-    setStyles(shapeGroup, { display: 'flex', alignItems: 'center', gap: '4px' });
+    setStyles(shapeGroup, {
+      display: 'flex',
+      flexFlow: 'row wrap',
+      alignItems: 'center',
+      gap: '4px'
+    });
 
     const shapeLabel = documentRef.createElement('span');
     shapeLabel.dataset.fabricPilotLabel = 'selection-shape';
     shapeLabel.textContent = '영역 모양';
     setStyles(shapeLabel, {
+      flex: '1 1 100%',
       color: 'rgba(255, 255, 255, 0.64)',
       fontSize: '11px',
       fontWeight: '600',
@@ -2629,11 +2653,11 @@ function createFabricOverlayRuntime(options = {}) {
     summary.setAttribute?.('role', 'status');
     summary.setAttribute?.('aria-live', 'polite');
     setStyles(summary, {
-      minWidth: '150px',
+      minWidth: '0',
       color: 'rgba(255, 255, 255, 0.76)',
       fontSize: '11px',
       fontWeight: '650',
-      whiteSpace: 'nowrap'
+      whiteSpace: 'normal'
     });
 
     group.appendChild(targetGroup);
@@ -2722,7 +2746,9 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(settingsButton, {
       display: 'inline-flex',
       alignItems: 'center',
+      justifyContent: 'space-between',
       gap: '8px',
+      width: '100%',
       minHeight: '40px'
     });
 
@@ -2744,22 +2770,21 @@ function createFabricOverlayRuntime(options = {}) {
     panel.dataset.fabricPilotPanel = 'brush-settings';
     panel.setAttribute?.('role', 'group');
     panel.setAttribute?.('aria-label', '브러시 설정');
+    // 팔레트 안에 인라인으로 펼쳐진다(더 이상 툴바 아래로 떨어지는 드롭다운이 아니다)
     setStyles(panel, {
       display: 'none',
-      position: 'absolute',
-      top: 'calc(100% + 6px)',
-      left: '0',
-      width: '360px',
-      maxWidth: 'calc(100vw - 24px)',
-      maxHeight: 'calc(100vh - 100% - 30px)',
+      position: 'static',
+      width: '100%',
+      maxHeight: '210px',
       overflowY: 'auto',
       overscrollBehavior: 'contain',
       flexDirection: 'column',
-      gap: '12px',
-      padding: '12px',
+      gap: '10px',
+      marginTop: '6px',
+      padding: '8px',
       boxSizing: 'border-box',
       borderRadius: '8px',
-      background: 'rgba(24, 24, 28, 0.96)',
+      background: 'rgba(255, 255, 255, 0.05)',
       color: '#fff'
     });
 
@@ -2823,11 +2848,13 @@ function createFabricOverlayRuntime(options = {}) {
       const row = documentRef.createElement('div');
       setStyles(row, {
         display: 'flex',
+        flexFlow: 'row wrap',
         alignItems: 'center',
         gap: '6px'
       });
       const labelElement = documentRef.createElement('span');
       labelElement.textContent = label;
+      setStyles(labelElement, { flex: '1 1 100%', fontSize: '11px' });
       const decrease = createButton('−', decreaseAction);
       decrease.setAttribute?.('aria-label', decreaseLabel);
       const input = documentRef.createElement('input');
@@ -3096,7 +3123,9 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function activeFrameInteractionInProgress() {
-    return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart);
+    // 제스처 중 renderArmedFramePreview()가 캔버스를 재구성하면 Ctrl 지우개의 은닉 표시가 사라진다.
+    return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture ||
+      transformStart || sizeAdjustGesture || strokeEraseGesture);
   }
 
   function renderedCandidateMatches(candidate) {
@@ -5171,6 +5200,282 @@ function createFabricOverlayRuntime(options = {}) {
     } catch (_error) { /* best-effort pointer release */ }
   }
 
+  // 펜/터치 유래 포인터 이벤트는 altKey/ctrlKey가 비어 오는 환경이 있어(레거시 피드백 22)
+  // 오버레이 문서의 전역 키 상태를 함께 본다. 상태는 keyup과 window blur에서만 내려간다.
+  function isAltActive(event) {
+    return event?.altKey === true || overlayModifierState.alt === true;
+  }
+
+  function isCtrlActive(event) {
+    return event?.ctrlKey === true || overlayModifierState.ctrl === true;
+  }
+
+  function resetOverlayModifierState() {
+    overlayModifierState.alt = false;
+    overlayModifierState.ctrl = false;
+  }
+
+  function onOverlayKeyDown(event) {
+    if (event?.key === 'Alt') overlayModifierState.alt = true;
+    if (event?.key === 'Control') overlayModifierState.ctrl = true;
+  }
+
+  function onOverlayKeyUp(event) {
+    if (event?.key === 'Alt') overlayModifierState.alt = false;
+    if (event?.key === 'Control') overlayModifierState.ctrl = false;
+  }
+
+  function onOverlayWindowBlur(event) {
+    resetOverlayModifierState();
+    endSizeAdjustGesture(event);
+    cancelStrokeEraseGesture(event);
+    onPointerCancel(event);
+  }
+
+  function onCanvasContextMenu(event) {
+    // 레거시 drawing-canvas.js L113-117 동치: Alt 우클릭 드래그가 컨텍스트 메뉴를 띄우지 않게 한다.
+    if (!isAltActive(event) && !sizeAdjustGesture) return;
+    event.preventDefault?.();
+  }
+
+  function createSizeAdjustHud() {
+    const hud = documentRef.createElement('div');
+    hud.className = 'mpv-fabric-pilot-size-hud';
+    hud.dataset.fabricPilotOutput = 'size-adjust';
+    hud.setAttribute?.('role', 'status');
+    hud.setAttribute?.('aria-live', 'polite');
+    hud.setAttribute?.('aria-atomic', 'true');
+    setStyles(hud, {
+      position: 'fixed',
+      display: 'none',
+      left: '0px',
+      top: '0px',
+      zIndex: '3',
+      pointerEvents: 'none',
+      padding: '4px 8px',
+      borderRadius: '6px',
+      font: '600 12px/1 sans-serif',
+      whiteSpace: 'nowrap',
+      background: 'rgba(24, 24, 28, 0.92)',
+      color: '#fff'
+    });
+    return hud;
+  }
+
+  function showSizeAdjustHud(clientX, clientY, size) {
+    if (!sizeAdjustHud) return;
+    sizeAdjustHud.textContent = `${size}px`;
+    setStyles(sizeAdjustHud, {
+      display: 'block',
+      left: `${Math.round(finiteNumber(clientX) + SIZE_ADJUST_HUD_OFFSET_X)}px`,
+      top: `${Math.round(finiteNumber(clientY) - SIZE_ADJUST_HUD_OFFSET_Y)}px`
+    });
+  }
+
+  function hideSizeAdjustHud() {
+    if (!sizeAdjustHud) return;
+    setStyles(sizeAdjustHud, { display: 'none' });
+  }
+
+  function beginSizeAdjustGesture(event) {
+    sizeAdjustGesture = {
+      pointerId: event.pointerId,
+      startClientX: finiteNumber(event.clientX),
+      startClientY: finiteNumber(event.clientY),
+      startSize: boundedInteger(
+        brushStyle.size,
+        MIN_BRUSH_SIZE,
+        MAX_BRUSH_SIZE,
+        DEFAULT_BRUSH_STYLE.size
+      )
+    };
+    try {
+      event.currentTarget?.setPointerCapture?.(event.pointerId);
+    } catch (_error) { /* pointer capture is best-effort */ }
+    // HUD 앵커는 레거시 sizeadjust 이벤트와 같이 드래그 '시작' 좌표에 고정한다.
+    showSizeAdjustHud(
+      sizeAdjustGesture.startClientX,
+      sizeAdjustGesture.startClientY,
+      sizeAdjustGesture.startSize
+    );
+    event.preventDefault?.();
+    event.stopImmediatePropagation?.();
+  }
+
+  function updateSizeAdjustGesture(event) {
+    const gesture = sizeAdjustGesture;
+    if (!gesture) return brushStyle.size;
+    const delta = finiteNumber(event.clientX) - gesture.startClientX;
+    // boundedInteger는 parseInt 절삭이므로 레거시 Math.round 동치를 여기서 만든다.
+    const requested = Math.round(gesture.startSize + delta / SIZE_ADJUST_PIXELS_PER_STEP);
+    const size = setBrushSize(requested);
+    showSizeAdjustHud(gesture.startClientX, gesture.startClientY, size);
+    return size;
+  }
+
+  // 정상 종료와 취소가 동일하다 — 레거시 _endSizeAdjust도 크기를 되돌리지 않는다.
+  function endSizeAdjustGesture(event) {
+    const gesture = sizeAdjustGesture;
+    sizeAdjustGesture = null;
+    if (!gesture) return false;
+    hideSizeAdjustHud();
+    releasePointerCapture(
+      event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+      gesture.pointerId
+    );
+    return true;
+  }
+
+  function strokeErasePoint(event) {
+    if (!currentSession) return null;
+    return mapClientPointToSource(
+      event,
+      currentSession.canvasRect,
+      currentSession.viewportTransform,
+      { width: currentSession.sourceWidth, height: currentSession.sourceHeight }
+    );
+  }
+
+  function strokeEraseRadius() {
+    return Math.max(1, resolveSelectionHitTolerance(currentSession || {}) / 2);
+  }
+
+  // 직전 샘플 → 현재 샘플 구간을 반경 radius로 부풀린 볼록 사각형.
+  // 점 단위 판정은 빠른 드래그에서 획을 건너뛰므로 스윕 형상으로 판정한다.
+  function strokeEraseSweepPolygon(previous, current, radius) {
+    const dx = current.x - finiteNumber(previous?.x, current.x);
+    const dy = current.y - finiteNumber(previous?.y, current.y);
+    const length = Math.hypot(dx, dy);
+    if (!previous || length < 1e-6) {
+      return rectanglePolygon(
+        { x: current.x - radius, y: current.y - radius },
+        { x: current.x + radius, y: current.y + radius }
+      );
+    }
+    const ux = (dx / length) * radius;
+    const uy = (dy / length) * radius;
+    const nx = -uy;
+    const ny = ux;
+    return [
+      { x: previous.x - ux + nx, y: previous.y - uy + ny },
+      { x: current.x + ux + nx, y: current.y + uy + ny },
+      { x: current.x + ux - nx, y: current.y + uy - ny },
+      { x: previous.x - ux - nx, y: previous.y - uy - ny }
+    ];
+  }
+
+  // 히트테스트 문맥은 **포인터 이벤트 1회당 한 번만** 만든다. coalesced 샘플마다
+  // 씬 스냅샷·캔버스 오브젝트 맵·기하 예산을 재구축하면 240Hz 펜에서 프레임당
+  // 4~8회 × 프레임 오브젝트 수만큼 반복되어 그리기 지연이 눈에 띈다.
+  function createStrokeEraseContext() {
+    if (!fabricCanvas) return null;
+    return {
+      snapshot: sceneStore.getActiveSceneSnapshot(),
+      canvasObjects: new Map(
+        fabricCanvas.getObjects()
+          .filter(object => object.__baeframeObjectId)
+          .map(object => [object.__baeframeObjectId, object])
+      ),
+      budget: createGeometryBudget(maxSelectionGeometryOperations),
+      radius: strokeEraseRadius(),
+      hidden: 0
+    };
+  }
+
+  function collectErasedStrokesAt(event, context) {
+    const gesture = strokeEraseGesture;
+    if (!gesture || !fabricCanvas || !context) return 0;
+    const point = strokeErasePoint(event);
+    if (!point) return 0;
+    const polygon = strokeEraseSweepPolygon(gesture.lastPoint, point, context.radius);
+    gesture.lastPoint = point;
+    if (!polygonHasArea(polygon, 1)) return 0;
+
+    const polygonBounds = boundsForPoints(polygon);
+    let hidden = 0;
+    for (const record of context.snapshot?.objects || []) {
+      // 이미 지운 획은 판정 자체를 건너뛴다 — 같은 획 위를 여러 번 지나가도 1회만 처리된다.
+      if (record.type !== 'stroke' || gesture.erasedIds.has(record.id)) continue;
+      const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
+      const object = context.canvasObjects.get(record.id);
+      if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
+        continue;
+      }
+      const sourceSelection = createSourcePolygonQuery(object, polygon, context.budget);
+      if (!sourceSelection.query || sourceSelection.reason) continue;
+      const fillSelection = createStoredPathFillQuery(record, object, sourceSelection, context.budget);
+      if (!fillSelection.query || fillSelection.reason) continue;
+      const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
+      // 기하 예산을 초과한 획은 삭제 후보에서 제외한다 (오삭제보다 미삭제가 안전하다).
+      if (touch.limitExceeded || !touch.hit) continue;
+      gesture.erasedIds.add(record.id);
+      if (object) {
+        gesture.hiddenObjects.push(object);
+        object.set?.({ visible: false });
+        hidden += 1;
+      }
+    }
+    // requestRenderAll()은 호출자가 이벤트당 1회만 수행한다 (루프 밖).
+    context.hidden += hidden;
+    return hidden;
+  }
+
+  function restoreErasedStrokeVisibility(gesture) {
+    if (!gesture) return;
+    for (const object of gesture.hiddenObjects) object.set?.({ visible: true });
+    gesture.hiddenObjects = [];
+    fabricCanvas?.requestRenderAll();
+  }
+
+  function cancelStrokeEraseGesture(event) {
+    const gesture = strokeEraseGesture;
+    strokeEraseGesture = null;
+    if (!gesture) return false;
+    restoreErasedStrokeVisibility(gesture);
+    releasePointerCapture(
+      event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+      gesture.pointerId
+    );
+    return true;
+  }
+
+  function finalizeStrokeEraseGesture() {
+    const gesture = strokeEraseGesture;
+    strokeEraseGesture = null;
+    if (!gesture) return { applied: false, reason: 'no-stroke-erase-gesture' };
+    if (gesture.erasedIds.size === 0) {
+      settleArmedFramePreview();
+      return { applied: false, deletedCount: 0, deletedIds: [] };
+    }
+    if (!inputEnabled || !currentSession ||
+        currentSession.sessionId !== gesture.sessionId ||
+        tokenState.inputRevision !== gesture.inputRevision) {
+      restoreErasedStrokeVisibility(gesture);
+      return { applied: false, reason: 'stale-stroke-erase-gesture' };
+    }
+    const retargeted = retargetArmedFrameForMutation();
+    if (!retargeted?.accepted) {
+      restoreErasedStrokeVisibility(gesture);
+      return { applied: false, reason: retargeted?.reason || 'retarget-failed' };
+    }
+    const selection = sceneStore.selectObjects([...gesture.erasedIds]);
+    if (selection.selection.length === 0) {
+      restoreErasedStrokeVisibility(gesture);
+      return { applied: false, reason: 'stroke-erase-target-missing' };
+    }
+    // 기존 삭제 액션 경로를 그대로 쓴다 — dedupe·프레임 재조준·undo 1건·영속화 관찰자까지 동일.
+    const result = applyDrawingAction({
+      sessionId: currentSession.sessionId,
+      actionId: createId('stroke-erase'),
+      action: 'delete-selection'
+    });
+    if (!result.applied) {
+      sceneStore.selectObjects([]);
+      restoreErasedStrokeVisibility(gesture);
+    }
+    return result;
+  }
+
   function rollbackSelectTransform(event, shouldEndTransform) {
     const start = transformStart;
     if (!start?.target) {
@@ -5289,6 +5594,27 @@ function createFabricOverlayRuntime(options = {}) {
       }
     }
     const tool = sceneStore.getDiagnostics().tool;
+    // 레거시 _resolveEffectiveTool 계승: Ctrl은 pointerdown 시점에 래치되고 pointerup에서 풀린다.
+    // fabric에서는 새 획을 만들지 않고 포인터가 지나가는 기존 스트로크를 지운다.
+    if (tool === 'brush' && isCtrlActive(event)) {
+      if (activeStroke || selectGesture || strokeEraseGesture) return;
+      strokeEraseGesture = {
+        pointerId: event.pointerId,
+        sessionId: currentSession?.sessionId,
+        inputRevision: tokenState.inputRevision,
+        lastPoint: null,
+        erasedIds: new Set(),
+        hiddenObjects: []
+      };
+      try {
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+      } catch (_error) { /* pointer capture is best-effort */ }
+      const eraseContext = createStrokeEraseContext();
+      collectErasedStrokesAt(event, eraseContext);
+      if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
+      event.preventDefault?.();
+      return;
+    }
     if (tool === 'brush') {
       if (activeStroke || selectGesture) return;
       activeStroke = {
@@ -5462,8 +5788,17 @@ function createFabricOverlayRuntime(options = {}) {
       beginPointerDown(event, false);
       return;
     }
+    // Alt 드래그는 씬을 바꾸지 않으므로 pointerdown 프레임 확정 왕복 이전에 가로챈다.
+    // 레거시와 같이 좌/우 버튼 모두 허용한다.
+    if (inputEnabled && isAltActive(event) &&
+        (event.button === 0 || event.button === 2) &&
+        !sizeAdjustGesture && !strokeEraseGesture && !pendingPointerdownFrame &&
+        !activeStroke && !activeLasso && !selectGesture) {
+      beginSizeAdjustGesture(event);
+      return;
+    }
     if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame ||
-        activeStroke || activeLasso || selectGesture) {
+        activeStroke || activeLasso || selectGesture || strokeEraseGesture) {
       return;
     }
     if (!requestPointerdownFrame) {
@@ -5578,7 +5913,24 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerMove(event) {
+    if (sizeAdjustGesture) {
+      if (event.pointerId !== sizeAdjustGesture.pointerId) return;
+      updateSizeAdjustGesture(event);
+      event.preventDefault?.();
+      return;
+    }
     if (consumePendingPointerEvent(event)) return;
+    if (strokeEraseGesture) {
+      if (event.pointerId !== strokeEraseGesture.pointerId) return;
+      const coalesced = typeof event.getCoalescedEvents === 'function' ? event.getCoalescedEvents() : [];
+      const samples = coalesced.length > 0 ? coalesced : [event];
+      // 스냅샷·오브젝트 맵·기하 예산은 이벤트당 1회만 만든다 (샘플마다 재구축 금지).
+      const eraseContext = createStrokeEraseContext();
+      for (const sample of samples) collectErasedStrokesAt(sample, eraseContext);
+      if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
+      event.preventDefault?.();
+      return;
+    }
     if (activeLasso) {
       if (event.pointerId !== activeLasso.pointerId) return;
       appendLassoPoint(event);
@@ -5595,7 +5947,24 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerUp(event) {
+    if (sizeAdjustGesture) {
+      if (event.pointerId !== sizeAdjustGesture.pointerId) return;
+      endSizeAdjustGesture(event);
+      event.preventDefault?.();
+      return;
+    }
     if (consumePendingPointerEvent(event)) return;
+    if (strokeEraseGesture) {
+      if (event.pointerId !== strokeEraseGesture.pointerId) return;
+      const eraseContext = createStrokeEraseContext();
+      collectErasedStrokesAt(event, eraseContext);
+      if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
+      // 제스처를 먼저 비운 뒤 캡처를 놓아, 동기 lostpointercapture가 취소로 해석되지 않게 한다.
+      finalizeStrokeEraseGesture();
+      releasePointerCapture(event.currentTarget, event.pointerId);
+      event.preventDefault?.();
+      return;
+    }
     if (activeLasso) {
       if (event.pointerId !== activeLasso.pointerId) return;
       const { sessionId, inputRevision } = activeLasso;
@@ -5623,6 +5992,16 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerCancel(event) {
+    if (sizeAdjustGesture) {
+      if (event.pointerId !== undefined && event.pointerId !== sizeAdjustGesture.pointerId) return;
+      endSizeAdjustGesture(event);
+      return;
+    }
+    if (strokeEraseGesture) {
+      if (event.pointerId !== undefined && event.pointerId !== strokeEraseGesture.pointerId) return;
+      cancelStrokeEraseGesture(event);
+      return;
+    }
     if (pendingPointerdownFrame) {
       if (event.pointerId !== undefined &&
           event.pointerId !== pendingPointerdownFrame.pointerId) return;
@@ -5661,6 +6040,15 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onDocumentPointerUp(event) {
+    // 포인터 캡처가 실패한 환경에서도 제스처가 끝나도록 문서 경로에서 회수한다.
+    if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+      onPointerUp(event);
+      return;
+    }
+    if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+      onPointerUp(event);
+      return;
+    }
     if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
       consumePendingPointerEvent(event);
       return;
@@ -5674,6 +6062,14 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onDocumentPointerCancel(event) {
+    if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+      onPointerCancel(event);
+      return;
+    }
+    if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+      onPointerCancel(event);
+      return;
+    }
     if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
       onPointerCancel(event);
       return;
@@ -5821,9 +6217,13 @@ function createFabricOverlayRuntime(options = {}) {
     addDomListener(pointerTarget, 'pointerup', onPointerUp, true);
     addDomListener(pointerTarget, 'pointercancel', onPointerCancel, true);
     addDomListener(pointerTarget, 'lostpointercapture', onPointerCancel, true);
+    addDomListener(pointerTarget, 'contextmenu', onCanvasContextMenu, true);
     addDomListener(documentRef, 'pointerup', onDocumentPointerUp);
     addDomListener(documentRef, 'pointercancel', onDocumentPointerCancel);
-    addDomListener(windowRef, 'blur', onPointerCancel);
+    // 펜/터치에서 modifier가 비어 오는 환경 대응 — 오버레이 문서 전역 키 상태
+    addDomListener(documentRef, 'keydown', onOverlayKeyDown, true);
+    addDomListener(documentRef, 'keyup', onOverlayKeyUp, true);
+    addDomListener(windowRef, 'blur', onOverlayWindowBlur);
     addFabricListener('selection:created', onSelectionChanged);
     addFabricListener('selection:updated', onSelectionChanged);
     addFabricListener('selection:cleared', onSelectionCleared);
@@ -6028,6 +6428,9 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function releaseSurfaceResources() {
+    endSizeAdjustGesture();
+    cancelStrokeEraseGesture();
+    resetOverlayModifierState();
     cancelPendingPointerdownFrame();
     cancelSelectInteraction();
     for (const { target, type, listener, listenerOptions } of domListeners.splice(0)) {
@@ -6065,9 +6468,11 @@ function createFabricOverlayRuntime(options = {}) {
     viewportElement = null;
     canvasElement = null;
     toolbar = null;
+    paletteShell = null;
     brushControls = null;
     selectionControls = null;
     badge = null;
+    sizeAdjustHud = null;
     container = null;
     root = null;
     prepared = false;
@@ -6104,24 +6509,16 @@ function createFabricOverlayRuntime(options = {}) {
       canvasElement.className = 'mpv-fabric-delta-canvas';
       toolbar = documentRef.createElement('div');
       toolbar.className = 'mpv-fabric-pilot-toolbar';
-      setStyles(toolbar, {
-        position: 'absolute',
-        top: '12px',
-        left: '12px',
-        display: 'flex',
-        zIndex: '2',
-        pointerEvents: 'none'
-      });
-      const brushButton = labelToolbarButton(createButton('Brush', 'brush'), '브러시 도구 (B)');
-      const selectButton = labelToolbarButton(createButton('V', 'select'), '선택 도구 (V)');
-      const undoButton = labelToolbarButton(createButton('Undo', 'undo'), '실행 취소 (Ctrl+Z)');
-      const redoButton = labelToolbarButton(createButton('Redo', 'redo'), '다시 실행 (Ctrl+Y)');
+      const brushButton = labelToolbarButton(createButton('브러시', 'brush'), '브러시 도구 (B)');
+      const selectButton = labelToolbarButton(createButton('선택', 'select'), '선택 도구 (V)');
+      const undoButton = labelToolbarButton(createButton('실행 취소', 'undo'), '실행 취소 (Ctrl+Z)');
+      const redoButton = labelToolbarButton(createButton('다시 실행', 'redo'), '다시 실행 (Ctrl+Y)');
       const deleteButton = labelToolbarButton(
-        createButton('Delete', 'delete-selection'),
+        createButton('선택 삭제', 'delete-selection'),
         '선택한 획 삭제 (Delete)'
       );
       const clearButton = labelToolbarButton(
-        createButton('Clear', 'clear-session'),
+        createButton('전체 지우기', 'clear-session'),
         '현재 프레임 드로잉 전체 삭제'
       );
       brushControls = createBrushSettingsControls();
@@ -6132,20 +6529,38 @@ function createFabricOverlayRuntime(options = {}) {
       badge.setAttribute?.('aria-live', 'polite');
       badge.setAttribute?.('aria-atomic', 'true');
       syncPersistenceBadge();
-      toolbar.appendChild(brushButton);
-      toolbar.appendChild(selectButton);
-      toolbar.appendChild(selectionControls.group);
-      toolbar.appendChild(undoButton);
-      toolbar.appendChild(redoButton);
-      toolbar.appendChild(deleteButton);
-      toolbar.appendChild(clearButton);
-      toolbar.appendChild(brushControls.settingsButton);
-      toolbar.appendChild(brushControls.panel);
-      toolbar.appendChild(badge);
+      // 크기 조절 HUD는 팔레트 레이아웃 계산에 섞이면 안 되므로 surface 직속으로 붙인다.
+      sizeAdjustHud = createSizeAdjustHud();
+      // 레거시 #drawingTools 팔레트 셸(헤더 드래그 + 접기 + 세로 섹션)을 그대로 계승한다
+      paletteShell = createFabricDrawingPalette({
+        documentRef,
+        windowRef,
+        element: toolbar,
+        setStyles,
+        addDomListener,
+        sections: [
+          { id: 'tools', label: '도구', items: [brushButton, selectButton] },
+          { id: 'selection', items: [selectionControls.group] },
+          {
+            id: 'brush',
+            label: '브러시 설정',
+            items: [brushControls.settingsButton],
+            appended: [brushControls.panel]
+          },
+          {
+            id: 'actions',
+            label: '편집',
+            items: [undoButton, redoButton, deleteButton, clearButton]
+          },
+          { id: 'status', items: [badge] }
+        ]
+      });
       viewportElement.appendChild(canvasElement);
       container.appendChild(viewportElement);
       container.appendChild(toolbar);
+      container.appendChild(sizeAdjustHud);
       root.appendChild(container);
+      paletteShell.restore();
 
       const { Canvas } = resolveFabric();
       fabricCanvas = new Canvas(canvasElement, {
@@ -6206,6 +6621,9 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: false, reason: 'invalid-session' };
     }
 
+    endSizeAdjustGesture();
+    cancelStrokeEraseGesture();
+    resetOverlayModifierState();
     cancelPendingPointerdownFrame();
     abortPendingLassoSelection();
     if (activeStroke) cancelActiveStroke();
@@ -6627,6 +7045,13 @@ function createFabricOverlayRuntime(options = {}) {
       inputEnabled,
       devicePixelRatio,
       tokens: { ...tokenState },
+      gestures: {
+        altSizeAdjustActive: !!sizeAdjustGesture,
+        ctrlStrokeEraseActive: !!strokeEraseGesture,
+        strokeEraseCandidateCount: strokeEraseGesture ? strokeEraseGesture.erasedIds.size : 0,
+        modifierAlt: overlayModifierState.alt,
+        modifierCtrl: overlayModifierState.ctrl
+      },
       presentationRevision: presentationState.presentationRevision,
       presentedStableVideoIdentity: currentSession?.stableVideoIdentity ??
         presentationState.stableVideoIdentity,

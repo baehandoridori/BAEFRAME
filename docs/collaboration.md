@@ -331,3 +331,46 @@ Liveblocks Storage(CRDT) 구독 콜백이 한 번도 실행되지 않는 문제�
 | Phase 6 | 기존 시스템 정리 | 완료 |
 | Phase 7 | 스키마 업데이트 (liveblocksRoomId) | 완료 |
 | Phase 8 | 웹 뷰어 통합 | 대기 (향후) |
+
+---
+
+## 7. 표시 계층 현황 (2026-08 기준)
+
+Liveblocks가 실어 나르는 presence/broadcast 데이터를 화면에 그리는 계층은 다음과 같습니다. mpv 재생 중에는 mpv가 네이티브 자식 창으로 렌더링하므로, DOM 표시 요소를 오버레이 창으로 **미러링**해야 보입니다.
+
+### 7.1 렌더러 DOM 표시 요소
+
+| 표시 요소 | 파일 · 앵커 |
+|-----------|-------------|
+| 협업 아바타 지표(호버 패널) | `renderer/scripts/app.js` — `handleCollaborationIndicatorEnter()`, `handleCollaborationIndicatorLeave()` |
+| 접속 리플 애니메이션 | `renderer/scripts/app.js` — `_triggerCollabRipple()`, 내부 `animateRipple()` |
+| 플렉서스 패널 | `renderer/scripts/modules/plexus.js` — `PlexusEffect`. 마운트 지점은 `app.js`의 `elements.collabPlexusPanel` / `elements.collabPlexusCanvas`, 설정 토글은 `togglePlexusPanel`(`userSettings.settings.showPlexusPanel`), 해제는 `_hideCollabPlexusPanel()` |
+| 원격 커서 | `renderer/scripts/app.js` — `renderRemoteCursors()`, `createRemoteCursorElement()`, `clearRemoteCursors()`. 표시 토글 버튼은 `updateRemoteCursorToggleButton()` |
+| 타임라인 원격 재생헤드 | `renderer/scripts/app.js` — `renderRemotePlayheads()` |
+
+### 7.2 mpv 협업 미러 (COLLABORATION_MIRROR)
+
+mpv 재생 중 위 표시 요소를 오버레이 창에 복제하는 경로입니다.
+
+| 항목 | 파일 · 앵커 |
+|------|-------------|
+| 서피스 모드 상수 | `renderer/scripts/modules/mpv-surface-policy.js` — `MPV_SURFACE_MODE.COLLABORATION_MIRROR` |
+| 미러 영역 히트테스트 | `renderer/scripts/app.js` — `findClosestMpvSurface(event.target, MPV_SURFACE_MODE.COLLABORATION_MIRROR)`, `MPV_COLLABORATION_MIRROR_OVERLAY_SELECTOR` |
+| 원격 커서 HTML 직렬화/동기화 | `renderer/scripts/app.js` — `serializeMpvOverlayRemoteCursorHtml()`, `syncMpvOverlayRemoteCursorState()`, `scheduleMpvOverlayRemoteCursorStateSync()` |
+| 플렉서스 캔버스 스냅샷 전송 | `renderer/scripts/app.js` — `captureMpvCollaborationPlexusSnapshot()` |
+| 오버레이 액션 릴레이 | `renderer/scripts/modules/mpv-overlay-collaboration-action-relay.js`, 채널 상수 `MPV_OVERLAY_COLLABORATION_ACTION_CHANNEL`(`main/mpv-overlay-host.js`) |
+| 재시도 정책 | `renderer/scripts/modules/mpv-collaboration-retry.js` |
+| 미러 페이로드 한도(main) | `main/mpv-overlay-host.js` — `MAX_MPV_REMOTE_CURSOR_HTML_BYTES`, `MAX_MPV_COLLABORATION_STATE_BYTES`, `MAX_MPV_COLLABORATION_SNAPSHOT_BYTES`, `MAX_MPV_COLLABORATION_USERS`, `MAX_MPV_COLLABORATION_NAME_LENGTH`, `MAX_MPV_COLLABORATION_BOUND` |
+
+### 7.3 접속·재연결 시 참여자 스냅샷 보장
+
+| 보장 | 구현 위치 |
+|------|-----------|
+| **구독 설치가 Storage 로드보다 앞선다** — `room.subscribe('others')`는 초기 발화가 없는 순수 이벤트 소스라, Storage 동기화 `await` 뒤에 구독하면 접속 직후의 초기 참여자 상태(ROOM_STATE)를 영구히 놓친다 | `renderer/scripts/modules/liveblocks-manager.js` — `start()` 안 `this._setupSubscriptions()` 호출이 `// Storage 로드 대기` 블록 **위**에 위치 |
+| **`collaboratorsChanged`는 접속 직후와 재연결 복구 시 보상 발행된다** — 구독 이전에 확정된 목록, `lost` 로 비워진 뒤의 복구 목록을 각각 1회 재푸시한다 | 같은 파일 — `_emitCollaboratorsChanged()`(유일한 발행 지점), `start()` 의 `return` 직전 1회, `lost-connection` 의 `else if (event === 'restored')` 분기 1회 |
+
+기존 참여자가 마우스를 움직여야 목록에 나타나던 증상, `lost` → `restored` 후 목록이 1명으로 고착되던 증상이 이 두 보장으로 닫힙니다.
+
+### 7.4 관련 테스트
+
+`npm run test:mpv`에 포함된 `scripts/tests/mpv-collaboration-mirror.test.js`, `scripts/tests/mpv-overlay-collaboration-action-relay.test.js`, `scripts/tests/mpv-collaboration-retry.test.js`, `scripts/tests/mpv-liveblocks-visibility.test.js`, `scripts/tests/mpv-surface-policy.test.js`와 `npm run test:collaboration`의 `scripts/tests/collaboration-cursors-source.test.js`가 이 계층을 덮습니다. 그리고 `collaboration-cursors-source.test.js` 의 신규 3건이 7.3의 두 보장을 소스 단언으로 강제합니다.

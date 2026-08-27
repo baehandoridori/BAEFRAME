@@ -272,6 +272,8 @@ graph LR
 | `schema.js` | `.bframe` 파일의 스키마 정의 (v2.0). `BFRAME_VERSION`, `SUPPORTED_VERSIONS`, 타입 정의 포함 |
 | `playlist-schema.js` | `.bplaylist` 파일의 스키마 정의 |
 | `validators.js` | 파일 데이터 유효성 검사 함수 |
+| `drawing-render-geometry.js` | 드로잉 렌더 지오메트리 검증기(CommonJS). 오버레이 런타임·오버레이 호스트·drawing-v3가 동일 validator 사용 |
+| `fabric-drawing-limits.js` | Fabric 드로잉 지속화 한도 상수 단일 소스(CommonJS). `FABRIC_DRAWING_MAX_*`, `FABRIC_DRAWING_STORE_LIMITS` |
 
 ### `.bframe` 파일 형식
 
@@ -526,3 +528,44 @@ graph TB
 | | `Ctrl + Shift + C` | 링크 복사 |
 | **뷰** | `F` | 전체화면 |
 | | `Shift + ?` | 단축키 도움말 |
+
+---
+
+## 11. 드로잉 스택 현황과 소유권 규칙
+
+### 11.1 드로잉 스택 2벌
+
+BAEFRAME에는 드로잉 엔진이 두 벌 존재합니다.
+
+| 구분 | (A) 레거시 Canvas2D | (B) Fabric 파일럿 |
+|------|--------------------|-------------------|
+| 렌더링 위치 | 메인 렌더러 DOM | mpv 오버레이 BrowserWindow(투명) |
+| UI | `renderer/index.html`의 `#drawingTools`(드래그형 팔레트) | 오버레이 창 내부 툴바 |
+| 엔진 모듈 | `renderer/scripts/modules/drawing-manager.js` | `renderer/scripts/modules/mpv-fabric-overlay-runtime.js` (esbuild → `renderer/scripts/lib/mpv-fabric-overlay.iife.js`) |
+| 컨트롤러 | `renderer/scripts/app.js` 내부 | `renderer/scripts/modules/fabric-drawing-pilot-controller.js` |
+| 저장 계층 | — | `renderer/scripts/modules/fabric-drawing-persistence-store.js`, `main/mpv-overlay-host.js` |
+| `.bframe` 저장 위치 | 루트 `drawings` (래스터) | 루트 `drawingsV3` (벡터) |
+
+레거시 스택은 **mpv 로드 실패 시의 순수 html5 폴백 모드에서만** 동작합니다. mpv 재생 중에는 `B` 단축키가 항상 Fabric 경로로 갑니다.
+
+### 11.2 소유권 규칙 — 저장 상태와 표시 분리
+
+소유권 술어는 `fabric-drawing-pilot-controller.js`의 `shouldOwnDrawingShortcut()`입니다. 이 값이 좌우하는 것은 다음 세 가지입니다.
+
+1. **B 라우팅** — `app.js`의 `routeKeydown()` / `toggleDrawMode()`
+2. **타임라인 투영** — `app.js`의 `getFabricPilotTimelineLayers()` (null이면 `renderActiveDrawingLayers()`가 레거시 레이어로 폴백)
+3. **CSS 마스크** — `body.fabric-drawing-pilot-enabled` 클래스(`renderer/styles/main.css`의 `#drawingTools` 숨김, `.drawing-track-row` 필터)
+
+**규칙: 소유권과 표시는 저장 성공 여부와 분리한다.** 저장 실패(`.bframe` 저장 실패, 스냅샷 재검증 실패)는 드로잉·키프레임을 지우거나 레거시 팔레트를 되살리지 않습니다. 저장 실패 시에는 드로잉과 키프레임을 그대로 유지한 채 자동 재시도하고, 상태 표시(저장 대기 중 → 저장됨)만 갱신하며, 지속 실패일 때만 경고를 띄웁니다.
+
+레거시 `drawings` 데이터는 파일럿이 소유 중이어도 타임라인에 **읽기 전용 행**으로 원래 색을 유지한 채 계속 표시됩니다(수정 불가).
+
+### 11.3 지속화 한도 단일 소스
+
+지속화 한도는 `shared/fabric-drawing-limits.js` 한 곳에서 정의합니다.
+
+- `main/mpv-overlay-host.js` — `require('../shared/fabric-drawing-limits')`
+- `renderer/scripts/modules/mpv-fabric-overlay-runtime.js` — `require('../../../shared/fabric-drawing-limits.js')` (esbuild 번들에 인라인)
+- `renderer/scripts/modules/fabric-drawing-persistence-store.js` — 브라우저 네이티브 ES 모듈이라 CommonJS를 import 할 수 없어 `DEFAULT_LIMITS` 리터럴을 유지하고, `scripts/tests/fabric-drawing-persistence-store.test.mjs`의 파리티 테스트가 shared 소스와 값이 같음을 강제합니다.
+
+한도를 바꿀 때는 **shared 파일을 먼저 고치고**, 스토어 리터럴을 맞춘 뒤, `npm run bundle:mpv-fabric-overlay`로 번들을 재생성합니다.

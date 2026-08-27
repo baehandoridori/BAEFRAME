@@ -384,6 +384,8 @@ function getBrushControls(root) {
   const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
   return {
     toolbar,
+    sizeHud: findOne(root.querySelectorAllByClass('mpv-fabric-overlay-surface')[0],
+      node => node.dataset.fabricPilotOutput === 'size-adjust'),
     undoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'undo'),
     redoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'redo'),
     settingsButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush-settings'),
@@ -8329,6 +8331,16 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-viewport').length, 1);
   assert.equal(root.querySelectorAllByClass('mpv-fabric-delta-canvas').length, 1);
+  const surface = root.querySelectorAllByClass('mpv-fabric-overlay-surface')[0];
+  const hud = findOne(surface, node => node.dataset.fabricPilotOutput === 'size-adjust');
+  assert.ok(hud, 'expected the Alt size-adjust HUD on the overlay surface');
+  assert.strictEqual(hud.parentNode, surface);
+  assert.equal(hud.style.display, 'none');
+  assert.equal(hud.style.position, 'fixed');
+  assert.equal(hud.getAttribute('role'), 'status');
+  assert.equal(hud.getAttribute('aria-live'), 'polite');
+  assert.equal(hud.getAttribute('title'), null);
+  assert.equal(hud.dataset.fabricPilotAction, undefined);
 });
 
 test('responsive toolbar keeps one accessible DOM and a compact persistence badge', () => {
@@ -8360,8 +8372,14 @@ test('responsive toolbar keeps one accessible DOM and a compact persistence badg
   ]);
 
   assert.equal(toolbar.style.gap, undefined);
-  assert.equal(panel.style.top, 'calc(100% + 6px)');
-  assert.equal(panel.style.maxHeight, 'calc(100vh - 100% - 30px)');
+  assert.equal(findOne(toolbar, node => node.dataset.fabricPilotOutput === 'size-adjust'), null);
+  assert.equal(toolbar.style.position, 'absolute');
+  assert.equal(toolbar.style.left, '12px');
+  assert.equal(toolbar.style.top, '12px');
+  assert.equal(toolbar.dataset.collapsed, 'false');
+  assert.equal(panel.style.position, 'static');
+  assert.equal(panel.style.width, '100%');
+  assert.equal(panel.style.maxHeight, '210px');
   assert.equal(panel.style.overflowY, 'auto');
   assert.equal(panel.style.overscrollBehavior, 'contain');
   for (const [action, label] of expectedLabels) {
@@ -8444,6 +8462,10 @@ test('a failed partial prepare rolls back its surface and retries without duplic
     .every(listeners => listeners.size === 1), true);
   assert.equal([...recoveredCanvas.upperCanvasEl.listeners.values()]
     .every(listeners => listeners.size === 1), true);
+  assert.deepEqual(
+    [...recoveredCanvas.upperCanvasEl.listeners.keys()].sort(),
+    ['contextmenu', 'lostpointercapture', 'pointercancel', 'pointerdown', 'pointermove', 'pointerup']
+  );
 
   assert.equal(runtime.setDrawingInput(makeInput()).accepted, true);
   drawStroke(recoveredCanvas.upperCanvasEl, 77);
@@ -8641,8 +8663,8 @@ test('local toolbar changes do not consume controller tool revisions', () => {
   runtime.prepare(root);
   runtime.setDrawingInput(makeInput());
   const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
-  const selectButton = toolbar.children.find(child => child.dataset.fabricPilotAction === 'select');
-  const brushButton = toolbar.children.find(child => child.dataset.fabricPilotAction === 'brush');
+  const selectButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'select');
+  const brushButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush');
 
   assert.equal(brushButton.dataset.active, 'true');
   assert.equal(selectButton.dataset.active, 'false');
@@ -13694,4 +13716,264 @@ test('a failed explicit action retarget releases its action id for a safe retry'
     targetFrame: 10
   }), { applied: false, reason: 'history-capacity-exceeded' });
   runtime.destroy();
+});
+
+test('Alt 드래그는 브러시 크기를 1~50으로 조절하고 팔레트·HUD에 반영한다', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const controls = getBrushControls(root);
+  const element = FakeCanvas.instances[0].upperCanvasEl;
+  element.dispatch('pointerdown', { pointerId: 900, button: 0, altKey: true, clientX: 100, clientY: 100 });
+  assert.equal(runtime.getDiagnostics().gestures.altSizeAdjustActive, true);
+  assert.equal(controls.sizeHud.style.display, 'block');
+  assert.equal(controls.sizeHud.style.left, '116px');
+  assert.equal(controls.sizeHud.style.top, '72px');
+  assert.equal(controls.sizeHud.textContent, '3px');
+  element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: 140, clientY: 130 });
+  // delta 40 / 4 = 10 → 3 + 10 = 13
+  assert.equal(controls.sizeInput.value, '13');
+  assert.equal(controls.sizeOutput.textContent, '13px');
+  assert.equal(controls.summary.textContent, '13px · 100%');
+  assert.equal(controls.sizeHud.textContent, '13px');
+  assert.equal(controls.sizeHud.style.left, '116px', 'HUD는 드래그 시작점에 고정된다');
+  element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: 1000, clientY: 130 });
+  assert.equal(controls.sizeInput.value, '50');
+  element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: -1000, clientY: 130 });
+  assert.equal(controls.sizeInput.value, '1');
+  element.dispatch('pointerup', { pointerId: 900, altKey: true, clientX: -1000, clientY: 130 });
+  assert.equal(runtime.getDiagnostics().gestures.altSizeAdjustActive, false);
+  assert.equal(controls.sizeHud.style.display, 'none');
+  assert.equal(controls.sizeInput.value, '1', '종료 시 크기를 되돌리지 않는다');
+  assert.equal(runtime.getDiagnostics().objectCount, 0);
+  assert.equal(runtime.getDiagnostics().mutationCount, 0, '크기 조절은 씬을 변경하지 않는다');
+});
+
+test('Alt 드래그는 획을 만들지 않고 우클릭 시작과 컨텍스트 메뉴 차단을 지원한다', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const element = FakeCanvas.instances[0].upperCanvasEl;
+  let prevented = 0;
+  element.dispatch('pointerdown', {
+    pointerId: 901, button: 2, altKey: true, clientX: 10, clientY: 10,
+    preventDefault() { prevented += 1; }
+  });
+  assert.equal(runtime.getDiagnostics().gestures.altSizeAdjustActive, true);
+  assert.equal(prevented, 1);
+  let contextPrevented = 0;
+  element.dispatch('contextmenu', { altKey: true, preventDefault() { contextPrevented += 1; } });
+  assert.equal(contextPrevented, 1);
+  element.dispatch('pointerup', { pointerId: 901, clientX: 10, clientY: 10 });
+  let plainContext = 0;
+  element.dispatch('contextmenu', { preventDefault() { plainContext += 1; } });
+  assert.equal(plainContext, 0, 'Alt/크기조절이 아니면 컨텍스트 메뉴를 막지 않는다');
+  assert.equal(runtime.getDiagnostics().objectCount, 0);
+});
+
+test('펜 태블릿처럼 altKey가 비어 와도 문서 전역 Alt 상태로 크기 조절이 시작된다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const keydown = new harness.environment.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(keydown, 'key', { value: 'Alt' });
+    harness.environment.document.dispatchEvent(keydown);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierAlt, true);
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 40, 910, 1,
+      { pointerType: 'pen', altKey: false });
+    assert.equal(harness.runtime.getDiagnostics().gestures.altSizeAdjustActive, true);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 40, 910, 1,
+      { pointerType: 'pen', altKey: false });
+    harness.dispatchPointer(harness.element, 'pointerup', 60, 40, 910, 0,
+      { pointerType: 'pen', altKey: false });
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 0);
+    const keyup = new harness.environment.window.Event('keyup', { bubbles: true });
+    Object.defineProperty(keyup, 'key', { value: 'Alt' });
+    harness.environment.document.dispatchEvent(keyup);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierAlt, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('window blur는 Alt/Ctrl 래치를 해제하고 진행 중인 제스처를 취소한다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    // 획을 먼저 그린 뒤에 Ctrl을 래치한다. 순서를 뒤집으면 modifierCtrl 래치 때문에
+    // drawStrokeAt 의 pointerdown 이 지우개로 열려 획이 만들어지지 않는다(objectCount 0).
+    harness.drawStrokeAt(60, 920);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 1);
+    const keydown = new harness.environment.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(keydown, 'key', { value: 'Control' });
+    harness.environment.document.dispatchEvent(keydown);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierCtrl, true);
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, 921, 1, { ctrlKey: true });
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, 921, 1, { ctrlKey: true });
+    assert.equal(harness.runtime.getDiagnostics().gestures.strokeEraseCandidateCount, 1);
+    harness.environment.window.dispatchEvent(new harness.environment.window.Event('blur'));
+    assert.equal(harness.runtime.getDiagnostics().gestures.ctrlStrokeEraseActive, false);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierCtrl, false);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 1, '취소는 삭제하지 않는다');
+    assert.equal(harness.canvas.getObjects()
+      .filter(object => object.__baeframeObjectId).every(object => object.visible !== false), true);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Ctrl 드래그는 지나간 획만 지우고 undo 1건으로 되돌아온다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(50, 930);
+    harness.drawStrokeAt(80, 931);
+    harness.drawStrokeAt(150, 932);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 3);
+    const undoBefore = harness.runtime.getDiagnostics().undoDepth;
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 50, 933, 1, { ctrlKey: true });
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 80, 933, 1, { ctrlKey: true });
+    assert.equal(harness.runtime.getDiagnostics().gestures.strokeEraseCandidateCount, 2);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 3, '드래그 중에는 커밋하지 않는다');
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 3);
+    harness.dispatchCapturedPointerUp(40, 80, 933);
+    const after = harness.runtime.getDiagnostics();
+    assert.equal(after.objectCount, 1);
+    assert.equal(after.undoDepth, undoBefore + 1, '드래그 전체가 undo 1건이다');
+    assert.equal(after.gestures.ctrlStrokeEraseActive, false);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'undo-erase', action: 'undo'
+    }).applied, true);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 3, 'undo 1회로 두 획이 함께 복원된다');
+    assert.equal(harness.canvas.getObjects()
+      .filter(object => object.__baeframeObjectId).length, 3);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Ctrl 드래그는 새 획을 만들지 않고 도구는 brush로 남는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.dispatchPointer(harness.element, 'pointerdown', 10, 10, 940, 1, { ctrlKey: true });
+    harness.dispatchPointer(harness.element, 'pointermove', 90, 90, 940, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(90, 90, 940);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().mutationCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().tool, 'brush', 'store tool은 바뀌지 않는다');
+    harness.drawStroke([{ x: 10, y: 10 }, { x: 90, y: 90 }], 941);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('같은 획 위를 여러 번 지나가도 삭제는 1회로 집계된다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(70, 950);
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 70, 951, 1, { ctrlKey: true });
+    for (const x of [30, 40, 30, 50, 40, 60]) {
+      harness.dispatchPointer(harness.element, 'pointermove', x, 70, 951, 1, { ctrlKey: true });
+    }
+    assert.equal(harness.runtime.getDiagnostics().gestures.strokeEraseCandidateCount, 1);
+    harness.dispatchCapturedPointerUp(60, 70, 951);
+    assert.equal(harness.runtime.getDiagnostics().objectCount, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 2);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Ctrl 지우개 취소는 은닉한 획을 되살리고 히스토리를 남기지 않는다', async () => {
+  for (const [name, cancel] of [
+    ['pointercancel', h => h.dispatchPointer(h.element, 'pointercancel', 60, 60, 960, 0)],
+    ['lostpointercapture', h => h.dispatchLostPointerCapture(960)]
+  ]) {
+    const harness = createRealFabricHarness();
+    try {
+      harness.drawStrokeAt(60, 959);
+      assert.equal(harness.runtime.getDiagnostics().objectCount, 1, name);
+      harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, 960, 1, { ctrlKey: true });
+      harness.dispatchPointer(harness.element, 'pointermove', 60, 60, 960, 1, { ctrlKey: true });
+      assert.equal(harness.runtime.getDiagnostics().gestures.strokeEraseCandidateCount, 1, name);
+      cancel(harness);
+      const diagnostics = harness.runtime.getDiagnostics();
+      assert.equal(diagnostics.gestures.ctrlStrokeEraseActive, false, name);
+      assert.equal(diagnostics.objectCount, 1, name);
+      assert.equal(diagnostics.undoDepth, 1, name);
+      assert.equal(harness.canvas.getObjects()
+        .find(object => object.__baeframeObjectId).visible !== false, true, name);
+    } finally {
+      await harness.destroy();
+    }
+  }
+});
+
+test('Alt/Ctrl 제스처는 select 도구와 pointerdown 프레임 확정 왕복을 침범하지 않는다', () => {
+  FakeCanvas.instances = [];
+  const requests = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document,
+    requestPointerdownFrame(request) {
+      requests.push(request);
+      return true;
+    }
+  });
+  runtime.prepare(root);
+  runtime.setDrawingInput(makeInput());
+  const element = FakeCanvas.instances[0].upperCanvasEl;
+  // (a) select 도구에서 Ctrl+드래그는 지우개가 아니라 기존 라쏘/선택 경로를 탄다
+  runtime.updateDrawingTool({ sessionId: 'runtime-session', toolRevision: 2, tool: 'select' });
+  element.dispatch('pointerdown', { pointerId: 970, button: 0, ctrlKey: true, clientX: 10, clientY: 10 });
+  assert.equal(runtime.getDiagnostics().gestures.ctrlStrokeEraseActive, false);
+  // (b) 프레임 확정 대기 중 Alt pointerdown은 크기 조절을 시작하지 않는다
+  assert.equal(requests.length, 1);
+  element.dispatch('pointerdown', { pointerId: 971, button: 0, altKey: true, clientX: 10, clientY: 10 });
+  assert.equal(runtime.getDiagnostics().gestures.altSizeAdjustActive, false);
+  // (c) 확정 후 재생되는 pointerdown이 ctrlKey를 보존해 지우개로 열린다
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [makeHistoryStroke('ctrl-erase-replay-source')]
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  const replayRuntime = harness.runtime;
+  const replayCanvas = harness.canvas;
+  replayCanvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1902, pointerType: 'pen', button: 0, buttons: 1,
+    ctrlKey: true, clientX: 10, clientY: 20, pressure: 0.3, timeStamp: 1
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  assert.equal(replayRuntime.getDiagnostics().gestures.ctrlStrokeEraseActive, false,
+    '확정 전에는 지우개를 열지 않는다');
+  assert.equal(replayRuntime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0], targetFrame: 10
+  }).accepted, true);
+  assert.equal(replayRuntime.getDiagnostics().gestures.ctrlStrokeEraseActive, true,
+    '재생된 pointerdown이 ctrlKey를 보존해 지우개로 열린다');
+  replayCanvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 1902, ctrlKey: true, clientX: 10, clientY: 20
+  });
+  assert.equal(replayRuntime.getDiagnostics().gestures.ctrlStrokeEraseActive, false);
 });

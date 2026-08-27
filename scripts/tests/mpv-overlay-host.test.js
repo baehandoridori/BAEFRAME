@@ -4592,37 +4592,65 @@ test('호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으�
   assert.match(hostSource, /open-from-protocol/);
 });
 
-test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구가 분명하다', () => {
+test('Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 계승한다', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const hostSource = fs.readFileSync(path.join(__dirname, '../../main/mpv-overlay-host.js'), 'utf8');
 
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*background:\s*rgba\(/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*border-radius:\s*14px/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*--fabric-toolbar-gap:\s*6px/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*flex-flow:\s*row wrap/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*width:\s*max-content/s);
+  // (e)가 툴바의 인라인 display:'flex'를 제거하므로 세로 팔레트 레이아웃을 CSS로 고정한다
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*display:\s*block/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*--fabric-palette-gap:\s*6px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*width:\s*220px/s);
   assert.match(
     hostSource,
     /\.mpv-fabric-pilot-toolbar\s*\{[^}]*max-width:\s*calc\(100% - 24px\)/s
   );
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*box-sizing:\s*border-box/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*min-width:\s*40px[^}]*min-height:\s*40px/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*white-space:\s*nowrap/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*border-radius:\s*12px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*background:\s*rgba\(/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*user-select:\s*none/s);
+
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar-header\s*\{[^}]*cursor:\s*move/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar-header\s*\{[^}]*touch-action:\s*none/s);
   assert.match(
     hostSource,
-    /\.mpv-fabric-pilot-toolbar\s*>\s*button,[\s\S]*?data-fabric-pilot-group="selection-controls"[\s\S]*?\{[^}]*flex:\s*0 0 auto/s
+    /\.mpv-fabric-pilot-toolbar-content\s*\{[^}]*flex-direction:\s*column/s
   );
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar-content\s*\{[^}]*max-height:\s*70vh[^}]*overflow-y:\s*auto/s
+  );
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\[data-collapsed="true"\] \.mpv-fabric-pilot-toolbar-content\s*\{[^}]*display:\s*none/s
+  );
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\[data-collapsed="true"\] \.mpv-fabric-pilot-collapse-button svg\s*\{[^}]*transform:\s*rotate\(-90deg\)/s
+  );
+
+  assert.match(hostSource, /\.mpv-fabric-pilot-section-row\s*\{[^}]*flex-flow:\s*row wrap/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-section-row\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*min-width:\s*40px[^}]*min-height:\s*40px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*white-space:\s*nowrap/s);
   assert.match(hostSource, /button\[data-active="true"\]\s*\{/);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button:active\s*\{[^}]*transform:\s*scale\(0\.96\)/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-collapse-button\s*\{[^}]*min-width:\s*24px/s);
+  assert.match(
+    hostSource,
+    /\[data-fabric-pilot-panel="brush-settings"\] button:not\(\[data-fabric-pilot-color\]\)\s*\{[^}]*min-width:\s*32px/s
+  );
+
+  assert.match(hostSource, /\.mpv-fabric-pilot-badge\s*\{[^}]*width:\s*100%/s);
   assert.match(
     hostSource,
     /\.mpv-fabric-pilot-badge\s*\{[^}]*font-variant-numeric:\s*tabular-nums[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis/s
   );
+
   assert.match(hostSource, /@media\s*\(max-width:\s*800px\)\s*\{/s);
   assert.match(
     hostSource,
-    /@media\s*\(max-width:\s*800px\)[\s\S]*?--fabric-toolbar-gap:\s*4px[\s\S]*?padding:\s*4px/s
+    /@media\s*\(max-width:\s*800px\)[\s\S]*?--fabric-palette-gap:\s*4px[\s\S]*?width:\s*190px/s
   );
   assert.match(
     hostSource,
@@ -4630,13 +4658,13 @@ test('Fabric 시험 툴바는 작은 화면에서도 읽기 쉽고 현재 도구
   );
   assert.match(
     hostSource,
-    /@media\s*\(max-width:\s*800px\)[\s\S]*?data-fabric-pilot-output="summary"[\s\S]*?display:\s*none/s
+    /@media\s*\(max-width:\s*800px\)[\s\S]*?data-fabric-pilot-output="selection-summary"[\s\S]*?display:\s*none/s
   );
+
   assert.match(hostSource, /#root\s*\{[^}]*overflow:\s*hidden/s);
-  assert.doesNotMatch(
-    hostSource,
-    /\.mpv-fabric-pilot-toolbar\s*\{[^}]*overflow-x:\s*auto/s
-  );
+  // 프로토타입 상단 탭(가로 wrap 바)은 더 이상 존재하지 않는다
+  assert.doesNotMatch(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*flex-flow:\s*row wrap/s);
+  assert.doesNotMatch(hostSource, /--fabric-toolbar-gap/);
   assert.doesNotMatch(
     hostSource,
     /\.mpv-fabric-pilot-toolbar(?: button)?\s*\{[^}]*transition:\s*all\b/s
@@ -4665,6 +4693,20 @@ test('standard mpv suite includes the hidden Fabric toolbar Chromium layout regr
   assert.match(
     packageJson.scripts['test:mpv'],
     /mpv-fabric-overlay-toolbar-layout\.test\.js/
+  );
+});
+
+test('standard mpv suite runs the keyboard shortcut target regression', () => {
+  const packageJson = require('../../package.json');
+
+  // 키 릴레이 계열과 같은 그룹에서 돌아야 B/Space 라우팅 회귀를 CI가 잡는다.
+  assert.match(
+    packageJson.scripts['test:mpv'],
+    /keyboard-shortcut-targets\.test\.js/
+  );
+  assert.match(
+    packageJson.scripts['test:mpv'],
+    /mpv-overlay-keyboard-relay\.test\.js/
   );
 });
 

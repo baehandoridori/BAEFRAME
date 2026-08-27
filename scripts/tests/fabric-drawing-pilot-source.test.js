@@ -15,6 +15,10 @@ const timelineSource = normalizeNewlines(fs.readFileSync(
   path.join(rootDir, 'renderer/scripts/modules/timeline.js'),
   'utf8'
 ));
+const fabricPaletteSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-toolbar.js'),
+  'utf8'
+));
 
 test('Fabric pilot controller is initialized with live mpv video and canvas context', () => {
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
@@ -1486,5 +1490,107 @@ test('B 토글 상태기계는 정착 지점마다 예약을 소비하고 창 �
   assert.match(
     appSource,
     /const active = nextState === 'active';\n\s+\/\/[^\n]*\n\s+if \(active\) fabricDrawingPilotFailureToastShown = false;/
+  );
+});
+
+test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레트로 조립된다', () => {
+  // 프로토타입 상단 탭 조립부가 남아 있지 않다
+  assert.doesNotMatch(fabricRuntimeSource, /createButton\('Brush', 'brush'\)/);
+  assert.doesNotMatch(fabricRuntimeSource, /createButton\('V', 'select'\)/);
+  assert.doesNotMatch(fabricRuntimeSource, /toolbar\.appendChild\(/);
+
+  assert.match(
+    fabricRuntimeSource,
+    /const \{\n  createFabricDrawingPalette\n\} = require\('\.\/mpv-fabric-toolbar\.js'\);/
+  );
+  assert.match(fabricRuntimeSource, /toolbar\.className = 'mpv-fabric-pilot-toolbar';/);
+  assert.match(
+    fabricRuntimeSource,
+    /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n\s+sections: \[/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /\{ id: 'tools', label: '도구', items: \[brushButton, selectButton\] \}/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /\{ id: 'selection', items: \[selectionControls\.group\] \}/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /id: 'brush',\n\s+label: '브러시 설정',\n\s+items: \[brushControls\.settingsButton\],\n\s+appended: \[brushControls\.panel\]/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /id: 'actions',\n\s+label: '편집',\n\s+items: \[undoButton, redoButton, deleteButton, clearButton\]/
+  );
+  assert.match(fabricRuntimeSource, /\{ id: 'status', items: \[badge\] \}/);
+  assert.match(fabricRuntimeSource, /root\.appendChild\(container\);\n\s+paletteShell\.restore\(\);/);
+  assert.match(fabricRuntimeSource, /^\s+let paletteShell = null;$/m);
+  assert.match(fabricRuntimeSource, /toolbar = null;\n\s+paletteShell = null;/);
+
+  // 도구 라벨은 한글이고 기존 접근성 라벨은 그대로 유지된다
+  assert.match(fabricRuntimeSource, /createButton\('브러시', 'brush'\), '브러시 도구 \(B\)'/);
+  assert.match(fabricRuntimeSource, /createButton\('선택', 'select'\), '선택 도구 \(V\)'/);
+  assert.match(fabricRuntimeSource, /createButton\('실행 취소', 'undo'\), '실행 취소 \(Ctrl\+Z\)'/);
+  assert.match(fabricRuntimeSource, /createButton\('다시 실행', 'redo'\), '다시 실행 \(Ctrl\+Y\)'/);
+  assert.match(fabricRuntimeSource, /createButton\('선택 삭제', 'delete-selection'\)/);
+  assert.match(fabricRuntimeSource, /createButton\('전체 지우기', 'clear-session'\)/);
+
+  // setSurfaceInput 계약은 그대로다
+  assert.match(
+    fabricRuntimeSource,
+    /function setSurfaceInput\(enabled\) \{[\s\S]+setStyles\(toolbar, \{\n\s+pointerEvents,\n\s+visibility: enabled \? 'visible' : 'hidden',\n\s+opacity: enabled \? '1' : '0'\n\s+\}\);/
+  );
+
+  // 브러시 설정 패널은 드롭다운이 아니라 팔레트 인라인이다
+  assert.doesNotMatch(fabricRuntimeSource, /top: 'calc\(100% \+ 6px\)'/);
+  assert.match(
+    fabricRuntimeSource,
+    /panel\.dataset\.fabricPilotPanel = 'brush-settings';[\s\S]+position: 'static',\n\s+width: '100%',\n\s+maxHeight: '210px',\n\s+overflowY: 'auto',\n\s+overscrollBehavior: 'contain',/
+  );
+});
+
+test('팔레트 모듈은 레거시 헤더·접기·경계 클램프·안전한 저장을 갖춘다', () => {
+  assert.match(fabricPaletteSource, /^'use strict';$/m);
+  assert.match(
+    fabricPaletteSource,
+    /const PALETTE_STORAGE_KEY = 'baeframe\.mpvFabricPalette\.v1';/
+  );
+  assert.match(fabricPaletteSource, /const PALETTE_MARGIN = 12;/);
+  assert.match(
+    fabricPaletteSource,
+    /header\.className = 'mpv-fabric-pilot-toolbar-header';/
+  );
+  assert.match(fabricPaletteSource, /title\.textContent = '그리기 도구';/);
+  assert.match(
+    fabricPaletteSource,
+    /collapseButton\.dataset\.fabricPilotAction = 'toggle-collapse';/
+  );
+  assert.match(
+    fabricPaletteSource,
+    /content\.className = 'mpv-fabric-pilot-toolbar-content';/
+  );
+  assert.match(
+    fabricPaletteSource,
+    /element\.dataset\.collapsed = String\(state\.collapsed\);/
+  );
+  assert.match(
+    fabricPaletteSource,
+    /function clampPalettePosition\(position, viewport, size\) \{[\s\S]+Math\.min\(Math\.max\(PALETTE_MARGIN, position\.left\), maxLeft\)/
+  );
+  // 저장 실패가 팔레트 조작을 막아서는 안 된다
+  assert.match(
+    fabricPaletteSource,
+    /function readStoredPaletteState\(windowRef\) \{[\s\S]+try \{[\s\S]+localStorage\?\.getItem\?\.\(PALETTE_STORAGE_KEY\)[\s\S]+\} catch \(_error\) \{/
+  );
+  assert.match(
+    fabricPaletteSource,
+    /function writeStoredPaletteState\(windowRef, state\) \{[\s\S]+try \{[\s\S]+localStorage\?\.setItem\?\.\([\s\S]+\} catch \(_error\) \{/
+  );
+  assert.match(fabricPaletteSource, /try \{\n\s+header\.setPointerCapture\?\.\(event\.pointerId\);\n\s+\} catch \(_error\) \{/);
+  assert.match(
+    fabricPaletteSource,
+    /module\.exports = \{\n\s+createFabricDrawingPalette,\n\s+clampPalettePosition,\n\s+normalizePaletteState,\n\s+PALETTE_STORAGE_KEY,\n\s+PALETTE_MARGIN\n\};/
   );
 });

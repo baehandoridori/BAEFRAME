@@ -7,16 +7,7 @@ const path = require('node:path');
 const PROBE_PREFIX = '__BAEFRAME_FABRIC_TOOLBAR_LAYOUT__';
 const rootDir = path.resolve(__dirname, '../..');
 
-function clusterRows(rectangles, tolerance = 6) {
-  const rows = [];
-  for (const rect of rectangles.slice().sort((a, b) => a.top - b.top)) {
-    const row = rows.find(candidate => Math.abs(candidate - rect.top) <= tolerance);
-    if (row === undefined) rows.push(rect.top);
-  }
-  return rows;
-}
-
-function rectanglesOverlap(a, b, tolerance = 0.5) {
+function boxesOverlap(a, b, tolerance = 0.5) {
   return a.left < b.right - tolerance &&
     a.right > b.left + tolerance &&
     a.top < b.bottom - tolerance &&
@@ -105,7 +96,6 @@ async function runElectronProbe() {
 
     const widths = [400, 500, 640, 641, 768, 800, 801];
     const measurements = [];
-    const panelMeasurements = [];
     for (const width of widths) {
       host.updateBounds({ x: 0, y: 0, width, height: 360 });
       await host.window.webContents.executeJavaScript(`
@@ -124,8 +114,10 @@ async function runElectronProbe() {
             'redo',
             'delete-selection',
             'clear-session',
-            'brush-settings'
+            'brush-settings',
+            'toggle-collapse'
           ];
+          const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
           const rect = element => {
             const value = element.getBoundingClientRect();
             return {
@@ -137,8 +129,29 @@ async function runElectronProbe() {
               height: value.height
             };
           };
+          // 스크롤과 무관한 레이아웃 좌표(offset 박스)로 겹침을 검사한다
+          const offsetBox = element => {
+            let left = 0;
+            let top = 0;
+            let node = element;
+            while (node && node !== toolbar) {
+              left += node.offsetLeft;
+              top += node.offsetTop;
+              node = node.offsetParent;
+            }
+            return {
+              left,
+              top,
+              right: left + element.offsetWidth,
+              bottom: top + element.offsetHeight,
+              width: element.offsetWidth,
+              height: element.offsetHeight
+            };
+          };
           const root = document.getElementById('root');
-          const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
+          const header = document.querySelector('.mpv-fabric-pilot-toolbar-header');
+          const content = document.querySelector('.mpv-fabric-pilot-toolbar-content');
+          const contentStyle = getComputedStyle(content);
           const badge = document.querySelector('.mpv-fabric-pilot-badge');
           const badgeStyle = getComputedStyle(badge);
           const controls = actions.map(action => {
@@ -148,32 +161,30 @@ async function runElectronProbe() {
             const style = getComputedStyle(element);
             return {
               action,
-              rect: rect(element),
+              box: offsetBox(element),
               display: style.display,
               visibility: style.visibility,
               pointerEvents: style.pointerEvents
             };
           });
-          const directItems = Array.from(toolbar.children)
-            .filter(element =>
-              element.dataset.fabricPilotPanel !== 'brush-settings' &&
-              getComputedStyle(element).display !== 'none')
-            .map(rect);
-          const summary = document.querySelector(
-            '[data-fabric-pilot-output="summary"]'
-          );
           return {
             root: rect(root),
             toolbar: rect(toolbar),
-            badge: rect(badge),
+            toolbarWidth: toolbar.offsetWidth,
+            toolbarClientWidth: toolbar.clientWidth,
+            headerCursor: getComputedStyle(header).cursor,
+            headerTouchAction: getComputedStyle(header).touchAction,
+            contentOverflowY: contentStyle.overflowY,
+            contentDisplay: contentStyle.display,
+            contentScrollHeight: content.scrollHeight,
+            contentClientHeight: content.clientHeight,
+            collapsed: toolbar.dataset.collapsed,
             badgeDisplay: badgeStyle.display,
             badgeTextOverflow: badgeStyle.textOverflow,
             badgeOverflowX: badgeStyle.overflowX,
             badgeScrollWidth: badge.scrollWidth,
             badgeClientWidth: badge.clientWidth,
             controls,
-            directItems,
-            summaryDisplay: getComputedStyle(summary).display,
             toolbarCount: document.querySelectorAll(
               '.mpv-fabric-pilot-toolbar'
             ).length,
@@ -183,47 +194,90 @@ async function runElectronProbe() {
         })();
       `, true);
       measurements.push({ width, ...measurement });
-
-      const panelMeasurement = await host.window.webContents.executeJavaScript(`
-        (async () => {
-          const settingsButton = document.querySelector(
-            '[data-fabric-pilot-action="brush-settings"]'
-          );
-          settingsButton.click();
-          await new Promise(resolve =>
-            requestAnimationFrame(() => requestAnimationFrame(resolve)));
-          const rect = element => {
-            const value = element.getBoundingClientRect();
-            return {
-              left: value.left,
-              top: value.top,
-              right: value.right,
-              bottom: value.bottom,
-              width: value.width,
-              height: value.height
-            };
-          };
-          const root = document.getElementById('root');
-          const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
-          const panel = document.querySelector(
-            '[data-fabric-pilot-panel="brush-settings"]'
-          );
-          const result = {
-            root: rect(root),
-            toolbar: rect(toolbar),
-            panel: rect(panel),
-            overflowY: getComputedStyle(panel).overflowY
-          };
-          settingsButton.click();
-          return result;
-        })();
-      `, true);
-      panelMeasurements.push({ width, ...panelMeasurement });
     }
+
+    // 드래그 검증 구간만 height 720으로 올린다. height 360에서는 팔레트 높이
+    // (header 41 + content max 70vh = 252 + border 2 = 295) 때문에
+    // maxTop = max(12, 360 - 295 - 12) = 53 이라 +80px 드래그가 클램프에 걸려
+    // moved.top - start.top 이 41이 되어 단언이 결정적으로 실패한다.
+    host.updateBounds({ x: 0, y: 0, width: 801, height: 720 });
+    await host.window.webContents.executeJavaScript(`
+      new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    `, true);
+    const interaction = await host.window.webContents.executeJavaScript(`
+      (async () => {
+        const settle = () => new Promise(resolve =>
+          requestAnimationFrame(() => requestAnimationFrame(resolve)));
+        const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
+        const header = document.querySelector('.mpv-fabric-pilot-toolbar-header');
+        const content = document.querySelector('.mpv-fabric-pilot-toolbar-content');
+        const collapseButton = document.querySelector(
+          '[data-fabric-pilot-action="toggle-collapse"]'
+        );
+        const root = document.getElementById('root');
+        const fire = (node, type, init) => node.dispatchEvent(new PointerEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          pointerId: 7,
+          pointerType: 'mouse',
+          button: 0,
+          ...init
+        }));
+
+        collapseButton.click();
+        await settle();
+        const collapsed = {
+          dataset: toolbar.dataset.collapsed,
+          contentDisplay: getComputedStyle(content).display,
+          height: toolbar.offsetHeight
+        };
+        collapseButton.click();
+        await settle();
+        const expanded = {
+          dataset: toolbar.dataset.collapsed,
+          contentDisplay: getComputedStyle(content).display,
+          height: toolbar.offsetHeight
+        };
+
+        const start = toolbar.getBoundingClientRect();
+        fire(header, 'pointerdown', { clientX: start.left + 40, clientY: start.top + 12 });
+        fire(header, 'pointermove', { clientX: start.left + 140, clientY: start.top + 92 });
+        fire(header, 'pointerup', { clientX: start.left + 140, clientY: start.top + 92 });
+        await settle();
+        const moved = toolbar.getBoundingClientRect();
+
+        fire(header, 'pointerdown', { clientX: moved.left + 40, clientY: moved.top + 12 });
+        fire(header, 'pointermove', { clientX: moved.left + 4000, clientY: moved.top + 4000 });
+        fire(header, 'pointerup', { clientX: moved.left + 4000, clientY: moved.top + 4000 });
+        await settle();
+        const clamped = toolbar.getBoundingClientRect();
+
+        return {
+          collapsed,
+          expanded,
+          start: { left: start.left, top: start.top },
+          moved: { left: moved.left, top: moved.top },
+          clamped: {
+            left: clamped.left,
+            top: clamped.top,
+            right: clamped.right,
+            bottom: clamped.bottom
+          },
+          root: {
+            left: root.getBoundingClientRect().left,
+            top: root.getBoundingClientRect().top,
+            right: root.getBoundingClientRect().right,
+            bottom: root.getBoundingClientRect().bottom
+          },
+          rootScrollWidth: root.scrollWidth,
+          rootClientWidth: root.clientWidth
+        };
+      })();
+    `, true);
 
     process.stdout.write(`${PROBE_PREFIX}${JSON.stringify({
       measurements,
-      panelMeasurements
+      interaction
     })}\n`);
   } finally {
     try {
@@ -254,7 +308,7 @@ if (process.versions.electron) {
   const assert = require('node:assert/strict');
   const { spawnSync } = require('node:child_process');
 
-  test('hidden Chromium keeps every Fabric toolbar control usable across compact breakpoints', {
+  test('hidden Chromium keeps the Fabric drawing palette usable, draggable, and collapsible', {
     timeout: 45000
   }, () => {
     const electronPath = require('electron');
@@ -273,7 +327,7 @@ if (process.versions.electron) {
         windowsHide: true
       });
       assert.equal(result.status, 0, [
-        'hidden Electron toolbar probe failed',
+        'hidden Electron palette probe failed',
         result.stdout,
         result.stderr
       ].filter(Boolean).join('\n'));
@@ -286,78 +340,77 @@ if (process.versions.electron) {
       fs.rmSync(tempDir, { recursive: true, force: true });
     }
 
+    assert.equal(probe.measurements.length, 7);
     for (const measurement of probe.measurements) {
-      const { root, toolbar, controls, directItems } = measurement;
-      assert.equal(measurement.toolbarCount, 1, `${measurement.width}px toolbar count`);
-      assert.equal(measurement.sameToolbar, true, `${measurement.width}px toolbar identity`);
-      assert.equal(
-        measurement.summaryDisplay,
-        measurement.width <= 800 ? 'none' : 'block',
-        `${measurement.width}px responsive summary`
-      );
-      assert.ok(toolbar.left >= root.left + 11.5, `${measurement.width}px left inset`);
-      assert.ok(toolbar.right <= root.right - 11.5, `${measurement.width}px right inset`);
-      const maxTwoRowHeight = measurement.width <= 800 ? 100.5 : 104.5;
+      const { root, toolbar, controls } = measurement;
+      const label = `${measurement.width}px`;
+      assert.equal(measurement.toolbarCount, 1, `${label} palette count`);
+      assert.equal(measurement.sameToolbar, true, `${label} palette identity`);
+      assert.equal(measurement.collapsed, 'false', `${label} palette starts expanded`);
+      assert.equal(measurement.headerCursor, 'move', `${label} drag handle cursor`);
+      assert.equal(measurement.headerTouchAction, 'none', `${label} drag handle touch-action`);
+      assert.equal(measurement.contentDisplay, 'flex', `${label} content visible`);
+      assert.equal(measurement.contentOverflowY, 'auto', `${label} content scrolls`);
       assert.ok(
-        toolbar.height <= maxTwoRowHeight,
-        `${measurement.width}px two-row toolbar height (actual ${toolbar.height}px)`
-      );
-      assert.ok(
-        clusterRows(directItems).length <= 2,
-        `${measurement.width}px row count (actual ${clusterRows(directItems).length})`
-      );
-      assert.equal(measurement.badgeDisplay, 'block', `${measurement.width}px badge container`);
-      assert.equal(measurement.badgeTextOverflow, 'ellipsis', `${measurement.width}px badge ellipsis`);
-      assert.equal(measurement.badgeOverflowX, 'hidden', `${measurement.width}px badge overflow`);
-      assert.ok(
-        measurement.badgeScrollWidth > measurement.badgeClientWidth,
-        `${measurement.width}px badge exercises real overflow`
+        measurement.contentScrollHeight >= measurement.contentClientHeight,
+        `${label} content height (scroll ${measurement.contentScrollHeight} / client ${measurement.contentClientHeight})`
       );
 
+      const expectedWidth = measurement.width <= 800 ? 190 : 220;
+      assert.equal(measurement.toolbarWidth, expectedWidth, `${label} palette width`);
+      assert.ok(toolbar.left >= root.left + 11.5, `${label} left inset`);
+      assert.ok(toolbar.top >= root.top + 11.5, `${label} top inset`);
+      assert.ok(toolbar.right <= root.right - 11.5, `${label} right inset`);
+      assert.ok(toolbar.bottom <= root.bottom - 11.5, `${label} bottom inset`);
+
+      assert.equal(measurement.badgeDisplay, 'block', `${label} badge container`);
+      assert.equal(measurement.badgeTextOverflow, 'ellipsis', `${label} badge ellipsis`);
+      assert.equal(measurement.badgeOverflowX, 'hidden', `${label} badge overflow`);
+
       for (const control of controls) {
-        assert.notEqual(control.display, 'none', `${measurement.width}px ${control.action} display`);
-        assert.equal(control.visibility, 'visible', `${measurement.width}px ${control.action} visibility`);
-        assert.equal(control.pointerEvents, 'auto', `${measurement.width}px ${control.action} pointer`);
-        assert.ok(control.rect.width >= 39.5, `${measurement.width}px ${control.action} width`);
-        assert.ok(control.rect.height >= 39.5, `${measurement.width}px ${control.action} height`);
-        assert.ok(control.rect.left >= root.left - 0.5, `${measurement.width}px ${control.action} left`);
-        assert.ok(control.rect.right <= root.right + 0.5, `${measurement.width}px ${control.action} right`);
-        assert.ok(control.rect.top >= root.top - 0.5, `${measurement.width}px ${control.action} top`);
-        assert.ok(control.rect.bottom <= root.bottom + 0.5, `${measurement.width}px ${control.action} bottom`);
+        const minimum = control.action === 'toggle-collapse' ? 23.5 : 39.5;
+        assert.notEqual(control.display, 'none', `${label} ${control.action} display`);
+        assert.equal(control.visibility, 'visible', `${label} ${control.action} visibility`);
+        assert.equal(control.pointerEvents, 'auto', `${label} ${control.action} pointer`);
+        assert.ok(control.box.width >= minimum, `${label} ${control.action} width`);
+        assert.ok(control.box.height >= minimum, `${label} ${control.action} height`);
+        assert.ok(control.box.left >= -0.5, `${label} ${control.action} left`);
+        assert.ok(
+          control.box.right <= measurement.toolbarClientWidth + 0.5,
+          `${label} ${control.action} right (${control.box.right} / ${measurement.toolbarClientWidth})`
+        );
       }
 
       for (let left = 0; left < controls.length; left += 1) {
         for (let right = left + 1; right < controls.length; right += 1) {
           assert.equal(
-            rectanglesOverlap(controls[left].rect, controls[right].rect),
+            boxesOverlap(controls[left].box, controls[right].box),
             false,
-            `${measurement.width}px ${controls[left].action}/${controls[right].action} overlap`
+            `${label} ${controls[left].action}/${controls[right].action} overlap`
           );
         }
       }
     }
 
-    assert.equal(probe.panelMeasurements.length, 7);
-    for (const measurement of probe.panelMeasurements) {
-      const { root, toolbar, panel, overflowY } = measurement;
-      assert.ok(
-        panel.top >= toolbar.bottom + 5.5,
-        `${measurement.width}px brush panel starts below wrapped toolbar`
-      );
-      assert.ok(
-        panel.left >= root.left + 11.5,
-        `${measurement.width}px brush panel keeps left inset`
-      );
-      assert.ok(
-        panel.right <= root.right - 11.5,
-        `${measurement.width}px brush panel stays within root width`
-      );
-      assert.ok(
-        panel.bottom <= root.bottom - 11.5,
-        `${measurement.width}px brush panel stays within root height`
-      );
-      assert.equal(overflowY, 'auto', `${measurement.width}px brush panel scroll`);
-    }
+    const { collapsed, expanded, start, moved, clamped, root } = probe.interaction;
+    assert.equal(collapsed.dataset, 'true', 'collapse marks the palette');
+    assert.equal(collapsed.contentDisplay, 'none', 'collapse hides the palette body');
+    assert.ok(collapsed.height <= 60, `collapsed palette height (actual ${collapsed.height}px)`);
+    assert.equal(expanded.dataset, 'false', 'second click expands the palette');
+    assert.equal(expanded.contentDisplay, 'flex', 'expanded palette body is visible');
+    assert.ok(expanded.height > collapsed.height, 'expanded palette is taller than collapsed');
+
+    assert.ok(Math.abs(moved.left - (start.left + 100)) <= 1.5, 'header drag moves the palette right');
+    assert.ok(Math.abs(moved.top - (start.top + 80)) <= 1.5, 'header drag moves the palette down');
+    assert.ok(clamped.left >= root.left + 11.5, 'clamped palette keeps its left inset');
+    assert.ok(clamped.top >= root.top + 11.5, 'clamped palette keeps its top inset');
+    assert.ok(clamped.right <= root.right - 11.5, 'clamped palette stays inside the overlay width');
+    assert.ok(clamped.bottom <= root.bottom - 11.5, 'clamped palette stays inside the overlay height');
+    assert.equal(
+      probe.interaction.rootScrollWidth,
+      probe.interaction.rootClientWidth,
+      'dragging never creates overlay scroll'
+    );
   });
 
   test('hidden Chromium layout probe exits non-zero when its setup fails', {
