@@ -92,8 +92,52 @@ test('global shortcuts use active text entry when keyboard target is the page sh
   assert.equal(shouldIgnoreComposingKeyboardEvent({ code: 'Process' }), true);
   assert.equal(shouldIgnoreComposingKeyboardEvent({ key: 'a', code: 'KeyA' }), false);
 
-  assert.match(appSource, /if \(shouldIgnoreComposingKeyboardEvent\(e\)\) return;/);
+  assert.match(appSource, /if \(isTextEntryShortcutTarget\(shortcutTarget\) && shouldIgnoreComposingKeyboardEvent\(e\)\) return;/);
   assert.match(appSource, /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, document\);/);
   assert.match(appSource, /shouldHandlePlayPauseShortcutFromTarget\(shortcutTarget, e\)/);
-  assert.match(appSource, /shouldIgnoreGlobalShortcutTarget\(shortcutTarget\)/);
+  assert.match(appSource, /shouldIgnoreGlobalShortcutTarget\(shortcutTarget, e\)/);
+});
+
+test('비텍스트 폼 컨트롤은 그 컨트롤이 소비하는 키만 차단한다', async () => {
+  const {
+    shouldIgnoreGlobalShortcutTarget
+  } = await import('../../renderer/scripts/modules/keyboard-shortcut-targets.js');
+
+  const range = { tagName: 'INPUT', type: 'range' };
+  const checkbox = { tagName: 'INPUT', type: 'checkbox' };
+  const select = { tagName: 'SELECT' };
+
+  // 문자 키는 통과한다 — 슬라이더/셀렉트에 포커스가 남아도 B/C/V가 살아야 한다.
+  assert.equal(shouldIgnoreGlobalShortcutTarget(range, { code: 'KeyB' }), false);
+  assert.equal(shouldIgnoreGlobalShortcutTarget(checkbox, { code: 'KeyC' }), false);
+  assert.equal(shouldIgnoreGlobalShortcutTarget(select, { code: 'KeyV' }), false);
+
+  // 컨트롤이 실제로 소비하는 키는 계속 차단한다.
+  for (const code of [
+    'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+    'Space', 'Home', 'End', 'PageUp', 'PageDown', 'Enter'
+  ]) {
+    assert.equal(shouldIgnoreGlobalShortcutTarget(range, { code }), true, `range/${code}`);
+    assert.equal(shouldIgnoreGlobalShortcutTarget(select, { code }), true, `select/${code}`);
+  }
+
+  // 텍스트 입력형은 키와 무관하게 전면 차단을 유지한다.
+  assert.equal(shouldIgnoreGlobalShortcutTarget({ tagName: 'INPUT', type: 'text' }, { code: 'KeyB' }), true);
+  assert.equal(shouldIgnoreGlobalShortcutTarget({ tagName: 'TEXTAREA' }, { code: 'KeyB' }), true);
+  assert.equal(shouldIgnoreGlobalShortcutTarget({ tagName: 'DIV', isContentEditable: true }, { code: 'KeyB' }), true);
+
+  // code를 알 수 없는 호출은 기존과 동일하게 보수적으로 차단한다.
+  assert.equal(shouldIgnoreGlobalShortcutTarget(range), true);
+  assert.equal(shouldIgnoreGlobalShortcutTarget(range, {}), true);
+  assert.equal(shouldIgnoreGlobalShortcutTarget(select, { code: 123 }), true);
+});
+
+test('IME 조합 게이트는 텍스트 입력 대상에만 적용되고 폼 컨트롤 가드는 이벤트를 함께 본다', () => {
+  assert.match(
+    appSource,
+    /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, document\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(isTextEntryShortcutTarget\(shortcutTarget\) && shouldIgnoreComposingKeyboardEvent\(e\)\) return;/
+  );
+  assert.doesNotMatch(appSource, /\n\s+if \(shouldIgnoreComposingKeyboardEvent\(e\)\) return;\n/);
+  assert.match(appSource, /if \(shouldIgnoreGlobalShortcutTarget\(shortcutTarget, e\)\) return;/);
+  assert.match(appSource, /document\.addEventListener\('paste', async \(e\) => \{\n\s+if \(shouldIgnoreGlobalShortcutTarget\(e\.target\)\) return;/);
 });

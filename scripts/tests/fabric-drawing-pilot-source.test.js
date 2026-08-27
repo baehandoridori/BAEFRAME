@@ -131,7 +131,7 @@ test('pilot state and B routing avoid every legacy playback and persistence muta
 
 test('capture keyboard and click firewalls stop legacy drawing mutations while keeping navigation separate', () => {
   assert.match(appSource, /if \(e\.code === 'Space' && state\.isDrawMode && !isFabricDrawingPilotEngaged\(\)\) \{/);
-  assert.match(appSource, /if \(shouldIgnoreGlobalShortcutTarget\(shortcutTarget\)\) return;\n\n\s+if \(fabricDrawingPilotController\.routeKeydown\(e\)\) return;\n\s+if \(shouldBlockFabricDrawingLegacyShortcut\(e\)\) \{/);
+  assert.match(appSource, /if \(shouldIgnoreGlobalShortcutTarget\(shortcutTarget, e\)\) return;\n\n\s+if \(fabricDrawingPilotController\.routeKeydown\(e\)\) return;\n\s+if \(shouldBlockFabricDrawingLegacyShortcut\(e\)\) \{/);
   assert.match(appSource, /const FABRIC_DRAWING_LEGACY_SHORTCUTS = new Set\(\[[\s\S]+drawingLayerAdd[\s\S]+keyframeAddWithCopy[\s\S]+frameCopy[\s\S]+onionSkinToggle[\s\S]+drawingToolSelect[\s\S]+\]\);/);
   assert.match(appSource, /document\.addEventListener\('click', handleFabricDrawingPilotLegacyClick, true\);/);
   assert.match(appSource, /function handleFabricDrawingPilotLegacyClick\(event\) \{[\s\S]+event\.preventDefault\(\);[\s\S]+event\.stopImmediatePropagation\(\);[\s\S]+\}/);
@@ -546,6 +546,13 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
 
   engaged = true;
   assert.equal(shouldBlock({ key: 'z', code: 'KeyZ', ctrlKey: true }), true);
+  // engaged 상태에서도 drawMode는 통과시켜야 한다 — routeKeydown이 IME 이벤트를
+  // 소비하지 못한 B가 레거시 toggleDrawMode(→ 파일럿 toggle)로 흘러가야 하기 때문.
+  assert.equal(shouldBlock({ action: 'drawMode', key: '', code: '' }), false);
+  // drawMode를 E로 재지정한 경우에도 KeyE 차단보다 먼저 판정돼야 한다(엣지 10 참조).
+  assert.equal(shouldBlock({ action: 'drawMode', key: 'e', code: 'KeyE' }), false);
+  assert.equal(shouldBlock({ action: 'insertFrame', key: '', code: '' }), true);
+  assert.equal(shouldBlock({ action: 'drawingToolSelect', key: '', code: '' }), true);
 });
 
 test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 숨긴다', () => {

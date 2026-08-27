@@ -6228,7 +6228,21 @@ async function initApp() {
         !['undo', 'redo', 'drawMode'].includes(matchedAction);
     }
     const key = String(event.key || '').toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && ['c', 'v', 'z', 'y'].includes(key)) return true;
+    // routeKeydown은 IME 이벤트(keyCode 229 등)를 소비하지 않고 false를 돌려준다.
+    // drawMode까지 차단하면 소비자도 통과도 없는 사각지대가 생기므로, undo/redo와 같은
+    // 패턴으로 예외 처리해 레거시 핸들러의 toggleDrawMode(→ 파일럿 toggle)로 흘려보낸다.
+    // 사용자가 drawMode를 E/Ctrl 조합으로 재지정한 경우까지 덮으려면 아래 chord·KeyE
+    // 차단보다 반드시 먼저 판정해야 한다.
+    if (matchedAction === 'drawMode') return false;
+    // IME 조합 중에는 event.key가 'Process'가 되어 key 기반 차단이 무력화된다.
+    // 단축키로 등록되지 않은 생 Ctrl+C/V/Z/Y(클립보드·브라우저 undo)는 matchedAction으로도
+    // 걸리지 않으므로 event.code를 함께 본다(IME 여부와 무관하게 물리 키를 가리킨다).
+    const chordCode = String(event.code || '');
+    if ((event.ctrlKey || event.metaKey) &&
+        (['c', 'v', 'z', 'y'].includes(key) ||
+         ['KeyC', 'KeyV', 'KeyZ', 'KeyY'].includes(chordCode))) {
+      return true;
+    }
     if (event.code === 'KeyE' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
       return true;
     }
@@ -6248,7 +6262,10 @@ async function initApp() {
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
   window.electronAPI.onMpvOverlayKeyboardInput?.((input) => {
-    dispatchMpvOverlayKeyboardInput(input, { ownerDocument: document });
+    dispatchMpvOverlayKeyboardInput(input, {
+      ownerDocument: document,
+      globalShortcutCodes: getMpvOverlayRelayGlobalShortcutCodes()
+    });
   });
   window.electronAPI.onMpvOverlayPointerPresence?.((cursor) => {
     if (!liveblocksManager.isConnected) return;
@@ -8718,6 +8735,30 @@ async function initApp() {
     return clone.innerHTML;
   }
 
+  // 작업4: 오버레이 키 릴레이(메인 포커스 handoff 판정·IME 조합 통과)와
+  // 릴레이 dispatch 대상 선택이 하드코딩 'KeyB' 대신 실제 사용자 단축키를 쓰게 한다.
+  function getMpvOverlayDrawModeShortcutDescriptor() {
+    const shortcut = userSettings.getShortcut('drawMode');
+    if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return null;
+    return {
+      key: shortcut.key,
+      ctrl: shortcut.ctrl === true,
+      shift: shortcut.shift === true,
+      alt: shortcut.alt === true
+    };
+  }
+
+  function getMpvOverlayRelayGlobalShortcutCodes() {
+    const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
+    // 릴레이 우회는 code만 보고 판정하므로, 수식키가 붙은 단축키는 평문 키까지
+    // 텍스트 포커스에서 빼앗는 과잉 우회가 된다 — 단독 키일 때만 등록한다.
+    if (!drawModeShortcut ||
+        drawModeShortcut.ctrl || drawModeShortcut.shift || drawModeShortcut.alt) {
+      return [];
+    }
+    return [drawModeShortcut.key];
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -8752,6 +8793,9 @@ async function initApp() {
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
+      // 작업4: 오버레이 호스트의 키 릴레이가 대조할 drawMode 단축키 서술자.
+      // MPV_OVERLAY_DIFF_FIELDS에 없으므로 매 sync마다 항상 실린다.
+      drawModeShortcut: getMpvOverlayDrawModeShortcutDescriptor(),
       canvas: {
         left: canvasRect.left - wrapperRect.left,
         top: canvasRect.top - wrapperRect.top,
@@ -13764,9 +13808,12 @@ async function initApp() {
 
   async function handleKeydown(e) {
     if (document.querySelector('.shortcut-key-btn.capturing')) return;
-    if (shouldIgnoreComposingKeyboardEvent(e)) return;
 
     const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
+    // 한글 IME는 편집 대상이 없어도 알파벳 키를 keyCode 229 / key 'Process'로 올린다.
+    // 아래 분기는 전부 e.code(물리 키 위치)로 판정하므로, 조합 게이트는 실제로 글자가
+    // 들어가는 텍스트 입력 대상에만 적용한다.
+    if (isTextEntryShortcutTarget(shortcutTarget) && shouldIgnoreComposingKeyboardEvent(e)) return;
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
     const isPlayPauseAltShortcut = userSettings.matchShortcut('playPauseAlt', e);
     const isPlayPauseInput = isPlayPauseShortcut || isPlayPauseAltShortcut;
@@ -13806,8 +13853,8 @@ async function initApp() {
       return;
     }
 
-    // 폼 컨트롤에서는 Space 재생을 제외한 전역 단축키를 무시한다.
-    if (shouldIgnoreGlobalShortcutTarget(shortcutTarget)) return;
+    // 폼 컨트롤에서는 그 컨트롤이 실제로 소비하는 키만 무시한다.
+    if (shouldIgnoreGlobalShortcutTarget(shortcutTarget, e)) return;
 
     if (fabricDrawingPilotController.routeKeydown(e)) return;
     if (shouldBlockFabricDrawingLegacyShortcut(e)) {
@@ -14172,12 +14219,16 @@ async function initApp() {
     // 그리기 모드 토글 (피드백 33: 모드 중 B는 먼저 브러시로 복귀, 브러시 상태에서 B면 종료)
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      if (!state.isDrawMode) {
+      const pilotOwnsDrawMode = isMpvPilotPlaybackActive() &&
+        fabricDrawingPilotController.shouldOwnDrawingShortcut();
+      if (pilotOwnsDrawMode) {
+        toggleDrawMode();
+      } else if (!state.isDrawMode) {
         toggleDrawMode();
         // 진입 시에는 마지막으로 저장된 도구를 복원
         const savedTool = userSettings.getBrushSettings().tool || currentToolName || 'brush';
         const toolBtn = document.querySelector(`.tool-btn[data-tool="${savedTool}"]`) || document.querySelector('.tool-btn[data-tool="brush"]');
-        if (toolBtn) toolBtn.click();
+        if (toolBtn && state.isDrawMode) toolBtn.click();
       } else if (currentToolName !== 'brush') {
         const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
         if (brushBtn) brushBtn.click();
