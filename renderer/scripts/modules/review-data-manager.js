@@ -54,6 +54,16 @@ const BLOCKING_SAVE_FAILURE_REASONS = new Set([
   'fabric-drawing-source-refresh-failed'
 ]);
 
+// main→renderer IPC는 error.code를 보존하지 않으므로 메시지에 각인된
+// 코드 리터럴로도 함께 식별한다 (main/review-file-store.js readReviewSnapshot).
+const REVIEW_LOCK_TIMEOUT_CODE = 'ERR_REVIEW_LOCK_TIMEOUT';
+
+function isReviewLockTimeoutError(error) {
+  if (!error) return false;
+  if (error.code === REVIEW_LOCK_TIMEOUT_CODE) return true;
+  return String(error.message || '').includes(REVIEW_LOCK_TIMEOUT_CODE);
+}
+
 function toTime(value) {
   if (!value) return 0;
   const time = new Date(value).getTime();
@@ -1348,7 +1358,35 @@ export class ReviewDataManager extends EventTarget {
         }
 
         this._assertSaveOwner(saveOwner);
-        const latestRoot = await this._refreshRootEnvelopeBeforeSave(saveOwner);
+        let latestRoot;
+        try {
+          latestRoot = await this._refreshRootEnvelopeBeforeSave(saveOwner);
+        } catch (error) {
+          if (!error?.reviewSaveRetryReason ||
+              !this._ownsSave(saveOwner)) {
+            throw error;
+          }
+          this.isDirty = true;
+          log.warn('.bframe 저장이 잠시 지연됨', {
+            path: saveOwner.bframePath,
+            reason: error.reviewSaveRetryReason
+          });
+          this._emit('saveDeferred', {
+            path: saveOwner.bframePath,
+            reason: error.reviewSaveRetryReason
+          });
+          if (this.autoSaveEnabled) {
+            this._scheduleAutoSave();
+          }
+          // §7 C-9 — 작업 6 (j-2)와 동일한 종결. 지연은 예외 경로가 아니라
+          // _classifySaveFailure를 거치지 않으므로 실제 사유를 직접 실어 보낸다.
+          this._saveStateSettled = true;
+          this._emitSaveState(
+            this.autoSaveEnabled ? 'retrying' : 'save-failed',
+            error.reviewSaveRetryReason
+          );
+          return false;
+        }
         this._assertSaveOwner(saveOwner);
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
@@ -2561,7 +2599,17 @@ export class ReviewDataManager extends EventTarget {
     if (!this._hasPersistedFile) return null;
 
     const reviewPath = saveOwner?.bframePath || this.currentBframePath;
-    const snapshot = await this._readReviewSnapshot(reviewPath);
+    let snapshot;
+    try {
+      snapshot = await this._readReviewSnapshot(reviewPath);
+    } catch (error) {
+      // 다른 프로세스가 커밋 중이라 락을 못 잡은 것뿐이다. 저장 실패가
+      // 아니라 재시도 가능한 지연으로 표시해 _doSave가 saveDeferred로
+      // 흘려보내게 한다.
+      if (!isReviewLockTimeoutError(error)) throw error;
+      error.reviewSaveRetryReason = 'review-snapshot-lock-timeout';
+      throw error;
+    }
     if (saveOwner) this._assertSaveOwner(saveOwner);
     const latestRoot = snapshot.data;
     if (!latestRoot || typeof latestRoot !== 'object' || Array.isArray(latestRoot)) {

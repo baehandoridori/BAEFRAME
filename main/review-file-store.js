@@ -49,6 +49,15 @@ const TRANSIENT_READ_ERROR_CODES = new Set([
 ]);
 const RECOVERY_SCHEMA_VERSION = 1;
 const MAX_AUTO_RECOVERY_JSON_BYTES = 64 * 1024 * 1024;
+// main→renderer로는 error.code가 전달되지 않고 결과 객체 필드와 메시지
+// 문자열만 남는다. 치명 실패는 원인을 알려주는 고정 문구를 error 필드에
+// 실어 보내, renderer가 '.bframe 저장 실패' 폴백을 타지 않게 한다.
+const ATOMIC_REPLACE_UNSUPPORTED_MESSAGE =
+  '공유 드라이브가 파일 교체를 허용하지 않았습니다. ' +
+  '파일이 다른 프로그램에서 열려 있는지 확인해 주세요.';
+const RECOVERY_REQUIRED_MESSAGE =
+  '저장을 끝내지 못해 복구가 필요합니다. ' +
+  '파일을 다른 프로그램에서 닫은 뒤 다시 시도해 주세요.';
 const GENERATED_TEMP_REMAINDER_PATTERN =
   /^([1-9]\d*)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}(\.(?:commit|prepare|restore))?$/;
 
@@ -1071,6 +1080,10 @@ function createReviewFileStore(configuration = {}) {
     const delays = renameRetryDelaysMs.length > 0
       ? renameRetryDelaysMs
       : [0];
+    // unsupported(exit 5)는 ReplaceFileW/MoveFileExW가 false를 돌려준
+    // 직후에만 나오므로 target은 그대로다. 공유 드라이브 리다이렉터의
+    // 일시적 거부를 위해 딱 1회만 다시 시도한다.
+    let unsupportedRetried = false;
 
     for (let attempt = 0; attempt < delays.length; attempt += 1) {
       await delay(Math.max(0, Number(delays[attempt]) || 0));
@@ -1143,10 +1156,15 @@ function createReviewFileStore(configuration = {}) {
         };
       }
       if (casResult?.status === 'unsupported') {
+        if (!unsupportedRetried && attempt < delays.length - 1) {
+          unsupportedRetried = true;
+          continue;
+        }
         return {
           success: false,
           fatal: true,
           reason: 'atomic-replace-unsupported',
+          error: ATOMIC_REPLACE_UNSUPPORTED_MESSAGE,
           casResult
         };
       }
@@ -1849,7 +1867,8 @@ function createReviewFileStore(configuration = {}) {
           return {
             success: false,
             fatal: true,
-            reason: 'recovery-required'
+            reason: 'recovery-required',
+            error: RECOVERY_REQUIRED_MESSAGE
           };
         }
         await cleanupCasBackups(
@@ -1869,7 +1888,8 @@ function createReviewFileStore(configuration = {}) {
       return {
         success: false,
         fatal: true,
-        reason: 'recovery-required'
+        reason: 'recovery-required',
+        error: RECOVERY_REQUIRED_MESSAGE
       };
     } catch (error) {
       if (!prepared) {
@@ -1962,7 +1982,20 @@ function createReviewFileStore(configuration = {}) {
       await cleanupOrphanTemps(filePath);
 
       const currentContent = await readTextOrNull(fsPromises, filePath);
-      if (currentContent !== null) JSON.parse(currentContent);
+      if (currentContent !== null && !failIfExists) {
+        try {
+          JSON.parse(currentContent);
+        } catch {
+          // 저장 경로는 손상 복구를 직접 하지 않는다. 다음 저장 시도가
+          // 먼저 부르는 readReviewSnapshot이 .bak 복구를 수행하므로,
+          // 여기서는 원본을 건드리지 않고 재시도 신호만 돌려준다.
+          return {
+            success: false,
+            retryable: true,
+            reason: 'malformed-target'
+          };
+        }
+      }
       const initialStateResult = currentStateResult(
         currentContent,
         versionToken,
@@ -2060,7 +2093,11 @@ function createReviewFileStore(configuration = {}) {
       while (await pathExists(fsPromises, sidecarPath)) {
         const release = await acquireLock(filePath);
         if (!release) {
-          const error = new Error('Review recovery lock timed out');
+          // renderer로는 code가 아니라 message만 전달되므로 코드 문자열을
+          // 메시지 앞에 각인해 재시도 가능 실패로 식별되게 한다.
+          const error = new Error(
+            'ERR_REVIEW_LOCK_TIMEOUT: Review recovery lock timed out'
+          );
           error.code = 'ERR_REVIEW_LOCK_TIMEOUT';
           throw error;
         }
@@ -2075,7 +2112,9 @@ function createReviewFileStore(configuration = {}) {
         }
         if (!active) break;
         if (Date.now() - startedAt >= lockAcquireTimeoutMs) {
-          const error = new Error('Review transaction wait timed out');
+          const error = new Error(
+            'ERR_REVIEW_LOCK_TIMEOUT: Review transaction wait timed out'
+          );
           error.code = 'ERR_REVIEW_LOCK_TIMEOUT';
           throw error;
         }

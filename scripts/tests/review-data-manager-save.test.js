@@ -1115,6 +1115,52 @@ test('retryable review lock contention keeps changes dirty without a save error 
   manager.disconnect();
 });
 
+test('a review snapshot lock timeout defers the save without a save error alert', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  const diskRoot = createReviewRoot({
+    reviewDocumentId: REVIEW_ID_EXISTING
+  });
+  const saveCalls = [];
+  window.electronAPI = {
+    loadReview: async () => structuredClone(diskRoot),
+    loadReviewSnapshot: async () => {
+      throw new Error(
+        "Error invoking remote method 'file:load-review-snapshot': " +
+        'Error: ERR_REVIEW_LOCK_TIMEOUT: Review recovery lock timed out'
+      );
+    },
+    saveReview: async (path, data, options) => {
+      saveCalls.push({ path, data, options });
+      return { success: true, versionToken: 'b'.repeat(64) };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager
+  });
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/snapshot-lock-timeout.mp4');
+  addSubstantiveComment(manager, commentManager, 'snapshot-lock-comment');
+  let deferredReason = null;
+  let saveErrorEvents = 0;
+  manager.addEventListener('saveDeferred', event => {
+    deferredReason = event.detail?.reason || null;
+  });
+  manager.addEventListener('saveError', () => {
+    saveErrorEvents += 1;
+  });
+
+  assert.equal(await manager.save(), false);
+  assert.equal(deferredReason, 'review-snapshot-lock-timeout');
+  assert.equal(saveErrorEvents, 0);
+  assert.equal(saveCalls.length, 0);
+  assert.equal(manager.isDirty, true);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  assert.equal(manager._writeBlockedReason, null);
+  manager.disconnect();
+});
+
 test('remote drawing layer order event marks a persisted review as unsaved', async () => {
   const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
   const drawingManager = new EventTarget();
