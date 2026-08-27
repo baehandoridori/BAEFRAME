@@ -1353,9 +1353,9 @@ test('drawing export rejects snapshot fence mismatches and every non-exact inner
       {
         success: false,
         accepted: false,
-        reason: 'invalid-persistence-snapshot'
+        reason: 'stale-drawing-snapshot'
       },
-      `snapshot ${field} must match the exact request fence`
+      `snapshot ${field} must be rejected as stale, not as corrupted data`
     );
   }
 
@@ -2419,6 +2419,83 @@ test('overlay physical key relay rejects malformed and composing input without f
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.sendInputEvent'), false);
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
+});
+
+test('오버레이 릴레이는 동기화된 drawMode 서술자로 조합 입력과 포커스 handoff를 판정한다', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 12,
+    sessionId: 'session-drawmode-descriptor'
+  });
+  const overlay = harness.windows[0];
+  const emit = input => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault() {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    return prevented;
+  };
+
+  // 서술자 동기화 전에는 기존과 같이 조합 입력을 전부 버린다.
+  harness.events.length = 0;
+  assert.equal(emit({ key: 'b', code: 'KeyB', isComposing: true }), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
+
+  assert.equal((await harness.host.updateState({
+    drawModeShortcut: { key: 'KeyG', ctrl: false, shift: false, alt: false }
+  })).success, true);
+
+  // 서술자와 다른 코드는 조합 중 계속 차단된다.
+  harness.events.length = 0;
+  assert.equal(emit({ key: 'b', code: 'KeyB', isComposing: true }), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
+
+  // 서술자와 같은 코드는 조합 플래그가 붙어도 릴레이되고 main 포커스를 넘겨받는다.
+  harness.events.length = 0;
+  assert.equal(emit({ key: 'ㅎ', code: 'KeyG', isComposing: true }), true);
+  assert.deepEqual(harness.events, [
+    ['mainWindow.focus'],
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyDown',
+      key: 'ㅎ',
+      code: 'KeyG',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }],
+    ['overlay.focus']
+  ]);
+
+  // 커스텀 단축키가 KeyG면 KeyB는 더 이상 포커스 handoff 대상이 아니다.
+  harness.events.length = 0;
+  assert.equal(emit({ key: 'b', code: 'KeyB' }), true);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.focus'), false);
+  assert.deepEqual(harness.events.filter(([name, channel]) =>
+    name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , input]) => input.code), ['KeyB']);
+
+  // 잘못된 서술자는 null로 되돌려 기본 KeyB 판정을 복구한다.
+  assert.equal((await harness.host.updateState({
+    drawModeShortcut: { key: 'InjectedCode' }
+  })).success, true);
+  harness.events.length = 0;
+  assert.equal(emit({ key: 'b', code: 'KeyB' }), true);
+  assert.deepEqual(harness.events[0], ['mainWindow.focus']);
+  harness.events.length = 0;
+  assert.equal(emit({ key: 'b', code: 'KeyB', isComposing: true }), false);
+  assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
 });
 
 test('overlay history shortcuts relay once to the main renderer without host-side history execution', async () => {
@@ -5336,4 +5413,39 @@ test('drawing input disable and export degrade gracefully when the overlay host 
     accepted: false,
     reason: 'overlay-host-unavailable'
   });
+});
+
+test('drawing export separates a stale request fence from a corrupted snapshot', async () => {
+  let runtimeSnapshot;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration, { videoGeneration: 8 });
+  assert.deepEqual(await harness.host.exportDrawingVideo(request), {
+    success: false,
+    accepted: false,
+    reason: 'stale-drawing-snapshot'
+  });
+
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+  runtimeSnapshot.scenes[0].objects[0].secret = 'record-secret';
+  const corrupted = await harness.host.exportDrawingVideo(request);
+  assert.deepEqual(corrupted, {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-snapshot'
+  });
+  assert.doesNotMatch(JSON.stringify(corrupted), /failedCheck|secret/i);
 });

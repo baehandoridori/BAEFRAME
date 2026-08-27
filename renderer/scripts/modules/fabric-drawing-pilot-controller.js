@@ -149,11 +149,14 @@ export function createFabricDrawingPilotController(options = {}) {
     };
   // 오버레이 호스트 IPC 응답 데드라인. 호스트가 응답하지 않으면 게이트가 영구 pending이 되어
   // 이어붙이기 전환 전체가 침묵 정지하므로(2026-08-21), 경계에서 유한 시간으로 자른다.
+  // 기본 8000ms: 문서가 커지면 export/hydrate 직렬화가 수 초까지 늘어나는데,
+  // 종전 3000ms에서는 정상 회수가 'persistence-ipc-timeout'으로 잘려 저장이 반복 중단됐다
+  // (2026-08-27 실측). 데드라인은 '무응답 감지'용이므로 정상 최댓값보다 넉넉해야 한다.
   const persistenceIpcDeadlineMs =
     Number.isFinite(Number(options.persistenceIpcDeadlineMs)) &&
     Number(options.persistenceIpcDeadlineMs) > 0
       ? Number(options.persistenceIpcDeadlineMs)
-      : 3000;
+      : 8000;
 
   let initializePromise = null;
   let pilotEnabled = false;
@@ -791,6 +794,7 @@ export function createFabricDrawingPilotController(options = {}) {
       resumeRequested,
       lastError,
       legacyBypass,
+      persistenceDegraded: legacyBypass,
       persistenceBlocked,
       persistenceFailureReason,
       persistenceSourceRefreshInProgress,
@@ -884,6 +888,48 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
+  // 예약(resumeRequested) 소비 단일 지점.
+  // 정착 지점에서 남아 있는 예약을 실제 진입(startEnable)으로 소비하거나,
+  // 진입 전제조건이 사라졌으면 명시적으로 취소하고 상태를 정착시킨다.
+  // 반환값 — null: 소비할 예약 없음, false: 예약을 취소하고 정착시킴,
+  //          Promise<boolean>: startEnable에 소비를 위임함.
+  function consumePendingResumeRequest(
+    enableContext = null,
+    isStillCurrent = () => true,
+    onInputFailure = null,
+    { allowResume = true, settleState = null } = {}
+  ) {
+    if (!resumeRequested) return null;
+    const context = contextSnapshot(enableContext);
+    // startEnable(2041~2054행)의 전제조건 + 종료 준비 유예 제외 조건을 선평가한다.
+    // 전제조건이 깨진 채 startEnable을 부르면 예약도 상태도 정착되지 않고 반환된다.
+    // persistenceQuitSuspension === null 은 startEnable에는 없는 추가 조건이다 —
+    // 종료 준비 유예 중에는 그 자체 예약 의미론(1917~1926행)이 우선하므로 여기서 진입하지 않는다.
+    const canResume = allowResume === true &&
+      persistenceQuitSuspension === null &&
+      shouldOwnDrawingShortcut() &&
+      hostGeneration > 0 &&
+      videoGeneration > 0 &&
+      videoReady &&
+      isStillCurrent() &&
+      validPilotContext(context) &&
+      String(context.stableVideoIdentity || '') !== '';
+    if (canResume) return startEnable(enableContext, isStillCurrent, onInputFailure);
+    resumeRequested = false;
+    syncExplicitResumeIntent();
+    // 상태가 실제로 바뀔 때만 setState한다. settleState === state인데도 별도로
+    // notifyStateChange()를 부르면 오버레이 강제 동기화가 한 번 더 나가(엣지 8),
+    // setState 경로의 알림과 합쳐 2배가 된다. 예약만 사라지고 상태가 그대로인
+    // 경우는 알림 없이 종료한다(엣지 12 참조).
+    if (settleState !== null && state !== settleState) {
+      setState(settleState);
+    }
+    return false;
+  }
+
+  // legacyBypass는 "저장 계층 저하" 표시일 뿐 소유권 플래그가 아니다.
+  // blocked=true(데이터 보호가 필요한 재수화·검증 실패)일 때만 진행 중인 드로잉 세션을 내린다.
+  // 세션을 내려도 소유권은 유지되므로 타임라인 투영과 CSS 마스크는 그대로 남는다.
   function setPersistenceBypass(reason, { blocked = false } = {}) {
     if (blocked === true && !persistenceBlocked) {
       persistenceAbandonResumeRequested =
@@ -900,18 +946,20 @@ export function createFabricDrawingPilotController(options = {}) {
     legacyBypass = true;
     persistenceBlocked = blocked;
     persistenceFailureReason = normalizedReason;
-    desiredInputEnabled = false;
-    resumeRequested = false;
-    currentSession = null;
     persistenceBoundSourceEpoch = null;
-    if (persistenceQuitSuspension) {
-      persistenceQuitSuspension.shouldResume = false;
+    if (blocked === true) {
+      desiredInputEnabled = false;
+      resumeRequested = false;
+      currentSession = null;
+      if (persistenceQuitSuspension) {
+        persistenceQuitSuspension.shouldResume = false;
+      }
+      if (state !== 'disabled' && state !== 'passive') {
+        setState('passive');
+        return false;
+      }
     }
-    if (state !== 'disabled' && state !== 'passive') {
-      setState('passive');
-    } else if (changed) {
-      notifyStateChange();
-    }
+    if (changed) notifyStateChange();
     return false;
   }
 
@@ -1602,10 +1650,31 @@ export function createFabricDrawingPilotController(options = {}) {
     return operation;
   }
 
+  // 회수 실패 중 '이번 시도만 실패한' 사유들. 데이터 손상이 아니므로 차단 래치로 승격하지 않는다.
+  // 'stale-drawing-snapshot'은 오버레이가 요청 펜스보다 늦게 응답한 신선도 문제라
+  // stale과 동일 취급한다(2026-08-27 결정).
+  const TRANSIENT_PERSISTENCE_PULL_REASONS = new Set([
+    'persistence-ipc-timeout',
+    'stale-drawing-snapshot',
+    'persistence-source-changed',
+    'persistence-source-kept-changing',
+    'drawing-snapshot-kept-changing'
+  ]);
+
+  function isTransientPersistencePullFailure(result) {
+    if (!result) return false;
+    if (result.stale === true) return true;
+    return TRANSIENT_PERSISTENCE_PULL_REASONS.has(result.reason);
+  }
+
   async function blockPersistenceAfterPullFailure(result) {
     if (result?.stale === true) return false;
     if (result?.hostUnavailable === true) {
       // 새 호스트가 현재 영상 소유권을 이어받아 재수화할 수 있도록 세션을 보존한다.
+      return false;
+    }
+    if (isTransientPersistencePullFailure(result)) {
+      // 신선도·타임아웃 등 일시 실패는 이번 저장만 중단하고 래치를 걸지 않는다.
       return false;
     }
     setPersistenceBypass(result?.reason || 'drawing-export-failed', {
@@ -1680,6 +1749,9 @@ export function createFabricDrawingPilotController(options = {}) {
         }
         return {
           ok: false,
+          // 재바인딩(입력 해제·재수화·검증) 단계에서 끊긴 실패는 즉시 재시도해도
+          // 같은 경로를 그대로 반복하므로, 회수(export) 단계 실패와 구분한다.
+          bindingFailed: true,
           stale: binding?.stale === true,
           hostUnavailable: binding?.hostUnavailable === true,
           eventEpoch: persistenceEventEpoch,
@@ -1712,7 +1784,16 @@ export function createFabricDrawingPilotController(options = {}) {
     if (!persistenceStore) return true;
     if (legacyBypass) return !persistenceBlocked;
     if (!persistenceSessionId) return true;
-    const result = await pullWithCurrentPersistenceBinding();
+    let result = await pullWithCurrentPersistenceBinding();
+    if (result?.ok !== true &&
+        result?.hostUnavailable !== true &&
+        result?.bindingFailed !== true &&
+        result?.stale !== true &&
+        isTransientPersistencePullFailure(result)) {
+      // 회수 단계의 일시 실패(IPC 지연·요청 펜스 신선도 불일치)는 즉시 1회만 다시 회수한다.
+      // 재바인딩 실패·소유권 상실은 재시도해도 같은 결과이므로 제외한다.
+      result = await pullWithCurrentPersistenceBinding();
+    }
     if (result?.ok === true) return true;
     if (result?.hostUnavailable === true) {
       // 오버레이 호스트가 이미 파괴된 상태: 회수할 드로잉 표면 자체가 없다.
@@ -1720,9 +1801,9 @@ export function createFabricDrawingPilotController(options = {}) {
       // 현재 영상 소유권은 보존하고 다음 호스트가 재수화하도록 저장만 통과시킨다.
       return true;
     }
-    if (result?.reason === 'persistence-ipc-timeout') {
-      // 호스트 응답 지연은 차단 래치로 승격하지 않지만,
-      // 권위 스냅샷을 확인하지 못한 현재 전환은 중단한다.
+    if (isTransientPersistencePullFailure(result)) {
+      // 호스트 응답 지연·신선도 불일치는 차단 래치로 승격하지 않지만,
+      // 권위 스냅샷을 확인하지 못한 현재 저장은 중단한다.
       return false;
     }
     return blockPersistenceAfterPullFailure(result);
@@ -1934,6 +2015,22 @@ export function createFabricDrawingPilotController(options = {}) {
       return true;
     } finally {
       persistenceSourceRefreshInProgress = false;
+      // 갱신이 어떤 경로로 끝나든 남은 B 예약을 여기서 소비한다.
+      // 이미 진입 중(preparing/active)이면 try 경로가 소비를 끝냈고,
+      // 종료 준비 유예는 자체 예약 의미론(1917-1926행)을 가지므로 건드리지 않는다.
+      if (resumeRequested &&
+          persistenceQuitSuspension === null &&
+          state !== 'preparing' &&
+          state !== 'active' &&
+          persistenceVideoMatches(owner)) {
+        const resumed = consumePendingResumeRequest(
+          persistenceVideoContext,
+          () => persistenceVideoMatches(owner),
+          null,
+          { settleState: 'passive' }
+        );
+        if (resumed !== null && resumed !== false) await resumed;
+      }
       notifyStateChange();
     }
   }
@@ -2079,7 +2176,22 @@ export function createFabricDrawingPilotController(options = {}) {
       isStillCurrent() &&
       currentSession?.sessionId === session.sessionId &&
       state === 'preparing';
-    if (!stillCurrent) return false;
+    if (!stillCurrent) {
+      // 준비 중 소유권을 잃었는데 아무도 상태를 내리지 않으면 preparing이 고착되어
+      // #btnDrawMode의 준비중 표시가 남는다. 우리 세션이 여전히 preparing을
+      // 들고 있을 때만(= 더 새 소유자가 없을 때만) 대기 상태로 정착시킨다.
+      if (state === 'preparing' && currentSession?.sessionId === session.sessionId) {
+        currentSession = null;
+        setState('passive');
+        if (inputAccepted) {
+          // 오버레이는 이미 입력을 켠 상태이므로 표면을 반드시 되돌린다
+          await bestEffortDisable();
+        } else {
+          desiredInputEnabled = false;
+        }
+      }
+      return false;
+    }
     if (!inputAccepted) {
       if (response?.reason === 'persistence-ipc-rejected' &&
           typeof onInputFailure === 'function') {
@@ -2150,14 +2262,28 @@ export function createFabricDrawingPilotController(options = {}) {
             typeof onInputFailure === 'function') {
           return false;
         }
+        // 수화 실패로 내려가면서 대기 중 들어온 B 예약을 명시적으로 취소한다.
+        // 예약을 남기면 이후 호스트 재생성/영상 확정이 shouldResume으로 승격시켜
+        // 사용자가 누르지 않은 드로잉 모드를 자동으로 켠다.
+        // settleState는 넘기지 않는다 — 정착은 바로 아래 setState('passive')가 책임진다.
+        consumePendingResumeRequest(enableContext, isStillCurrent, onInputFailure, {
+          allowResume: false
+        });
         setState('passive');
         return false;
       }
     }
-    if (shouldResume || resumeRequested) {
-      return startEnable(enableContext, isStillCurrent, onInputFailure);
-    }
     if (!isStillCurrent()) return false;
+    if (shouldResume || resumeRequested) {
+      resumeRequested = true;
+    }
+    const resumed = consumePendingResumeRequest(
+      enableContext,
+      isStillCurrent,
+      onInputFailure,
+      { settleState: settledState }
+    );
+    if (resumed !== null) return resumed;
     setState(settledState);
     return true;
   }
@@ -2409,10 +2535,20 @@ export function createFabricDrawingPilotController(options = {}) {
       if (options?.preserveAuthoritativeOverlay === true) {
         if (!isStillCurrent()) return false;
         if (legacyBypass || persistenceBlocked || !rollback.shouldResume) {
+          // 2401행에서 세운 예약을 남기지 않고 취소한 뒤 대기 상태로 정착시킨다
+          // (settleState 미전달 — 정착은 바로 아래 setState('passive')가 책임진다. (b)와 동일 규약)
+          consumePendingResumeRequest(rollback.context, isStillCurrent, null, {
+            allowResume: false
+          });
           setState('passive');
           return true;
         }
-        return startEnable(rollback.context, isStillCurrent);
+        const resumed = consumePendingResumeRequest(rollback.context, isStillCurrent, null, {
+          settleState: 'passive'
+        });
+        if (resumed !== null) return resumed;
+        setState('passive');
+        return true;
       }
       const restored = await reconcileCurrentVideo(
         rollback.shouldResume,
@@ -2545,7 +2681,9 @@ export function createFabricDrawingPilotController(options = {}) {
     if (isDrawingToggleShortcut) {
       consumeKeyEvent(event);
       bInputAttempted += 1;
-      notifyStateChange();
+      // 여기서 알리면 아직 passive인 상태로 표시·오버레이 IPC가 한 번 더 나간다.
+      // 직후 toggle()의 setState('preparing')와 아래 완료 핸들러가 카운터를 싣고
+      // 알리므로, 카운터 반영이 한 틱 늦어지는 것을 허용한다.
       runDetached(Promise.resolve(toggle()).then(
         accepted => {
           if (accepted) {
@@ -2580,9 +2718,10 @@ export function createFabricDrawingPilotController(options = {}) {
     return pilotEnabled;
   }
 
+  // 소유권은 파일럿 활성화와 persistence 브리지 준비 여부만으로 결정한다.
+  // legacyBypass(저장 계층 저하)는 저장 게이트 전용 플래그이므로 여기서 참조하지 않는다.
   function shouldOwnDrawingShortcut() {
     return pilotEnabled &&
-      !legacyBypass &&
       (persistenceStore === null || persistenceBridgeReady);
   }
 
@@ -2633,6 +2772,7 @@ export function createFabricDrawingPilotController(options = {}) {
     preparePersistenceForQuit,
     resumeAfterQuitCancelled,
     shouldOwnDrawingShortcut,
+    clearPersistenceSaveBlock: clearPersistenceBypass,
     isEnabled,
     isActiveOrPreparing,
     getState,

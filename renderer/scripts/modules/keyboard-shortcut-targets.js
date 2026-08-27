@@ -79,9 +79,29 @@ export function shouldHandlePlayPauseShortcutFromTarget(target, event = null) {
   return true;
 }
 
-export function shouldIgnoreGlobalShortcutTarget(target) {
+// 비텍스트 폼 컨트롤(range/checkbox/radio/color/button 등)과 SELECT가 실제로 소비하는 키.
+// 이 목록 밖의 문자 키(KeyB/KeyC/KeyV 등)는 컨트롤이 삼키지 않으므로 전역 단축키로 흘려보낸다.
+const CONTROL_CONSUMED_KEY_CODES = new Set([
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Space',
+  'Home',
+  'End',
+  'PageUp',
+  'PageDown',
+  'Enter'
+]);
+
+export function shouldIgnoreGlobalShortcutTarget(target, event = null) {
   if (isTextEntryShortcutTarget(target)) return true;
 
   const tagName = getTagName(target);
-  return tagName === 'INPUT' || tagName === 'SELECT';
+  if (tagName !== 'INPUT' && tagName !== 'SELECT') return false;
+
+  // code를 알 수 없는 호출(paste 등 비키보드 이벤트)은 기존과 동일하게 보수적으로 차단한다.
+  const code = typeof event?.code === 'string' ? event.code : '';
+  if (code.length === 0) return true;
+  return CONTROL_CONSUMED_KEY_CODES.has(code);
 }

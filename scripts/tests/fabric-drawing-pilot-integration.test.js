@@ -924,7 +924,7 @@ function makeValidRawDiagnostics() {
   const after = structuredClone(before);
   after.controller.inputRevision = 101;
   after.counters.toggleCount = 100;
-  after.host.moveTop = before.host.moveTop + 99;
+  after.host.moveTop = before.host.moveTop + 100;
 
   return {
     before,
@@ -1120,7 +1120,8 @@ test('synthetic controller/runtime boundary restores native stack order and pres
   assert.equal(hostHarness.host.window, hostWindow);
   assert.deepEqual(hostAfter, {
     ...hostBefore,
-    moveTop: hostBefore.moveTop + 99
+    // 미준비 disable을 포함해 모든 입력 전환이 overlay 순서를 복원한다
+    moveTop: hostBefore.moveTop + 100
   });
 
   const shadowObserver = createThrowingDrawingV3Observer();

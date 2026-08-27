@@ -1,3 +1,5 @@
+import { isTextEntryShortcutTarget } from './keyboard-shortcut-targets.js';
+
 const NAMED_KEY_CODES = new Set([
   'Backspace', 'Tab', 'Enter', 'Delete', 'Insert', 'Home', 'End', 'PageUp', 'PageDown',
   'Escape', 'Space', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Backquote',
@@ -72,11 +74,22 @@ function isOverlayHistoryShortcut(input) {
   return input.code === 'KeyY' && input.shiftKey !== true;
 }
 
+function normalizeGlobalShortcutCodes(value) {
+  if (!value) return null;
+  const codes = Array.isArray(value) ? value : [value];
+  const normalized = new Set();
+  for (const code of codes) {
+    if (typeof code === 'string' && code.length > 0 && code.length <= 32) normalized.add(code);
+  }
+  return normalized.size > 0 ? normalized : null;
+}
+
 export function dispatchMpvOverlayKeyboardInput(
   value,
   {
     ownerDocument = globalThis.document,
-    KeyboardEventConstructor = globalThis.KeyboardEvent
+    KeyboardEventConstructor = globalThis.KeyboardEvent,
+    globalShortcutCodes = null
   } = {}
 ) {
   const input = normalizeKeyboardInput(value);
@@ -102,9 +115,18 @@ export function dispatchMpvOverlayKeyboardInput(
         composed: false
       }
     );
+    const activeElement = ownerDocument.activeElement;
+    // 메인 창에 남아 있던 텍스트 입력 포커스가 오버레이에서 릴레이된 전역 단축키를
+    // 삼키지 않게 한다. body로 보내면 getEffectiveKeyboardShortcutTarget이 다시
+    // activeElement로 되돌아가므로(BODY 폴백), 히스토리 chord와 같이 document로 보낸다.
+    const shortcutCodes = normalizeGlobalShortcutCodes(globalShortcutCodes);
+    const escapesTextEntry = shortcutCodes !== null &&
+      shortcutCodes.has(input.code) &&
+      isTextEntryShortcutTarget(activeElement);
     const dispatchTarget = !isOverlayHistoryShortcut(input) &&
-        typeof ownerDocument.activeElement?.dispatchEvent === 'function'
-      ? ownerDocument.activeElement
+        !escapesTextEntry &&
+        typeof activeElement?.dispatchEvent === 'function'
+      ? activeElement
       : ownerDocument;
     dispatchTarget.dispatchEvent(event);
     return true;

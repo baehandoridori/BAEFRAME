@@ -1807,7 +1807,7 @@ function isOptionalBoolean(value) {
   return value === undefined || typeof value === 'boolean';
 }
 
-function createForwardedKeyboardInput(input = {}) {
+function createForwardedKeyboardInput(input = {}, drawModeShortcut = null) {
   if (input.type !== 'keyDown' && input.type !== 'keyUp') return null;
   const key = typeof input.key === 'string' ? input.key : '';
   const code = typeof input.code === 'string' ? input.code : '';
@@ -1821,7 +1821,11 @@ function createForwardedKeyboardInput(input = {}) {
       !isOptionalBoolean(input.isComposing)) {
     return null;
   }
-  if (input.isComposing === true ||
+  // 그리기 토글 물리 키는 IME 조합 플래그가 붙어도 릴레이한다. 조합 대상이 없는
+  // 오버레이 창에서 조합 플래그만으로 B가 통째로 사라지던 비대칭을 없앤다.
+  // key 자체가 'Process'/'Dead'/'Unidentified'면 식별 가능한 키 정보가 없고
+  // 렌더러 릴레이 모듈도 독립적으로 거부하므로 예외 없이 계속 차단한다.
+  if ((input.isComposing === true && !matchesDrawModeShortcutInput(input, drawModeShortcut)) ||
       ['Process', 'Dead', 'Unidentified'].includes(key) ||
       ['Process', 'Dead', 'Unidentified'].includes(code)) {
     return null;
@@ -1839,13 +1843,36 @@ function createForwardedKeyboardInput(input = {}) {
   };
 }
 
-function forwardedInputNeedsMainFocus(input = {}) {
+// 렌더러가 상태 sync로 실어 보낸 drawMode 단축키 서술자. 아직 동기화 전이면 null이며,
+// null이면 기존 기본값(KeyB 단독)과 완전히 같은 판정을 유지한다.
+function normalizeDrawModeShortcutDescriptor(value, previous = null) {
+  if (value === undefined) return previous;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  if (!isForwardedPhysicalKeyCode(value.key)) return null;
+  return {
+    key: value.key,
+    ctrl: value.ctrl === true,
+    shift: value.shift === true,
+    alt: value.alt === true
+  };
+}
+
+function matchesDrawModeShortcutInput(input = {}, drawModeShortcut = null) {
+  if (!drawModeShortcut) return false;
+  return input.code === drawModeShortcut.key &&
+    (input.shift === true) === (drawModeShortcut.shift === true) &&
+    (input.control === true) === (drawModeShortcut.ctrl === true) &&
+    (input.alt === true) === (drawModeShortcut.alt === true) &&
+    input.meta !== true;
+}
+
+function forwardedInputNeedsMainFocus(input = {}, drawModeShortcut = null) {
   return input.type === 'keyDown' &&
-    input.code === 'KeyB' &&
+    input.code === (drawModeShortcut ? drawModeShortcut.key : 'KeyB') &&
     input.repeat !== true &&
-    input.shiftKey !== true &&
-    input.ctrlKey !== true &&
-    input.altKey !== true &&
+    input.shiftKey === (drawModeShortcut ? drawModeShortcut.shift === true : false) &&
+    input.ctrlKey === (drawModeShortcut ? drawModeShortcut.ctrl === true : false) &&
+    input.altKey === (drawModeShortcut ? drawModeShortcut.alt === true : false) &&
     input.metaKey !== true;
 }
 
@@ -2448,17 +2475,36 @@ function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
       success: false,
       reason: cloned.reason === 'too-large'
         ? 'persistence-snapshot-too-large'
-        : 'invalid-persistence-snapshot'
+        : 'invalid-persistence-snapshot',
+      failedCheck: cloned.reason === 'too-large'
+        ? 'snapshot-clone-too-large'
+        : 'snapshot-clone-failed'
     };
   }
   const value = cloned.value;
+  // 요청-스냅샷 펜스 불일치는 데이터 손상이 아니라 신선도(회수 타이밍) 문제다.
+  // 손상과 같은 사유로 뭉개면 저장 차단 래치까지 승격되므로(2026-08-27 실측),
+  // 봉투 구조가 멀쩡한 경우에 한해 먼저 stale 사유로 분리한다.
+  if (hasExactPersistenceKeys(value, FABRIC_DRAWING_SNAPSHOT_KEYS) &&
+      readFabricDrawingPersistenceFence(value) &&
+      validateFabricDrawingTimeline(value) &&
+      FABRIC_DRAWING_EXPORT_REQUEST_KEYS.some(key => value[key] !== request[key])) {
+    return {
+      success: false,
+      reason: 'stale-drawing-snapshot',
+      failedCheck: 'export-request-fence-mismatch'
+    };
+  }
   if (!hasExactPersistenceKeys(value, FABRIC_DRAWING_SNAPSHOT_KEYS) ||
       !readFabricDrawingPersistenceFence(value) ||
       !validateFabricDrawingTimeline(value) ||
-      FABRIC_DRAWING_EXPORT_REQUEST_KEYS.some(key => value[key] !== request[key]) ||
       !isDensePersistenceArray(value.scenes) ||
       value.scenes.length > FABRIC_DRAWING_MAX_KEYFRAMES) {
-    return { success: false, reason: 'invalid-persistence-snapshot' };
+    return {
+      success: false,
+      reason: 'invalid-persistence-snapshot',
+      failedCheck: 'snapshot-envelope'
+    };
   }
 
   const sceneIds = new Set();
@@ -2483,18 +2529,30 @@ function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
         scene.objects.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
         sceneIds.has(scene.sceneInstanceId) ||
         frames.has(scene.targetFrame)) {
-      return { success: false, reason: 'invalid-persistence-snapshot' };
+      return {
+        success: false,
+        reason: 'invalid-persistence-snapshot',
+        failedCheck: 'snapshot-scene'
+      };
     }
     const objectIds = new Set();
     for (const object of scene.objects) {
       if (!validateFabricDrawingRecord(object, maxBytes) || objectIds.has(object.id)) {
-        return { success: false, reason: 'invalid-persistence-snapshot' };
+        return {
+          success: false,
+          reason: 'invalid-persistence-snapshot',
+          failedCheck: 'snapshot-record'
+        };
       }
       objectIds.add(object.id);
     }
     objectCount += scene.objects.length;
     if (objectCount > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) {
-      return { success: false, reason: 'persistence-snapshot-too-large' };
+      return {
+        success: false,
+        reason: 'persistence-snapshot-too-large',
+        failedCheck: 'snapshot-object-total'
+      };
     }
     sceneIds.add(scene.sceneInstanceId);
     frames.add(scene.targetFrame);
@@ -2557,6 +2615,7 @@ class MPVOverlayHost {
     this.currentToolRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
+    this.drawModeShortcutDescriptor = null;
     this.completedActionIds = new Map();
     this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
@@ -2786,12 +2845,20 @@ class MPVOverlayHost {
     // 준비된 Fabric surface가 없다면 disable은 native click-through만 보장하면 된다.
     // 영구적인 bundle 오류 상태에서 B-off가 또 read/injection을 시작하지 않게 한다.
     if (!request.enabled && this.fabricReadyGeneration !== this.hostGeneration) {
+      // 2767-2769행에서 이미 focusable:false로 전환했으므로 sibling mpv 창이
+      // 위로 올라올 수 있다. Fabric 준비 여부와 무관하게 창 순서를 복원한다.
+      hostWindow.moveTop?.();
+      hostWindow.webContents?.invalidate?.();
       return { success: true, accepted: true, enabled: false, fabricReady: false };
     }
 
     const prepared = await this._ensureFabricRuntime();
     if (!prepared.success) {
       if (!request.enabled) {
+        // (g)와 동일 — focusable:false 전환은 이미 끝났으므로 준비 실패로 되돌아가도
+        // 창 순서는 반드시 복원한다. (j)의 restack 완전일치 계약이 이 경로를 포함한다.
+        hostWindow.moveTop?.();
+        hostWindow.webContents?.invalidate?.();
         return { success: true, accepted: true, enabled: false, fabricReady: false };
       }
       return { success: false, accepted: false, enabled: false, error: prepared.error };
@@ -2810,9 +2877,10 @@ class MPVOverlayHost {
     }
 
     const stillCurrent = this._inputRequestStillDesired(hostWindow, request);
-    if (!request.enabled && runtimeResult?.accepted === true && stillCurrent) {
+    if (!request.enabled && stillCurrent) {
       // focusable:false 전환은 Windows에서 sibling mpv 창을 위로 올릴 수 있다.
-      // passive 장면을 다시 그린 뒤 overlay의 순서를 복원하고 즉시 present한다.
+      // runtime이 passive 장면을 거부해도 focusable 전환은 이미 일어났으므로,
+      // 창 순서 복원은 승인 여부와 무관하게 disable 요청마다 대칭으로 수행한다.
       hostWindow.moveTop?.();
       hostWindow.webContents?.invalidate?.();
     }
@@ -3532,6 +3600,12 @@ class MPVOverlayHost {
         this.fabricDrawingSnapshotMaxBytes
       );
       if (!normalizedSnapshot.success) {
+        // 응답 형태(success/accepted/reason)는 그대로 두고,
+        // 어떤 검사에서 걸렀는지는 main 로그로만 남긴다.
+        this.logger.warn('Fabric 드로잉 스냅샷 회수 거절', {
+          reason: normalizedSnapshot.reason,
+          failedCheck: normalizedSnapshot.failedCheck || 'unknown'
+        });
         return {
           success: false,
           accepted: false,
@@ -3900,6 +3974,12 @@ class MPVOverlayHost {
       return { success: false, error: 'mpv overlay host is not ready' };
     }
 
+    // 작업4: 릴레이 판정용 서술자만 호스트에 남기고, 오버레이 페이지로 내려보내는
+    // normalized 페이로드에는 넣지 않는다(오버레이 런타임 계약 불변).
+    this.drawModeShortcutDescriptor = normalizeDrawModeShortcutDescriptor(
+      state?.drawModeShortcut,
+      this.drawModeShortcutDescriptor
+    );
     const normalized = normalizeOverlayState(state);
     try {
       await this.window.webContents?.executeJavaScript?.(
@@ -4039,6 +4119,7 @@ class MPVOverlayHost {
     this.currentToolRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
+    this.drawModeShortcutDescriptor = null;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
@@ -4106,6 +4187,7 @@ class MPVOverlayHost {
     this.currentToolRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
+    this.drawModeShortcutDescriptor = null;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
@@ -4166,7 +4248,8 @@ class MPVOverlayHost {
         // renderer가 Fabric 실행과 전역 히스토리 fallback을 한 경로에서 판정하도록
         // 물리 키 입력을 즉시 릴레이한다.
       }
-      const forwardedInput = createForwardedKeyboardInput(input);
+      const drawModeShortcut = this.drawModeShortcutDescriptor;
+      const forwardedInput = createForwardedKeyboardInput(input, drawModeShortcut);
       const mainWindow = this.getMainWindow();
       if (!forwardedInput ||
           !mainWindow ||
@@ -4174,7 +4257,7 @@ class MPVOverlayHost {
           typeof mainWindow.webContents?.send !== 'function') {
         return;
       }
-      const needsMainFocusHandoff = forwardedInputNeedsMainFocus(forwardedInput);
+      const needsMainFocusHandoff = forwardedInputNeedsMainFocus(forwardedInput, drawModeShortcut);
       try {
         // overlay가 획 클릭으로 포커스를 얻어도 물리 키 위치(code)를 보존해
         // 사용자 지정 단축키를 메인 renderer의 단일 처리 경로로 보낸다.
@@ -4231,6 +4314,7 @@ class MPVOverlayHost {
       this.currentToolRevision = -1;
       this.keyboardRelayCount = 0;
       this.lastKeyboardRelayCode = null;
+      this.drawModeShortcutDescriptor = null;
       this.completedActionIds.clear();
       this.inFlightDrawingActions.clear();
       this.suppressedOverlayHistoryKeys.clear();

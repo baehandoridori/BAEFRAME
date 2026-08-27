@@ -457,6 +457,100 @@ test('app subscribes once and dispatches overlay keyboard payloads through the g
   );
   assert.match(
     appSource,
-    /window\.electronAPI\.onMpvOverlayKeyboardInput\?\.\(\(input\)\s*=>\s*\{\s*dispatchMpvOverlayKeyboardInput\(input,\s*\{\s*ownerDocument:\s*document\s*\}\);\s*\}\);/
+    /window\.electronAPI\.onMpvOverlayKeyboardInput\?\.\(\(input\)\s*=>\s*\{\s*dispatchMpvOverlayKeyboardInput\(input,\s*\{\s*ownerDocument:\s*document,\s*globalShortcutCodes:\s*getMpvOverlayRelayGlobalShortcutCodes\(\)\s*\}\);\s*\}\);/
   );
+});
+
+test('릴레이된 전역 단축키 코드는 남아 있는 텍스트 포커스를 건너뛰고 문서로 간다', async () => {
+  const { dispatchMpvOverlayKeyboardInput } = await import(
+    `${pathToFileURL(relayModulePath).href}?global-shortcut=${Date.now()}`
+  );
+  class FakeKeyboardEvent {
+    constructor(type, init) {
+      this.type = type;
+      Object.assign(this, init);
+    }
+  }
+  const makeDocument = activeElement => {
+    const activeEvents = [];
+    const documentEvents = [];
+    const ownerDocument = {
+      activeElement,
+      dispatchEvent(event) {
+        documentEvents.push(event);
+        return true;
+      }
+    };
+    if (activeElement) {
+      activeElement.dispatchEvent = event => {
+        activeEvents.push(event);
+        return true;
+      };
+    }
+    return { ownerDocument, activeEvents, documentEvents };
+  };
+
+  // 텍스트 입력 포커스 + 등록된 전역 단축키 코드 → 문서로 우회
+  const editor = makeDocument({ tagName: 'TEXTAREA' });
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'ㅂ', code: 'KeyB' }),
+    {
+      ownerDocument: editor.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: ['KeyB']
+    }
+  ), true);
+  assert.equal(editor.activeEvents.length, 0);
+  assert.deepEqual(editor.documentEvents.map(event => event.code), ['KeyB']);
+
+  // 등록되지 않은 코드는 기존대로 활성 편집기로 간다
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'c', code: 'KeyC' }),
+    {
+      ownerDocument: editor.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: ['KeyB']
+    }
+  ), true);
+  assert.deepEqual(editor.activeEvents.map(event => event.code), ['KeyC']);
+  assert.equal(editor.documentEvents.length, 1);
+
+  // 텍스트 입력이 아닌 포커스는 그대로 유지한다
+  const button = makeDocument({ tagName: 'BUTTON' });
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'b', code: 'KeyB' }),
+    {
+      ownerDocument: button.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: ['KeyB']
+    }
+  ), true);
+  assert.deepEqual(button.activeEvents.map(event => event.code), ['KeyB']);
+  assert.equal(button.documentEvents.length, 0);
+
+  // 빈 목록/비문자열은 기존 동작으로 되돌아간다
+  const fallback = makeDocument({ tagName: 'TEXTAREA' });
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'b', code: 'KeyB' }),
+    {
+      ownerDocument: fallback.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: []
+    }
+  ), true);
+  assert.deepEqual(fallback.activeEvents.map(event => event.code), ['KeyB']);
+  assert.equal(fallback.documentEvents.length, 0);
+});
+
+test('app은 drawMode 단축키 코드를 릴레이 우회 목록으로 넘긴다', () => {
+  const appSource = fs.readFileSync(appPath, 'utf8');
+  assert.match(
+    appSource,
+    /function getMpvOverlayDrawModeShortcutDescriptor\(\) \{[\s\S]*?userSettings\.getShortcut\('drawMode'\)[\s\S]*?key: shortcut\.key[\s\S]*?\}/
+  );
+  assert.match(
+    appSource,
+    /function getMpvOverlayRelayGlobalShortcutCodes\(\) \{[\s\S]*?drawModeShortcut\.ctrl \|\| drawModeShortcut\.shift \|\| drawModeShortcut\.alt[\s\S]*?return \[drawModeShortcut\.key\];[\s\S]*?\}/
+  );
+  assert.match(appSource, /drawModeShortcut: getMpvOverlayDrawModeShortcutDescriptor\(\),/);
 });

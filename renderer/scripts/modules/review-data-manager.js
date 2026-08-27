@@ -24,6 +24,36 @@ import {
 } from '../../../shared/bframe-root-envelope.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
 
+// 저장 재시도 백오프(ms). 2s → 5s → 10s, 최대 3회.
+const SAVE_RETRY_DELAYS_MS = Object.freeze([2000, 5000, 10000]);
+
+// 재시도로 회복 가능한 실패 사유. 그 외는 즉시 사용자에게 통보한다.
+// 이 Set은 _classifySaveFailure(= 예외 경로 전용)만 사용한다.
+// - review-file-write-failed: 디스크/IPC 쓰기 실패(구글 드라이브 동기화 잠금 등)
+// - fabric-snapshot-unavailable: Fabric 최신 스냅샷 회수 실패(IPC 지연·스냅샷 신선도)
+// ※ 작업 7의 'malformed-target'·'review-snapshot-lock-timeout'은 예외가 아니라
+//   saveDeferred로 흐르므로 여기 넣지 않는다 (§7 C-9). 이들은 (j-2)의
+//   지연 분기에서 직접 _emitSaveState('retrying', reason)로 표시된다.
+const TRANSIENT_SAVE_FAILURE_REASONS = new Set([
+  'review-file-write-failed',
+  'fabric-snapshot-unavailable'
+]);
+
+// 사유 태그가 없는 훅 예외를 메시지로 식별한다(app.js의 최종 Fabric 스냅샷 훅).
+const TRANSIENT_SAVE_FAILURE_MESSAGES = Object.freeze([
+  'Fabric 드로잉 최신 상태를 가져오지 못했습니다.'
+]);
+
+// 원본 보호를 위해 재시도해서는 안 되는 영구 차단 사유.
+const BLOCKING_SAVE_FAILURE_REASONS = new Set([
+  'invalid-review-document-id',
+  'review-document-id-missing',
+  'review-document-id-mismatch',
+  'fabric-drawing-conflict',
+  'fabric-drawing-source-refresh-stale',
+  'fabric-drawing-source-refresh-failed'
+]);
+
 function toTime(value) {
   if (!value) return 0;
   const time = new Date(value).getTime();
@@ -850,6 +880,20 @@ export class ReviewDataManager extends EventTarget {
     this.autoSaveDelay = options.autoSaveDelay || 500; // 500ms (타이핑 완료 후 저장)
     this.autoSaveTimer = null;
 
+    // 저장 재시도 설정 (일시 실패 전용 지수 백오프)
+    this._saveRetryDelays = Array.isArray(options.saveRetryDelays) &&
+      options.saveRetryDelays.length > 0
+      ? Object.freeze(options.saveRetryDelays.map(
+        value => Math.max(0, Number(value) || 0)
+      ))
+      : SAVE_RETRY_DELAYS_MS;
+    this._saveRetryTimer = null;
+    this._saveRetryAttempt = 0;
+    this._saveStateSettled = false;
+    // 직전 저장에서 최종 Fabric 스냅샷 훅이 "회수를 건너뛰었는지"(저장 계층 저하).
+    // saveStateChanged의 bypassed 필드로 실어 보내 저장 차단 래치 해제를 막는다.
+    this._lastFinalSnapshotBypassed = false;
+
     // 저장 동시성 제어
     this._savePromise = null;  // 저장 중인 Promise (락)
     this._videoFileRequestEpoch = 0;
@@ -1204,12 +1248,28 @@ export class ReviewDataManager extends EventTarget {
 
     // 저장 Promise 생성 (락)
     const saveOwner = this._captureSaveOwner();
+    this._saveStateSettled = false;
+    this._emitSaveState('saving');
     this._savePromise = Promise.resolve().then(
       () => this._doSave(options, saveOwner)
     );
 
     try {
-      return await this._savePromise;
+      const saved = await this._savePromise;
+      if (saved === true) {
+        this._resetSaveRetry();
+        this._emitSaveState('saved');
+      } else if (!this._saveStateSettled) {
+        // 예외 없이 미뤄진 저장(saveDeferred 등)은 예약이 실제로 걸린 경우에만
+        // 대기 표시를 남긴다. 예약 없는 지연에 'retrying'을 발행하면 재시도가
+        // 영원히 오지 않는 채로 칩이 노랑에 고착된다(상태기계 불변식 위반).
+        if (this.autoSaveTimer !== null || this._saveRetryTimer !== null) {
+          this._emitSaveState('retrying', 'save-deferred');
+        } else {
+          this._emitSaveState(null);
+        }
+      }
+      return saved;
     } finally {
       this._savePromise = null;
     }
@@ -1293,12 +1353,16 @@ export class ReviewDataManager extends EventTarget {
         this._assertRootEnvelopeWritable();
         this._ensureReviewDocumentId();
         if (this._finalFabricSnapshotHandler) {
-          await this._finalFabricSnapshotHandler({
+          const finalSnapshotResult = await this._finalFabricSnapshotHandler({
             path: saveOwner.bframePath,
             videoPath: saveOwner.videoPath,
             hasPersistedFile: this._hasPersistedFile,
             options: _options
           });
+          // 저장 계층이 저하되어 회수를 건너뛴 경우를 기억한다(작업 1 엣지 12).
+          this._lastFinalSnapshotBypassed = finalSnapshotResult?.bypassed === true;
+        } else {
+          this._lastFinalSnapshotBypassed = false;
         }
         this._assertSaveOwner(saveOwner);
         this._assertRootEnvelopeWritable();
@@ -1334,18 +1398,27 @@ export class ReviewDataManager extends EventTarget {
           throw new Error('저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.');
         }
         if (saveResult?.retryable === true) {
+          const deferredReason = saveResult.reason || 'review-file-busy';
           this.isDirty = true;
           log.warn('.bframe 저장이 잠시 지연됨', {
             path: saveOwner.bframePath,
-            reason: saveResult.reason || 'review-file-busy'
+            reason: deferredReason
           });
           this._emit('saveDeferred', {
             path: saveOwner.bframePath,
-            reason: saveResult.reason || 'review-file-busy'
+            reason: deferredReason
           });
           if (this.autoSaveEnabled) {
             this._scheduleAutoSave();
           }
+          // 지연 분기는 예외 경로가 아니므로 _classifySaveFailure를 거치지 않는다.
+          // 실제 사유를 직접 실어 보내고, 재시도 예약이 없는 경로(autoSave 비활성)는
+          // 'save-failed'로 종결해 칩 고착(상태기계 불변식 위반)을 막는다.
+          this._saveStateSettled = true;
+          this._emitSaveState(
+            this.autoSaveEnabled ? 'retrying' : 'save-failed',
+            deferredReason
+          );
           return false;
         }
         const observationChanged = attemptObservationEpoch !==
@@ -1382,7 +1455,15 @@ export class ReviewDataManager extends EventTarget {
         }
 
         if (saveResult?.success !== true) {
-          throw new Error(saveResult?.error || '.bframe 저장 실패');
+          // 디스크/IPC 쓰기 실패는 재시도로 회복 가능한 일시 실패로 분류한다.
+          // 단 CAS 치명 실패(fatal)는 재시도해도 회복되지 않으므로 즉시 통보한다
+          // — 'review-file-write-fatal'은 TRANSIENT 목록에 없어 곧바로
+          // 'save-failed'로 분류되고, main이 실어 보낸 원인 문구가 토스트에 뜬다.
+          const writeError = new Error(saveResult?.error || '.bframe 저장 실패');
+          writeError.saveFailureReason = saveResult?.fatal === true
+            ? 'review-file-write-fatal'
+            : 'review-file-write-failed';
+          throw writeError;
         }
 
         if (typeof saveResult.versionToken === 'string' &&
@@ -1456,10 +1537,105 @@ export class ReviewDataManager extends EventTarget {
 
       return true;
     } catch (error) {
+      const failure = this._classifySaveFailure(error);
+      this._saveStateSettled = true;
       log.error('.bframe 저장 실패', error);
-      this._emit('saveError', { error });
+      if (failure.status === 'retrying' &&
+          this._scheduleSaveRetry(failure.reason, saveOwner)) {
+        log.warn('.bframe 저장 일시 실패, 재시도 예약됨', {
+          path: saveOwner.bframePath,
+          reason: failure.reason,
+          attempt: this._saveRetryAttempt
+        });
+        this._emitSaveState('retrying', failure.reason);
+        return false;
+      }
+      const status = failure.status === 'save-blocked'
+        ? 'save-blocked'
+        : 'save-failed';
+      this._resetSaveRetry();
+      this._emitSaveState(status, failure.reason);
+      this._emit('saveError', { error, reason: failure.reason, status });
       return false;
     }
+  }
+
+  /**
+   * 저장 실패를 재시도 가능 여부로 분류한다.
+   * @param {Error} error
+   * @returns {{status: 'retrying'|'save-failed'|'save-blocked', reason: string}}
+   */
+  _classifySaveFailure(error) {
+    if (this._writeBlockedVersionDetected) {
+      return { status: 'save-blocked', reason: 'unsupported-bframe-version' };
+    }
+    const taggedReason = typeof error?.saveFailureReason === 'string'
+      ? error.saveFailureReason
+      : null;
+    if (taggedReason && BLOCKING_SAVE_FAILURE_REASONS.has(taggedReason)) {
+      return { status: 'save-blocked', reason: taggedReason };
+    }
+    if (this._writeBlockedReason &&
+        BLOCKING_SAVE_FAILURE_REASONS.has(this._writeBlockedReason)) {
+      return { status: 'save-blocked', reason: this._writeBlockedReason };
+    }
+    if (taggedReason && TRANSIENT_SAVE_FAILURE_REASONS.has(taggedReason)) {
+      return { status: 'retrying', reason: taggedReason };
+    }
+    const message = typeof error?.message === 'string' ? error.message : '';
+    if (TRANSIENT_SAVE_FAILURE_MESSAGES.some(
+      candidate => message.includes(candidate)
+    )) {
+      return { status: 'retrying', reason: 'fabric-snapshot-unavailable' };
+    }
+    return { status: 'save-failed', reason: 'save-failed' };
+  }
+
+  /**
+   * 일시 실패 재시도 예약 (2s → 5s → 10s)
+   * @returns {boolean} 예약했으면 true
+   */
+  _scheduleSaveRetry(reason, saveOwner) {
+    if (!this._isConnected || !this.autoSaveEnabled) return false;
+    if (this._saveRetryAttempt >= this._saveRetryDelays.length) return false;
+    this._cancelSaveRetry();
+    const delay = this._saveRetryDelays[this._saveRetryAttempt];
+    this._saveRetryAttempt += 1;
+    const timer = setTimeout(() => {
+      this._saveRetryTimer = null;
+      if (!this._isConnected || !this._ownsSave(saveOwner)) return;
+      if (!this.hasUnsavedChanges()) return;
+      log.info('.bframe 저장 재시도', {
+        path: saveOwner.bframePath,
+        attempt: this._saveRetryAttempt,
+        reason
+      });
+      void this.save();
+    }, delay);
+    // Node 테스트 환경에서 남은 타이머가 프로세스를 붙잡지 않게 한다(브라우저에선 no-op).
+    if (typeof timer?.unref === 'function') timer.unref();
+    this._saveRetryTimer = timer;
+    return true;
+  }
+
+  _cancelSaveRetry() {
+    if (this._saveRetryTimer) {
+      clearTimeout(this._saveRetryTimer);
+      this._saveRetryTimer = null;
+    }
+  }
+
+  _resetSaveRetry() {
+    this._cancelSaveRetry();
+    this._saveRetryAttempt = 0;
+  }
+
+  _emitSaveState(status, reason = null) {
+    // bypassed: 이번 저장이 "Fabric 회수를 실제로 수행했는지"를 소비자에게 알린다.
+    // 'saved' 외의 상태에서는 의미가 없으므로 항상 false로 내려보낸다(작업 1 엣지 12).
+    const bypassed = status === 'saved' &&
+      this._lastFinalSnapshotBypassed === true;
+    this._emit('saveStateChanged', { status, reason, bypassed });
   }
 
   /**
@@ -2772,13 +2948,14 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
-   * 예약된 자동 저장 취소
+   * 예약된 자동 저장 취소 (예약된 저장 재시도도 함께 취소)
    */
   _cancelAutoSave() {
     if (this.autoSaveTimer) {
       clearTimeout(this.autoSaveTimer);
       this.autoSaveTimer = null;
     }
+    this._cancelSaveRetry();
   }
 
   /**

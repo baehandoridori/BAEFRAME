@@ -513,3 +513,45 @@ test('fabric 히스토리 폴백은 renderer 단일 경로에서 처리한다', 
   assert.match(hostSource, /mainWindow\.webContents\.send\(FORWARDED_KEYBOARD_CHANNEL, forwardedInput\);/);
   assert.doesNotMatch(hostSource, /this\.applyDrawingAction\(request\)\.then/);
 });
+
+test('저장 상태 칩은 재시도 소진 후에만 저장 실패를 알린다', () => {
+  assert.match(
+    indexSource,
+    /<div class="save-status-chip is-hidden" id="saveStatusChip" role="status" aria-live="polite">/
+  );
+  assert.match(
+    indexSource,
+    /<span class="save-status-chip-label" id="saveStatusChipLabel"><\/span>/
+  );
+  assert.match(mainCss, /\.save-status-chip \{\n  display: flex;/);
+  assert.match(mainCss, /\.save-status-chip\.is-hidden \{\n  display: none;\n\}/);
+  assert.match(mainCss, /\.save-status-chip\.is-retrying \{\n  color: var\(--warning\);/);
+  assert.match(appSource, /saveStatusChip: document\.getElementById\('saveStatusChip'\),/);
+  assert.match(appSource, /reviewDataManager\.addEventListener\('saveStateChanged', \(e\) => \{/);
+  assert.match(
+    appSource,
+    /if \(status === 'save-failed'\) \{\n\s+showToast\('리뷰 데이터 저장 실패', 'error'\);/
+  );
+  assert.doesNotMatch(
+    appSource,
+    /addEventListener\('saveError', \(e\) => \{\n\s+log\.error\('\.bframe 저장 실패', e\.detail\.error\);\n\s+showToast\(/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const SAVE_RETRY_DELAYS_MS = Object\.freeze\(\[2000, 5000, 10000\]\);/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const TRANSIENT_SAVE_FAILURE_REASONS = new Set\(\[\n  'review-file-write-failed',\n  'fabric-snapshot-unavailable'\n\]\);/
+  );
+  assert.match(reviewDataManagerSource, /this\._emitSaveState\('retrying', failure\.reason\);/);
+  assert.match(
+    reviewDataManagerSource,
+    /writeError\.saveFailureReason = saveResult\?\.fatal === true\n\s+\? 'review-file-write-fatal'\n\s+: 'review-file-write-failed';/
+  );
+  // §7 C-9: 지연 사유는 _classifySaveFailure를 거치지 않고 지연 분기에서 직접 표시된다
+  assert.match(
+    reviewDataManagerSource,
+    /this\._saveStateSettled = true;\n\s+this\._emitSaveState\(\n\s+this\.autoSaveEnabled \? 'retrying' : 'save-failed',\n\s+deferredReason\n\s+\);/
+  );
+});

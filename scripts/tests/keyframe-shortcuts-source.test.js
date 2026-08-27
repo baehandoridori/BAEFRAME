@@ -110,6 +110,6 @@ test('Animate-style playback, layer toggle, and frame clipboard shortcuts are co
   assert.match(appSource, /userSettings\.matchShortcut\('drawingToolSelect', e\)/);
   assert.doesNotMatch(appSource, /\/\/ V: 선택 모드 \(드로잉 모드 끄기\)/);
   // 피드백 33: 드로잉 모드 중 B는 브러시 복귀 → 브러시 상태에서만 모드 종료
-  assert.match(appSource, /matchShortcut\('drawMode', e\)[\s\S]{0,600}?currentToolName !== 'brush'/);
+  assert.match(appSource, /matchShortcut\('drawMode', e\)[\s\S]{0,800}?currentToolName !== 'brush'/);
   assert.match(appSource, /\[data-tool="brush"\]'\);\s*\n\s*if \(brushBtn\) brushBtn\.click\(\);/);
 });

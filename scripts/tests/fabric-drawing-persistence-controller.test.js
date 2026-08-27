@@ -1,5 +1,6 @@
 const { before, test } = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
 const path = require('node:path');
 const { pathToFileURL } = require('node:url');
 
@@ -356,7 +357,7 @@ test('committed transitions update the shared store while stale fences are ignor
   assert.equal(harness.store.exportRootValue().keyframes[0].mutationSequence, 2);
 });
 
-test('future or malformed persistence data bypasses Fabric without consuming B', async () => {
+test('future or malformed persistence data degrades saving while Fabric keeps owning B', async () => {
   const future = {
     ...makeRoot(),
     storageVersion: '9.0.0'
@@ -368,15 +369,20 @@ test('future or malformed persistence data bypasses Fabric without consuming B',
 
   assert.equal(await prepareVideo(harness), false);
   assert.equal(harness.calls.hydrate.length, 0);
-  assert.equal(harness.controller.shouldOwnDrawingShortcut(), false);
-  assert.equal(harness.controller.getStatusSnapshot().legacyBypass, true);
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+  const degraded = harness.controller.getStatusSnapshot();
+  assert.equal(degraded.legacyBypass, true);
+  assert.equal(degraded.persistenceDegraded, true);
+  assert.equal(degraded.persistenceBlocked, false);
 
   const b = createKeyEvent('b');
-  assert.equal(harness.controller.routeKeydown(b), false);
-  assert.deepEqual(b.calls, []);
+  assert.equal(harness.controller.routeKeydown(b), true);
+  assert.deepEqual(b.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await flushDetachedWork();
+  assert.equal(harness.controller.getState(), 'active');
 });
 
-test('hydrate failure leaves the saved document intact and routes B to legacy', async () => {
+test('hydrate failure leaves the saved document intact while Fabric keeps owning B', async () => {
   const original = makeRoot();
   const harness = createHarness({
     root: original,
@@ -387,8 +393,13 @@ test('hydrate failure leaves the saved document intact and routes B to legacy', 
 
   assert.equal(await prepareVideo(harness), false);
   assert.deepEqual(harness.store.exportRootValue(), original);
-  assert.equal(harness.controller.shouldOwnDrawingShortcut(), false);
-  assert.equal(harness.controller.routeKeydown(createKeyEvent('b')), false);
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceDegraded, true);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, false);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('b')), true);
+  await flushDetachedWork();
+  assert.equal(harness.controller.getState(), 'active');
+  assert.deepEqual(harness.store.exportRootValue(), original);
 });
 
 test('resync-required events coalesce in flight and pull one trailing authoritative snapshot', async () => {
@@ -922,7 +933,7 @@ test('source rebind verification rejection stays blocking', async () => {
   assert.equal(harness.controller.getStatusSnapshot().resumeRequested, true);
 });
 
-test('an external future drawingsV3 refresh preserves the root and hands B to legacy without blocking save', async () => {
+test('an external future drawingsV3 refresh preserves the root and keeps Fabric owning B without blocking save', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);
   const futureRoot = {
@@ -941,12 +952,20 @@ test('an external future drawingsV3 refresh preserves the root and hands B to le
     await harness.controller.preparePersistenceSnapshotForSave(),
     true
   );
-  assert.equal(harness.controller.shouldOwnDrawingShortcut(), false);
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceDegraded, true);
   assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, false);
+  assert.deepEqual(harness.store.exportRootValue(), futureRoot);
+
+  const b = createKeyEvent('b');
+  assert.equal(harness.controller.routeKeydown(b), true);
+  assert.deepEqual(b.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await flushDetachedWork();
+  assert.equal(harness.controller.getState(), 'active');
   assert.deepEqual(harness.store.exportRootValue(), futureRoot);
 });
 
-test('authoritative pull failure blocks leave and immediately hands B back to legacy', async () => {
+test('authoritative pull failure blocks leave and ends the session while Fabric keeps owning B', async () => {
   const harness = createHarness();
   assert.equal(await prepareVideo(harness), true);
   assert.equal(await harness.controller.toggle(), true);
@@ -957,11 +976,18 @@ test('authoritative pull failure blocks leave and immediately hands B back to le
   }));
 
   assert.equal(await harness.controller.flushPersistenceBeforeLeave(), false);
-  assert.equal(harness.controller.shouldOwnDrawingShortcut(), false);
-  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, true);
+  const blockedStatus = harness.controller.getStatusSnapshot();
+  assert.equal(blockedStatus.persistenceBlocked, true);
+  assert.equal(blockedStatus.persistenceDegraded, true);
+  assert.equal(blockedStatus.state, 'passive');
+  assert.equal(blockedStatus.sessionId, null);
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+
   const b = createKeyEvent('b');
-  assert.equal(harness.controller.routeKeydown(b), false);
-  assert.deepEqual(b.calls, []);
+  assert.equal(harness.controller.routeKeydown(b), true);
+  assert.deepEqual(b.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await flushDetachedWork();
+  assert.equal(harness.controller.getState(), 'active');
 });
 
 test('overlay host recovery rehydrates before restoring an active Fabric session', async () => {
@@ -2206,4 +2232,77 @@ test('keyframe edit rejects wrong documents, malformed tokens, and changed touch
   }, 'undo').applied, false);
   assert.equal(store.applyKeyframeEdit(firstMove.edit, 'sideways').applied, false);
   assert.deepEqual(store.exportRootValue(), beforeRejectedEdits);
+});
+
+test('B 소유권 술어는 저장 실패 래치를 참조하지 않는다', () => {
+  const controllerSource = fs
+    .readFileSync(controllerPath, 'utf8')
+    .replace(/\r\n/g, '\n');
+  const predicate = controllerSource.match(
+    /function shouldOwnDrawingShortcut\(\) \{([\s\S]*?)\n  \}/
+  )?.[1];
+  assert.ok(predicate, '소유권 술어 원문을 추출할 수 있어야 한다');
+  assert.doesNotMatch(
+    predicate,
+    /legacyBypass|persistenceBlocked|persistenceFailureReason/
+  );
+  assert.match(
+    predicate,
+    /pilotEnabled &&\s*\n\s*\(persistenceStore === null \|\| persistenceBridgeReady\)/
+  );
+});
+
+test('비차단 저장 저하는 드로잉 세션을 강제로 내리지 않는다', () => {
+  const controllerSource = fs
+    .readFileSync(controllerPath, 'utf8')
+    .replace(/\r\n/g, '\n');
+  const bypass = controllerSource.match(
+    /function setPersistenceBypass\(reason, \{ blocked = false \} = \{\}\) \{([\s\S]*?)\n  \}/
+  )?.[1];
+  assert.ok(bypass, '저장 저하 진입점 원문을 추출할 수 있어야 한다');
+  assert.match(
+    bypass,
+    /if \(blocked === true\) \{[\s\S]*desiredInputEnabled = false;[\s\S]*currentSession = null;[\s\S]*setState\('passive'\);/
+  );
+  const beforeBlockedBranch = bypass.slice(0, bypass.indexOf('if (blocked === true) {'));
+  assert.doesNotMatch(beforeBlockedBranch, /desiredInputEnabled = false;|currentSession = null;|setState\(/);
+});
+
+test('저장 회수의 일시 실패는 즉시 1회 재시도하고 차단 래치를 걸지 않는다', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const exportCountBeforeRetry = harness.calls.export.length;
+  let exportAttempts = 0;
+  harness.setExportHandler(() => {
+    exportAttempts += 1;
+    if (exportAttempts === 1) {
+      return { success: false, accepted: false, reason: 'stale-drawing-snapshot' };
+    }
+    return { success: true, accepted: true, snapshot: harness.getRuntimeSnapshot() };
+  });
+
+  assert.equal(await harness.controller.preparePersistenceSnapshotForSave(), true);
+  assert.equal(harness.calls.export.length, exportCountBeforeRetry + 2);
+  const status = harness.controller.getStatusSnapshot();
+  assert.equal(status.persistenceBlocked, false);
+  assert.equal(status.legacyBypass, false);
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('구조 위반 회수 실패는 재시도 없이 곧바로 차단 래치를 건다', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const exportCountBeforeFailure = harness.calls.export.length;
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-snapshot'
+  }));
+
+  assert.equal(await harness.controller.preparePersistenceSnapshotForSave(), false);
+  assert.equal(harness.calls.export.length, exportCountBeforeFailure + 1);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, true);
 });

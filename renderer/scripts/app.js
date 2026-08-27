@@ -588,6 +588,8 @@ async function initApp() {
     fileName: document.getElementById('fileName'),
     filePath: document.getElementById('filePath'),
     versionBadge: document.getElementById('versionBadge'),
+    saveStatusChip: document.getElementById('saveStatusChip'),
+    saveStatusChipLabel: document.getElementById('saveStatusChipLabel'),
     // btnVersionHistory 제거됨 - 버전 드롭다운으로 대체
     btnSave: document.getElementById('btnSave'),
     btnCopyLink: document.getElementById('btnCopyLink'),
@@ -2344,16 +2346,85 @@ async function initApp() {
 
   // ====== 리뷰 데이터 매니저 이벤트 ======
 
+  // 저장 상태 칩 표시값 (저장 중 / 재시도 대기 / 저장됨 / 저장 실패 / 저장 차단)
+  const SAVE_STATUS_CHIP_PRESETS = {
+    saving: { label: '저장 중…', modifier: 'is-saving', clickable: false },
+    retrying: { label: '저장 대기 중(재시도)', modifier: 'is-retrying', clickable: false },
+    saved: { label: '저장됨', modifier: 'is-saved', clickable: false },
+    'save-failed': { label: '저장 실패', modifier: 'is-failed', clickable: true },
+    'save-blocked': { label: '저장 차단됨', modifier: 'is-blocked', clickable: true }
+  };
+  let saveStatusChipHideTimer = null;
+  let saveStatusChipStatus = null;
+
+  function renderSaveStatusChip(status) {
+    const chip = elements.saveStatusChip;
+    if (!chip) return;
+    if (saveStatusChipHideTimer) {
+      clearTimeout(saveStatusChipHideTimer);
+      saveStatusChipHideTimer = null;
+    }
+    const preset = SAVE_STATUS_CHIP_PRESETS[status] || null;
+    saveStatusChipStatus = preset ? status : null;
+    chip.classList.remove(
+      'is-saving',
+      'is-retrying',
+      'is-saved',
+      'is-failed',
+      'is-blocked',
+      'is-clickable'
+    );
+    if (!preset) {
+      chip.classList.add('is-hidden');
+      return;
+    }
+    if (elements.saveStatusChipLabel) {
+      elements.saveStatusChipLabel.textContent = preset.label;
+    }
+    chip.classList.add(preset.modifier);
+    if (preset.clickable) chip.classList.add('is-clickable');
+    chip.classList.remove('is-hidden');
+    chip.title = preset.clickable ? '클릭하면 다시 저장합니다' : preset.label;
+    if (status === 'saved') {
+      // 저장 완료는 2초만 알리고 조용히 사라진다.
+      saveStatusChipHideTimer = setTimeout(() => {
+        saveStatusChipHideTimer = null;
+        renderSaveStatusChip(null);
+      }, 2000);
+    }
+  }
+
+  elements.saveStatusChip?.addEventListener('click', () => {
+    if (saveStatusChipStatus !== 'save-failed' &&
+        saveStatusChipStatus !== 'save-blocked') {
+      return;
+    }
+    renderSaveStatusChip('saving');
+    void reviewDataManager.save();
+  });
+
   // 자동 저장 완료
   reviewDataManager.addEventListener('saved', (e) => {
     log.info('.bframe 저장됨', { path: e.detail.path });
     // 조용히 저장 (토스트 생략 - 자동 저장이라 너무 자주 뜸)
   });
 
-  // 저장 에러
+  // 저장 에러 (사용자 알림은 saveStateChanged에서 재시도 소진 후 1회만 표시)
   reviewDataManager.addEventListener('saveError', (e) => {
     log.error('.bframe 저장 실패', e.detail.error);
-    showToast('리뷰 데이터 저장 실패', 'error');
+  });
+
+  // 저장 상태 변화: 칩 갱신 + 재시도 소진 후 1회 경고
+  reviewDataManager.addEventListener('saveStateChanged', (e) => {
+    const status = e.detail?.status || null;
+    renderSaveStatusChip(status);
+    if (status === 'save-failed') {
+      showToast('리뷰 데이터 저장 실패', 'error');
+      return;
+    }
+    if (status === 'save-blocked') {
+      showToast('원본 보호를 위해 저장이 중단되었습니다. 파일 상태를 확인해주세요.', 'error');
+    }
   });
 
   // 로드 완료
@@ -6228,7 +6299,21 @@ async function initApp() {
         !['undo', 'redo', 'drawMode'].includes(matchedAction);
     }
     const key = String(event.key || '').toLowerCase();
-    if ((event.ctrlKey || event.metaKey) && ['c', 'v', 'z', 'y'].includes(key)) return true;
+    // routeKeydown은 IME 이벤트(keyCode 229 등)를 소비하지 않고 false를 돌려준다.
+    // drawMode까지 차단하면 소비자도 통과도 없는 사각지대가 생기므로, undo/redo와 같은
+    // 패턴으로 예외 처리해 레거시 핸들러의 toggleDrawMode(→ 파일럿 toggle)로 흘려보낸다.
+    // 사용자가 drawMode를 E/Ctrl 조합으로 재지정한 경우까지 덮으려면 아래 chord·KeyE
+    // 차단보다 반드시 먼저 판정해야 한다.
+    if (matchedAction === 'drawMode') return false;
+    // IME 조합 중에는 event.key가 'Process'가 되어 key 기반 차단이 무력화된다.
+    // 단축키로 등록되지 않은 생 Ctrl+C/V/Z/Y(클립보드·브라우저 undo)는 matchedAction으로도
+    // 걸리지 않으므로 event.code를 함께 본다(IME 여부와 무관하게 물리 키를 가리킨다).
+    const chordCode = String(event.code || '');
+    if ((event.ctrlKey || event.metaKey) &&
+        (['c', 'v', 'z', 'y'].includes(key) ||
+         ['KeyC', 'KeyV', 'KeyZ', 'KeyY'].includes(chordCode))) {
+      return true;
+    }
     if (event.code === 'KeyE' && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
       return true;
     }
@@ -6248,7 +6333,10 @@ async function initApp() {
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
   window.electronAPI.onMpvOverlayKeyboardInput?.((input) => {
-    dispatchMpvOverlayKeyboardInput(input, { ownerDocument: document });
+    dispatchMpvOverlayKeyboardInput(input, {
+      ownerDocument: document,
+      globalShortcutCodes: getMpvOverlayRelayGlobalShortcutCodes()
+    });
   });
   window.electronAPI.onMpvOverlayPointerPresence?.((cursor) => {
     if (!liveblocksManager.isConnected) return;
@@ -6378,6 +6466,7 @@ async function initApp() {
 
   // 파일럿 드로잉(drawingsV3)을 타임라인 드로잉 레이어로 읽기 전용 투영한다.
   // 레거시 drawings 필드와의 이중 기록을 피하기 위해 데이터는 절대 쓰지 않는다.
+  // 파일럿이 소유하는 동안에는 레거시 drawings도 읽기 전용 행으로 함께 투영한다.
   function getFabricPilotTimelineLayers() {
     if (!fabricDrawingPilotController.shouldOwnDrawingShortcut() ||
         !isMpvPilotPlaybackActive()) {
@@ -6393,40 +6482,67 @@ async function initApp() {
     if (hasPlaylistAggregateTimeline || hasCutlistAggregateTimeline) {
       return [];
     }
+    const projectedLayers = [];
     const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
-    const keyframes = (doc?.keyframes || [])
-      .map(kf => ({
-        frame: Number(kf.frame),
-        isEmpty: !(Array.isArray(kf.objects) && kf.objects.length > 0)
-      }))
-      .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
-      .sort((a, b) => a.frame - b.frame);
-    return [{
-      id: 'fabric-pilot-drawing-layer',
-      name: '드로잉',
-      color: '#4f8ef7',
-      visible: true,
-      locked: true,
-      timelineKeyframesMovable: true,
-      opacity: 1,
-      keyframes,
-      getKeyframeRanges(totalFrames) {
-        const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
-        return keyframes.map((kf, index) => ({
-          start: kf.frame,
-          end: Math.max(
-            kf.frame,
-            Math.min(
-              tailFrame,
-              keyframes[index + 1]?.frame !== undefined
-                ? keyframes[index + 1].frame - 1
-                : tailFrame
-            )
-          ),
-          keyframe: kf
-        }));
-      }
-    }];
+    // store가 아직 hydrate되지 않아도 소유를 놓지 않는다. 파일럿 행만 생략하고 진행한다.
+    if (doc) {
+      const keyframes = (doc.keyframes || [])
+        .map(kf => ({
+          frame: Number(kf.frame),
+          isEmpty: !(Array.isArray(kf.objects) && kf.objects.length > 0)
+        }))
+        .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
+        .sort((a, b) => a.frame - b.frame);
+      projectedLayers.push({
+        id: 'fabric-pilot-drawing-layer',
+        name: '드로잉',
+        color: '#4f8ef7',
+        visible: true,
+        locked: true,
+        timelineKeyframesMovable: true,
+        opacity: 1,
+        keyframes,
+        getKeyframeRanges(totalFrames) {
+          const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
+          return keyframes.map((kf, index) => ({
+            start: kf.frame,
+            end: Math.max(
+              kf.frame,
+              Math.min(
+                tailFrame,
+                keyframes[index + 1]?.frame !== undefined
+                  ? keyframes[index + 1].frame - 1
+                  : tailFrame
+              )
+            ),
+            keyframe: kf
+          }));
+        }
+      });
+    }
+    // 레거시 drawings(래스터)는 파일럿 소유 중에도 읽기 전용 행으로 계속 보여준다.
+    // 원본 id·이름·색을 유지하고 locked/pilotProjected로 편집 경로만 봉쇄한다.
+    const legacyLayers = Array.isArray(drawingManager.layers) ? drawingManager.layers : [];
+    legacyLayers.forEach(layer => {
+      const legacyKeyframes = Array.isArray(layer?.keyframes) ? layer.keyframes : [];
+      if (!legacyKeyframes.some(kf => kf?.isEmpty !== true)) return;
+      projectedLayers.push({
+        id: layer.id,
+        name: layer.name,
+        color: layer.color,
+        visible: layer.visible !== false,
+        locked: true,
+        pilotProjected: true,
+        timelineKeyframesMovable: false,
+        opacity: layer.opacity ?? 1,
+        keyframes: legacyKeyframes.map(kf => ({
+          frame: Number(kf.frame),
+          isEmpty: kf.isEmpty === true
+        })),
+        getKeyframeRanges: totalFrames => layer.getKeyframeRanges(totalFrames)
+      });
+    });
+    return projectedLayers;
   }
 
   let lastFabricPilotTimelineVideoGeneration = null;
@@ -6459,6 +6575,8 @@ async function initApp() {
       lastFabricPilotTimelineVideoGeneration = null;
       lastFabricPilotTimelineStableVideoIdentity = null;
       if (hasFabricPilotSelection) timeline.clearSelection();
+      // 레거시 전체 렌더(편집 가능)는 파일럿 비소유 구간에서만 도달한다.
+      // = 순수 html5 폴백이거나 파일럿이 비활성인 경우뿐이며, 저장 실패로는 도달하지 않는다.
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
     } catch (_error) {
       // 파일럿 상태 훅(notifyStateChange)이 예외를 빈 catch로 삼키므로,
@@ -7554,6 +7672,7 @@ async function initApp() {
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
   let fabricDrawingPilotFailureToastShown = false;
+  let fabricDrawingPilotDegradedNoticeShown = false;
   let fabricDrawingPilotUiEngaged = false;
   let fabricDrawingPilotStatusSnapshot = null;
   let lastLoggedFabricPersistenceReason = null;
@@ -7610,11 +7729,26 @@ async function initApp() {
       fabricDrawingPilotController.refreshPersistenceSource(installSource)
   );
   reviewDataManager.setFinalFabricSnapshotHandler(async () => {
+    // 회수 직전의 저하 여부를 먼저 읽어 둔다 — legacyBypass가 true면
+    // preparePersistenceSnapshotForSave()가 실제 회수 없이 true를 돌려준다
+    // (fabric-drawing-pilot-controller.js:1713 `if (legacyBypass) return !persistenceBlocked;`).
+    // 컨트롤러의 getStatusSnapshot() 직접 호출은 fabric-drawing-pilot-source.test.js:302가
+    // 금지하므로, 상태 훅이 갱신하는 캐시 변수(app.js:7558)를 읽는다.
+    const bypassed =
+      fabricDrawingPilotStatusSnapshot?.persistenceDegraded === true;
     const prepared =
       await fabricDrawingPilotController.preparePersistenceSnapshotForSave();
     if (!prepared) {
       throw new Error('Fabric 드로잉 최신 상태를 가져오지 못했습니다.');
     }
+    return { bypassed };
+  });
+  // 저장이 "회수를 실제로 수행한 채" 성공했을 때만 저장 차단 래치를 해제한다.
+  // 회수를 건너뛴(bypassed) 저장으로 래치를 풀면 다음 회수가 보존 대상이던
+  // 미래 버전 루트를 오버레이 상태로 덮어쓸 수 있다(작업 1 엣지 12).
+  reviewDataManager.addEventListener('saveStateChanged', (e) => {
+    if (e.detail?.status !== 'saved' || e.detail?.bypassed === true) return;
+    fabricDrawingPilotController.clearPersistenceSaveBlock?.();
   });
   const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
     document.body.classList.toggle(
@@ -8687,6 +8821,30 @@ async function initApp() {
     return clone.innerHTML;
   }
 
+  // 작업4: 오버레이 키 릴레이(메인 포커스 handoff 판정·IME 조합 통과)와
+  // 릴레이 dispatch 대상 선택이 하드코딩 'KeyB' 대신 실제 사용자 단축키를 쓰게 한다.
+  function getMpvOverlayDrawModeShortcutDescriptor() {
+    const shortcut = userSettings.getShortcut('drawMode');
+    if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return null;
+    return {
+      key: shortcut.key,
+      ctrl: shortcut.ctrl === true,
+      shift: shortcut.shift === true,
+      alt: shortcut.alt === true
+    };
+  }
+
+  function getMpvOverlayRelayGlobalShortcutCodes() {
+    const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
+    // 릴레이 우회는 code만 보고 판정하므로, 수식키가 붙은 단축키는 평문 키까지
+    // 텍스트 포커스에서 빼앗는 과잉 우회가 된다 — 단독 키일 때만 등록한다.
+    if (!drawModeShortcut ||
+        drawModeShortcut.ctrl || drawModeShortcut.shift || drawModeShortcut.alt) {
+      return [];
+    }
+    return [drawModeShortcut.key];
+  }
+
   function getMpvOverlayState() {
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
@@ -8721,6 +8879,9 @@ async function initApp() {
       markerTransform: markerContainer?.style.transform || '',
       markerTransformOrigin: markerContainer?.style.transformOrigin || 'center center',
       videoTransform: getMpvVideoTransform(),
+      // 작업4: 오버레이 호스트의 키 릴레이가 대조할 drawMode 단축키 서술자.
+      // MPV_OVERLAY_DIFF_FIELDS에 없으므로 매 sync마다 항상 실린다.
+      drawModeShortcut: getMpvOverlayDrawModeShortcutDescriptor(),
       canvas: {
         left: canvasRect.left - wrapperRect.left,
         top: canvasRect.top - wrapperRect.top,
@@ -10519,6 +10680,9 @@ async function initApp() {
         });
       }
     }
+    // 소유권은 파일럿 활성화 + persistence 브리지 준비 여부만으로 결정된다(작업 1).
+    // 저장 실패(snapshot.persistenceDegraded)로는 흔들리지 않으므로
+    // 아래 CSS 마스크 토글과 타임라인 투영도 저장 상태와 무관하게 유지된다.
     const ownsDrawingShortcut =
       fabricDrawingPilotController.shouldOwnDrawingShortcut();
     const bInput = snapshot?.bInput || {};
@@ -10537,6 +10701,8 @@ async function initApp() {
       ownsDrawingShortcut
     );
     const active = nextState === 'active';
+    // 파일럿이 활성 진입에 성공하면 이전 실패 안내 래치를 해제해 다음 실패를 다시 안내한다.
+    if (active) fabricDrawingPilotFailureToastShown = false;
     const preparing = nextState === 'preparing';
     if (!active) resetMpvOverlayCollaborationDrag();
     const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;
@@ -10638,8 +10804,36 @@ async function initApp() {
   function toggleDrawMode() {
     // 오디오 모드에서는 그리기 모드 진입 차단
     if (state.isAudioMode) return;
-    if (fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
-        isMpvPilotPlaybackActive()) {
+    // mpv 재생 중 B는 항상 fabric 파일럿 경로다. 저장 실패·준비 지연으로 소유권이
+    // 없더라도 레거시 팔레트로 새지 않고 사유만 알린 뒤 종료한다.
+    // 파일럿 자체가 비활성(킬스위치·브리지 미가용)인 경우에만 아래 레거시 경로로 내려간다.
+    if (isMpvPilotPlaybackActive() && fabricDrawingPilotController.isEnabled()) {
+      const pilotState = fabricDrawingPilotController.getState();
+      if (pilotState === 'failed') {
+        // 직전 진입이 실패한 상태다. 사유를 알리되 재시도는 막지 않는다
+        // (toggle()이 'failed'에서도 다시 준비를 시작한다).
+        showToast('드로잉 화면을 시작하지 못했습니다.', 'error');
+        void fabricDrawingPilotController.toggle();
+        return;
+      }
+      if (pilotState === 'disabled' ||
+          !fabricDrawingPilotController.shouldOwnDrawingShortcut()) {
+        showToast('드로잉 준비 중입니다. 잠시 후 다시 시도해 주세요.', 'warn', null, true);
+        return;
+      }
+      // 저장 계층이 저하된 상태에서는 지금 그린 획이 저장되지 않을 수 있음을
+      // 저하 구간마다 최초 1회만 알린다(작업 1 엣지 11).
+      // 스냅샷은 handleFabricDrawingPilotStateChange가 밀어 넣은 캐시(fabricDrawingPilotStatusSnapshot)를
+      // 읽는다 — fabric-drawing-pilot-source.test.js:302가 app.js에서
+      // 컨트롤러의 getStatusSnapshot() 직접 호출을 금지한다(HUD 폴링 금지 불변식).
+      const persistenceDegraded =
+        fabricDrawingPilotStatusSnapshot?.persistenceDegraded === true;
+      if (!persistenceDegraded) {
+        fabricDrawingPilotDegradedNoticeShown = false;
+      } else if (!fabricDrawingPilotDegradedNoticeShown) {
+        fabricDrawingPilotDegradedNoticeShown = true;
+        showToast('저장이 일시 중단된 상태입니다. 지금 그린 획은 저장되지 않을 수 있습니다.', 'warn', null, true);
+      }
       void fabricDrawingPilotController.toggle();
       return;
     }
@@ -13700,9 +13894,12 @@ async function initApp() {
 
   async function handleKeydown(e) {
     if (document.querySelector('.shortcut-key-btn.capturing')) return;
-    if (shouldIgnoreComposingKeyboardEvent(e)) return;
 
     const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
+    // 한글 IME는 편집 대상이 없어도 알파벳 키를 keyCode 229 / key 'Process'로 올린다.
+    // 아래 분기는 전부 e.code(물리 키 위치)로 판정하므로, 조합 게이트는 실제로 글자가
+    // 들어가는 텍스트 입력 대상에만 적용한다.
+    if (isTextEntryShortcutTarget(shortcutTarget) && shouldIgnoreComposingKeyboardEvent(e)) return;
     const isPlayPauseShortcut = userSettings.matchShortcut('playPause', e);
     const isPlayPauseAltShortcut = userSettings.matchShortcut('playPauseAlt', e);
     const isPlayPauseInput = isPlayPauseShortcut || isPlayPauseAltShortcut;
@@ -13742,8 +13939,8 @@ async function initApp() {
       return;
     }
 
-    // 폼 컨트롤에서는 Space 재생을 제외한 전역 단축키를 무시한다.
-    if (shouldIgnoreGlobalShortcutTarget(shortcutTarget)) return;
+    // 폼 컨트롤에서는 그 컨트롤이 실제로 소비하는 키만 무시한다.
+    if (shouldIgnoreGlobalShortcutTarget(shortcutTarget, e)) return;
 
     if (fabricDrawingPilotController.routeKeydown(e)) return;
     if (shouldBlockFabricDrawingLegacyShortcut(e)) {
@@ -14108,12 +14305,16 @@ async function initApp() {
     // 그리기 모드 토글 (피드백 33: 모드 중 B는 먼저 브러시로 복귀, 브러시 상태에서 B면 종료)
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      if (!state.isDrawMode) {
+      const pilotOwnsDrawMode = isMpvPilotPlaybackActive() &&
+        fabricDrawingPilotController.shouldOwnDrawingShortcut();
+      if (pilotOwnsDrawMode) {
+        toggleDrawMode();
+      } else if (!state.isDrawMode) {
         toggleDrawMode();
         // 진입 시에는 마지막으로 저장된 도구를 복원
         const savedTool = userSettings.getBrushSettings().tool || currentToolName || 'brush';
         const toolBtn = document.querySelector(`.tool-btn[data-tool="${savedTool}"]`) || document.querySelector('.tool-btn[data-tool="brush"]');
-        if (toolBtn) toolBtn.click();
+        if (toolBtn && state.isDrawMode) toolBtn.click();
       } else if (currentToolName !== 'brush') {
         const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
         if (brushBtn) brushBtn.click();

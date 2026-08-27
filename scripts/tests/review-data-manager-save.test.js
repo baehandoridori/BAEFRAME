@@ -6914,3 +6914,87 @@ test('Fabric drawing sync propagates causal tombstones without trusting incompar
     stoppedManager.disconnect();
   }
 });
+
+test('일시적 저장 실패는 백오프 재시도로 복구되고 실패 토스트를 미룬다', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  let saveCount = 0;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING
+    }),
+    saveReview: async () => {
+      saveCount += 1;
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    saveRetryDelays: [5, 5, 5]
+  });
+  manager.autoSaveEnabled = true;
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/save-retry.mp4');
+  addSubstantiveComment(manager, commentManager, 'save-retry-comment');
+
+  const states = [];
+  manager.addEventListener('saveStateChanged', (e) => states.push(e.detail.status));
+  let saveErrorEvents = 0;
+  manager.addEventListener('saveError', () => {
+    saveErrorEvents += 1;
+  });
+
+  let shouldFail = true;
+  manager.setFinalFabricSnapshotHandler(async () => {
+    if (!shouldFail) return;
+    shouldFail = false;
+    throw new Error('Fabric 드로잉 최신 상태를 가져오지 못했습니다.');
+  });
+
+  assert.equal(await manager.save(), false);
+  assert.deepEqual(states, ['saving', 'retrying']);
+  assert.equal(saveErrorEvents, 0);
+  assert.equal(saveCount, 0);
+
+  await wait(60);
+  assert.deepEqual(states, ['saving', 'retrying', 'saving', 'saved']);
+  assert.equal(saveErrorEvents, 0);
+  assert.equal(saveCount, 1);
+  manager.disconnect();
+});
+
+test('재시도 불가능한 저장 실패는 즉시 save-failed로 통보한다', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING
+    }),
+    saveReview: async () => ({ success: true })
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    saveRetryDelays: [5, 5, 5]
+  });
+  manager.autoSaveEnabled = true;
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/save-hard-failure.mp4');
+  addSubstantiveComment(manager, commentManager, 'save-hard-failure-comment');
+
+  const states = [];
+  manager.addEventListener('saveStateChanged', (e) => states.push(e.detail.status));
+  let saveErrorEvents = 0;
+  manager.addEventListener('saveError', () => {
+    saveErrorEvents += 1;
+  });
+  manager.setFinalFabricSnapshotHandler(async () => {
+    throw new Error('재시도 불가 실패');
+  });
+
+  assert.equal(await manager.save(), false);
+  assert.deepEqual(states, ['saving', 'save-failed']);
+  assert.equal(saveErrorEvents, 1);
+  manager.disconnect();
+});
