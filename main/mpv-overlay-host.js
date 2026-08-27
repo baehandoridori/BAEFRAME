@@ -2475,17 +2475,36 @@ function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
       success: false,
       reason: cloned.reason === 'too-large'
         ? 'persistence-snapshot-too-large'
-        : 'invalid-persistence-snapshot'
+        : 'invalid-persistence-snapshot',
+      failedCheck: cloned.reason === 'too-large'
+        ? 'snapshot-clone-too-large'
+        : 'snapshot-clone-failed'
     };
   }
   const value = cloned.value;
+  // 요청-스냅샷 펜스 불일치는 데이터 손상이 아니라 신선도(회수 타이밍) 문제다.
+  // 손상과 같은 사유로 뭉개면 저장 차단 래치까지 승격되므로(2026-08-27 실측),
+  // 봉투 구조가 멀쩡한 경우에 한해 먼저 stale 사유로 분리한다.
+  if (hasExactPersistenceKeys(value, FABRIC_DRAWING_SNAPSHOT_KEYS) &&
+      readFabricDrawingPersistenceFence(value) &&
+      validateFabricDrawingTimeline(value) &&
+      FABRIC_DRAWING_EXPORT_REQUEST_KEYS.some(key => value[key] !== request[key])) {
+    return {
+      success: false,
+      reason: 'stale-drawing-snapshot',
+      failedCheck: 'export-request-fence-mismatch'
+    };
+  }
   if (!hasExactPersistenceKeys(value, FABRIC_DRAWING_SNAPSHOT_KEYS) ||
       !readFabricDrawingPersistenceFence(value) ||
       !validateFabricDrawingTimeline(value) ||
-      FABRIC_DRAWING_EXPORT_REQUEST_KEYS.some(key => value[key] !== request[key]) ||
       !isDensePersistenceArray(value.scenes) ||
       value.scenes.length > FABRIC_DRAWING_MAX_KEYFRAMES) {
-    return { success: false, reason: 'invalid-persistence-snapshot' };
+    return {
+      success: false,
+      reason: 'invalid-persistence-snapshot',
+      failedCheck: 'snapshot-envelope'
+    };
   }
 
   const sceneIds = new Set();
@@ -2510,18 +2529,30 @@ function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
         scene.objects.length > FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME ||
         sceneIds.has(scene.sceneInstanceId) ||
         frames.has(scene.targetFrame)) {
-      return { success: false, reason: 'invalid-persistence-snapshot' };
+      return {
+        success: false,
+        reason: 'invalid-persistence-snapshot',
+        failedCheck: 'snapshot-scene'
+      };
     }
     const objectIds = new Set();
     for (const object of scene.objects) {
       if (!validateFabricDrawingRecord(object, maxBytes) || objectIds.has(object.id)) {
-        return { success: false, reason: 'invalid-persistence-snapshot' };
+        return {
+          success: false,
+          reason: 'invalid-persistence-snapshot',
+          failedCheck: 'snapshot-record'
+        };
       }
       objectIds.add(object.id);
     }
     objectCount += scene.objects.length;
     if (objectCount > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) {
-      return { success: false, reason: 'persistence-snapshot-too-large' };
+      return {
+        success: false,
+        reason: 'persistence-snapshot-too-large',
+        failedCheck: 'snapshot-object-total'
+      };
     }
     sceneIds.add(scene.sceneInstanceId);
     frames.add(scene.targetFrame);
@@ -3569,6 +3600,12 @@ class MPVOverlayHost {
         this.fabricDrawingSnapshotMaxBytes
       );
       if (!normalizedSnapshot.success) {
+        // 응답 형태(success/accepted/reason)는 그대로 두고,
+        // 어떤 검사에서 걸렀는지는 main 로그로만 남긴다.
+        this.logger.warn('Fabric 드로잉 스냅샷 회수 거절', {
+          reason: normalizedSnapshot.reason,
+          failedCheck: normalizedSnapshot.failedCheck || 'unknown'
+        });
         return {
           success: false,
           accepted: false,

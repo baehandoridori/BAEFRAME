@@ -87,6 +87,11 @@
       </div>
     </div>
     <div class="header-right">
+      <!-- 저장 상태 표시 (저장 중 / 재시도 대기 / 저장됨 / 저장 실패) -->
+      <div class="save-status-chip is-hidden" id="saveStatusChip" role="status" aria-live="polite">
+        <span class="save-status-chip-dot"></span>
+        <span class="save-status-chip-label" id="saveStatusChipLabel"></span>
+      </div>
       <!-- 협업자 표시 -->
       <div class="collaborators-indicator" id="collaboratorsIndicator" style="display: none;">
         <div class="collaborators-avatars" id="collaboratorsAvatars">

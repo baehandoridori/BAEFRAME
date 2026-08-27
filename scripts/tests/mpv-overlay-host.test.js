@@ -1353,9 +1353,9 @@ test('drawing export rejects snapshot fence mismatches and every non-exact inner
       {
         success: false,
         accepted: false,
-        reason: 'invalid-persistence-snapshot'
+        reason: 'stale-drawing-snapshot'
       },
-      `snapshot ${field} must match the exact request fence`
+      `snapshot ${field} must be rejected as stale, not as corrupted data`
     );
   }
 
@@ -5413,4 +5413,39 @@ test('drawing input disable and export degrade gracefully when the overlay host 
     accepted: false,
     reason: 'overlay-host-unavailable'
   });
+});
+
+test('drawing export separates a stale request fence from a corrupted snapshot', async () => {
+  let runtimeSnapshot;
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration, { videoGeneration: 8 });
+  assert.deepEqual(await harness.host.exportDrawingVideo(request), {
+    success: false,
+    accepted: false,
+    reason: 'stale-drawing-snapshot'
+  });
+
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+  runtimeSnapshot.scenes[0].objects[0].secret = 'record-secret';
+  const corrupted = await harness.host.exportDrawingVideo(request);
+  assert.deepEqual(corrupted, {
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-snapshot'
+  });
+  assert.doesNotMatch(JSON.stringify(corrupted), /failedCheck|secret/i);
 });

@@ -149,11 +149,14 @@ export function createFabricDrawingPilotController(options = {}) {
     };
   // 오버레이 호스트 IPC 응답 데드라인. 호스트가 응답하지 않으면 게이트가 영구 pending이 되어
   // 이어붙이기 전환 전체가 침묵 정지하므로(2026-08-21), 경계에서 유한 시간으로 자른다.
+  // 기본 8000ms: 문서가 커지면 export/hydrate 직렬화가 수 초까지 늘어나는데,
+  // 종전 3000ms에서는 정상 회수가 'persistence-ipc-timeout'으로 잘려 저장이 반복 중단됐다
+  // (2026-08-27 실측). 데드라인은 '무응답 감지'용이므로 정상 최댓값보다 넉넉해야 한다.
   const persistenceIpcDeadlineMs =
     Number.isFinite(Number(options.persistenceIpcDeadlineMs)) &&
     Number(options.persistenceIpcDeadlineMs) > 0
       ? Number(options.persistenceIpcDeadlineMs)
-      : 3000;
+      : 8000;
 
   let initializePromise = null;
   let pilotEnabled = false;
@@ -1647,10 +1650,31 @@ export function createFabricDrawingPilotController(options = {}) {
     return operation;
   }
 
+  // 회수 실패 중 '이번 시도만 실패한' 사유들. 데이터 손상이 아니므로 차단 래치로 승격하지 않는다.
+  // 'stale-drawing-snapshot'은 오버레이가 요청 펜스보다 늦게 응답한 신선도 문제라
+  // stale과 동일 취급한다(2026-08-27 결정).
+  const TRANSIENT_PERSISTENCE_PULL_REASONS = new Set([
+    'persistence-ipc-timeout',
+    'stale-drawing-snapshot',
+    'persistence-source-changed',
+    'persistence-source-kept-changing',
+    'drawing-snapshot-kept-changing'
+  ]);
+
+  function isTransientPersistencePullFailure(result) {
+    if (!result) return false;
+    if (result.stale === true) return true;
+    return TRANSIENT_PERSISTENCE_PULL_REASONS.has(result.reason);
+  }
+
   async function blockPersistenceAfterPullFailure(result) {
     if (result?.stale === true) return false;
     if (result?.hostUnavailable === true) {
       // 새 호스트가 현재 영상 소유권을 이어받아 재수화할 수 있도록 세션을 보존한다.
+      return false;
+    }
+    if (isTransientPersistencePullFailure(result)) {
+      // 신선도·타임아웃 등 일시 실패는 이번 저장만 중단하고 래치를 걸지 않는다.
       return false;
     }
     setPersistenceBypass(result?.reason || 'drawing-export-failed', {
@@ -1725,6 +1749,9 @@ export function createFabricDrawingPilotController(options = {}) {
         }
         return {
           ok: false,
+          // 재바인딩(입력 해제·재수화·검증) 단계에서 끊긴 실패는 즉시 재시도해도
+          // 같은 경로를 그대로 반복하므로, 회수(export) 단계 실패와 구분한다.
+          bindingFailed: true,
           stale: binding?.stale === true,
           hostUnavailable: binding?.hostUnavailable === true,
           eventEpoch: persistenceEventEpoch,
@@ -1757,7 +1784,16 @@ export function createFabricDrawingPilotController(options = {}) {
     if (!persistenceStore) return true;
     if (legacyBypass) return !persistenceBlocked;
     if (!persistenceSessionId) return true;
-    const result = await pullWithCurrentPersistenceBinding();
+    let result = await pullWithCurrentPersistenceBinding();
+    if (result?.ok !== true &&
+        result?.hostUnavailable !== true &&
+        result?.bindingFailed !== true &&
+        result?.stale !== true &&
+        isTransientPersistencePullFailure(result)) {
+      // 회수 단계의 일시 실패(IPC 지연·요청 펜스 신선도 불일치)는 즉시 1회만 다시 회수한다.
+      // 재바인딩 실패·소유권 상실은 재시도해도 같은 결과이므로 제외한다.
+      result = await pullWithCurrentPersistenceBinding();
+    }
     if (result?.ok === true) return true;
     if (result?.hostUnavailable === true) {
       // 오버레이 호스트가 이미 파괴된 상태: 회수할 드로잉 표면 자체가 없다.
@@ -1765,9 +1801,9 @@ export function createFabricDrawingPilotController(options = {}) {
       // 현재 영상 소유권은 보존하고 다음 호스트가 재수화하도록 저장만 통과시킨다.
       return true;
     }
-    if (result?.reason === 'persistence-ipc-timeout') {
-      // 호스트 응답 지연은 차단 래치로 승격하지 않지만,
-      // 권위 스냅샷을 확인하지 못한 현재 전환은 중단한다.
+    if (isTransientPersistencePullFailure(result)) {
+      // 호스트 응답 지연·신선도 불일치는 차단 래치로 승격하지 않지만,
+      // 권위 스냅샷을 확인하지 못한 현재 저장은 중단한다.
       return false;
     }
     return blockPersistenceAfterPullFailure(result);

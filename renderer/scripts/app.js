@@ -588,6 +588,8 @@ async function initApp() {
     fileName: document.getElementById('fileName'),
     filePath: document.getElementById('filePath'),
     versionBadge: document.getElementById('versionBadge'),
+    saveStatusChip: document.getElementById('saveStatusChip'),
+    saveStatusChipLabel: document.getElementById('saveStatusChipLabel'),
     // btnVersionHistory 제거됨 - 버전 드롭다운으로 대체
     btnSave: document.getElementById('btnSave'),
     btnCopyLink: document.getElementById('btnCopyLink'),
@@ -2344,16 +2346,85 @@ async function initApp() {
 
   // ====== 리뷰 데이터 매니저 이벤트 ======
 
+  // 저장 상태 칩 표시값 (저장 중 / 재시도 대기 / 저장됨 / 저장 실패 / 저장 차단)
+  const SAVE_STATUS_CHIP_PRESETS = {
+    saving: { label: '저장 중…', modifier: 'is-saving', clickable: false },
+    retrying: { label: '저장 대기 중(재시도)', modifier: 'is-retrying', clickable: false },
+    saved: { label: '저장됨', modifier: 'is-saved', clickable: false },
+    'save-failed': { label: '저장 실패', modifier: 'is-failed', clickable: true },
+    'save-blocked': { label: '저장 차단됨', modifier: 'is-blocked', clickable: true }
+  };
+  let saveStatusChipHideTimer = null;
+  let saveStatusChipStatus = null;
+
+  function renderSaveStatusChip(status) {
+    const chip = elements.saveStatusChip;
+    if (!chip) return;
+    if (saveStatusChipHideTimer) {
+      clearTimeout(saveStatusChipHideTimer);
+      saveStatusChipHideTimer = null;
+    }
+    const preset = SAVE_STATUS_CHIP_PRESETS[status] || null;
+    saveStatusChipStatus = preset ? status : null;
+    chip.classList.remove(
+      'is-saving',
+      'is-retrying',
+      'is-saved',
+      'is-failed',
+      'is-blocked',
+      'is-clickable'
+    );
+    if (!preset) {
+      chip.classList.add('is-hidden');
+      return;
+    }
+    if (elements.saveStatusChipLabel) {
+      elements.saveStatusChipLabel.textContent = preset.label;
+    }
+    chip.classList.add(preset.modifier);
+    if (preset.clickable) chip.classList.add('is-clickable');
+    chip.classList.remove('is-hidden');
+    chip.title = preset.clickable ? '클릭하면 다시 저장합니다' : preset.label;
+    if (status === 'saved') {
+      // 저장 완료는 2초만 알리고 조용히 사라진다.
+      saveStatusChipHideTimer = setTimeout(() => {
+        saveStatusChipHideTimer = null;
+        renderSaveStatusChip(null);
+      }, 2000);
+    }
+  }
+
+  elements.saveStatusChip?.addEventListener('click', () => {
+    if (saveStatusChipStatus !== 'save-failed' &&
+        saveStatusChipStatus !== 'save-blocked') {
+      return;
+    }
+    renderSaveStatusChip('saving');
+    void reviewDataManager.save();
+  });
+
   // 자동 저장 완료
   reviewDataManager.addEventListener('saved', (e) => {
     log.info('.bframe 저장됨', { path: e.detail.path });
     // 조용히 저장 (토스트 생략 - 자동 저장이라 너무 자주 뜸)
   });
 
-  // 저장 에러
+  // 저장 에러 (사용자 알림은 saveStateChanged에서 재시도 소진 후 1회만 표시)
   reviewDataManager.addEventListener('saveError', (e) => {
     log.error('.bframe 저장 실패', e.detail.error);
-    showToast('리뷰 데이터 저장 실패', 'error');
+  });
+
+  // 저장 상태 변화: 칩 갱신 + 재시도 소진 후 1회 경고
+  reviewDataManager.addEventListener('saveStateChanged', (e) => {
+    const status = e.detail?.status || null;
+    renderSaveStatusChip(status);
+    if (status === 'save-failed') {
+      showToast('리뷰 데이터 저장 실패', 'error');
+      return;
+    }
+    if (status === 'save-blocked') {
+      showToast('원본 보호를 위해 저장이 중단되었습니다. 파일 상태를 확인해주세요.', 'error');
+    }
   });
 
   // 로드 완료
@@ -7658,11 +7729,26 @@ async function initApp() {
       fabricDrawingPilotController.refreshPersistenceSource(installSource)
   );
   reviewDataManager.setFinalFabricSnapshotHandler(async () => {
+    // 회수 직전의 저하 여부를 먼저 읽어 둔다 — legacyBypass가 true면
+    // preparePersistenceSnapshotForSave()가 실제 회수 없이 true를 돌려준다
+    // (fabric-drawing-pilot-controller.js:1713 `if (legacyBypass) return !persistenceBlocked;`).
+    // 컨트롤러의 getStatusSnapshot() 직접 호출은 fabric-drawing-pilot-source.test.js:302가
+    // 금지하므로, 상태 훅이 갱신하는 캐시 변수(app.js:7558)를 읽는다.
+    const bypassed =
+      fabricDrawingPilotStatusSnapshot?.persistenceDegraded === true;
     const prepared =
       await fabricDrawingPilotController.preparePersistenceSnapshotForSave();
     if (!prepared) {
       throw new Error('Fabric 드로잉 최신 상태를 가져오지 못했습니다.');
     }
+    return { bypassed };
+  });
+  // 저장이 "회수를 실제로 수행한 채" 성공했을 때만 저장 차단 래치를 해제한다.
+  // 회수를 건너뛴(bypassed) 저장으로 래치를 풀면 다음 회수가 보존 대상이던
+  // 미래 버전 루트를 오버레이 상태로 덮어쓸 수 있다(작업 1 엣지 12).
+  reviewDataManager.addEventListener('saveStateChanged', (e) => {
+    if (e.detail?.status !== 'saved' || e.detail?.bypassed === true) return;
+    fabricDrawingPilotController.clearPersistenceSaveBlock?.();
   });
   const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
     document.body.classList.toggle(

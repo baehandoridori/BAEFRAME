@@ -2267,3 +2267,42 @@ test('비차단 저장 저하는 드로잉 세션을 강제로 내리지 않는�
   const beforeBlockedBranch = bypass.slice(0, bypass.indexOf('if (blocked === true) {'));
   assert.doesNotMatch(beforeBlockedBranch, /desiredInputEnabled = false;|currentSession = null;|setState\(/);
 });
+
+test('저장 회수의 일시 실패는 즉시 1회 재시도하고 차단 래치를 걸지 않는다', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const exportCountBeforeRetry = harness.calls.export.length;
+  let exportAttempts = 0;
+  harness.setExportHandler(() => {
+    exportAttempts += 1;
+    if (exportAttempts === 1) {
+      return { success: false, accepted: false, reason: 'stale-drawing-snapshot' };
+    }
+    return { success: true, accepted: true, snapshot: harness.getRuntimeSnapshot() };
+  });
+
+  assert.equal(await harness.controller.preparePersistenceSnapshotForSave(), true);
+  assert.equal(harness.calls.export.length, exportCountBeforeRetry + 2);
+  const status = harness.controller.getStatusSnapshot();
+  assert.equal(status.persistenceBlocked, false);
+  assert.equal(status.legacyBypass, false);
+  assert.equal(harness.controller.shouldOwnDrawingShortcut(), true);
+  assert.equal(harness.controller.getState(), 'active');
+});
+
+test('구조 위반 회수 실패는 재시도 없이 곧바로 차단 래치를 건다', async () => {
+  const harness = createHarness();
+  assert.equal(await prepareVideo(harness), true);
+  assert.equal(await harness.controller.toggle(), true);
+  const exportCountBeforeFailure = harness.calls.export.length;
+  harness.setExportHandler(() => ({
+    success: false,
+    accepted: false,
+    reason: 'invalid-persistence-snapshot'
+  }));
+
+  assert.equal(await harness.controller.preparePersistenceSnapshotForSave(), false);
+  assert.equal(harness.calls.export.length, exportCountBeforeFailure + 1);
+  assert.equal(harness.controller.getStatusSnapshot().persistenceBlocked, true);
+});
