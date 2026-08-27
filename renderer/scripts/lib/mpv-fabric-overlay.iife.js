@@ -13582,7 +13582,13 @@ void main() {
         "ctrlKey",
         "shiftKey",
         "altKey",
-        "metaKey"
+        "metaKey",
+        // timeStamp를 보존하지 않으면 재생된 이벤트가 '재생 시각'을 갖게 되고, 확정 직전에
+        // 생성돼 확정 뒤에 배달된 라이브 pointermove가 그보다 이른 시각을 실어 와 획의
+        // sourcePoints 시각이 역행한다. 그러면 세 검증기가 모두 요구하는 시간 단조 불변식이
+        // 깨져 호스트가 export 전체를 거절하고 저장이 영구 차단된다(2026-08-27 실측:
+        // failedCheck "snapshot-record:point-time:3@5.12").
+        "timeStamp"
       ]);
       var PERSISTENCE_KEYFRAME_KEYS = Object.freeze([
         "id",
@@ -16392,6 +16398,8 @@ void main() {
         function appendPointerSample(event) {
           const sample = toSourceSample(event);
           if (!sample) return;
+          const previous = activeStroke.samples[activeStroke.samples.length - 1];
+          if (previous && sample.time < previous.time) sample.time = previous.time;
           activeStroke.samples.push(sample);
           metrics.recordPointerSample(sample.pressure);
         }
@@ -18434,6 +18442,9 @@ void main() {
                 if (field === "type") continue;
                 Object.defineProperty(event, field, { value });
               }
+            }
+            if (typeof snapshot.timeStamp === "number" && event.timeStamp !== snapshot.timeStamp) {
+              Object.defineProperty(event, "timeStamp", { value: snapshot.timeStamp });
             }
             Object.defineProperty(event, REPLAYED_POINTERDOWN, { value: true });
             target.dispatchEvent(event);

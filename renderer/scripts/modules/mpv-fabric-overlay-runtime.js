@@ -207,7 +207,13 @@ const POINTER_EVENT_SNAPSHOT_FIELDS = Object.freeze([
   'ctrlKey',
   'shiftKey',
   'altKey',
-  'metaKey'
+  'metaKey',
+  // timeStamp를 보존하지 않으면 재생된 이벤트가 '재생 시각'을 갖게 되고, 확정 직전에
+  // 생성돼 확정 뒤에 배달된 라이브 pointermove가 그보다 이른 시각을 실어 와 획의
+  // sourcePoints 시각이 역행한다. 그러면 세 검증기가 모두 요구하는 시간 단조 불변식이
+  // 깨져 호스트가 export 전체를 거절하고 저장이 영구 차단된다(2026-08-27 실측:
+  // failedCheck "snapshot-record:point-time:3@5.12").
+  'timeStamp'
 ]);
 const PERSISTENCE_KEYFRAME_KEYS = Object.freeze([
   'id',
@@ -3466,6 +3472,12 @@ function createFabricOverlayRuntime(options = {}) {
   function appendPointerSample(event) {
     const sample = toSourceSample(event);
     if (!sample) return;
+    // 시간 단조는 저장 스키마의 불변식이다(스토어·런타임·호스트 세 검증기가 모두
+    // point.time < previousTime을 거절한다). 어떤 시계 이상으로도 획 하나가 파일 전체의
+    // 저장을 막지 못하도록, 표본을 쌓는 지점에서 단조성을 보장한다. x/y는 건드리지
+    // 않으므로 획 모양은 달라지지 않는다.
+    const previous = activeStroke.samples[activeStroke.samples.length - 1];
+    if (previous && sample.time < previous.time) sample.time = previous.time;
     activeStroke.samples.push(sample);
     metrics.recordPointerSample(sample.pressure);
   }
@@ -5787,6 +5799,12 @@ function createFabricOverlayRuntime(options = {}) {
           if (field === 'type') continue;
           Object.defineProperty(event, field, { value });
         }
+      }
+      // PointerEventInit에는 timeStamp 멤버가 없어 생성자가 무시하고 '생성 시각'을
+      // 넣는다. 원본 시각을 반드시 되돌려 놓아야 재생 샘플과 라이브 샘플의 시간 축이
+      // 어긋나지 않는다.
+      if (typeof snapshot.timeStamp === 'number' && event.timeStamp !== snapshot.timeStamp) {
+        Object.defineProperty(event, 'timeStamp', { value: snapshot.timeStamp });
       }
       Object.defineProperty(event, REPLAYED_POINTERDOWN, { value: true });
       target.dispatchEvent(event);

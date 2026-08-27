@@ -14037,3 +14037,73 @@ test('펜 입력은 modifier가 비어 와도 전역 래치를 계속 신뢰한�
     await harness.destroy();
   }
 });
+
+test('시각이 역행하는 포인터 표본이 와도 획의 시간 단조가 유지된다', async () => {
+  // 저장 스키마의 불변식: 스토어·런타임·호스트 세 검증기가 모두 point.time 역행을
+  // 거절하고, 하나라도 걸리면 export 전체가 막혀 파일 저장이 영구 차단된다.
+  const harness = createRealFabricHarness();
+  try {
+    const element = harness.element;
+    harness.dispatchPointer(element, 'pointerdown', 20, 40, 990, 1, { timeStamp: 1000 });
+    harness.dispatchPointer(element, 'pointermove', 40, 40, 990, 1, { timeStamp: 1010 });
+    // 확정 직전에 생성돼 뒤늦게 배달된 표본을 모사한다 — 시각이 앞선다
+    harness.dispatchPointer(element, 'pointermove', 60, 40, 990, 1, { timeStamp: 990 });
+    harness.dispatchPointer(element, 'pointermove', 80, 40, 990, 1, { timeStamp: 1020 });
+    harness.dispatchCapturedPointerUp(80, 40, 990);
+
+    const snapshot = harness.sceneStore.getActiveSceneSnapshot();
+    const record = (snapshot?.objects || []).find(object => object.type === 'stroke');
+    assert.ok(record, '획이 만들어져야 한다');
+    assert.ok(record.sourcePoints.length >= 3);
+    let previousTime = 0;
+    record.sourcePoints.forEach((point, index) => {
+      assert.ok(
+        point.time >= previousTime,
+        `sourcePoints[${index}].time(${point.time})이 이전 값(${previousTime})보다 작다`
+      );
+      previousTime = point.time;
+    });
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('재생된 pointerdown은 재생 시각이 아니라 원본 timeStamp를 유지한다', () => {
+  // timeStamp를 스냅샷하지 않으면 재생 이벤트가 '재생 시각'을 갖게 되고, 확정 직전에
+  // 생성돼 확정 뒤에 배달된 라이브 move가 그보다 이른 시각을 실어 와 시간이 역행한다.
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [makeHistoryStroke('replay-timestamp-source')]
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+
+  const element = harness.canvas.upperCanvasEl;
+  const dispatched = [];
+  const passthrough = element.dispatch.bind(element);
+  element.dispatch = (type, init = {}) => {
+    dispatched.push({ type, timeStamp: init.timeStamp });
+    return passthrough(type, init);
+  };
+
+  element.dispatch('pointerdown', {
+    pointerId: 1907, pointerType: 'pen', button: 0, buttons: 1,
+    clientX: 10, clientY: 20, pressure: 0.3, timeStamp: 4242
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  dispatched.length = 0;
+  assert.equal(harness.runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0], targetFrame: 10
+  }).accepted, true);
+
+  const replayed = dispatched.find(entry => entry.type === 'pointerdown');
+  assert.ok(replayed, '확정 뒤 pointerdown이 재생되어야 한다');
+  assert.equal(replayed.timeStamp, 4242, '재생 이벤트가 원본 timeStamp를 유지해야 한다');
+});
