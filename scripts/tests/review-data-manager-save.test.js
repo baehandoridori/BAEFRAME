@@ -7044,3 +7044,57 @@ test('재시도 불가능한 저장 실패는 즉시 save-failed로 통보한다
   assert.equal(saveErrorEvents, 1);
   manager.disconnect();
 });
+
+test('드로잉 저장 차단은 재시도하지 않고 즉시 save-blocked로 통보한다', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  let saveCount = 0;
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot({
+      reviewDocumentId: REVIEW_ID_EXISTING
+    }),
+    saveReview: async () => {
+      saveCount += 1;
+      return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({
+    autoSave: false,
+    commentManager,
+    saveRetryDelays: [5, 5, 5]
+  });
+  manager.autoSaveEnabled = true;
+  manager.connect();
+  await manager.setVideoFile('C:/reviews/drawing-blocked.mp4');
+  addSubstantiveComment(manager, commentManager, 'drawing-blocked-comment');
+
+  const states = [];
+  const reasons = [];
+  manager.addEventListener('saveStateChanged', (e) => {
+    states.push(e.detail.status);
+    reasons.push(e.detail.reason);
+  });
+  let saveErrorEvents = 0;
+  manager.addEventListener('saveError', () => {
+    saveErrorEvents += 1;
+  });
+
+  // 컨트롤러의 저장 차단 래치는 재수화 전까지 절대 풀리지 않는다.
+  manager.setFinalFabricSnapshotHandler(async () => {
+    const blocked = new Error('Fabric 드로잉 저장이 차단된 상태입니다.');
+    blocked.saveFailureReason = 'fabric-drawing-blocked';
+    throw blocked;
+  });
+
+  assert.equal(await manager.save(), false);
+  assert.deepEqual(states, ['saving', 'save-blocked']);
+  assert.equal(reasons[1], 'fabric-drawing-blocked');
+  assert.equal(saveErrorEvents, 1);
+  assert.equal(saveCount, 0);
+
+  // 재시도가 예약되지 않았으므로 백오프가 지나도 추가 저장 시도가 없다.
+  await wait(60);
+  assert.deepEqual(states, ['saving', 'save-blocked'], '차단 상태는 재시도하지 않는다');
+  assert.equal(saveErrorEvents, 1);
+  manager.disconnect();
+});

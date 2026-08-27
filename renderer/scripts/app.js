@@ -2423,7 +2423,12 @@ async function initApp() {
       return;
     }
     if (status === 'save-blocked') {
-      showToast('원본 보호를 위해 저장이 중단되었습니다. 파일 상태를 확인해주세요.', 'error');
+      showToast(
+        e.detail?.reason === 'fabric-drawing-blocked'
+          ? '드로잉 저장이 중단되었습니다. 영상을 다시 열면 복구됩니다.'
+          : '원본 보호를 위해 저장이 중단되었습니다. 파일 상태를 확인해주세요.',
+        'error'
+      );
     }
   });
 
@@ -7748,6 +7753,14 @@ async function initApp() {
     const prepared =
       await fabricDrawingPilotController.preparePersistenceSnapshotForSave();
     if (!prepared) {
+      // 저장 차단 래치(구조 위반)는 재수화·영상 전환 전까지 풀리지 않는다. 이를 일시
+      // 실패와 같은 사유로 던지면 성공할 수 없는 재시도를 3회 반복하고, 사용자가 뭔가
+      // 바꿀 때마다 그 사이클이 되풀이되어 실패 토스트가 계속 뜬다(2026-08-27 보고).
+      if (fabricDrawingPilotStatusSnapshot?.persistenceBlocked === true) {
+        const blocked = new Error('Fabric 드로잉 저장이 차단된 상태입니다.');
+        blocked.saveFailureReason = 'fabric-drawing-blocked';
+        throw blocked;
+      }
       throw new Error('Fabric 드로잉 최신 상태를 가져오지 못했습니다.');
     }
     return { bypassed };

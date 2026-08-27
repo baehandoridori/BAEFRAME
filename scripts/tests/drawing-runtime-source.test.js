@@ -555,3 +555,25 @@ test('저장 상태 칩은 재시도 소진 후에만 저장 실패를 알린다
     /this\._saveStateSettled = true;\n\s+this\._emitSaveState\(\n\s+this\.autoSaveEnabled \? 'retrying' : 'save-failed',\n\s+deferredReason\n\s+\);/
   );
 });
+
+test('저장 차단 래치는 일시 실패로 분류되지 않는다', () => {
+  // 최종 Fabric 스냅샷 훅이 차단 상태를 별도 사유로 태깅해야 재시도 루프에 들어가지 않는다.
+  assert.match(
+    appSource,
+    /if \(fabricDrawingPilotStatusSnapshot\?\.persistenceBlocked === true\) \{\n\s+const blocked = new Error\('Fabric 드로잉 저장이 차단된 상태입니다\.'\);\n\s+blocked\.saveFailureReason = 'fabric-drawing-blocked';\n\s+throw blocked;/
+  );
+  assert.match(
+    reviewDataManagerSource,
+    /const BLOCKING_SAVE_FAILURE_REASONS = new Set\(\[\n  'fabric-drawing-blocked',/
+  );
+  // 차단 사유는 재시도 대상 목록에 들어가면 안 된다
+  const transient = reviewDataManagerSource.match(
+    /const TRANSIENT_SAVE_FAILURE_REASONS = new Set\(\[([\s\S]*?)\]\);/
+  )?.[1] || '';
+  assert.doesNotMatch(transient, /fabric-drawing-blocked/);
+  // 차단 안내는 복구 방법을 알려준다
+  assert.match(
+    appSource,
+    /e\.detail\?\.reason === 'fabric-drawing-blocked'\n\s+\? '드로잉 저장이 중단되었습니다\. 영상을 다시 열면 복구됩니다\.'/
+  );
+});

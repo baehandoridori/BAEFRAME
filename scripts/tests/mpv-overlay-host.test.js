@@ -201,6 +201,7 @@ function createDrawingHostHarness(options = {}) {
   const host = new MPVOverlayHost({
     BrowserWindow: FakeBrowserWindow,
     getMainWindow: () => fakeMainWindow,
+    logger: options.logger,
     fabricBundlePath: 'fixed/app/renderer/scripts/lib/mpv-fabric-overlay.iife.js',
     now: options.now,
     fabricRetryBaseMs: options.fabricRetryBaseMs,
@@ -5490,4 +5491,63 @@ test('drawing export separates a stale request fence from a corrupted snapshot',
     reason: 'invalid-persistence-snapshot'
   });
   assert.doesNotMatch(JSON.stringify(corrupted), /failedCheck|secret/i);
+});
+
+test('rejected export logs which record check failed and where', async () => {
+  const warnings = [];
+  let runtimeSnapshot;
+  const harness = createDrawingHostHarness({
+    logger: {
+      warn: (message, data) => warnings.push({ message, data }),
+      info: () => {},
+      debug: () => {},
+      error: () => {}
+    },
+    executeDrawing(script) {
+      if (!script.includes('.exportDrawingVideo(')) return undefined;
+      return { accepted: true, snapshot: runtimeSnapshot };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }));
+  const request = makePersistenceExport(hostGeneration);
+
+  // 레코드에 없는 키가 섞이면 record-keys 로 식별된다
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+  runtimeSnapshot.scenes[0].objects[0].unexpected = true;
+  warnings.length = 0;
+  assert.equal(
+    (await harness.host.exportDrawingVideo(request)).reason,
+    'invalid-persistence-snapshot'
+  );
+  assert.equal(warnings.length, 1);
+  assert.equal(warnings[0].data.failedCheck, 'snapshot-record:record-keys@0.0');
+
+  // 같은 키프레임 안의 id 중복도 별도로 식별된다
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+  const first = runtimeSnapshot.scenes[0].objects[0];
+  runtimeSnapshot.scenes[0].objects.push(JSON.parse(JSON.stringify(first)));
+  warnings.length = 0;
+  assert.equal(
+    (await harness.host.exportDrawingVideo(request)).reason,
+    'invalid-persistence-snapshot'
+  );
+  assert.equal(warnings[0].data.failedCheck, 'snapshot-record:duplicate-id@0.1');
+
+  // 점 시각이 역행하면 몇 번째 점인지까지 남는다
+  runtimeSnapshot = makePersistenceSnapshot(hostGeneration);
+  const points = runtimeSnapshot.scenes[0].objects[0].sourcePoints;
+  if (points.length >= 2) points[points.length - 1].time = -1;
+  warnings.length = 0;
+  const rejected = await harness.host.exportDrawingVideo(request);
+  assert.equal(rejected.reason, 'invalid-persistence-snapshot');
+  assert.match(warnings[0].data.failedCheck, /^snapshot-record:point(?:-time)?:\d+@0\.0$/);
+
+  // 응답 자체에는 여전히 failedCheck 가 실리지 않는다
+  assert.doesNotMatch(JSON.stringify(rejected), /failedCheck/);
 });

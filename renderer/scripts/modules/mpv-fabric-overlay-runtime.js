@@ -5201,13 +5201,29 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   // 펜/터치 유래 포인터 이벤트는 altKey/ctrlKey가 비어 오는 환경이 있어(레거시 피드백 22)
-  // 오버레이 문서의 전역 키 상태를 함께 본다. 상태는 keyup과 window blur에서만 내려간다.
+  // 오버레이 문서의 전역 키 상태를 보조로 본다. 다만 이 래치는 keyup을 놓치면 켜진 채
+  // 남는데(오버레이는 별도 창이라 호스트가 키를 가로채거나 포커스가 옮겨갈 수 있다),
+  // 그 상태로 브러시가 조용히 지우개·크기 조절로 바뀌면 사용자는 원인을 알 수 없다
+  // (2026-08-27 실사용 보고: Ctrl+Z 뒤 아무것도 그려지지 않음).
+  // 따라서 마우스 포인터에서는 이벤트가 실어 온 modifier만 신뢰한다.
   function isAltActive(event) {
-    return event?.altKey === true || overlayModifierState.alt === true;
+    if (event?.altKey === true) return true;
+    if (event?.pointerType === 'mouse') return false;
+    return overlayModifierState.alt === true;
   }
 
   function isCtrlActive(event) {
-    return event?.ctrlKey === true || overlayModifierState.ctrl === true;
+    if (event?.ctrlKey === true) return true;
+    if (event?.pointerType === 'mouse') return false;
+    return overlayModifierState.ctrl === true;
+  }
+
+  // 마우스 이벤트는 modifier 상태를 정확히 실어 오므로, 래치가 stuck이면 여기서 되돌린다.
+  // 펜만 쓰다 마우스를 한 번 잡아도 복구되도록 포인터 진입 지점에서 동기화한다.
+  function syncOverlayModifierStateFromPointer(event) {
+    if (event?.pointerType !== 'mouse') return;
+    if (event.altKey !== true) overlayModifierState.alt = false;
+    if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
   }
 
   function resetOverlayModifierState() {
@@ -5784,6 +5800,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerDown(event) {
+    syncOverlayModifierStateFromPointer(event);
     if (event?.[REPLAYED_POINTERDOWN] === true) {
       beginPointerDown(event, false);
       return;

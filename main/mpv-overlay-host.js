@@ -2186,6 +2186,68 @@ function validateFabricDrawingRecord(value, maxPathLength) {
   return true;
 }
 
+// failedCheck 진단 전용 — validateFabricDrawingRecord가 false를 돌려준 뒤에만 호출한다.
+// 어떤 하위 검사에서 걸렸는지만 짧은 토큰으로 돌려주고, 레코드 내용은 남기지 않는다.
+// 검사 순서가 validateFabricDrawingRecord와 어긋나면 'unknown'이 나오며 그 자체로도
+// "열거한 검사 밖에서 실패했다"는 정보가 된다.
+function describeFabricDrawingRecordFailure(value, maxPathLength) {
+  if (!hasExactPersistenceKeys(
+    value,
+    FABRIC_DRAWING_RECORD_REQUIRED_KEYS,
+    FABRIC_DRAWING_RECORD_OPTIONAL_KEYS
+  )) {
+    return 'record-keys';
+  }
+  if (!isBoundedPersistenceString(value.id, 512)) return 'id';
+  if (value.type !== 'stroke') return 'type';
+  if (!isBoundedPersistenceString(value.pathData, maxPathLength)) return 'path-data';
+  if (!isDensePersistenceArray(value.sourcePoints) ||
+      value.sourcePoints.length === 0 ||
+      value.sourcePoints.length > FABRIC_DRAWING_MAX_POINTS_PER_STROKE) {
+    return 'source-points';
+  }
+  if (!hasExactPersistenceKeys(value.style, FABRIC_DRAWING_STYLE_KEYS)) return 'style-keys';
+  if (!FABRIC_DRAWING_HEX_COLOR.test(value.style.color) ||
+      !Number.isFinite(value.style.size) ||
+      value.style.size <= 0 ||
+      value.style.size > FABRIC_DRAWING_MAX_BRUSH_SIZE ||
+      !Number.isFinite(value.style.opacity) ||
+      value.style.opacity < 0 ||
+      value.style.opacity > 1) {
+    return 'style-values';
+  }
+  if (!validateFabricDrawingTransform(value.transform)) return 'transform';
+  let previousTime = 0;
+  for (let index = 0; index < value.sourcePoints.length; index += 1) {
+    const point = value.sourcePoints[index];
+    if (!validateFabricDrawingPoint(point)) return `point:${index}`;
+    if (point.time < previousTime) return `point-time:${index}`;
+    previousTime = point.time;
+  }
+  if (value.strokeCaps !== undefined &&
+      (!hasExactPersistenceKeys(value.strokeCaps, FABRIC_DRAWING_CAPS_KEYS) ||
+       typeof value.strokeCaps.start !== 'boolean' ||
+       typeof value.strokeCaps.end !== 'boolean')) {
+    return 'stroke-caps';
+  }
+  if (value.renderGeometry !== undefined) {
+    if (!hasExactPersistenceKeys(
+      value.renderGeometry,
+      FABRIC_DRAWING_RENDER_GEOMETRY_KEYS
+    )) {
+      return 'render-geometry-keys';
+    }
+    if (!validateDrawingRenderGeometry(value.renderGeometry, {
+      maxPathLength: Math.min(FABRIC_DRAWING_MAX_STRING_LENGTH, maxPathLength),
+      maxCoordinate: FABRIC_DRAWING_MAX_POINT_COORDINATE +
+        FABRIC_DRAWING_MAX_BRUSH_SIZE
+    })) {
+      return 'render-geometry';
+    }
+  }
+  return 'unknown';
+}
+
 function normalizeFabricDrawingPersistenceRequest(request, {
   includeKeyframes,
   maxBytes
@@ -2560,7 +2622,8 @@ function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
   const frames = new Set();
   let objectCount = 0;
   let previousFrame = -1;
-  for (const scene of value.scenes) {
+  for (let sceneIndex = 0; sceneIndex < value.scenes.length; sceneIndex += 1) {
+    const scene = value.scenes[sceneIndex];
     if (!hasExactPersistenceKeys(scene, FABRIC_DRAWING_SNAPSHOT_SCENE_KEYS) ||
         !isBoundedPersistenceString(scene.sceneInstanceId, 512) ||
         !Number.isSafeInteger(scene.targetFrame) ||
@@ -2581,16 +2644,23 @@ function normalizeFabricDrawingExportSnapshot(snapshot, request, maxBytes) {
       return {
         success: false,
         reason: 'invalid-persistence-snapshot',
-        failedCheck: 'snapshot-scene'
+        failedCheck: `snapshot-scene@${sceneIndex}`
       };
     }
     const objectIds = new Set();
-    for (const object of scene.objects) {
-      if (!validateFabricDrawingRecord(object, maxBytes) || objectIds.has(object.id)) {
+    for (let objectIndex = 0; objectIndex < scene.objects.length; objectIndex += 1) {
+      const object = scene.objects[objectIndex];
+      const duplicateId = objectIds.has(object?.id);
+      if (!validateFabricDrawingRecord(object, maxBytes) || duplicateId) {
+        // 어느 하위 검사에서 걸렸는지까지 남긴다 — 'snapshot-record' 하나로는
+        // 10종 검사와 id 중복을 구분할 수 없어 원인 추적이 불가능하다.
+        const detail = duplicateId
+          ? 'duplicate-id'
+          : describeFabricDrawingRecordFailure(object, maxBytes);
         return {
           success: false,
           reason: 'invalid-persistence-snapshot',
-          failedCheck: 'snapshot-record'
+          failedCheck: `snapshot-record:${detail}@${sceneIndex}.${objectIndex}`
         };
       }
       objectIds.add(object.id);
