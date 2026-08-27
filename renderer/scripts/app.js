@@ -10519,6 +10519,9 @@ async function initApp() {
         });
       }
     }
+    // 소유권은 파일럿 활성화 + persistence 브리지 준비 여부만으로 결정된다(작업 1).
+    // 저장 실패(snapshot.persistenceDegraded)로는 흔들리지 않으므로
+    // 아래 CSS 마스크 토글과 타임라인 투영도 저장 상태와 무관하게 유지된다.
     const ownsDrawingShortcut =
       fabricDrawingPilotController.shouldOwnDrawingShortcut();
     const bInput = snapshot?.bInput || {};

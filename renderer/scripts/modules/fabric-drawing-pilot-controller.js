@@ -791,6 +791,7 @@ export function createFabricDrawingPilotController(options = {}) {
       resumeRequested,
       lastError,
       legacyBypass,
+      persistenceDegraded: legacyBypass,
       persistenceBlocked,
       persistenceFailureReason,
       persistenceSourceRefreshInProgress,
@@ -884,6 +885,9 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
+  // legacyBypass는 "저장 계층 저하" 표시일 뿐 소유권 플래그가 아니다.
+  // blocked=true(데이터 보호가 필요한 재수화·검증 실패)일 때만 진행 중인 드로잉 세션을 내린다.
+  // 세션을 내려도 소유권은 유지되므로 타임라인 투영과 CSS 마스크는 그대로 남는다.
   function setPersistenceBypass(reason, { blocked = false } = {}) {
     if (blocked === true && !persistenceBlocked) {
       persistenceAbandonResumeRequested =
@@ -900,18 +904,20 @@ export function createFabricDrawingPilotController(options = {}) {
     legacyBypass = true;
     persistenceBlocked = blocked;
     persistenceFailureReason = normalizedReason;
-    desiredInputEnabled = false;
-    resumeRequested = false;
-    currentSession = null;
     persistenceBoundSourceEpoch = null;
-    if (persistenceQuitSuspension) {
-      persistenceQuitSuspension.shouldResume = false;
+    if (blocked === true) {
+      desiredInputEnabled = false;
+      resumeRequested = false;
+      currentSession = null;
+      if (persistenceQuitSuspension) {
+        persistenceQuitSuspension.shouldResume = false;
+      }
+      if (state !== 'disabled' && state !== 'passive') {
+        setState('passive');
+        return false;
+      }
     }
-    if (state !== 'disabled' && state !== 'passive') {
-      setState('passive');
-    } else if (changed) {
-      notifyStateChange();
-    }
+    if (changed) notifyStateChange();
     return false;
   }
 
@@ -2580,9 +2586,10 @@ export function createFabricDrawingPilotController(options = {}) {
     return pilotEnabled;
   }
 
+  // 소유권은 파일럿 활성화와 persistence 브리지 준비 여부만으로 결정한다.
+  // legacyBypass(저장 계층 저하)는 저장 게이트 전용 플래그이므로 여기서 참조하지 않는다.
   function shouldOwnDrawingShortcut() {
     return pilotEnabled &&
-      !legacyBypass &&
       (persistenceStore === null || persistenceBridgeReady);
   }
 
@@ -2633,6 +2640,7 @@ export function createFabricDrawingPilotController(options = {}) {
     preparePersistenceForQuit,
     resumeAfterQuitCancelled,
     shouldOwnDrawingShortcut,
+    clearPersistenceSaveBlock: clearPersistenceBypass,
     isEnabled,
     isActiveOrPreparing,
     getState,
