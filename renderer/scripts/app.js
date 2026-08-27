@@ -6454,6 +6454,36 @@ async function initApp() {
     };
   }
 
+  // 키프레임 이동(A/D)의 데이터 출처를 소유자에 맞춘다.
+  // 파일럿이 소유 중이면 화면에 떠 있는 것은 drawingsV3 투영 행이고 레거시
+  // drawingManager는 비어 있다. 출처를 고르지 않으면 키는 통과하는데 조용히
+  // 아무 일도 일어나지 않는다(docs/drawing-keyframe-features.md 실패 유형 B).
+  // 조회 전용이라 어떤 데이터도 변경하지 않는다.
+  function getAdjacentDrawingKeyframeFrame(direction) {
+    const currentFrame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
+    const pilotLayers = getFabricPilotTimelineLayers();
+    if (!pilotLayers) {
+      return direction === 'prev'
+        ? drawingManager.getPrevKeyframeFrame()
+        : drawingManager.getNextKeyframeFrame();
+    }
+    // 파일럿 행과 읽기 전용으로 투영된 레거시 행을 함께 본다 — 타임라인에 보이는
+    // 모든 키프레임이 이동 대상이어야 사용자가 놓치는 지점이 없다.
+    const frames = new Set();
+    for (const layer of pilotLayers) {
+      for (const keyframe of layer.keyframes || []) {
+        const frame = Math.trunc(Number(keyframe?.frame));
+        if (Number.isInteger(frame) && frame >= 0) frames.add(frame);
+      }
+    }
+    if (frames.size === 0) return null;
+    const ordered = [...frames].sort((a, b) => a - b);
+    const target = direction === 'prev'
+      ? ordered.filter(frame => frame < currentFrame).pop()
+      : ordered.find(frame => frame > currentFrame);
+    return target === undefined ? null : target;
+  }
+
   function shouldSuppressLegacyDrawingForFabricPilot() {
     return fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
       isMpvPilotPlaybackActive();
@@ -14357,13 +14387,13 @@ async function initApp() {
     }
     if (userSettings.matchShortcut('prevKeyframe', e)) {
       e.preventDefault();
-      const prevKf = drawingManager.getPrevKeyframeFrame();
+      const prevKf = getAdjacentDrawingKeyframeFrame('prev');
       if (prevKf !== null) videoPlayer.seekToFrame(prevKf);
       return;
     }
     if (userSettings.matchShortcut('nextKeyframe', e)) {
       e.preventDefault();
-      const nextKf = drawingManager.getNextKeyframeFrame();
+      const nextKf = getAdjacentDrawingKeyframeFrame('next');
       if (nextKf !== null) videoPlayer.seekToFrame(nextKf);
       return;
     }

@@ -33,8 +33,8 @@
 | `keyframeDelete` | `Delete` | 키프레임 삭제 | 레거시 | **A. 차단** (+ `deleteSelectedOrCurrentKeyframes`가 투영 존재 시 조기 반환) |
 | `keyframeConvertToFrame` | `Shift+2` | 키프레임 → 일반 프레임 | 레거시 | **A. 차단** |
 | `keyframeConvertToKeyframe` | `Shift+3` | 프레임 → 키프레임 | 레거시 | **A. 차단** |
-| `prevKeyframe` | `A` | 이전 키프레임 | 레거시 | **B. 빈 데이터** — 차단 목록에 없다 |
-| `nextKeyframe` | `D` | 다음 키프레임 | 레거시 | **B. 빈 데이터** — 차단 목록에 없다 |
+| `prevKeyframe` | `A` | 이전 키프레임 | **소유자에 따라 분기** | ✅ 동작 (v2.4.3-beta) |
+| `nextKeyframe` | `D` | 다음 키프레임 | **소유자에 따라 분기** | ✅ 동작 (v2.4.3-beta) |
 
 ### 2.2 프레임 조작
 
@@ -117,7 +117,7 @@
 
 | 항목 | 상태 |
 |---|---|
-| `prevKeyframe` / `nextKeyframe` (A/D) | ⬜ 대기 — 출처만 파일럿 투영으로 바꾸면 됨 (데이터 미변경) |
+| `prevKeyframe` / `nextKeyframe` (A/D) | ✅ 완료 (v2.4.3-beta) — `getAdjacentDrawingKeyframeFrame()`이 소유자에 맞는 출처를 고른다. 파일럿 소유 중엔 투영 행 전부의 키프레임 합집합, html5 폴백은 기존 `drawingManager` |
 | `keyframeDelete` (Delete) | ⬜ 대기 |
 | `keyframeAddWithCopy` / `keyframeAddBlank` (F6/F7) | ⬜ 대기 |
 | 키프레임↔프레임 변환 (Shift+2/3) | ⬜ 대기 |

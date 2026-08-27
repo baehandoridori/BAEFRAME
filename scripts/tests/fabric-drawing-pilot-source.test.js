@@ -1594,3 +1594,49 @@ test('팔레트 모듈은 레거시 헤더·접기·경계 클램프·안전한 
     /module\.exports = \{\n\s+createFabricDrawingPalette,\n\s+clampPalettePosition,\n\s+normalizePaletteState,\n\s+PALETTE_STORAGE_KEY,\n\s+PALETTE_MARGIN\n\};/
   );
 });
+
+test('키프레임 이동 단축키는 소유자에 맞는 데이터 출처를 고른다', () => {
+  const source = appSource.match(
+    /function getAdjacentDrawingKeyframeFrame\(direction\) \{[\s\S]*?\n  \}\n\n  function shouldSuppressLegacyDrawingForFabricPilot/
+  )?.[0]?.replace(/\n\n  function shouldSuppressLegacyDrawingForFabricPilot$/, '');
+  assert.ok(source, '키프레임 이동 헬퍼를 추출할 수 있어야 한다');
+
+  const build = (currentFrame, pilotLayers, legacy) => new Function(
+    'videoPlayer',
+    'getFabricPilotTimelineLayers',
+    'drawingManager',
+    `${source}\nreturn getAdjacentDrawingKeyframeFrame;`
+  )({ currentFrame }, () => pilotLayers, legacy);
+
+  // 파일럿 소유 중에는 투영된 키프레임을 본다 (파일럿 행 + 읽기 전용 레거시 행 합집합)
+  const pilotLayers = [
+    { keyframes: [{ frame: 10 }, { frame: 40 }, { frame: 90 }] },
+    { keyframes: [{ frame: 25 }, { frame: 40 }] }
+  ];
+  const legacyStub = {
+    getPrevKeyframeFrame: () => 999,
+    getNextKeyframeFrame: () => 999
+  };
+  assert.equal(build(40, pilotLayers, legacyStub)('prev'), 25);
+  assert.equal(build(40, pilotLayers, legacyStub)('next'), 90);
+  assert.equal(build(0, pilotLayers, legacyStub)('prev'), null, '앞이 없으면 null');
+  assert.equal(build(90, pilotLayers, legacyStub)('next'), null, '뒤가 없으면 null');
+  assert.equal(build(26, pilotLayers, legacyStub)('prev'), 25, '키프레임 사이에서도 동작한다');
+
+  // 집계 타임라인 등으로 투영이 비면 이동 대상이 없다
+  assert.equal(build(40, [], legacyStub)('prev'), null);
+
+  // 파일럿이 소유하지 않으면(html5 폴백) 레거시 매니저를 그대로 쓴다
+  assert.equal(build(40, null, legacyStub)('prev'), 999);
+  assert.equal(build(40, null, legacyStub)('next'), 999);
+
+  // 단축키 핸들러가 이 헬퍼를 쓰는지 — 레거시 직접 조회로 되돌아가지 않았는지 고정
+  assert.match(
+    appSource,
+    /matchShortcut\('prevKeyframe', e\)\) \{\n\s+e\.preventDefault\(\);\n\s+const prevKf = getAdjacentDrawingKeyframeFrame\('prev'\);/
+  );
+  assert.match(
+    appSource,
+    /matchShortcut\('nextKeyframe', e\)\) \{\n\s+e\.preventDefault\(\);\n\s+const nextKf = getAdjacentDrawingKeyframeFrame\('next'\);/
+  );
+});
