@@ -1126,14 +1126,16 @@ body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-settings-popup {
 }
 
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .layer-action-btn,
-body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header:not([data-layer-id="fabric-pilot-drawing-layer"]),
-body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row:not([data-layer-id="fabric-pilot-drawing-layer"]) {
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header:not([data-layer-id="fabric-pilot-drawing-layer"]):not([data-pilot-projected="true"]),
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-track-row:not([data-layer-id="fabric-pilot-drawing-layer"]):not([data-pilot-projected="true"]) {
   display: none;
   pointer-events: none;
 }
 
 body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-visibility,
-body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-lock {
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-layer-id="fabric-pilot-drawing-layer"] .layer-lock,
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-pilot-projected="true"] .layer-visibility,
+body.fabric-drawing-pilot-enabled.mpv-pilot-mode .drawing-layer-header[data-pilot-projected="true"] .layer-lock {
   display: none;
   pointer-events: none;
 }

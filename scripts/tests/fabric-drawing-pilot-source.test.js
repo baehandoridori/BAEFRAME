@@ -11,6 +11,10 @@ const fabricRuntimeSource = normalizeNewlines(fs.readFileSync(
   path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js'),
   'utf8'
 ));
+const timelineSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/timeline.js'),
+  'utf8'
+));
 
 test('Fabric pilot controller is initialized with live mpv video and canvas context', () => {
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
@@ -98,10 +102,24 @@ test('pilot state and B routing avoid every legacy playback and persistence muta
   assert.match(appSource, /let fabricDrawingPilotUiEngaged = false;/);
   assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{/);
   const toggle = appSource.match(/function toggleDrawMode\(\) \{([\s\S]*?)\n  \}\n\n  \/\*\*/)?.[1] || '';
-  assert.match(toggle, /fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\) &&\s+isMpvPilotPlaybackActive\(\)/);
+  assert.match(toggle, /if \(isMpvPilotPlaybackActive\(\) && fabricDrawingPilotController\.isEnabled\(\)\) \{/);
   assert.match(toggle, /void fabricDrawingPilotController\.toggle\(\);\n\s+return;/);
-  const pilotBranch = toggle.match(/if \(fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\) &&\s+isMpvPilotPlaybackActive\(\)\) \{([\s\S]*?)\n\s+\}/)?.[1] || '';
-  assert.doesNotMatch(pilotBranch, /videoPlayer\.pause|loadVideo|enterHybridReviewEngineIfPossible|showMpvReviewFreezeFrame|drawingManager|reviewDataManager/);
+  // 가드는 상태(getState) 축으로 세운다 — shouldOwnDrawingShortcut() 단독 가드는
+  // 작업 1 이후 isEnabled()와 항등이 되어 죽은 코드가 된다.
+  assert.match(toggle, /const pilotState = fabricDrawingPilotController\.getState\(\);/);
+  // 'failed'는 사유를 알린 뒤에도 재시도를 위해 toggle()을 이어서 호출한다
+  assert.match(
+    toggle,
+    /if \(pilotState === 'failed'\) \{[\s\S]*?showToast\('드로잉 화면을 시작하지 못했습니다\.', 'error'\);\n\s+void fabricDrawingPilotController\.toggle\(\);\n\s+return;/
+  );
+  // 준비 중(소유권 미확보)은 안내만 하고 종료한다 — 레거시로 새지 않는다
+  assert.match(
+    toggle,
+    /if \(pilotState === 'disabled' \|\|\n\s+!fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)\) \{\n\s+showToast\('드로잉 준비 중입니다\. 잠시 후 다시 시도해 주세요\.', 'warn', null, true\);\n\s+return;/
+  );
+  const pilotBranch = toggle.match(/if \(isMpvPilotPlaybackActive\(\) && fabricDrawingPilotController\.isEnabled\(\)\) \{([\s\S]*?)\n    \}\n/)?.[1] || '';
+  assert.ok(pilotBranch.length > 0, 'mpv 파일럿 분기를 추출할 수 있어야 한다');
+  assert.doesNotMatch(pilotBranch, /videoPlayer\.pause|loadVideo|enterHybridReviewEngineIfPossible|showMpvReviewFreezeFrame|drawingManager|reviewDataManager|applyDrawModeState/);
   const stateHandler = appSource.match(/function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{([\s\S]*?)\n  \}/)?.[1] || '';
   assert.match(stateHandler, /const wasEngaged = fabricDrawingPilotUiEngaged;/);
   assert.match(stateHandler, /fabricDrawingPilotUiEngaged = engaged;/);
@@ -123,7 +141,7 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-overlay[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none(?:\s*!important)?;/);
   assert.match(
     mainCss,
-    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\),[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\)[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\):not\(\[data-pilot-projected="true"\]\),[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\):not\(\[data-pilot-projected="true"\]\)[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
   );
   assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
@@ -479,10 +497,10 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
   assert.match(appSource, /let lastFabricPilotTimelineStableVideoIdentity = null;/);
 });
 
-test('읽기 전용 합성 행의 가시성·잠금 버튼은 숨긴다', () => {
+test('읽기 전용 합성 행과 투영 행의 가시성·잠금 버튼은 숨긴다', () => {
   assert.match(
     mainCss,
-    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-lock,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-pilot-projected="true"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-pilot-projected="true"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
   );
 });
 
@@ -555,6 +573,7 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     'timeline',
     'cutlistUIState',
     'getCutlistManager',
+    'drawingManager',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -568,7 +587,8 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     playlistState,
     timelineState,
     cutlistState,
-    () => ({ isActive: () => cutlistManagerActive })
+    () => ({ isActive: () => cutlistManagerActive }),
+    { layers: [] }
   );
 
   assert.equal(getProjection().length, 1);
@@ -624,6 +644,7 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
     'timeline',
     'cutlistUIState',
     'getCutlistManager',
+    'drawingManager',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -644,7 +665,8 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
       cutlistSegments: []
     },
     { active: false },
-    () => ({ isActive: () => false })
+    () => ({ isActive: () => false }),
+    { layers: [] }
   );
 
   const [layer] = getProjection();
@@ -1222,5 +1244,139 @@ test('집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다
   assert.equal(
     (updateCutlistSource.match(/renderActiveDrawingLayers\(\);/g) || []).length,
     2
+  );
+});
+
+test('레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 투영된다', () => {
+  const projectionSource = appSource.match(
+    /function getFabricPilotTimelineLayers\(\) \{[\s\S]*?\n  \}\n\n  let lastFabricPilotTimeline/
+  )?.[0]?.replace(/\n\n  let lastFabricPilotTimeline$/, '');
+  assert.ok(projectionSource, 'timeline projection source should be extractable');
+
+  const legacyRanges = [{ start: 4, end: 9, keyframe: { frame: 4, isEmpty: false } }];
+  const legacyLayers = [
+    {
+      id: 'layer-legacy-1',
+      name: '레이어 1',
+      color: '#ff8a00',
+      visible: true,
+      locked: false,
+      opacity: 0.5,
+      keyframes: [{ frame: 4, isEmpty: false }],
+      getKeyframeRanges: () => legacyRanges
+    },
+    {
+      id: 'layer-empty',
+      name: '레이어 2',
+      color: '#00ff00',
+      visible: true,
+      locked: false,
+      opacity: 1,
+      keyframes: [{ frame: 7, isEmpty: true }],
+      getKeyframeRanges: () => []
+    }
+  ];
+  let hydrationDocument = { keyframes: [{ frame: 12, objects: [{}] }] };
+  const getProjection = new Function(
+    'fabricDrawingPilotController',
+    'isMpvPilotPlaybackActive',
+    'fabricDrawingPersistenceStore',
+    'playlistUIState',
+    'timeline',
+    'cutlistUIState',
+    'getCutlistManager',
+    'drawingManager',
+    `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
+  )(
+    { shouldOwnDrawingShortcut: () => true },
+    () => true,
+    { getHydrationDocument: () => hydrationDocument },
+    { mode: 'review' },
+    {
+      playlistDuration: 0,
+      playlistSegments: [],
+      cutlistDuration: 0,
+      cutlistSegments: []
+    },
+    { active: false },
+    () => ({ isActive: () => false }),
+    { layers: legacyLayers }
+  );
+
+  const layers = getProjection();
+  assert.equal(layers.length, 2);
+  assert.equal(layers[0].id, 'fabric-pilot-drawing-layer');
+
+  const projected = layers[1];
+  assert.equal(projected.id, 'layer-legacy-1');
+  assert.equal(projected.name, '레이어 1');
+  assert.equal(projected.color, '#ff8a00');
+  assert.equal(projected.opacity, 0.5);
+  assert.equal(projected.visible, true);
+  assert.equal(projected.locked, true);
+  assert.equal(projected.pilotProjected, true);
+  assert.equal(projected.timelineKeyframesMovable, false);
+  assert.deepEqual(projected.keyframes, [{ frame: 4, isEmpty: false }]);
+  assert.equal(projected.getKeyframeRanges(100), legacyRanges);
+
+  // 빈 키프레임만 가진 레거시 레이어는 행을 만들지 않는다
+  assert.equal(layers.some(layer => layer.id === 'layer-empty'), false);
+
+  // store가 아직 hydrate되지 않아도 소유를 놓지 않고 레거시 행만 투영한다
+  hydrationDocument = null;
+  const withoutStore = getProjection();
+  assert.equal(Array.isArray(withoutStore), true);
+  assert.equal(withoutStore.length, 1);
+  assert.equal(withoutStore[0].id, 'layer-legacy-1');
+});
+
+test('mpv 재생 중 B는 소유 실패에도 레거시 그리기로 폴백하지 않는다', () => {
+  const toggleSource = appSource.match(
+    /function toggleDrawMode\(\) \{([\s\S]*?)\n  \}\n\n  \/\*\*/
+  )?.[1] || '';
+  assert.ok(toggleSource, 'toggleDrawMode source should be extractable');
+
+  const pilotGateIndex = toggleSource.indexOf(
+    'if (isMpvPilotPlaybackActive() && fabricDrawingPilotController.isEnabled()) {'
+  );
+  const legacyEnableIndex = toggleSource.indexOf('applyDrawModeState(true)');
+  assert.ok(pilotGateIndex >= 0, 'mpv 재생 중 파일럿 게이트가 존재해야 한다');
+  assert.ok(
+    pilotGateIndex < legacyEnableIndex,
+    '레거시 진입은 mpv 파일럿 게이트를 통과한 뒤에만 도달해야 한다'
+  );
+  assert.match(
+    toggleSource,
+    /const pilotState = fabricDrawingPilotController\.getState\(\);\n\s+if \(pilotState === 'failed'\) \{/
+  );
+});
+
+test('투영된 레거시 행은 읽기 전용 표식을 달고 편집 핸들러를 붙이지 않는다', () => {
+  assert.match(
+    timelineSource,
+    /if \(layer\.pilotProjected === true\) \{\n\s+header\.dataset\.pilotProjected = 'true';\n\s+this\.layerHeaders\.appendChild\(header\);\n\s+return;\n\s+\}/
+  );
+  assert.match(
+    timelineSource,
+    /if \(layer\.pilotProjected === true\) trackRow\.dataset\.pilotProjected = 'true';/
+  );
+
+  const headerSource = timelineSource.match(
+    /_renderLayerHeader\(layer, isActive\) \{[\s\S]*?\n  \}\n\n  \/\*\*/
+  )?.[0] || '';
+  assert.ok(headerSource, 'layer header renderer should be extractable');
+  const projectedGuardIndex = headerSource.indexOf('if (layer.pilotProjected === true) {');
+  const selectIndex = headerSource.indexOf("this._emit('layerSelect'");
+  const contextMenuIndex = headerSource.indexOf("addEventListener('contextmenu'");
+  assert.ok(projectedGuardIndex > 0, '읽기 전용 가드가 존재해야 한다');
+  assert.ok(
+    projectedGuardIndex < selectIndex && projectedGuardIndex < contextMenuIndex,
+    '읽기 전용 투영 행은 선택·우클릭 핸들러 등록 전에 반환되어야 한다'
+  );
+
+  // 잠긴 투영 행의 키프레임은 기존 이동 판정에서 계속 차단된다
+  assert.match(
+    timelineSource,
+    /return layer\.locked !== true \|\| layer\.timelineKeyframesMovable === true;/
   );
 });

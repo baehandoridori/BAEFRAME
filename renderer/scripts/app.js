@@ -6378,6 +6378,7 @@ async function initApp() {
 
   // 파일럿 드로잉(drawingsV3)을 타임라인 드로잉 레이어로 읽기 전용 투영한다.
   // 레거시 drawings 필드와의 이중 기록을 피하기 위해 데이터는 절대 쓰지 않는다.
+  // 파일럿이 소유하는 동안에는 레거시 drawings도 읽기 전용 행으로 함께 투영한다.
   function getFabricPilotTimelineLayers() {
     if (!fabricDrawingPilotController.shouldOwnDrawingShortcut() ||
         !isMpvPilotPlaybackActive()) {
@@ -6393,40 +6394,67 @@ async function initApp() {
     if (hasPlaylistAggregateTimeline || hasCutlistAggregateTimeline) {
       return [];
     }
+    const projectedLayers = [];
     const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
-    const keyframes = (doc?.keyframes || [])
-      .map(kf => ({
-        frame: Number(kf.frame),
-        isEmpty: !(Array.isArray(kf.objects) && kf.objects.length > 0)
-      }))
-      .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
-      .sort((a, b) => a.frame - b.frame);
-    return [{
-      id: 'fabric-pilot-drawing-layer',
-      name: '드로잉',
-      color: '#4f8ef7',
-      visible: true,
-      locked: true,
-      timelineKeyframesMovable: true,
-      opacity: 1,
-      keyframes,
-      getKeyframeRanges(totalFrames) {
-        const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
-        return keyframes.map((kf, index) => ({
-          start: kf.frame,
-          end: Math.max(
-            kf.frame,
-            Math.min(
-              tailFrame,
-              keyframes[index + 1]?.frame !== undefined
-                ? keyframes[index + 1].frame - 1
-                : tailFrame
-            )
-          ),
-          keyframe: kf
-        }));
-      }
-    }];
+    // store가 아직 hydrate되지 않아도 소유를 놓지 않는다. 파일럿 행만 생략하고 진행한다.
+    if (doc) {
+      const keyframes = (doc.keyframes || [])
+        .map(kf => ({
+          frame: Number(kf.frame),
+          isEmpty: !(Array.isArray(kf.objects) && kf.objects.length > 0)
+        }))
+        .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
+        .sort((a, b) => a.frame - b.frame);
+      projectedLayers.push({
+        id: 'fabric-pilot-drawing-layer',
+        name: '드로잉',
+        color: '#4f8ef7',
+        visible: true,
+        locked: true,
+        timelineKeyframesMovable: true,
+        opacity: 1,
+        keyframes,
+        getKeyframeRanges(totalFrames) {
+          const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
+          return keyframes.map((kf, index) => ({
+            start: kf.frame,
+            end: Math.max(
+              kf.frame,
+              Math.min(
+                tailFrame,
+                keyframes[index + 1]?.frame !== undefined
+                  ? keyframes[index + 1].frame - 1
+                  : tailFrame
+              )
+            ),
+            keyframe: kf
+          }));
+        }
+      });
+    }
+    // 레거시 drawings(래스터)는 파일럿 소유 중에도 읽기 전용 행으로 계속 보여준다.
+    // 원본 id·이름·색을 유지하고 locked/pilotProjected로 편집 경로만 봉쇄한다.
+    const legacyLayers = Array.isArray(drawingManager.layers) ? drawingManager.layers : [];
+    legacyLayers.forEach(layer => {
+      const legacyKeyframes = Array.isArray(layer?.keyframes) ? layer.keyframes : [];
+      if (!legacyKeyframes.some(kf => kf?.isEmpty !== true)) return;
+      projectedLayers.push({
+        id: layer.id,
+        name: layer.name,
+        color: layer.color,
+        visible: layer.visible !== false,
+        locked: true,
+        pilotProjected: true,
+        timelineKeyframesMovable: false,
+        opacity: layer.opacity ?? 1,
+        keyframes: legacyKeyframes.map(kf => ({
+          frame: Number(kf.frame),
+          isEmpty: kf.isEmpty === true
+        })),
+        getKeyframeRanges: totalFrames => layer.getKeyframeRanges(totalFrames)
+      });
+    });
+    return projectedLayers;
   }
 
   let lastFabricPilotTimelineVideoGeneration = null;
@@ -6459,6 +6487,8 @@ async function initApp() {
       lastFabricPilotTimelineVideoGeneration = null;
       lastFabricPilotTimelineStableVideoIdentity = null;
       if (hasFabricPilotSelection) timeline.clearSelection();
+      // 레거시 전체 렌더(편집 가능)는 파일럿 비소유 구간에서만 도달한다.
+      // = 순수 html5 폴백이거나 파일럿이 비활성인 경우뿐이며, 저장 실패로는 도달하지 않는다.
       timeline.renderDrawingLayers(drawingManager.layers, drawingManager.activeLayerId);
     } catch (_error) {
       // 파일럿 상태 훅(notifyStateChange)이 예외를 빈 catch로 삼키므로,
@@ -7554,6 +7584,7 @@ async function initApp() {
   let mpvEmbedBoundsSyncPending = false;
   let mpvVideoTransformSyncPending = false;
   let fabricDrawingPilotFailureToastShown = false;
+  let fabricDrawingPilotDegradedNoticeShown = false;
   let fabricDrawingPilotUiEngaged = false;
   let fabricDrawingPilotStatusSnapshot = null;
   let lastLoggedFabricPersistenceReason = null;
@@ -10641,8 +10672,36 @@ async function initApp() {
   function toggleDrawMode() {
     // 오디오 모드에서는 그리기 모드 진입 차단
     if (state.isAudioMode) return;
-    if (fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
-        isMpvPilotPlaybackActive()) {
+    // mpv 재생 중 B는 항상 fabric 파일럿 경로다. 저장 실패·준비 지연으로 소유권이
+    // 없더라도 레거시 팔레트로 새지 않고 사유만 알린 뒤 종료한다.
+    // 파일럿 자체가 비활성(킬스위치·브리지 미가용)인 경우에만 아래 레거시 경로로 내려간다.
+    if (isMpvPilotPlaybackActive() && fabricDrawingPilotController.isEnabled()) {
+      const pilotState = fabricDrawingPilotController.getState();
+      if (pilotState === 'failed') {
+        // 직전 진입이 실패한 상태다. 사유를 알리되 재시도는 막지 않는다
+        // (toggle()이 'failed'에서도 다시 준비를 시작한다).
+        showToast('드로잉 화면을 시작하지 못했습니다.', 'error');
+        void fabricDrawingPilotController.toggle();
+        return;
+      }
+      if (pilotState === 'disabled' ||
+          !fabricDrawingPilotController.shouldOwnDrawingShortcut()) {
+        showToast('드로잉 준비 중입니다. 잠시 후 다시 시도해 주세요.', 'warn', null, true);
+        return;
+      }
+      // 저장 계층이 저하된 상태에서는 지금 그린 획이 저장되지 않을 수 있음을
+      // 저하 구간마다 최초 1회만 알린다(작업 1 엣지 11).
+      // 스냅샷은 handleFabricDrawingPilotStateChange가 밀어 넣은 캐시(fabricDrawingPilotStatusSnapshot)를
+      // 읽는다 — fabric-drawing-pilot-source.test.js:302가 app.js에서
+      // 컨트롤러의 getStatusSnapshot() 직접 호출을 금지한다(HUD 폴링 금지 불변식).
+      const persistenceDegraded =
+        fabricDrawingPilotStatusSnapshot?.persistenceDegraded === true;
+      if (!persistenceDegraded) {
+        fabricDrawingPilotDegradedNoticeShown = false;
+      } else if (!fabricDrawingPilotDegradedNoticeShown) {
+        fabricDrawingPilotDegradedNoticeShown = true;
+        showToast('저장이 일시 중단된 상태입니다. 지금 그린 획은 저장되지 않을 수 있습니다.', 'warn', null, true);
+      }
       void fabricDrawingPilotController.toggle();
       return;
     }

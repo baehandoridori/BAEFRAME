@@ -1486,6 +1486,14 @@ export class Timeline extends EventTarget {
       </button>
     `;
 
+    // 파일럿 소유 중 투영된 레거시 행은 읽기 전용이다.
+    // 선택·우클릭(설정 팝업)·가시성/잠금 토글 핸들러를 아예 붙이지 않는다.
+    if (layer.pilotProjected === true) {
+      header.dataset.pilotProjected = 'true';
+      this.layerHeaders.appendChild(header);
+      return;
+    }
+
     // 레이어 선택 클릭
     header.addEventListener('click', (e) => {
       if (e.target.dataset.action || e.target.closest('[data-action]')) return;
@@ -1526,6 +1534,8 @@ export class Timeline extends EventTarget {
     const trackRow = document.createElement('div');
     trackRow.className = `track-row drawing-track-row${isActive ? ' active-layer' : ''}`;
     trackRow.dataset.layerId = layer.id;
+    // 파일럿 소유 중 투영된 레거시 행은 CSS 마스크에서 제외되도록 표시한다
+    if (layer.pilotProjected === true) trackRow.dataset.pilotProjected = 'true';
 
     // 키프레임 컨테이너 (키프레임만 DOM 요소로)
     const keyframeContainer = document.createElement('div');
