@@ -143,6 +143,12 @@ export class LiveblocksManager extends EventTarget {
       this._room = result.room;
       this._leave = result.leave;
 
+      // 이벤트 구독 설정 — Storage 로드를 기다리기 전에 설치해야 접속 직후 도착하는
+      // 초기 참여자 상태(ROOM_STATE)를 놓치지 않는다. room.subscribe('others')는
+      // 구독 시점의 현재 값을 초기 발화하지 않는 순수 이벤트 소스이기 때문이다.
+      // _setupSubscriptions()는 this._room만 사용하므로 Storage 없이 안전하다.
+      this._setupSubscriptions();
+
       // Storage 로드 대기
       this._storage = await new Promise((resolve, reject) => {
         const timeout = setTimeout(() => {
@@ -166,9 +172,6 @@ export class LiveblocksManager extends EventTarget {
         }
       });
 
-      // 이벤트 구독 설정
-      this._setupSubscriptions();
-
       this._isConnected = true;
       this._connectionStatus = 'connected';
 
@@ -186,9 +189,26 @@ export class LiveblocksManager extends EventTarget {
 
       this._emit('connectionStatusChanged', { status: 'connected' });
 
+      // 구독 설치 이전에 이미 확정된 초기 참여자 목록을 1회 보상 발행한다.
+      // 구독을 앞당겨도 접속 직전에 확정된 상태는 변화 이벤트로 오지 않으므로,
+      // 이 자체 발행이 없으면 먼저 접속해 있던 참여자가 UI에 나타나지 않는다.
+      this._emitCollaboratorsChanged();
+
       return { roomId: this._roomId, isNewRoom };
     } catch (error) {
       log.error('Room 접속 실패', error);
+      // 구독을 Storage 대기보다 먼저 설치하므로, 접속이 실패하면 죽은 방의 구독이
+      // collaboratorsChanged를 계속 발행하지 않도록 여기서 반드시 정리한다.
+      this._unsubscribers.forEach(unsub => {
+        try { unsub(); } catch (e) { /* 무시 */ }
+      });
+      this._unsubscribers = [];
+      if (this._leave) {
+        try { this._leave(); } catch (e) { /* 무시 */ }
+      }
+      this._room = null;
+      this._leave = null;
+      this._storage = null;
       this._isConnected = false;
       this._connectionStatus = 'disconnected';
       this._emit('connectionStatusChanged', { status: 'disconnected', error });
@@ -371,21 +391,31 @@ export class LiveblocksManager extends EventTarget {
   /**
    * 이벤트 구독 설정
    */
+  /**
+   * 현재 others 스냅샷으로 collaboratorsChanged를 발행
+   * room.subscribe('others')는 변화가 있을 때만 발화하므로, 구독 설치 이전에
+   * 확정된 목록이나 재연결 직후 목록을 보상 푸시할 때도 이 경로를 재사용한다.
+   */
+  _emitCollaboratorsChanged() {
+    if (!this._room) return;
+    const others = this.getOthers();
+    this._emit('collaboratorsChanged', {
+      collaborators: others.map(u => ({
+        userName: u.presence?.userName || '알 수 없음',
+        userColor: u.presence?.userColor || '#888',
+        cursor: u.presence?.cursor,
+        currentFrame: u.presence?.currentFrame,
+        isDrawing: u.presence?.isDrawing,
+        activeComment: u.presence?.activeComment,
+        connectionId: u.connectionId
+      }))
+    });
+  }
+
   _setupSubscriptions() {
     // Others 변경 (접속/퇴장/presence 변경)
     const unsubOthers = this._room.subscribe('others', () => {
-      const others = this.getOthers();
-      this._emit('collaboratorsChanged', {
-        collaborators: others.map(u => ({
-          userName: u.presence?.userName || '알 수 없음',
-          userColor: u.presence?.userColor || '#888',
-          cursor: u.presence?.cursor,
-          currentFrame: u.presence?.currentFrame,
-          isDrawing: u.presence?.isDrawing,
-          activeComment: u.presence?.activeComment,
-          connectionId: u.connectionId
-        }))
-      });
+      this._emitCollaboratorsChanged();
     });
     this._unsubscribers.push(unsubOthers);
 
@@ -400,6 +430,9 @@ export class LiveblocksManager extends EventTarget {
         this._connectionStatus = 'connected';
         this._isConnected = true;
         this._emit('connectionStatusChanged', { status: 'connected' });
+        // 'lost' 동안 others가 비워져 UI가 1명으로 줄어든 뒤, 복구 시 others 변화가
+        // 발생하지 않으면 목록이 그대로 고착된다 — 복구 시점 스냅샷을 1회 재푸시한다.
+        this._emitCollaboratorsChanged();
         log.info('연결 복구됨');
       } else if (event === 'failed') {
         this._connectionStatus = 'disconnected';

@@ -7215,6 +7215,14 @@ async function initApp() {
       if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
       const existingRoomId = bframeData?.liveblocksRoomId || null;
 
+      // 참여자 카운트 기준값만 Room 접속 이전에 잡는다 — LiveblocksManager.stop()은
+      // collaboratorsChanged([])를 발생시키지 않아 이전 방의 참여자 수가 남으면 새 방의
+      // 0→N 에지를 놓친다. 구독이 Storage 대기보다 먼저 설치되어 start() 실행 중에도
+      // collaboratorsChanged가 도착하므로 반드시 여기서 0으로 되돌린다.
+      // 억제 창 시각(_collaborationSessionStartedAt)은 여기서 찍지 않는다 — sync 모듈이
+      // 전부 기동한 playbackSync.start() 직후에 찍는다(아래 c-2).
+      _previousOthersCount = 0;
+
       const { roomId, isNewRoom } = await liveblocksManager.start(
         bframePath,
         userName,
@@ -7246,9 +7254,10 @@ async function initApp() {
       drawingSync.start();
       fabricDrawingSync.start();
       playbackSync.start();
-      // 새 협업 세션 기준값 초기화 — LiveblocksManager.stop()은 collaboratorsChanged([])를
-      // 발생시키지 않아 이전 방의 참여자 수가 남으면 새 방의 late seed 조건을 놓친다
-      _previousOthersCount = 0;
+      // late seed 억제 창은 sync 모듈이 전부 기동한 이 시점부터 센다. 접속 소요시간이
+      // 10초를 넘어도(G: 드라이브 저장 재시도 등) broadcastCurrentState가
+      // fabricDrawingSync.start() 이전에 나가지 않도록 여기서 다시 찍는다.
+      // 참여자 카운트 기준값(_previousOthersCount)은 (c-1)이 접속 직전에 잡는다.
       _collaborationSessionStartedAt = Date.now();
       if (seedCurrentState) {
         // 댓글·레거시 drawing seed는 삭제 경합을 수렴시킬 causal 정보가 없어 제외한다.
@@ -17567,14 +17576,25 @@ async function initApp() {
 
   liveblocksManager.addEventListener('collaborationStarted', (e) => {
     log.info('협업 시작됨 (Liveblocks)', e.detail);
-    // 다른 협업자가 있을 때만 알림 표시 (단일 세션에서는 무시)
-    if (liveblocksManager.hasOtherCollaborators()) {
-      if (!e.detail.isNewRoom) {
-        showToast('실시간 협업 세션에 참여했습니다', 'info');
-      }
-      // AirDrop 스타일 리플 효과
-      _triggerCollabRipple();
-    }
+    // 초기 참여자 스냅샷 1회 반영 — room.subscribe('others')는 변화가 있을 때만
+    // 발화하므로 구독 설치 이전에 확정된 기존 참여자는 이벤트로 오지 않는다.
+    // LiveblocksManager의 자체 보상 발행과 겹쳐도 같은 스냅샷이라 UI는 멱등하다.
+    const isSyncing = playbackSync.syncEnabled;
+    const me = {
+      name: userSettings.getUserName(),
+      color: userSettings.getColorForName(userSettings.getUserName()) || '#4a9eff',
+      isMe: true,
+      syncActive: isSyncing
+    };
+    const others = liveblocksManager.getOthers().map(u => ({
+      name: u.presence?.userName || '알 수 없음',
+      color: u.presence?.userColor || '#888',
+      isMe: false,
+      syncActive: isSyncing
+    }));
+    updateCollaboratorsUI([me, ...others]);
+    // 참여 알림(안내 배너·리플)은 collaboratorsChanged의 0→N 에지가 단독으로 담당한다.
+    // 여기서 다시 알리면 초기 스냅샷 보상 발행과 겹쳐 두 번 재생된다.
   });
 
   liveblocksManager.addEventListener('connectionStatusChanged', (e) => {

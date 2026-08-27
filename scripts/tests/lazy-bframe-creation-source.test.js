@@ -246,7 +246,18 @@ test('Fabric 드로잉(drawingsV3) 동기화가 배선되어 있다', () => {
   assert.match(appSource, /new FabricDrawingSync\(\{/);
   assert.match(appSource, /fabricDrawingSync\.broadcastCurrentState\?\.\(\);/);
   assert.match(appSource, /reloadDrawingsV3FromDisk/);
-  assert.match(appSource, /_previousOthersCount = 0;\s*\n\s*_collaborationSessionStartedAt = Date\.now\(\);/);
+  // 기준값 이중 스탬프: 참여자 카운트는 Room 접속 직전, 억제 창 시각은 playbackSync.start() 직후.
+  assert.equal((appSource.match(/^\s+_previousOthersCount = 0;$/gm) || []).length, 1);
+  assert.equal((appSource.match(/_collaborationSessionStartedAt = Date\.now\(\);/g) || []).length, 1);
+  assert.ok(
+    appSource.indexOf('\n      _previousOthersCount = 0;') <
+      appSource.indexOf('await liveblocksManager.start('),
+    '참여자 카운트 기준값은 Room 접속 이전에 초기화되어야 한다'
+  );
+  assert.match(
+    appSource,
+    /playbackSync\.start\(\);[\s\S]{0,400}?_collaborationSessionStartedAt = Date\.now\(\);/
+  );
   assert.match(appSource, /currentOthersCount > _previousOthersCount &&\s*\n\s*Date\.now\(\) - _collaborationSessionStartedAt > 10000/);
   const syncSource = fs.readFileSync(
     path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-sync.js'), 'utf8'
