@@ -464,6 +464,103 @@ test('shared and persistence render geometry validators stay in parity', async (
   }
 });
 
+test('fabric drawing limits stay in parity across persistence layers', async () => {
+  const fs = require('node:fs');
+  const { FABRIC_DRAWING_STORAGE } = await loadModule();
+  const {
+    FABRIC_DRAWING_STORE_LIMITS,
+    FABRIC_DRAWING_MAX_KEYFRAMES,
+    FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME,
+    FABRIC_DRAWING_MAX_OBJECTS_TOTAL,
+    FABRIC_DRAWING_MAX_POINTS_PER_STROKE,
+    FABRIC_DRAWING_MAX_SOURCE_DIMENSION,
+    FABRIC_DRAWING_MAX_TOTAL_FRAMES,
+    FABRIC_DRAWING_MAX_POINT_COORDINATE,
+    FABRIC_DRAWING_MAX_POINT_TIME,
+    FABRIC_DRAWING_MAX_BRUSH_SIZE,
+    FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE,
+    FABRIC_DRAWING_MAX_STRING_LENGTH,
+    FABRIC_DRAWING_MAX_DOCUMENT_BYTES,
+    FABRIC_DRAWING_MAX_TRANSITION_BYTES
+  } = require('../../shared/fabric-drawing-limits.js');
+
+  // 값 자체가 조용히 바뀌지 않도록 고정 리터럴로 못 박는다.
+  assert.deepEqual({ ...FABRIC_DRAWING_STORE_LIMITS }, {
+    maxDocumentBytes: 128 * 1024 * 1024,
+    maxTransitionBytes: 8 * 1024 * 1024,
+    maxKeyframes: 10000,
+    maxObjectsPerKeyframe: 10000,
+    maxObjectsTotal: 100000,
+    maxPointsPerStroke: 20000
+  });
+  assert.equal(FABRIC_DRAWING_MAX_SOURCE_DIMENSION, 1_000_000);
+  assert.equal(FABRIC_DRAWING_MAX_TOTAL_FRAMES, 1_000_000_000);
+  assert.equal(FABRIC_DRAWING_MAX_POINT_COORDINATE, 1_000_000_000);
+  assert.equal(FABRIC_DRAWING_MAX_POINT_TIME, 1_000_000_000_000);
+  assert.equal(FABRIC_DRAWING_MAX_BRUSH_SIZE, 1_000_000);
+  assert.equal(FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE, 1_000_000_000);
+  assert.equal(FABRIC_DRAWING_MAX_STRING_LENGTH, 32768);
+  assert.equal(FABRIC_DRAWING_MAX_DOCUMENT_BYTES, 128 * 1024 * 1024);
+  assert.equal(FABRIC_DRAWING_MAX_TRANSITION_BYTES, 8 * 1024 * 1024);
+  assert.equal(FABRIC_DRAWING_MAX_KEYFRAMES, 10000);
+  assert.equal(FABRIC_DRAWING_MAX_OBJECTS_PER_KEYFRAME, 10000);
+  assert.equal(FABRIC_DRAWING_MAX_OBJECTS_TOTAL, 100000);
+  assert.equal(FABRIC_DRAWING_MAX_POINTS_PER_STROKE, 20000);
+
+  // 브라우저 네이티브 ESM인 스토어는 리터럴을 유지하므로 파리티로만 묶인다.
+  assert.deepEqual(
+    { ...FABRIC_DRAWING_STORAGE.limits },
+    { ...FABRIC_DRAWING_STORE_LIMITS }
+  );
+
+  // 오버레이 호스트/런타임은 리터럴이 아니라 shared 소스를 실제로 참조해야 한다.
+  const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
+  const hostSource = normalizeNewlines(fs.readFileSync(
+    path.resolve(import.meta.dirname, '../../main/mpv-overlay-host.js'),
+    'utf8'
+  ));
+  const runtimeSource = normalizeNewlines(fs.readFileSync(
+    path.resolve(
+      import.meta.dirname,
+      '../../renderer/scripts/modules/mpv-fabric-overlay-runtime.js'
+    ),
+    'utf8'
+  ));
+
+  assert.match(hostSource, /} = require\('\.\.\/shared\/fabric-drawing-limits'\);/);
+  assert.match(
+    hostSource,
+    /FABRIC_DRAWING_MAX_TRANSITION_BYTES: FABRIC_DRAWING_TRANSITION_MAX_BYTES,/
+  );
+  assert.match(
+    hostSource,
+    /FABRIC_DRAWING_MAX_DOCUMENT_BYTES: FABRIC_DRAWING_SNAPSHOT_MAX_BYTES,/
+  );
+  assert.doesNotMatch(hostSource, /^const FABRIC_DRAWING_MAX_KEYFRAMES = /m);
+  assert.doesNotMatch(hostSource, /^const FABRIC_DRAWING_MAX_STRING_LENGTH = /m);
+  assert.doesNotMatch(hostSource, /^const FABRIC_DRAWING_SNAPSHOT_MAX_BYTES = /m);
+
+  assert.match(
+    runtimeSource,
+    /} = require\('\.\.\/\.\.\/\.\.\/shared\/fabric-drawing-limits\.js'\);/
+  );
+  assert.match(
+    runtimeSource,
+    /FABRIC_DRAWING_MAX_KEYFRAMES: MAX_PERSISTED_KEYFRAMES,/
+  );
+  assert.match(
+    runtimeSource,
+    /FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH/
+  );
+  assert.doesNotMatch(runtimeSource, /^const MAX_PERSISTED_KEYFRAMES = /m);
+  assert.doesNotMatch(runtimeSource, /^const MAX_PERSISTENCE_STRING_LENGTH = /m);
+
+  // 입력측 상한은 shared로 옮기지 않지만(엣지 4), 호스트측 대응물과 값이 어긋나면
+  // "캡처는 되는데 호스트가 거부"하는 비대칭이 생기므로 값 동기는 강제한다.
+  assert.match(runtimeSource, /^const MAX_STROKE_POINTS = 20000;$/m);
+  assert.match(runtimeSource, /^const DEFAULT_MAX_OBJECTS = 10000;$/m);
+});
+
 test('delta byte accounting never stringifies untouched records in the active frame', async () => {
   const { createFabricDrawingPersistenceStore } = await loadModule();
   const untouched = record('untouched-large', {

@@ -4696,6 +4696,20 @@ test('standard mpv suite includes the hidden Fabric toolbar Chromium layout regr
   );
 });
 
+test('standard mpv suite runs the keyboard shortcut target regression', () => {
+  const packageJson = require('../../package.json');
+
+  // 키 릴레이 계열과 같은 그룹에서 돌아야 B/Space 라우팅 회귀를 CI가 잡는다.
+  assert.match(
+    packageJson.scripts['test:mpv'],
+    /keyboard-shortcut-targets\.test\.js/
+  );
+  assert.match(
+    packageJson.scripts['test:mpv'],
+    /mpv-overlay-keyboard-relay\.test\.js/
+  );
+});
+
 test('current overlay pointerdown request relays only the exact active drawing session to main', async () => {
   const harness = createDrawingHostHarness();
   const tokens = await activateDrawingHost(harness, {

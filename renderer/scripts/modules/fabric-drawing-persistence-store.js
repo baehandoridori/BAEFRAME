@@ -2,6 +2,13 @@ const STORAGE_SCHEMA = 'baeframe-fabric-scenes';
 const STORAGE_VERSION = '1.0.0';
 const STORAGE_ENGINE = 'fabric-7';
 
+// 한도 단일 소스: shared/fabric-drawing-limits.js의 FABRIC_DRAWING_STORE_LIMITS.
+// 이 파일은 브라우저 네이티브 ES 모듈(index.html의 type="module" → app.js,
+// nodeIntegration: false)이라 CommonJS인 shared 모듈을 import 할 수 없으므로
+// 리터럴을 유지한다. 값이 어긋나지 않도록
+// scripts/tests/fabric-drawing-persistence-store.test.mjs의
+// 'fabric drawing limits stay in parity across persistence layers' 테스트가
+// shared 소스와 deepEqual 대조한다. 한도를 바꾸려면 shared 파일을 먼저 고칠 것.
 const DEFAULT_LIMITS = Object.freeze({
   maxDocumentBytes: 128 * 1024 * 1024,
   maxTransitionBytes: 8 * 1024 * 1024,
