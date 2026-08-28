@@ -6298,7 +6298,16 @@ function createFabricOverlayRuntime(options = {}) {
       // 기하 예산을 초과한 획은 삭제 후보에서 제외한다 (오삭제보다 미삭제가 안전하다).
       if (touch.limitExceeded || !touch.hit) continue;
       gesture.erasedIds.add(record.id);
-      if (object) {
+      // 획 단위 모드는 닿은 획을 통째로 지우므로, 드래그 중 숨기는 미리보기가
+      // 커밋 결과와 정확히 일치한다.
+      //
+      // 픽셀 모드는 다르다. 히트 판정은 스윕 사각형들의 합집합으로 하는데 커밋은
+      // 그것을 근사한 단순 폴리곤 하나로 하고, 이 저장소에는 폴리곤 불리언
+      // 유니온이 없다(부록 C 참조). 그래서 안쪽 모서리처럼 근사가 미치지 못하는
+      // 자리에서만 닿은 획은 숨었다가 되살아나 사용자를 혼란스럽게 한다.
+      // 어차피 일치시킬 수 없다면 **숨기지 않는 편이 정직하다** — 픽셀 모드는
+      // 손을 뗄 때 잘린 결과만 보여 준다.
+      if (object && gesture.mode !== 'pixel') {
         gesture.hiddenObjects.push(object);
         object.set?.({ visible: false });
         hidden += 1;

@@ -15834,3 +15834,49 @@ test('a sharp eraser turn commits the corner it actually swept', async () => {
     await harness.destroy();
   }
 });
+
+test('pixel mode never hides a stroke it might not cut', async () => {
+  // 히트 판정은 스윕 사각형들의 합집합이고 커밋은 그것을 근사한 단순 폴리곤
+  // 하나다. 저장소에 폴리곤 불리언 유니온이 없어 둘을 정확히 일치시킬 수 없으므로,
+  // 근사가 미치지 못하는 자리(안쪽 모서리 등)에서만 닿은 획은 숨었다가 되살아난다.
+  // 픽셀 모드는 아예 숨기지 않아 그 깜빡임을 없앤다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 7901);
+    const target = harness.canvas.getObjects()[0];
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7902;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    assert.notEqual(target.visible, false, '픽셀 모드는 드래그 중 획을 숨기지 않는다');
+
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 130, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stroke mode still previews the strokes it is about to delete', async () => {
+  // 획 단위 모드는 닿은 획을 통째로 지우므로 미리보기가 커밋과 정확히 일치한다.
+  // 픽셀 모드 때문에 이 미리보기를 잃으면 안 된다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 7911);
+    const target = harness.canvas.getObjects()[0];
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 7912;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    assert.equal(target.visible, false, '지울 획은 드래그 중 미리 사라져야 한다');
+
+    harness.dispatchCapturedPointerUp(100, 100, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});

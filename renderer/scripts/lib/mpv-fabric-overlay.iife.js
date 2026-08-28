@@ -18873,7 +18873,7 @@ void main() {
             const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
             if (touch.limitExceeded || !touch.hit) continue;
             gesture.erasedIds.add(record.id);
-            if (object) {
+            if (object && gesture.mode !== "pixel") {
               gesture.hiddenObjects.push(object);
               object.set?.({ visible: false });
               hidden += 1;
