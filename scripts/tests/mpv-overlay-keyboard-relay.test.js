@@ -540,6 +540,44 @@ test('릴레이된 전역 단축키 코드는 남아 있는 텍스트 포커스�
   ), true);
   assert.deepEqual(fallback.activeEvents.map(event => event.code), ['KeyB']);
   assert.equal(fallback.documentEvents.length, 0);
+
+  // 문자열 항목은 "수식키 없는 그 코드"를 뜻한다. Shift+B 는 텍스트 입력에 남는다.
+  const shifted = makeDocument({ tagName: 'TEXTAREA' });
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'B', code: 'KeyB', shiftKey: true }),
+    {
+      ownerDocument: shifted.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: ['KeyB']
+    }
+  ), true);
+  assert.deepEqual(shifted.activeEvents.map(event => event.code), ['KeyB']);
+  assert.equal(shifted.documentEvents.length, 0);
+
+  // 서술자로 넘기면 그 chord 만 우회한다 — 평문 키는 에디터에 그대로 남는다.
+  const chord = makeDocument({ tagName: 'TEXTAREA' });
+  const eraserChord = [{ code: 'KeyE', shift: true }];
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'E', code: 'KeyE', shiftKey: true }),
+    {
+      ownerDocument: chord.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: eraserChord
+    }
+  ), true);
+  assert.deepEqual(chord.documentEvents.map(event => event.code), ['KeyE']);
+  assert.equal(chord.activeEvents.length, 0);
+
+  assert.equal(dispatchMpvOverlayKeyboardInput(
+    validInput({ key: 'e', code: 'KeyE' }),
+    {
+      ownerDocument: chord.ownerDocument,
+      KeyboardEventConstructor: FakeKeyboardEvent,
+      globalShortcutCodes: eraserChord
+    }
+  ), true);
+  assert.deepEqual(chord.activeEvents.map(event => event.code), ['KeyE'], '평문 E 는 에디터로 간다');
+  assert.equal(chord.documentEvents.length, 1);
 });
 
 test('app은 drawMode 단축키 코드를 릴레이 우회 목록으로 넘긴다', () => {
@@ -548,12 +586,12 @@ test('app은 drawMode 단축키 코드를 릴레이 우회 목록으로 넘긴�
     appSource,
     /function getMpvOverlayDrawModeShortcutDescriptor\(\) \{[\s\S]*?userSettings\.getShortcut\('drawMode'\)[\s\S]*?key: shortcut\.key[\s\S]*?\}/
   );
-  // 우회 목록에는 drawMode 외에 그리기 도구·브러시 크기 단축키도 함께 들어간다.
-  // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가 에디터면
-  // 그 키들이 에디터로 새고 컨트롤러가 editable-target 으로 버리기 때문이다.
+  // 우회 목록에는 drawMode 외에 그리기 도구·브러시 크기 단축키도 함께 들어가고,
+  // code 가 아니라 수식키까지 담은 서술자로 넘어간다. 릴레이가 chord 전체를
+  // 대조하므로 Shift+E 를 배정해도 평문 E 는 텍스트 입력에 그대로 남는다.
   assert.match(
     appSource,
-    /function getMpvOverlayRelayGlobalShortcutCodes\(\) \{[\s\S]*?drawModeShortcut\.ctrl && !drawModeShortcut\.shift && !drawModeShortcut\.alt[\s\S]*?codes\.add\(drawModeShortcut\.key\);[\s\S]*?return \[\.\.\.codes\];[\s\S]*?\}/
+    /function getMpvOverlayRelayGlobalShortcutCodes\(\) \{[\s\S]*?const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor\(\);[\s\S]*?for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) add\(describe\(actionId\)\);[\s\S]*?return shortcuts;[\s\S]*?\}/
   );
   assert.match(appSource, /drawModeShortcut: getMpvOverlayDrawModeShortcutDescriptor\(\),/);
 });

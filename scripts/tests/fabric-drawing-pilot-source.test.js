@@ -1794,11 +1794,12 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
   ]);
   assert.match(
     appSource,
-    /for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) addUnmodified\(actionId\);/
+    /for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) add\(describe\(actionId\)\);/
   );
-  // 수식키가 붙은 배정은 평문 키를 텍스트 포커스에서 빼앗지 않도록 제외한다.
-  assert.match(
-    appSource,
-    /if \(shortcut\.ctrl === true \|\| shortcut\.shift === true \|\| shortcut\.alt === true\) return;/
-  );
+  // 수식키가 붙은 배정도 그대로 넘긴다 — 릴레이가 chord 전체를 대조하므로
+  // Shift+E 를 우회 목록에 넣어도 평문 E 는 텍스트 입력에 남는다.
+  assert.match(appSource, /ctrl: shortcut\.ctrl === true,/);
+  assert.match(appSource, /shift: shortcut\.shift === true,/);
+  assert.match(appSource, /alt: shortcut\.alt === true/);
+  assert.doesNotMatch(appSource, /addUnmodified/);
 });

@@ -8930,25 +8930,47 @@ async function initApp() {
   }
 
   function getMpvOverlayRelayGlobalShortcutCodes() {
-    // 릴레이 우회는 code만 보고 판정하므로, 수식키가 붙은 단축키는 평문 키까지
-    // 텍스트 포커스에서 빼앗는 과잉 우회가 된다 — 단독 키일 때만 등록한다.
-    const codes = new Set();
-    const addUnmodified = actionId => {
-      const shortcut = userSettings.getShortcut(actionId);
-      if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return;
-      if (shortcut.ctrl === true || shortcut.shift === true || shortcut.alt === true) return;
-      codes.add(shortcut.key);
-    };
-    const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
-    if (drawModeShortcut &&
-        !drawModeShortcut.ctrl && !drawModeShortcut.shift && !drawModeShortcut.alt) {
-      codes.add(drawModeShortcut.key);
-    }
     // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가
     // 에디터면 릴레이된 키가 그쪽으로 가고 컨트롤러가 editable-target 으로 버린다.
-    // 그리기 중에만 쓰는 도구·크기 단축키를 함께 우회 목록에 넣는다.
-    for (const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS) addUnmodified(actionId);
-    return [...codes];
+    // 그리기 중에만 쓰는 단축키를 우회 목록에 넣는다.
+    //
+    // 수식키가 붙은 배정도 그대로 넘긴다. 릴레이가 chord 전체를 대조하므로
+    // Shift+E 를 넣어도 평문 E 는 텍스트 입력에 그대로 남는다.
+    const seen = new Set();
+    const shortcuts = [];
+    const add = descriptor => {
+      if (!descriptor) return;
+      const signature = [
+        descriptor.code,
+        descriptor.ctrl ? 'c' : '',
+        descriptor.shift ? 's' : '',
+        descriptor.alt ? 'a' : ''
+      ].join('|');
+      if (seen.has(signature)) return;
+      seen.add(signature);
+      shortcuts.push(descriptor);
+    };
+    const describe = actionId => {
+      const shortcut = userSettings.getShortcut(actionId);
+      if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return null;
+      return {
+        code: shortcut.key,
+        ctrl: shortcut.ctrl === true,
+        shift: shortcut.shift === true,
+        alt: shortcut.alt === true
+      };
+    };
+    const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
+    if (drawModeShortcut) {
+      add({
+        code: drawModeShortcut.key,
+        ctrl: drawModeShortcut.ctrl,
+        shift: drawModeShortcut.shift,
+        alt: drawModeShortcut.alt
+      });
+    }
+    for (const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS) add(describe(actionId));
+    return shortcuts;
   }
 
   function getMpvOverlayState() {

@@ -74,14 +74,39 @@ function isOverlayHistoryShortcut(input) {
   return input.code === 'KeyY' && input.shiftKey !== true;
 }
 
-function normalizeGlobalShortcutCodes(value) {
+// 문자열은 "수식키 없는 그 코드"를, 객체는 지정된 chord 전체를 뜻한다.
+// code 만 보면 Shift+E 를 우회 목록에 넣었을 때 평문 E 까지 텍스트 입력에서
+// 빼앗고, 반대로 chord 배정을 빼면 그 단축키가 에디터로 새어 죽는다.
+function normalizeGlobalShortcuts(value) {
   if (!value) return null;
-  const codes = Array.isArray(value) ? value : [value];
-  const normalized = new Set();
-  for (const code of codes) {
-    if (typeof code === 'string' && code.length > 0 && code.length <= 32) normalized.add(code);
+  const entries = Array.isArray(value) ? value : [value];
+  const normalized = [];
+  for (const entry of entries) {
+    if (typeof entry === 'string') {
+      if (entry.length === 0 || entry.length > 32) continue;
+      normalized.push({ code: entry, ctrlKey: false, shiftKey: false, altKey: false });
+      continue;
+    }
+    const code = entry?.code ?? entry?.key;
+    if (typeof code !== 'string' || code.length === 0 || code.length > 32) continue;
+    normalized.push({
+      code,
+      ctrlKey: entry.ctrl === true || entry.ctrlKey === true,
+      shiftKey: entry.shift === true || entry.shiftKey === true,
+      altKey: entry.alt === true || entry.altKey === true
+    });
   }
-  return normalized.size > 0 ? normalized : null;
+  return normalized.length > 0 ? normalized : null;
+}
+
+function matchesGlobalShortcut(input, shortcuts) {
+  if (shortcuts === null || input.metaKey === true) return false;
+  return shortcuts.some(shortcut => (
+    shortcut.code === input.code &&
+    shortcut.ctrlKey === (input.ctrlKey === true) &&
+    shortcut.shiftKey === (input.shiftKey === true) &&
+    shortcut.altKey === (input.altKey === true)
+  ));
 }
 
 export function dispatchMpvOverlayKeyboardInput(
@@ -119,9 +144,8 @@ export function dispatchMpvOverlayKeyboardInput(
     // 메인 창에 남아 있던 텍스트 입력 포커스가 오버레이에서 릴레이된 전역 단축키를
     // 삼키지 않게 한다. body로 보내면 getEffectiveKeyboardShortcutTarget이 다시
     // activeElement로 되돌아가므로(BODY 폴백), 히스토리 chord와 같이 document로 보낸다.
-    const shortcutCodes = normalizeGlobalShortcutCodes(globalShortcutCodes);
-    const escapesTextEntry = shortcutCodes !== null &&
-      shortcutCodes.has(input.code) &&
+    const shortcuts = normalizeGlobalShortcuts(globalShortcutCodes);
+    const escapesTextEntry = matchesGlobalShortcut(input, shortcuts) &&
       isTextEntryShortcutTarget(activeElement);
     const dispatchTarget = !isOverlayHistoryShortcut(input) &&
         !escapesTextEntry &&
