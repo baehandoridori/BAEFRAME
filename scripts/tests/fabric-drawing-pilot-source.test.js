@@ -1819,3 +1819,19 @@ test('palette height changes reclamp the position so revealed controls stay on s
     /function setSectionVisible\(id, visible\) \{[\s\S]*?if \(wasHidden !== !visible\) applyPosition\(state\);/
   );
 });
+
+test('section labels do not advertise keyboard activation the overlay cannot deliver', () => {
+  // 그리기 입력이 켜져 있는 동안 오버레이 호스트가 모든 키를 메인 렌더러로 넘기며
+  // preventDefault() 한다. Enter·Space 가 오버레이 문서에 도달하지 못하고 Tab 으로
+  // 포커스를 옮길 수도 없으므로, 라벨에 role="button" 과 tabindex 를 달면
+  // 도달할 수 없는 컨트롤을 도달할 수 있는 것처럼 알리게 된다.
+  const labelBlock = fabricPaletteSource.match(
+    /label\.className = 'mpv-fabric-pilot-section-label';[\s\S]*?listen\(label, 'click', toggleSection\);/
+  );
+  assert.ok(labelBlock, '섹션 라벨 조립부가 있어야 한다');
+  assert.doesNotMatch(labelBlock[0], /setAttribute\?\.\('role', 'button'\)/);
+  assert.doesNotMatch(labelBlock[0], /setAttribute\?\.\('tabindex'/);
+  assert.doesNotMatch(labelBlock[0], /listen\(label, 'keydown'/);
+  // 마우스로 무엇을 하는지는 툴팁으로 알린다.
+  assert.match(fabricPaletteSource, /label\.setAttribute\?\.\('title', `\$\{section\.label\} 접기\/펴기`\);/);
+});

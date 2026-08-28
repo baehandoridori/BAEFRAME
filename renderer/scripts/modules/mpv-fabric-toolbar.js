@@ -202,8 +202,14 @@ function createFabricDrawingPalette(options = {}) {
     }
     for (const item of items) row.appendChild(item);
     // 섹션 라벨을 눌러 그 섹션만 접는다. 팔레트 전체 접기와는 별개다.
-    label.setAttribute?.('role', 'button');
-    label.setAttribute?.('tabindex', '0');
+    //
+    // 키보드 활성화는 배선하지 않는다. 그리기 입력이 켜져 있는 동안 오버레이
+    // 호스트의 before-input-event 가 모든 키를 메인 렌더러로 넘기며
+    // preventDefault() 하므로 Enter·Space 가 이 문서에 아예 도달하지 못하고,
+    // Tab 으로 포커스를 옮길 수도 없다. role="button" 과 tabindex 를 달면
+    // 도달할 수 없는 컨트롤을 도달할 수 있는 것처럼 알리는 셈이 된다.
+    // 오버레이가 포커스 상태를 호스트에 알리는 경로가 생기면 그때 배선한다.
+    label.setAttribute?.('title', `${section.label} 접기/펴기`);
     label.dataset.collapsed = 'false';
     const sectionId = String(section.id || section.label);
     const toggleSection = () => {
@@ -227,11 +233,6 @@ function createFabricDrawingPalette(options = {}) {
       applyPosition(state);
     };
     listen(label, 'click', toggleSection);
-    listen(label, 'keydown', event => {
-      if (event?.key !== 'Enter' && event?.key !== ' ') return;
-      event.preventDefault?.();
-      toggleSection();
-    });
     sectionElement.appendChild(label);
     sectionElement.appendChild(row);
     for (const item of appended) sectionElement.appendChild(item);

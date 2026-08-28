@@ -5915,8 +5915,7 @@
             }
           }
           for (const item of items) row.appendChild(item);
-          label.setAttribute?.("role", "button");
-          label.setAttribute?.("tabindex", "0");
+          label.setAttribute?.("title", `${section.label} \uC811\uAE30/\uD3B4\uAE30`);
           label.dataset.collapsed = "false";
           const sectionId = String(section.id || section.label);
           const toggleSection = () => {
@@ -5934,11 +5933,6 @@
             applyPosition(state);
           };
           listen(label, "click", toggleSection);
-          listen(label, "keydown", (event) => {
-            if (event?.key !== "Enter" && event?.key !== " ") return;
-            event.preventDefault?.();
-            toggleSection();
-          });
           sectionElement.appendChild(label);
           sectionElement.appendChild(row);
           for (const item of appended) sectionElement.appendChild(item);
