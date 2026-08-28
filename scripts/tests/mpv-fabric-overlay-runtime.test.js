@@ -15971,11 +15971,17 @@ test('an outline record keeps the drawingsV3 schema unchanged', async () => {
     const outline = outlineObjects(harness)[0];
     assert.ok(outline);
     assert.equal(outline.type, 'stroke');
-    // 결정 1 — 스키마를 한 글자도 바꾸지 않는다.
+    // 결정 1 — 스키마를 한 글자도 바꾸지 않는다. renderGeometry 는 이미 허용된
+    // 선택 키이고, 외곽선을 고리로 칠해 불투명도가 두 번 합성되지 않게 하는 데 쓴다.
     assert.deepEqual(
       Object.keys(outline).sort(),
-      ['id', 'pathData', 'sourcePoints', 'style', 'transform', 'type']
+      ['id', 'pathData', 'renderGeometry', 'sourcePoints', 'style', 'transform', 'type']
     );
+    assert.deepEqual(
+      Object.keys(outline.renderGeometry).sort(),
+      ['fillRule', 'pathData', 'version']
+    );
+    assert.equal(outline.renderGeometry.fillRule, 'evenodd');
     assert.deepEqual(Object.keys(outline.style).sort(), ['color', 'opacity', 'size']);
   } finally {
     await harness.destroy();
@@ -16365,6 +16371,33 @@ test('an outline follows its body during the drag, not just at commit', async ()
       `드래그 중 짝이 벌어졌다 (전 ${JSON.stringify(gapBefore)} / 후 ` +
       `${JSON.stringify({ left: bodyPath.left - outlinePath.left, top: bodyPath.top - outlinePath.top })})`
     );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a translucent outlined stroke does not double-composite its centre', async () => {
+  // 외곽선은 본체를 통째로 덮는 채워진 경로다. 그대로 두면 불투명도가 1 미만일 때
+  // 두 층이 따로 합성돼 중심이 두 번 칠해지고(50% 두 층 = 75%) 외곽선 색이 본체
+  // 색으로 번진다. 본체 윤곽을 합쳐 evenodd 로 칠하면 겹치는 부분이 상쇄돼 고리가 된다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { color: '#ffffff', width: 4 });
+    harness.runtime.updateDrawingBrush({ size: 8 });
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 8701);
+
+    const [outline, body] = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.ok(outline.id.endsWith('~outline'));
+    assert.ok(outline.renderGeometry, '고리로 칠하려면 renderGeometry 가 있어야 한다');
+    assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+    // 고리 경로는 외곽선 윤곽과 본체 윤곽을 함께 담는다 — 겹치는 부분이 상쇄된다.
+    assert.ok(outline.renderGeometry.pathData.includes(body.pathData), '본체 윤곽이 합쳐져야 한다');
+    assert.ok(outline.renderGeometry.pathData.includes(outline.pathData));
+
+    // 캔버스도 고리 경로로 그린다.
+    const outlinePath = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === outline.id);
+    assert.equal(outlinePath.fillRule, 'evenodd');
   } finally {
     await harness.destroy();
   }

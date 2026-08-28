@@ -5240,6 +5240,12 @@ function createFabricOverlayRuntime(options = {}) {
       return null;
     }
     if (!strokeData?.pathData) return null;
+    // 외곽선은 본체를 통째로 덮는 **채워진** 경로다. 그대로 두면 불투명도가 1 미만일 때
+    // 두 층이 따로 합성돼 중심이 두 번 칠해지고(50% 두 층 = 75%) 외곽선 색이 본체
+    // 색으로 번진다. 본체 윤곽을 같은 경로에 합쳐 evenodd 로 칠하면 겹치는 부분이
+    // 상쇄돼 **고리**가 된다 — 눈에 보이는 외곽선만 남는다.
+    // renderGeometry 는 이미 허용된 선택 키라 저장 스키마는 그대로다.
+    const ringPathData = `${strokeData.pathData} ${record.pathData}`;
     const derived = {
       id,
       type: 'stroke',
@@ -5250,6 +5256,15 @@ function createFabricOverlayRuntime(options = {}) {
       style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
     };
     if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
+    // 합친 경로가 저장 한도를 넘으면 고리를 포기하고 채워진 판으로 둔다.
+    // 불투명도 1 에서는 결과가 같고, 그 아래에서는 중심이 조금 진해질 뿐이다.
+    if (ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
+      derived.renderGeometry = {
+        version: 1,
+        pathData: ringPathData,
+        fillRule: 'evenodd'
+      };
+    }
     // 본체 transform 을 그대로 베끼면 안 된다. 외곽선은 더 굵어 pathData 의
     // pathOffset·바운딩 박스 중심이 본체와 다르고, 같은 transform 을 주면 두
     // **오브젝트 중심**이 맞춰질 뿐 소스 좌표가 어긋난다. 압력이 실린 획이나
@@ -5557,7 +5572,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const selectedObjectIds = [...pending.selectedIds];
     const result = sceneStore.replaceObjects({
-      replacements: expandOutlineReplacements(pending.replacements),
+      replacements: pending.replacements,
       selectedObjectIds,
       dx,
       dy,
@@ -5605,7 +5620,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
     const result = sceneStore.replaceObjects({
-      replacements: expandOutlineReplacements(replacements),
+      replacements,
       selectedObjectIds: [],
       kind: 'split-stroke'
     });
@@ -6066,7 +6081,9 @@ function createFabricOverlayRuntime(options = {}) {
     let result = { applied: false, selectedObjectIds };
     if (replacements.length > 0 && selectedFragmentIds.size > 0) {
       const staged = stagePendingLassoSelection({
-        replacements,
+        // 외곽선 제거를 **스테이징 시점에** 반영한다. 커밋 때만 확장하면 드래그하는
+        // 내내 쪼개지지 않은 원본 외곽선이 캔버스에 그대로 남아 있다.
+        replacements: expandOutlineReplacements(replacements),
         selectedPersistedIds,
         selectedFragmentIds,
         snapshot,

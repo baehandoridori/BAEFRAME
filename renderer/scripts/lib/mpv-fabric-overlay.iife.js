@@ -17914,6 +17914,7 @@ void main() {
             return null;
           }
           if (!strokeData?.pathData) return null;
+          const ringPathData = `${strokeData.pathData} ${record.pathData}`;
           const derived = {
             id,
             type: "stroke",
@@ -17924,6 +17925,13 @@ void main() {
             style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
           };
           if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
+          if (ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
+            derived.renderGeometry = {
+              version: 1,
+              pathData: ringPathData,
+              fillRule: "evenodd"
+            };
+          }
           derived.transform = captureTransform(makeFabricPath(derived));
           return derived;
         }
@@ -18194,7 +18202,7 @@ void main() {
           }
           const selectedObjectIds = [...pending.selectedIds];
           const result = sceneStore.replaceObjects({
-            replacements: expandOutlineReplacements(pending.replacements),
+            replacements: pending.replacements,
             selectedObjectIds,
             dx,
             dy,
@@ -18241,7 +18249,7 @@ void main() {
           }
           const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
           const result = sceneStore.replaceObjects({
-            replacements: expandOutlineReplacements(replacements),
+            replacements,
             selectedObjectIds: [],
             kind: "split-stroke"
           });
@@ -18644,7 +18652,9 @@ void main() {
           let result = { applied: false, selectedObjectIds };
           if (replacements.length > 0 && selectedFragmentIds.size > 0) {
             const staged = stagePendingLassoSelection({
-              replacements,
+              // 외곽선 제거를 **스테이징 시점에** 반영한다. 커밋 때만 확장하면 드래그하는
+              // 내내 쪼개지지 않은 원본 외곽선이 캔버스에 그대로 남아 있다.
+              replacements: expandOutlineReplacements(replacements),
               selectedPersistedIds,
               selectedFragmentIds,
               snapshot,
