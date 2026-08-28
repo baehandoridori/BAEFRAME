@@ -1294,9 +1294,14 @@ export function createFabricDrawingPilotController(options = {}) {
   async function sendDrawingActionRequest(request) {
     try {
       const response = await electronAPI.mpvApplyOverlayDrawingAction(request);
-      return response && typeof response === 'object'
-        ? response
-        : { success: false, applied: false };
+      if (!response || typeof response !== 'object') {
+        return { success: false, applied: false };
+      }
+      // 실행취소가 키프레임을 없애거나 되살리면 전이만으로는 스토어의 키프레임 목록을
+      // 맞출 수 없다(전이는 객체 단위다). 그대로 두면 타임라인이 다음 저장 주기까지
+      // 사라진 키프레임 마커를 들고 있으므로 즉시 재동기한다.
+      if (response.keyframeSetChanged === true) runDetached(requestPersistenceResync());
+      return response;
     } catch {
       return { success: false, applied: false };
     }

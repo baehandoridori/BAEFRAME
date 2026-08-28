@@ -9873,6 +9873,36 @@ test('되돌린 임시 씬에 새로 그리면 지워진 내용이 되살아나�
   );
 });
 
+test('키프레임이 생기거나 사라지는 되돌리기만 재동기를 요청한다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  const base = {
+    hostGeneration: 1, videoGeneration: 1, persistenceSessionId: 'ps-kfset',
+    stableVideoIdentity: 'kfset-video', fps: 24, totalFrames: 240
+  };
+  assert.equal(sceneStore.hydrateVideo({ ...base, keyframes: [] }).accepted, true);
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'kfset-session', stableVideoIdentity: 'kfset-video', targetFrame: 10,
+    hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+  }).accepted, true);
+  // 첫 획이 임시 씬을 정식화한다 = 키프레임을 만든다.
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('kfset-A')).applied, true);
+  // 두 번째 획은 이미 정식인 씬에 얹힌다 = 키프레임 집합이 그대로다.
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('kfset-B')).applied, true);
+
+  const plain = sceneStore.undo();
+  assert.equal(plain.applied, true);
+  assert.equal(plain.keyframeSetChanged, false, '키프레임 집합이 그대로면 재동기가 필요 없다');
+
+  const removesKeyframe = sceneStore.undo();
+  assert.equal(removesKeyframe.applied, true);
+  assert.equal(removesKeyframe.keyframeSetChanged, true, '키프레임이 사라지면 재동기해야 한다');
+
+  const restoresKeyframe = sceneStore.redo();
+  assert.equal(restoresKeyframe.applied, true);
+  assert.equal(restoresKeyframe.keyframeSetChanged, true, '되살아날 때도 마찬가지다');
+});
+
 test('redo history bytes remain in the store-wide maxBytes calculation across scenes', () => {
   const harness = createHistoryHarness({
     maxBytes: 700,
