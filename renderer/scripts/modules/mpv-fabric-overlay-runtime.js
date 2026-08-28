@@ -5262,15 +5262,15 @@ function createFabricOverlayRuntime(options = {}) {
       style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
     };
     if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
-    // 합친 경로가 저장 한도를 넘으면 고리를 포기하고 채워진 판으로 둔다.
-    // 불투명도 1 에서는 결과가 같고, 그 아래에서는 중심이 조금 진해질 뿐이다.
-    if (ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
-      derived.renderGeometry = {
-        version: 1,
-        pathData: ringPathData,
-        fillRule: 'evenodd'
-      };
-    }
+    // 합친 경로가 저장 한도를 넘으면 고리를 만들 수 없다. 그때 채워진 판으로
+    // 두면 불투명도 1 미만에서 중심이 두 번 칠해지고 색이 번진다 — 그 상태를
+    // 남기느니 **외곽선을 붙이지 않는다.** 덜 그리는 쪽이 틀리게 그리는 쪽보다 낫다.
+    if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
+    derived.renderGeometry = {
+      version: 1,
+      pathData: ringPathData,
+      fillRule: 'evenodd'
+    };
     // 본체 transform 을 그대로 베끼면 안 된다. 외곽선은 더 굵어 pathData 의
     // pathOffset·바운딩 박스 중심이 본체와 다르고, 같은 transform 을 주면 두
     // **오브젝트 중심**이 맞춰질 뿐 소스 좌표가 어긋난다. 압력이 실린 획이나

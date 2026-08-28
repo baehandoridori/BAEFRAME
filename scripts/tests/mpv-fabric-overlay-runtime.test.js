@@ -16486,3 +16486,27 @@ test('a partial lasso delete removes outlines of fully covered strokes too', asy
     await harness.destroy();
   }
 });
+
+test('an outline is skipped when the ring path would exceed the persistence limit', async () => {
+  // 고리를 만들 수 없으면 채워진 판으로 두면 안 된다 — 불투명도 1 미만에서
+  // 중심이 두 번 칠해지고 색이 번진다. 덜 그리는 쪽이 틀리게 그리는 쪽보다 낫다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 3 });
+    // 아주 긴 획이면 본체+외곽선 경로 합이 32,768자를 넘는다.
+    const points = [];
+    for (let index = 0; index < 900; index += 1) {
+      points.push({ x: 10 + (index % 180), y: 20 + Math.floor(index / 180) * 12 });
+    }
+    harness.drawStroke(points, 9001);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    const outlines = objects.filter(object => object.id.endsWith('~outline'));
+    for (const outline of outlines) {
+      assert.ok(outline.renderGeometry, '외곽선이 남았다면 반드시 고리여야 한다');
+      assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+    }
+  } finally {
+    await harness.destroy();
+  }
+});

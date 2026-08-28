@@ -17931,13 +17931,12 @@ void main() {
             style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
           };
           if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
-          if (ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
-            derived.renderGeometry = {
-              version: 1,
-              pathData: ringPathData,
-              fillRule: "evenodd"
-            };
-          }
+          if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
+          derived.renderGeometry = {
+            version: 1,
+            pathData: ringPathData,
+            fillRule: "evenodd"
+          };
           derived.transform = captureTransform(makeFabricPath(derived));
           return derived;
         }
