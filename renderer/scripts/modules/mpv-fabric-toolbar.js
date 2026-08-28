@@ -201,6 +201,9 @@ function createFabricDrawingPalette(options = {}) {
     label.setAttribute?.('role', 'button');
     label.setAttribute?.('tabindex', '0');
     label.dataset.collapsed = 'false';
+    // 접기 직전의 붙임 패널 표시 상태. 다시 펼칠 때 '' 로 비우면 도형 플라이아웃과
+    // 브러시 설정 패널이 닫혀 있었는데도 함께 열려 버린다.
+    const appendedDisplay = new WeakMap();
     const toggleSection = () => {
       const collapsed = label.dataset.collapsed !== 'true';
       label.dataset.collapsed = String(collapsed);
@@ -208,7 +211,14 @@ function createFabricDrawingPalette(options = {}) {
       applyStyles(row, {
         display: collapsed ? 'none' : (row.dataset.layout === 'grid' ? 'grid' : 'flex')
       });
-      for (const item of appended) applyStyles(item, { display: collapsed ? 'none' : '' });
+      for (const item of appended) {
+        if (collapsed) {
+          appendedDisplay.set(item, item?.style?.display ?? '');
+          applyStyles(item, { display: 'none' });
+          continue;
+        }
+        applyStyles(item, { display: appendedDisplay.get(item) ?? '' });
+      }
     };
     listen(label, 'click', toggleSection);
     listen(label, 'keydown', event => {

@@ -1755,11 +1755,19 @@ test('brush size shortcuts are routed by action id, not by a hard-coded key code
     pilotControllerSource,
     /if \(brushSizeStep !== 0\) \{\n\s+if \(state !== 'active'\) return false;\n\s+consumeKeyEvent\(event\);/
   );
-  // modifier 가드 허용 목록에 들어가야 chord 재지정이 먹는다.
+  // modifier 가드 허용 목록에 들어가야 chord 재지정이 먹는다 — 크기·도구 둘 다.
   assert.match(
     pilotControllerSource,
-    /if \(!isDrawingToggleShortcut && !isSelectionShortcut && brushSizeStep === 0 && \(/
+    /if \(!isDrawingToggleShortcut && !isSelectionShortcut &&\n\s+brushSizeStep === 0 && shortcutTool === null && \(/
   );
+  // 컨트롤러는 절대 크기가 아니라 상대 증감을 보낸다. 절대값을 보내면 팔레트
+  // 슬라이더·Alt 드래그로 바뀐 굵기를 모르는 채 낡은 값에서 계산하게 된다.
+  assert.match(pilotControllerSource, /async function sendBrushSizeStep\(step\) \{/);
+  assert.doesNotMatch(pilotControllerSource, /let desiredBrushSize/);
+  // 설정에서 배정한 도구 단축키가 실제 도구 전환으로 이어져야 한다.
+  assert.match(appSource, /matchesToolShortcut: event => \{/);
+  assert.match(appSource, /const DRAWING_TOOL_SHORTCUT_ACTIONS = \{/);
+  assert.match(pilotControllerSource, /if \(shortcutTool !== null && \(state === 'preparing' \|\| state === 'active'\)\) \{/);
   // IPC 채널 4계층이 모두 이어져야 한다.
   assert.match(
     preloadSource,

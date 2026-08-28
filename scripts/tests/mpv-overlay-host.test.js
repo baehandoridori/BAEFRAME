@@ -5853,7 +5853,7 @@ async function enableBrushSession(host, hostGeneration, sessionId, inputRevision
     inputRevision,
     sessionId,
     brushRevision,
-    size,
+    ...(size === undefined ? null : { size }),
     ...overrides
   });
 }
@@ -5901,6 +5901,31 @@ test('updateDrawingBrush rejects stale tokens, backward revisions and out-of-ran
   // 범위 밖 크기.
   assert.equal((await send(2, 0)).success, false);
   assert.equal((await send(2, 1.5)).success, false);
+
+  // 상대 증감도 같은 경계 검사를 받는다.
+  assert.equal((await send(2, undefined, { step: 0 })).success, false, '0 증감은 의미가 없다');
+  assert.equal((await send(2, undefined, { step: 1.5 })).success, false);
+  assert.equal((await send(2, undefined, { step: 999 })).success, false, '한 번에 너무 큰 증감');
+  // 절대 크기와 증감을 함께 보내면 어느 쪽이 이기는지 모호해지므로 거부한다.
+  assert.equal((await send(2, 8, { step: 1 })).success, false);
+  assert.equal((await send(2, undefined, { step: -1 })).success, true);
+});
+
+test('updateDrawingBrush applies a relative step against the overlay size', async () => {
+  // 컨트롤러는 절대 크기를 모른다. 오버레이가 현재 값에 증감을 적용해 결과를 돌려준다.
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingBrush(')) return undefined;
+      const match = script.match(/"step":(-?\d+)/);
+      return { accepted: true, size: 20 + (match ? Number(match[1]) : 0) };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableBrushSession(host, ensured.drawingCapability.hostGeneration, 'session-brush-step', 2);
+
+  const response = await send(1, undefined, { step: 1 });
+  assert.equal(response.success, true);
+  assert.equal(response.size, 21, '팔레트로 20px 이 된 상태에서 ] 는 21 이어야 한다');
 });
 
 test('enabling drawing input resets the brush revision for the new session', async () => {

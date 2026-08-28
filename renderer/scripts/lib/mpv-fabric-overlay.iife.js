@@ -385,6 +385,36 @@
         }
         return points.filter((_point, index) => keep[index]).map((point) => ({ ...point }));
       }
+      function convexHull(points = []) {
+        const unique = [];
+        const seen = /* @__PURE__ */ new Set();
+        for (const point of points) {
+          const x = finiteNumber(point?.x);
+          const y = finiteNumber(point?.y);
+          const key = `${x}\0${y}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          unique.push({ x, y });
+        }
+        if (unique.length < 3) return unique;
+        unique.sort((left, right) => left.x - right.x || left.y - right.y);
+        const build = (source) => {
+          const chain = [];
+          for (const point of source) {
+            while (chain.length >= 2) {
+              const a = chain[chain.length - 2];
+              const b = chain[chain.length - 1];
+              if (cross(b.x - a.x, b.y - a.y, point.x - a.x, point.y - a.y) > EPSILON) break;
+              chain.pop();
+            }
+            chain.push(point);
+          }
+          chain.pop();
+          return chain;
+        };
+        const hull = [...build(unique), ...build([...unique].reverse())];
+        return hull.length >= 3 ? hull : unique;
+      }
       function simplifyClosedPolygon(points = [], tolerance = 1) {
         const deduplicated = [];
         for (const point of points) {
@@ -473,6 +503,8 @@
         createGeometryBudget,
         createPolygonEdgeIndex,
         simplifyClosedPolygon,
+        simplifyOpenPolyline,
+        convexHull,
         segmentEdgeIntersectionParameters,
         segmentPolygonIntersectionParameters
       };
@@ -5915,13 +5947,21 @@
           label.setAttribute?.("role", "button");
           label.setAttribute?.("tabindex", "0");
           label.dataset.collapsed = "false";
+          const appendedDisplay = /* @__PURE__ */ new WeakMap();
           const toggleSection = () => {
             const collapsed = label.dataset.collapsed !== "true";
             label.dataset.collapsed = String(collapsed);
             applyStyles(row, {
               display: collapsed ? "none" : row.dataset.layout === "grid" ? "grid" : "flex"
             });
-            for (const item of appended) applyStyles(item, { display: collapsed ? "none" : "" });
+            for (const item of appended) {
+              if (collapsed) {
+                appendedDisplay.set(item, item?.style?.display ?? "");
+                applyStyles(item, { display: "none" });
+                continue;
+              }
+              applyStyles(item, { display: appendedDisplay.get(item) ?? "" });
+            }
           };
           listen(label, "click", toggleSection);
           listen(label, "keydown", (event) => {
@@ -13487,7 +13527,9 @@ void main() {
         boundsIntersect,
         createGeometryBudget,
         createPolygonEdgeIndex,
-        simplifyClosedPolygon
+        simplifyClosedPolygon,
+        simplifyOpenPolyline,
+        convexHull
       } = require_lasso_geometry();
       var {
         clipSimplePathFillPair,
@@ -15570,10 +15612,15 @@ void main() {
           time: index
         }));
       }
+      var PEN_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0.4, streamline: 0.35 });
+      var SHAPE_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0, streamline: 0 });
+      var STROKE_GEOMETRY_CANDIDATES = Object.freeze([
+        null,
+        SHAPE_STROKE_GEOMETRY,
+        PEN_STROKE_GEOMETRY
+      ]);
       var SHAPE_STROKE_OPTIONS = Object.freeze({
-        thinning: 0,
-        smoothing: 0,
-        streamline: 0,
+        ...SHAPE_STROKE_GEOMETRY,
         alreadyNormalizedPressure: true,
         last: true
       });
@@ -16969,7 +17016,7 @@ void main() {
           try {
             const strokeData = strokePathFactory(activeStroke.samples, {
               size: activeStroke.style.size,
-              ...activeStroke.tool === "pen" ? { thinning: 0, smoothing: 0.4, streamline: 0.35 } : null
+              ...activeStroke.tool === "pen" ? PEN_STROKE_GEOMETRY : null
             });
             if (!strokeData.pathData) return;
             activeStroke.preview = makeFabricPath({
@@ -17220,23 +17267,27 @@ void main() {
             reason: query ? null : budget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
           };
         }
-        function canonicalStrokePathMatches(record, budget) {
-          if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return false;
+        function resolveStrokeGeometryOptions(record, budget) {
+          if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return null;
           const logicalCost = record.sourcePoints.length * 2 + Math.ceil(record.pathData.length / 8);
-          if (!budget?.consume(logicalCost)) return false;
-          let canonical;
-          try {
-            canonical = strokePathFactory(record.sourcePoints, {
-              size: record.style?.size,
-              last: true,
-              alreadyNormalizedPressure: true,
-              start: { cap: record.strokeCaps?.start !== false },
-              end: { cap: record.strokeCaps?.end !== false }
-            });
-          } catch (_error) {
-            return false;
+          for (const candidate of STROKE_GEOMETRY_CANDIDATES) {
+            if (!budget?.consume(logicalCost)) return null;
+            let canonical;
+            try {
+              canonical = strokePathFactory(record.sourcePoints, {
+                size: record.style?.size,
+                last: true,
+                alreadyNormalizedPressure: true,
+                start: { cap: record.strokeCaps?.start !== false },
+                end: { cap: record.strokeCaps?.end !== false },
+                ...candidate || null
+              });
+            } catch (_error) {
+              return null;
+            }
+            if (canonical?.pathData === record.pathData) return candidate || {};
           }
-          return canonical?.pathData === record.pathData;
+          return null;
         }
         function sourceGeometryMatches(signature, sourcePoints) {
           if (!Array.isArray(signature) || signature.length !== sourcePoints.length * 3) return false;
@@ -17651,7 +17702,7 @@ void main() {
           }
           return { plans, reason: null };
         }
-        function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null) {
+        function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null, geometryOptions = null) {
           if (!Array.isArray(points) || points.length < 2) return null;
           let strokeData;
           try {
@@ -17660,7 +17711,9 @@ void main() {
               last: true,
               alreadyNormalizedPressure: true,
               start: { cap: caps.start !== false },
-              end: { cap: caps.end !== false }
+              end: { cap: caps.end !== false },
+              // 원본이 도형·펜이면 브러시 기본값으로 다시 만들면 안 된다.
+              ...geometryOptions || null
             });
           } catch (error) {
             lastError = error.message;
@@ -18127,13 +18180,13 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
-          const queueReplacementPlan = (record, object, componentPlans) => {
+          const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
             accumulatedFragments += componentPlans.length;
             const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
             if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
               return false;
             }
-            replacementPlans.push({ record, object, componentPlans });
+            replacementPlans.push({ record, object, componentPlans, geometryOptions });
             return true;
           };
           if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -18166,7 +18219,8 @@ void main() {
             );
             if (touch.limitExceeded) return fail("selection-complexity-limit-exceeded");
             if (!touch.hit) continue;
-            if (!canonicalStrokePathMatches(record, geometryBudget)) {
+            const geometryOptions = resolveStrokeGeometryOptions(record, geometryBudget);
+            if (!geometryOptions) {
               return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
             }
             if (!strokeHasSplittableLength(record.sourcePoints)) {
@@ -18200,7 +18254,7 @@ void main() {
               if (!compact.plans || compact.reason) {
                 return fail(compact.reason || "selection-geometry-unavailable");
               }
-              if (!queueReplacementPlan(record, object, compact.plans)) {
+              if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
                 return fail("lasso-fragment-limit-exceeded");
               }
               continue;
@@ -18247,7 +18301,7 @@ void main() {
                 if (!compact.plans || compact.reason) {
                   return fail(compact.reason || "selection-geometry-unavailable");
                 }
-                if (!queueReplacementPlan(record, object, compact.plans)) {
+                if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
                   return fail("lasso-fragment-limit-exceeded");
                 }
                 continue;
@@ -18321,7 +18375,7 @@ void main() {
               );
             }
             componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
-            if (!queueReplacementPlan(record, object, componentPlans)) {
+            if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
               return fail("lasso-fragment-limit-exceeded");
             }
           }
@@ -18337,7 +18391,8 @@ void main() {
                 plan.selected,
                 plan.caps,
                 replacementPlan.object,
-                plan.renderGeometry
+                plan.renderGeometry,
+                replacementPlan.geometryOptions
               );
               if (!fragment) {
                 fragmentBuildFailed = true;
@@ -18446,7 +18501,7 @@ void main() {
               size: style.size,
               last: true,
               // 펜은 압력에 따라 굵기가 변하지 않는다(레거시 pen 동치).
-              ...activeStrokeTool === "pen" ? { thinning: 0, smoothing: 0.4, streamline: 0.35 } : null
+              ...activeStrokeTool === "pen" ? PEN_STROKE_GEOMETRY : null
             });
           } catch (error) {
             lastError = error.message;
@@ -18860,17 +18915,7 @@ void main() {
           );
           return true;
         }
-        function strokeEraseRibbonPolygon(pathPoints, radius) {
-          if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
-          const simplified = simplifyClosedPolygon(pathPoints, Math.max(0.25, radius / 4));
-          const spine = simplified.length >= 2 ? simplified : pathPoints;
-          if (spine.length === 1) {
-            const point = spine[0];
-            return rectanglePolygon(
-              { x: point.x - radius, y: point.y - radius },
-              { x: point.x + radius, y: point.y + radius }
-            );
-          }
+        function offsetRibbonFromSpine(spine, radius) {
           const left = [];
           const right = [];
           for (let index = 0; index < spine.length; index += 1) {
@@ -18886,6 +18931,22 @@ void main() {
             right.push({ x: current.x - nx, y: current.y - ny });
           }
           return [...left, ...right.reverse()];
+        }
+        function strokeEraseRibbonPolygon(pathPoints, radius, budget) {
+          if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
+          const simplified = simplifyOpenPolyline(pathPoints, Math.max(0.25, radius / 4));
+          const spine = simplified.length >= 2 ? simplified : pathPoints;
+          if (spine.length === 1) {
+            const point = spine[0];
+            return rectanglePolygon(
+              { x: point.x - radius, y: point.y - radius },
+              { x: point.x + radius, y: point.y + radius }
+            );
+          }
+          const ribbon = offsetRibbonFromSpine(spine, radius);
+          if (validateSimpleContour(ribbon, budget)) return ribbon;
+          const hull = convexHull(ribbon);
+          return hull.length >= 3 ? hull : ribbon;
         }
         function commitStrokeEraseAsWholeStrokes(gesture) {
           const selection = sceneStore.selectObjects([...gesture.erasedIds]);
@@ -18923,11 +18984,20 @@ void main() {
           }
           if (gesture.mode !== "pixel") return commitStrokeEraseAsWholeStrokes(gesture);
           restoreErasedStrokeVisibility(gesture);
-          const ribbon = strokeEraseRibbonPolygon(gesture.pathPoints, strokeEraseRadius());
+          const ribbon = strokeEraseRibbonPolygon(
+            gesture.pathPoints,
+            strokeEraseRadius(),
+            createGeometryBudget(maxSelectionGeometryOperations)
+          );
           const staged = finalizePartialSelectionPolygon(ribbon, null);
           if (staged?.pending === true) return commitPendingLassoDelete();
           sceneStore.selectObjects([]);
-          return commitStrokeEraseAsWholeStrokes(gesture);
+          return {
+            applied: false,
+            reason: staged?.reason || "pixel-erase-unavailable",
+            deletedCount: 0,
+            deletedIds: []
+          };
         }
         function rollbackSelectTransform(event, shouldEndTransform) {
           const start = transformStart;
@@ -19427,6 +19497,8 @@ void main() {
           }
           if (shapeGesture) {
             if (event.pointerId !== shapeGesture.pointerId) return;
+            const releasePoint = strokeErasePoint(event);
+            if (releasePoint) shapeGesture.current = releasePoint;
             commitShapeGesture();
             releasePointerCapture(event.currentTarget, event.pointerId);
             event.preventDefault?.();
@@ -20396,7 +20468,10 @@ void main() {
         }
         function updateDrawingBrush(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
-          const size = setBrushSize(command.size);
+          const step = Math.trunc(Number(command.step));
+          const size = setBrushSize(
+            Number.isInteger(step) && step !== 0 ? brushStyle.size + step : command.size
+          );
           flashSizeAdjustHudAtViewportCenter(size);
           return { accepted: true, size };
         }

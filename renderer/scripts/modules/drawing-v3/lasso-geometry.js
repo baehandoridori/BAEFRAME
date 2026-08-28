@@ -300,6 +300,40 @@ function simplifyOpenPolyline(points, tolerance) {
   return points.filter((_point, index) => keep[index]).map(point => ({ ...point }));
 }
 
+// 지우개 스윕처럼 왕복하는 경로는 좌/우 오프셋이 서로를 가로질러 단순 폴리곤이
+// 되지 않는다. 그때 쓸 볼록 껍질(모노톤 체인). 스크럽 구간의 껍질은 사실상
+// 지나간 복도와 같고, 획을 통째로 지우는 것보다 언제나 덜 파괴적이다.
+function convexHull(points = []) {
+  const unique = [];
+  const seen = new Set();
+  for (const point of points) {
+    const x = finiteNumber(point?.x);
+    const y = finiteNumber(point?.y);
+    const key = `${x}\u0000${y}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    unique.push({ x, y });
+  }
+  if (unique.length < 3) return unique;
+  unique.sort((left, right) => left.x - right.x || left.y - right.y);
+  const build = source => {
+    const chain = [];
+    for (const point of source) {
+      while (chain.length >= 2) {
+        const a = chain[chain.length - 2];
+        const b = chain[chain.length - 1];
+        if (cross(b.x - a.x, b.y - a.y, point.x - a.x, point.y - a.y) > EPSILON) break;
+        chain.pop();
+      }
+      chain.push(point);
+    }
+    chain.pop();
+    return chain;
+  };
+  const hull = [...build(unique), ...build([...unique].reverse())];
+  return hull.length >= 3 ? hull : unique;
+}
+
 function simplifyClosedPolygon(points = [], tolerance = 1) {
   const deduplicated = [];
   for (const point of points) {
@@ -399,6 +433,8 @@ module.exports = {
   createGeometryBudget,
   createPolygonEdgeIndex,
   simplifyClosedPolygon,
+  simplifyOpenPolyline,
+  convexHull,
   segmentEdgeIntersectionParameters,
   segmentPolygonIntersectionParameters
 };

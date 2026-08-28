@@ -14,7 +14,9 @@ const {
   boundsIntersect,
   createGeometryBudget,
   createPolygonEdgeIndex,
-  simplifyClosedPolygon
+  simplifyClosedPolygon,
+  simplifyOpenPolyline,
+  convexHull
 } = require('./drawing-v3/lasso-geometry.js');
 const {
   clipSimplePathFillPair,
@@ -2480,10 +2482,21 @@ function shapeCenterlineSamples(tool, start, end, brushSize) {
   }));
 }
 
+// 도형·펜은 브러시와 다른 기하 파라미터로 획을 만든다. 저장 레코드는 어떤 도구로
+// 그렸는지를 남기지 않으므로(스키마 무변경), 재구성할 때 후보를 순서대로 시도해
+// pathData 가 일치하는 것을 그 획의 생성 규약으로 삼는다.
+// 이게 없으면 도형·펜 획은 canonicalStrokePathMatches 를 절대 통과하지 못해
+// 부분 선택·픽셀 지우개가 그 획을 통째로 삭제하는 쪽으로 떨어진다.
+const PEN_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0.4, streamline: 0.35 });
+const SHAPE_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0, streamline: 0 });
+const STROKE_GEOMETRY_CANDIDATES = Object.freeze([
+  null,
+  SHAPE_STROKE_GEOMETRY,
+  PEN_STROKE_GEOMETRY
+]);
+
 const SHAPE_STROKE_OPTIONS = Object.freeze({
-  thinning: 0,
-  smoothing: 0,
-  streamline: 0,
+  ...SHAPE_STROKE_GEOMETRY,
   alreadyNormalizedPressure: true,
   last: true
 });
@@ -4116,9 +4129,7 @@ function createFabricOverlayRuntime(options = {}) {
     try {
       const strokeData = strokePathFactory(activeStroke.samples, {
         size: activeStroke.style.size,
-        ...(activeStroke.tool === 'pen'
-          ? { thinning: 0, smoothing: 0.4, streamline: 0.35 }
-          : null)
+        ...(activeStroke.tool === 'pen' ? PEN_STROKE_GEOMETRY : null)
       });
       if (!strokeData.pathData) return;
       activeStroke.preview = makeFabricPath({
@@ -4414,24 +4425,30 @@ function createFabricOverlayRuntime(options = {}) {
     };
   }
 
-  function canonicalStrokePathMatches(record, budget) {
-    if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return false;
+  // 일치하는 생성 규약을 돌려준다. 못 찾으면 null.
+  // 조각을 다시 만들 때도 같은 규약을 써야 도형·펜의 생김새가 바뀌지 않는다.
+  function resolveStrokeGeometryOptions(record, budget) {
+    if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return null;
     const logicalCost = record.sourcePoints.length * 2 +
       Math.ceil(record.pathData.length / 8);
-    if (!budget?.consume(logicalCost)) return false;
-    let canonical;
-    try {
-      canonical = strokePathFactory(record.sourcePoints, {
-        size: record.style?.size,
-        last: true,
-        alreadyNormalizedPressure: true,
-        start: { cap: record.strokeCaps?.start !== false },
-        end: { cap: record.strokeCaps?.end !== false }
-      });
-    } catch (_error) {
-      return false;
+    for (const candidate of STROKE_GEOMETRY_CANDIDATES) {
+      if (!budget?.consume(logicalCost)) return null;
+      let canonical;
+      try {
+        canonical = strokePathFactory(record.sourcePoints, {
+          size: record.style?.size,
+          last: true,
+          alreadyNormalizedPressure: true,
+          start: { cap: record.strokeCaps?.start !== false },
+          end: { cap: record.strokeCaps?.end !== false },
+          ...(candidate || null)
+        });
+      } catch (_error) {
+        return null;
+      }
+      if (canonical?.pathData === record.pathData) return candidate || {};
     }
-    return canonical?.pathData === record.pathData;
+    return null;
   }
 
   function sourceGeometryMatches(signature, sourcePoints) {
@@ -4924,7 +4941,8 @@ function createFabricOverlayRuntime(options = {}) {
     selected,
     caps = {},
     sourceObject = null,
-    renderGeometry = null
+    renderGeometry = null,
+    geometryOptions = null
   ) {
     if (!Array.isArray(points) || points.length < 2) return null;
     let strokeData;
@@ -4934,7 +4952,9 @@ function createFabricOverlayRuntime(options = {}) {
         last: true,
         alreadyNormalizedPressure: true,
         start: { cap: caps.start !== false },
-        end: { cap: caps.end !== false }
+        end: { cap: caps.end !== false },
+        // 원본이 도형·펜이면 브러시 기본값으로 다시 만들면 안 된다.
+        ...(geometryOptions || null)
       });
     } catch (error) {
       lastError = error.message;
@@ -5450,7 +5470,7 @@ function createFabricOverlayRuntime(options = {}) {
         selectedObjectIds: restoredSelectionIds
       };
     };
-    const queueReplacementPlan = (record, object, componentPlans) => {
+    const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
       accumulatedFragments += componentPlans.length;
       const projectedObjectCount = snapshot.objects.length -
         (replacementPlans.length + 1) +
@@ -5459,7 +5479,7 @@ function createFabricOverlayRuntime(options = {}) {
           projectedObjectCount > sceneLimits.maxObjects) {
         return false;
       }
-      replacementPlans.push({ record, object, componentPlans });
+      replacementPlans.push({ record, object, componentPlans, geometryOptions });
       return true;
     };
     if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -5495,7 +5515,8 @@ function createFabricOverlayRuntime(options = {}) {
       );
       if (touch.limitExceeded) return fail('selection-complexity-limit-exceeded');
       if (!touch.hit) continue;
-      if (!canonicalStrokePathMatches(record, geometryBudget)) {
+      const geometryOptions = resolveStrokeGeometryOptions(record, geometryBudget);
+      if (!geometryOptions) {
         return fail(geometryBudget.limitExceeded
           ? 'selection-complexity-limit-exceeded'
           : 'selection-geometry-unavailable');
@@ -5531,7 +5552,7 @@ function createFabricOverlayRuntime(options = {}) {
         if (!compact.plans || compact.reason) {
           return fail(compact.reason || 'selection-geometry-unavailable');
         }
-        if (!queueReplacementPlan(record, object, compact.plans)) {
+        if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
           return fail('lasso-fragment-limit-exceeded');
         }
         continue;
@@ -5578,7 +5599,7 @@ function createFabricOverlayRuntime(options = {}) {
           if (!compact.plans || compact.reason) {
             return fail(compact.reason || 'selection-geometry-unavailable');
           }
-          if (!queueReplacementPlan(record, object, compact.plans)) {
+          if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
             return fail('lasso-fragment-limit-exceeded');
           }
           continue;
@@ -5666,7 +5687,7 @@ function createFabricOverlayRuntime(options = {}) {
         Number(left.selected) - Number(right.selected) ||
         left.interval[1] - right.interval[1]
       ));
-      if (!queueReplacementPlan(record, object, componentPlans)) {
+      if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
         return fail('lasso-fragment-limit-exceeded');
       }
     }
@@ -5683,7 +5704,8 @@ function createFabricOverlayRuntime(options = {}) {
           plan.selected,
           plan.caps,
           replacementPlan.object,
-          plan.renderGeometry
+          plan.renderGeometry,
+          replacementPlan.geometryOptions
         );
         if (!fragment) {
           fragmentBuildFailed = true;
@@ -5807,9 +5829,7 @@ function createFabricOverlayRuntime(options = {}) {
         size: style.size,
         last: true,
         // 펜은 압력에 따라 굵기가 변하지 않는다(레거시 pen 동치).
-        ...(activeStrokeTool === 'pen'
-          ? { thinning: 0, smoothing: 0.4, streamline: 0.35 }
-          : null)
+        ...(activeStrokeTool === 'pen' ? PEN_STROKE_GEOMETRY : null)
       });
     } catch (error) {
       lastError = error.message;
@@ -6297,19 +6317,7 @@ function createFabricOverlayRuntime(options = {}) {
   // 지우개가 지나간 경로를 반경만큼 좌/우로 부풀린 닫힌 폴리곤.
   // 폴리곤 불리언 유니온이 저장소에 없으므로, 스윕 quad 들을 합치는 대신
   // 경로 자체를 리본으로 만들어 부분 선택 경로에 한 번에 넘긴다.
-  function strokeEraseRibbonPolygon(pathPoints, radius) {
-    if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
-    // 되짚기·정지 구간이 그대로 남으면 리본이 자기 자신과 교차해
-    // validateSimpleContour 를 통과하지 못한다. 라쏘와 같은 방식으로 먼저 줄인다.
-    const simplified = simplifyClosedPolygon(pathPoints, Math.max(0.25, radius / 4));
-    const spine = simplified.length >= 2 ? simplified : pathPoints;
-    if (spine.length === 1) {
-      const point = spine[0];
-      return rectanglePolygon(
-        { x: point.x - radius, y: point.y - radius },
-        { x: point.x + radius, y: point.y + radius }
-      );
-    }
+  function offsetRibbonFromSpine(spine, radius) {
     const left = [];
     const right = [];
     for (let index = 0; index < spine.length; index += 1) {
@@ -6325,6 +6333,30 @@ function createFabricOverlayRuntime(options = {}) {
       right.push({ x: current.x - nx, y: current.y - ny });
     }
     return [...left, ...right.reverse()];
+  }
+
+  function strokeEraseRibbonPolygon(pathPoints, radius, budget) {
+    if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
+    // 지우개 경로는 닫힌 폴리곤이 아니라 열린 폴리라인이다.
+    // simplifyClosedPolygon 을 쓰면 첫 점과 끝 점을 잇는 변까지 기준으로 삼아
+    // 왕복 구간이 잘못 남는다.
+    const simplified = simplifyOpenPolyline(pathPoints, Math.max(0.25, radius / 4));
+    const spine = simplified.length >= 2 ? simplified : pathPoints;
+    if (spine.length === 1) {
+      const point = spine[0];
+      return rectanglePolygon(
+        { x: point.x - radius, y: point.y - radius },
+        { x: point.x + radius, y: point.y + radius }
+      );
+    }
+    const ribbon = offsetRibbonFromSpine(spine, radius);
+    if (validateSimpleContour(ribbon, budget)) return ribbon;
+    // 앞뒤로 문지르는(A→B→A) 지우개 동작은 좌/우 오프셋이 서로를 가로질러
+    // 단순 폴리곤이 되지 않는다. 그때는 지나간 영역의 볼록 껍질을 쓴다 —
+    // 문지른 구간의 껍질은 사실상 지나간 복도와 같고, 획을 통째로 지우는
+    // 쪽으로 떨어지는 것보다 언제나 덜 파괴적이다.
+    const hull = convexHull(ribbon);
+    return hull.length >= 3 ? hull : ribbon;
   }
 
   function commitStrokeEraseAsWholeStrokes(gesture) {
@@ -6371,14 +6403,24 @@ function createFabricOverlayRuntime(options = {}) {
     // pixel 모드: 리본 폴리곤으로 부분 선택을 만든 뒤 1회 커밋으로 잘라낸다.
     // 부분 분할은 캔버스 오브젝트를 실제로 읽으므로, 드래그 중 숨겨 둔 획을 먼저 되살린다.
     restoreErasedStrokeVisibility(gesture);
-    const ribbon = strokeEraseRibbonPolygon(gesture.pathPoints, strokeEraseRadius());
+    const ribbon = strokeEraseRibbonPolygon(
+      gesture.pathPoints,
+      strokeEraseRadius(),
+      createGeometryBudget(maxSelectionGeometryOperations)
+    );
     const staged = finalizePartialSelectionPolygon(ribbon, null);
     if (staged?.pending === true) return commitPendingLassoDelete();
-    // 리본이 획을 통째로 덮어 조각이 생기지 않거나 폴리곤이 너무 작은 경우가 있다.
-    // 그때는 획 단위 삭제로 떨어뜨려, 사용자가 "지우개를 그었는데 아무것도 안 지워졌다"를
-    // 겪지 않게 한다.
+    // 리본이 획을 통째로 덮은 경우는 finalizePartialSelectionPolygon 이 이미
+    // selectedPersistedIds 로 처리해 pending 으로 올린다. 여기까지 왔다는 것은
+    // 기하가 성립하지 않았다는 뜻이므로 **아무것도 지우지 않는다** — 픽셀 지우개가
+    // 지나가지도 않은 부분까지 통째로 날리는 쪽이 훨씬 나쁜 실패다.
     sceneStore.selectObjects([]);
-    return commitStrokeEraseAsWholeStrokes(gesture);
+    return {
+      applied: false,
+      reason: staged?.reason || 'pixel-erase-unavailable',
+      deletedCount: 0,
+      deletedIds: []
+    };
   }
 
   function rollbackSelectTransform(event, shouldEndTransform) {
@@ -6920,6 +6962,11 @@ function createFabricOverlayRuntime(options = {}) {
     }
     if (shapeGesture) {
       if (event.pointerId !== shapeGesture.pointerId) return;
+      // 빠른 드래그·이벤트 병합·문서 경로에서는 마지막 pointermove 보다 release
+      // 좌표가 더 뒤에 있다. 커밋 전에 끝점을 갱신하지 않으면 도형이 직전 move
+      // 위치에서 끝나고, move 가 하나도 없던 드래그는 클릭으로 오인돼 버려진다.
+      const releasePoint = strokeErasePoint(event);
+      if (releasePoint) shapeGesture.current = releasePoint;
       // 커밋이 shapeGesture 를 먼저 비우므로, 그 뒤에 캡처를 놓는다.
       commitShapeGesture();
       releasePointerCapture(event.currentTarget, event.pointerId);
@@ -7977,9 +8024,15 @@ function createFabricOverlayRuntime(options = {}) {
 
   // 브러시 크기 원격 변경. 도구 변경과 같은 토큰 규약을 쓰되 revision 은 별도로 센다.
   // 크기는 씬 스키마와 무관한 입력 계층 상태이므로 히스토리에 남기지 않는다.
+  // step 은 현재 굵기 기준 상대 증감이다. 팔레트 슬라이더와 Alt 드래그는 오버레이
+  // 안에서만 굵기를 바꾸므로 컨트롤러가 든 값은 언제든 낡을 수 있다. 절대값을 받으면
+  // 20px 로 바꾼 뒤 ] 를 눌렀을 때 21 이 아니라 4 가 되어 버린다.
   function updateDrawingBrush(command = {}) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
-    const size = setBrushSize(command.size);
+    const step = Math.trunc(Number(command.step));
+    const size = setBrushSize(
+      Number.isInteger(step) && step !== 0 ? brushStyle.size + step : command.size
+    );
     flashSizeAdjustHudAtViewportCenter(size);
     return { accepted: true, size };
   }

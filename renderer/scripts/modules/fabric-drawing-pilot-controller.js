@@ -8,10 +8,6 @@ const CONTROLLER_DRAWING_ACTIONS = new Set(['delete-selection', 'undo', 'redo'])
 const CONTROLLER_DRAWING_TOOLS = new Set([
   'brush', 'pen', 'eraser', 'line', 'rect', 'circle', 'arrow', 'select'
 ]);
-// 런타임 MIN_BRUSH_SIZE / MAX_BRUSH_SIZE 와 같아야 한다
-// (mpv-fabric-overlay-runtime.js). 컨트롤러가 낙관적으로 세는 값의 범위다.
-const CONTROLLER_MIN_BRUSH_SIZE = 1;
-const CONTROLLER_MAX_BRUSH_SIZE = 50;
 const ACTIVE_FRAME_MAX_IN_FLIGHT = 2;
 const ACTIVE_FRAME_OBSERVATION_LIMIT = 64;
 const POINTERDOWN_FRAME_REQUEST_KEYS = [
@@ -139,6 +135,12 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.matchesSelectionShortcut === 'function'
       ? options.matchesSelectionShortcut
       : null;
+  // app.js 가 주입한다. 이벤트를 도구 이름으로 바꿔 주며, 해당 없으면 null 이다.
+  // 이 주입이 없으면 설정 UI 에서 배정한 도구 단축키가 아무 일도 하지 않는다.
+  const configuredToolShortcutMatcher =
+    typeof options.matchesToolShortcut === 'function'
+      ? options.matchesToolShortcut
+      : null;
   // app.js 가 주입하는 매처. 주입 전에는 기본 키([ / ])로 판정한다.
   const configuredBrushSizeShortcutMatcher =
     typeof options.matchesBrushSizeShortcut === 'function'
@@ -182,8 +184,9 @@ export function createFabricDrawingPilotController(options = {}) {
   let inputRevision = 0;
   let desiredInputEnabled = false;
   let desiredTool = 'brush';
-  // 런타임 DEFAULT_BRUSH_STYLE.size 와 같은 값에서 시작한다.
-  let desiredBrushSize = 3;
+  // 오버레이가 마지막으로 알려 준 굵기. 표시·진단용이며 다음 증감의 기준이 아니다
+  // (기준은 언제나 오버레이의 현재 값이다).
+  let lastKnownBrushSize = null;
 
   let currentSession = null;
   let videoReady = false;
@@ -871,6 +874,16 @@ export function createFabricDrawingPilotController(options = {}) {
     return 0;
   }
 
+  function matchToolShortcut(event = {}) {
+    if (!configuredToolShortcutMatcher) return null;
+    try {
+      const tool = configuredToolShortcutMatcher(event);
+      return CONTROLLER_DRAWING_TOOLS.has(tool) ? tool : null;
+    } catch {
+      return null;
+    }
+  }
+
   function matchesSelectionShortcut(event = {}) {
     if (configuredSelectionShortcutMatcher) {
       try {
@@ -1302,28 +1315,28 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
-  // 오버레이 런타임이 브러시 크기의 진실의 원천이지만, [ / ] 연타 시 IPC 왕복을
-  // 기다리면 값이 밀린다. desiredBrushSize 로 낙관적으로 세고, 오버레이가 잘라 낸
-  // 실제 값이 응답으로 오면 그것으로 보정한다.
-  async function sendBrushSize(size) {
+  // 굵기의 진실의 원천은 오버레이 런타임이다. 팔레트 슬라이더와 Alt 드래그는
+  // 오버레이 안에서만 값을 바꾸고 컨트롤러에 알리지 않으므로, 컨트롤러가 절대값을
+  // 세면 반드시 낡는다. 그래서 **증감만** 보내고 결과 값을 응답으로 받는다.
+  async function sendBrushSizeStep(step) {
     if (state !== 'active' || !currentSession) return false;
     currentSession.brushRevision += 1;
     const request = {
-      ...makeEnvelope('brush-update', { size }),
+      ...makeEnvelope('brush-update', { step }),
       hostGeneration,
       videoGeneration,
       inputRevision,
       sessionId: currentSession.sessionId,
       brushRevision: currentSession.brushRevision,
-      size
+      step
     };
     try {
       const response = await withPersistenceIpcDeadline(
         electronAPI.mpvUpdateOverlayDrawingBrush(request),
-        { success: false, accepted: false, size, error: 'persistence-ipc-timeout' }
+        { success: false, accepted: false, error: 'persistence-ipc-timeout' }
       );
       const accepted = response?.success === true && response.accepted === true;
-      if (accepted && Number.isInteger(response.size)) desiredBrushSize = response.size;
+      if (accepted && Number.isInteger(response.size)) lastKnownBrushSize = response.size;
       return accepted;
     } catch {
       return false;
@@ -2729,24 +2742,29 @@ export function createFabricDrawingPilotController(options = {}) {
     const isSelectionShortcut = matchesSelectionShortcut(event);
     // 사용자가 chord 로 재지정했을 수 있으므로 modifier 가드의 허용 목록에 넣는다.
     const brushSizeStep = matchBrushSizeShortcut(event);
-    if (!isDrawingToggleShortcut && !isSelectionShortcut && brushSizeStep === 0 && (
+    const shortcutTool = matchToolShortcut(event);
+    if (!isDrawingToggleShortcut && !isSelectionShortcut &&
+      brushSizeStep === 0 && shortcutTool === null && (
       event.ctrlKey === true ||
       event.metaKey === true ||
       event.altKey === true ||
       event.shiftKey === true)) {
       return false;
     }
+    // 도구 단축키는 선택 도구(V)와 같은 경로로 처리한다. 설정에서 배정할 수 있는
+    // 액션이 실제로 도구를 바꾸지 않으면 설정 UI 가 거짓말을 하는 셈이다.
+    if (shortcutTool !== null && (state === 'preparing' || state === 'active')) {
+      consumeKeyEvent(event);
+      desiredTool = shortcutTool;
+      if (state === 'active') runDetached(sendTool(shortcutTool));
+      return true;
+    }
     if (brushSizeStep !== 0) {
       if (state !== 'active') return false;
       consumeKeyEvent(event);
-      const next = Math.min(
-        CONTROLLER_MAX_BRUSH_SIZE,
-        Math.max(CONTROLLER_MIN_BRUSH_SIZE, desiredBrushSize + brushSizeStep)
-      );
-      if (next !== desiredBrushSize) {
-        desiredBrushSize = next;
-        runDetached(sendBrushSize(next));
-      }
+      // 상한·하한은 오버레이가 자른다. 여기서 미리 판단하면 팔레트로 바꾼 굵기를
+      // 모르는 채 "이미 최대"라고 잘못 넘겨 버릴 수 있다.
+      runDetached(sendBrushSizeStep(brushSizeStep));
       return true;
     }
 

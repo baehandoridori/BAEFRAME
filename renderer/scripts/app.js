@@ -7736,11 +7736,31 @@ async function initApp() {
       });
     }
   });
+  // 드로잉 도구 단축키 액션 ↔ 파일럿 도구 이름. 기본 키는 없고 사용자가 설정에서
+  // 배정한다(user-settings.js 의 key: null 항목들).
+  const DRAWING_TOOL_SHORTCUT_ACTIONS = {
+    drawingToolBrush: 'brush',
+    drawingToolPen: 'pen',
+    drawingToolEraser: 'eraser',
+    drawingToolLine: 'line',
+    drawingToolRect: 'rect',
+    drawingToolCircle: 'circle',
+    drawingToolArrow: 'arrow'
+  };
+
   const fabricDrawingPilotController = createFabricDrawingPilotController({
     electronAPI: window.electronAPI,
     getContext: getFabricDrawingPilotContext,
     matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
     matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
+    // 설정에서 배정한 도구 단축키를 실제 도구 전환으로 잇는다.
+    // drawingToolSelect(V)는 matchesSelectionShortcut 이 이미 처리한다.
+    matchesToolShortcut: event => {
+      for (const [actionId, tool] of Object.entries(DRAWING_TOOL_SHORTCUT_ACTIONS)) {
+        if (userSettings.matchShortcut(actionId, event)) return tool;
+      }
+      return null;
+    },
     // 액션 id 로 판정한다 — 사용자가 [ / ] 를 다른 키로 재지정해도 따라간다.
     matchesBrushSizeShortcut: event => {
       if (userSettings.matchShortcut('brushSizeUp', event)) return 1;
