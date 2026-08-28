@@ -16436,3 +16436,42 @@ test('a cancelled drag puts the outline back where the body goes', async () => {
     await harness.destroy();
   }
 });
+
+test('a partial lasso delete removes outlines of fully covered strokes too', async () => {
+  // 통째로 덮인 획은 selectedPersistedIds 로만 들어와 짝이 교체 목록에 없다.
+  // replaceObjects 는 짝을 알아서 지우지 않으므로, 함께 넣지 않으면 그 획의
+  // 외곽선이 고아로 남아 화면에 그대로 보인다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 3 });
+    // 하나는 라쏘가 가로질러 쪼개고, 하나는 통째로 덮인다.
+    harness.drawStroke([{ x: 10, y: 60 }, { x: 190, y: 60 }], 8901);
+    harness.drawStroke([{ x: 95, y: 120 }, { x: 105, y: 120 }], 8902);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 4);
+
+    enableRealFabricLasso(harness, 8);
+    harness.dragLasso([
+      { x: 70, y: 40 }, { x: 130, y: 40 },
+      { x: 130, y: 150 }, { x: 70, y: 150 }
+    ], 8903);
+
+    const deleted = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'lasso-delete-outline',
+      action: 'delete-selection'
+    });
+    assert.equal(deleted.applied, true);
+
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    for (const object of survivors) {
+      if (!object.id.endsWith('~outline')) continue;
+      const bodyId = object.id.slice(0, -'~outline'.length);
+      assert.ok(
+        survivors.some(candidate => candidate.id === bodyId),
+        `외곽선 ${object.id} 이 짝 없이 남았다`
+      );
+    }
+  } finally {
+    await harness.destroy();
+  }
+});

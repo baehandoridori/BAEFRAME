@@ -18244,8 +18244,19 @@ void main() {
             addObjects: replacement.addObjects.filter((object) => !pending.selectedFragmentIds.has(object.id))
           }));
           const replacementSourceIds = new Set(replacements.map((replacement) => replacement.removeId));
+          const snapshotIds = new Set(
+            (sceneStore.getActiveSceneSnapshot()?.objects || []).map((object) => object.id)
+          );
           for (const id of pending.selectedPersistedIds) {
-            if (!replacementSourceIds.has(id)) replacements.push({ removeId: id, addObjects: [] });
+            if (!replacementSourceIds.has(id)) {
+              replacements.push({ removeId: id, addObjects: [] });
+              replacementSourceIds.add(id);
+            }
+            const outlineId = outlineIdFor(id);
+            if (outlineId && snapshotIds.has(outlineId) && !replacementSourceIds.has(outlineId)) {
+              replacements.push({ removeId: outlineId, addObjects: [] });
+              replacementSourceIds.add(outlineId);
+            }
           }
           const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
           const result = sceneStore.replaceObjects({

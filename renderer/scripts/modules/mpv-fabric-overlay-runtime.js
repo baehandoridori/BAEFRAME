@@ -5615,8 +5615,22 @@ function createFabricOverlayRuntime(options = {}) {
       addObjects: replacement.addObjects.filter(object => !pending.selectedFragmentIds.has(object.id))
     }));
     const replacementSourceIds = new Set(replacements.map(replacement => replacement.removeId));
+    const snapshotIds = new Set(
+      (sceneStore.getActiveSceneSnapshot()?.objects || []).map(object => object.id)
+    );
     for (const id of pending.selectedPersistedIds) {
-      if (!replacementSourceIds.has(id)) replacements.push({ removeId: id, addObjects: [] });
+      if (!replacementSourceIds.has(id)) {
+        replacements.push({ removeId: id, addObjects: [] });
+        replacementSourceIds.add(id);
+      }
+      // 통째로 덮인 획은 selectedPersistedIds 로만 들어와 짝이 확장 목록에 없다.
+      // replaceObjects 는 짝을 알아서 지우지 않으므로 여기서 함께 넣지 않으면
+      // 그 획의 외곽선이 고아로 남아 화면에 그대로 보인다.
+      const outlineId = outlineIdFor(id);
+      if (outlineId && snapshotIds.has(outlineId) && !replacementSourceIds.has(outlineId)) {
+        replacements.push({ removeId: outlineId, addObjects: [] });
+        replacementSourceIds.add(outlineId);
+      }
     }
     const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
     const result = sceneStore.replaceObjects({
