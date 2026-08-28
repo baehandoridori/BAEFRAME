@@ -1531,11 +1531,11 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
     fabricRuntimeSource,
     /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n\s+sections: \[/
   );
-  // 도구가 8종으로 늘어 한 줄 리터럴이 아니게 됐다. 섹션이 존재하고 도구 버튼을
-  // 모두 담는다는 계약은 그대로다.
+  // 도구 줄은 아이콘 5개 한 줄이고 도형 4종은 드롭다운으로 접힌다(목업 확정).
+  // 섹션이 존재하고 도구 버튼을 담는다는 계약은 그대로다.
   assert.match(
     fabricRuntimeSource,
-    /id: 'tools',\n\s+label: '도구',\n\s+items: \[\n\s+brushButton, penButton, eraserButton, lineButton,\n\s+rectButton, circleButton, arrowButton, selectButton\n\s+\]/
+    /id: 'tools',\n\s+label: '도구',\n\s+layout: 'grid',\n\s+columns: 5,\n\s+gap: '3px',\n\s+items: \[\n\s+brushButton, penButton, eraserButton, shapeMenuControls\.button, selectButton\n\s+\],\n\s+appended: \[shapeMenuControls\.flyout\]/
   );
   assert.match(
     fabricRuntimeSource,
@@ -1554,9 +1554,10 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.match(fabricRuntimeSource, /^\s+let paletteShell = null;$/m);
   assert.match(fabricRuntimeSource, /toolbar = null;\n\s+paletteShell = null;/);
 
-  // 도구 라벨은 한글이고 기존 접근성 라벨은 그대로 유지된다
-  assert.match(fabricRuntimeSource, /createButton\('브러시', 'brush'\), '브러시 도구 \(B\)'/);
-  assert.match(fabricRuntimeSource, /createButton\('선택', 'select'\), '선택 도구 \(V\)'/);
+  // 도구 버튼은 아이콘 전용이 됐지만(190px 팔레트에서 한글 라벨이 잘린다)
+  // 접근성 라벨은 한글 그대로 유지된다 — 이름이 title/aria-label 로 옮겨갔을 뿐이다.
+  assert.match(fabricRuntimeSource, /createButton\('', 'brush'\), '브러시 도구 \(B\)', TOOL_ICON_SVG\.brush/);
+  assert.match(fabricRuntimeSource, /createButton\('', 'select'\), '선택 도구 \(V\)', TOOL_ICON_SVG\.select/);
   assert.match(fabricRuntimeSource, /createButton\('실행 취소', 'undo'\), '실행 취소 \(Ctrl\+Z\)'/);
   assert.match(fabricRuntimeSource, /createButton\('다시 실행', 'redo'\), '다시 실행 \(Ctrl\+Y\)'/);
   assert.match(fabricRuntimeSource, /createButton\('선택 삭제', 'delete-selection'\)/);

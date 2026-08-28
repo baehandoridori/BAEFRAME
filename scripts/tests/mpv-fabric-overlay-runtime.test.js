@@ -15188,3 +15188,199 @@ test('an Alt size gesture takes the HUD away from the keyboard flash timer', asy
     await harness.destroy();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 작업 6 — 팔레트 재구성 (도구 줄 5개 + 도형 드롭다운, 맥락 표시, 상시 요약, 최근 색)
+// ---------------------------------------------------------------------------
+
+function paletteSection(root, id) {
+  return findOne(root, node => node.dataset?.fabricPilotSection === id);
+}
+
+function paletteButton(root, action) {
+  return findOne(root, node => node.dataset?.fabricPilotAction === action);
+}
+
+test('the tool row is five icon buttons with the shape tools folded into a dropdown', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    assert.ok(toolsSection, '도구 섹션이 있어야 한다');
+    const row = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-row');
+    assert.ok(row, '도구 줄이 있어야 한다');
+    assert.equal(row.dataset.layout, 'grid');
+    assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
+    assert.equal(row.style.gap, '3px');
+    assert.equal(row.children.length, 5, '한 줄에 5개 — 브러시·펜·지우개·도형·선택');
+
+    // 도형 4종은 줄이 아니라 플라이아웃 안에 있고 기본은 닫혀 있다.
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    assert.ok(flyout);
+    assert.equal(flyout.style.display, 'none');
+    for (const tool of ['line', 'rect', 'circle', 'arrow']) {
+      assert.ok(paletteButton(harness.root, tool), `${tool} 버튼이 플라이아웃에 있어야 한다`);
+    }
+
+    // 아이콘 전용이지만 이름은 접근성 속성으로 남는다.
+    const brushButton = paletteButton(harness.root, 'brush');
+    assert.equal(brushButton.textContent, '');
+    assert.equal(brushButton.getAttribute('title'), '브러시 도구 (B)');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the shape button opens the dropdown and remembers the last shape used', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const shapeButton = paletteButton(harness.root, 'shape-menu');
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    // 도형 도구가 아닐 때 누르면 마지막 도형으로 전환하고 메뉴를 연다.
+    click(shapeButton);
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'rect');
+    assert.equal(flyout.style.display, 'grid');
+    assert.equal(shapeButton.dataset.active, 'true');
+
+    // 다른 도형을 고르면 그 도구로 바뀌고 메뉴가 닫힌다.
+    click(paletteButton(harness.root, 'arrow'));
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'arrow');
+    assert.equal(flyout.style.display, 'none');
+    assert.equal(shapeButton.getAttribute('title'), '도형 도구 (화살표)');
+
+    // 도형이 아닌 도구로 나가면 버튼 활성 표시가 풀리고 메뉴도 닫힌다.
+    click(paletteButton(harness.root, 'brush'));
+    assert.equal(shapeButton.dataset.active, 'false');
+    assert.equal(flyout.style.display, 'none');
+    // 마지막에 쓴 도형은 기억된다 — 다시 누르면 화살표로 돌아간다.
+    click(shapeButton);
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'arrow');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('only the sections that matter for the active tool stay visible', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const brushSection = paletteSection(harness.root, 'brush');
+    const eraserSection = paletteSection(harness.root, 'eraser');
+    const expect = (tool, brushVisible, eraserVisible) => {
+      enableRealFabricShapeTool(harness, tool, harness.__toolRevision = (harness.__toolRevision || 0) + 1);
+      assert.equal(brushSection.style.display !== 'none', brushVisible, `${tool} 브러시 섹션`);
+      assert.equal(eraserSection.style.display !== 'none', eraserVisible, `${tool} 지우개 섹션`);
+    };
+
+    expect('pen', true, false);
+    expect('rect', true, false);
+    expect('eraser', false, true);
+    expect('select', false, false);
+    expect('brush', true, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the always-on status row reports size, opacity and tool without moving panel elements', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const text = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === 'brush-status-text');
+    const swatch = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === 'brush-status-swatch');
+    assert.ok(text && swatch);
+    assert.equal(text.textContent, '3px · 100% · 브러시');
+
+    harness.runtime.updateDrawingBrush({ size: 14 });
+    assert.equal(text.textContent, '14px · 100% · 브러시');
+    assert.equal(swatch.style.width, '14px');
+
+    // §6.6 회귀 방지 — summary 와 sizePreview 는 원래 자리에 남아 있어야 한다.
+    // appendChild 로 옮기면 브러시 설정 버튼의 표시가 사라진다.
+    const settingsButton = paletteButton(harness.root, 'brush-settings');
+    const summary = findOne(settingsButton, node =>
+      node.dataset?.fabricPilotOutput === 'summary');
+    assert.ok(summary, 'summary 는 설정 버튼의 자식으로 남아야 한다');
+    assert.equal(summary.textContent, '14px · 100%');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('recent colors keep the newest first without duplicates and cap at four', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const readRecent = () => [0, 1, 2, 3]
+      .map(index => paletteButton(harness.root, `recent-color-${index}`))
+      .map(button => ({
+        color: button.dataset.fabricPilotRecentColor,
+        display: button.style.display
+      }));
+
+    const click = action => paletteButton(harness.root, action).dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+    const colorButtons = findAll(harness.root, node =>
+      typeof node.dataset?.fabricPilotColor === 'string' && node.dataset.fabricPilotColor.length > 0);
+    assert.ok(colorButtons.length >= 5, '색상 버튼이 5개 이상이어야 한다');
+
+    const used = [];
+    for (const button of colorButtons.slice(0, 5)) {
+      used.push(button.dataset.fabricPilotColor);
+      button.dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+    }
+    // 최근 4개만, 최신이 앞에.
+    assert.deepEqual(readRecent().map(entry => entry.color), used.slice(1).reverse());
+
+    // 이미 쓴 색을 다시 고르면 중복 없이 맨 앞으로 온다.
+    const revisited = used[2];
+    colorButtons.find(button => button.dataset.fabricPilotColor === revisited)
+      .dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+    const recent = readRecent().map(entry => entry.color);
+    assert.equal(recent[0], revisited);
+    assert.equal(recent.filter(color => color === revisited).length, 1);
+
+    // 최근 색 버튼을 누르면 그 색으로 돌아가고, 그 색이 다시 맨 앞으로 온다.
+    const revived = recent[1];
+    click('recent-color-1');
+    assert.equal(readRecent()[0].color, revived);
+    assert.equal(
+      findOne(harness.root, node => node.dataset?.fabricPilotColor === revived)
+        .getAttribute('aria-pressed'),
+      'true',
+      '해당 색상 버튼이 활성으로 표시돼야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('collapsing a section and reopening it keeps the tool grid layout', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    const label = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const row = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-row');
+    const click = () => label.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    click();
+    assert.equal(label.dataset.collapsed, 'true');
+    assert.equal(row.style.display, 'none');
+
+    click();
+    assert.equal(label.dataset.collapsed, 'false');
+    // flex 로 되돌리면 도구 줄이 한 줄로 무너진다.
+    assert.equal(row.style.display, 'grid');
+    assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
+  } finally {
+    await harness.destroy();
+  }
+});

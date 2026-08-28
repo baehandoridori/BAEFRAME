@@ -158,6 +158,9 @@ function createFabricDrawingPalette(options = {}) {
   const content = documentRef.createElement('div');
   content.className = 'mpv-fabric-pilot-toolbar-content';
 
+  // 라벨이 있는 섹션의 래퍼. 도구에 따라 관련 섹션만 남기기 위해 id 로 찾는다.
+  const sectionElements = new Map();
+
   for (const section of sections) {
     const items = Array.isArray(section?.items) ? section.items : [];
     const appended = Array.isArray(section?.appended) ? section.appended : [];
@@ -176,10 +179,47 @@ function createFabricDrawingPalette(options = {}) {
     label.textContent = section.label;
     const row = documentRef.createElement('div');
     row.className = 'mpv-fabric-pilot-section-row';
+    // 항목이 많은 섹션(도구 줄)은 한 줄로 늘어놓으면 팔레트를 넘친다.
+    // 렌더러 구조는 그대로 두고 표시만 그리드로 바꾼다.
+    // minmax(0, 1fr) 이어야 트랙이 버튼의 min-width 보다 작아질 수 있다 —
+    // 1fr 만 쓰면 min-content(= min-width 40px)가 하한이 되어 팔레트를 넘친다.
+    if (section.layout === 'grid') {
+      const columns = Math.max(1, Number(section.columns) || 4);
+      const gap = typeof section.gap === 'string' ? section.gap : '4px';
+      row.dataset.layout = 'grid';
+      applyStyles(row, {
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        gap
+      });
+      for (const item of items) {
+        applyStyles(item, { minWidth: '0', padding: '0' });
+      }
+    }
     for (const item of items) row.appendChild(item);
+    // 섹션 라벨을 눌러 그 섹션만 접는다. 팔레트 전체 접기와는 별개다.
+    label.setAttribute?.('role', 'button');
+    label.setAttribute?.('tabindex', '0');
+    label.dataset.collapsed = 'false';
+    const toggleSection = () => {
+      const collapsed = label.dataset.collapsed !== 'true';
+      label.dataset.collapsed = String(collapsed);
+      // grid 로 만든 섹션을 flex 로 되돌리면 도구 줄이 한 줄로 무너진다.
+      applyStyles(row, {
+        display: collapsed ? 'none' : (row.dataset.layout === 'grid' ? 'grid' : 'flex')
+      });
+      for (const item of appended) applyStyles(item, { display: collapsed ? 'none' : '' });
+    };
+    listen(label, 'click', toggleSection);
+    listen(label, 'keydown', event => {
+      if (event?.key !== 'Enter' && event?.key !== ' ') return;
+      event.preventDefault?.();
+      toggleSection();
+    });
     sectionElement.appendChild(label);
     sectionElement.appendChild(row);
     for (const item of appended) sectionElement.appendChild(item);
+    sectionElements.set(String(section.id || section.label), sectionElement);
     content.appendChild(sectionElement);
   }
 
@@ -274,6 +314,15 @@ function createFabricDrawingPalette(options = {}) {
 
   applyCollapsedState();
 
+  // 도구에 따라 라벨이 있는 섹션을 통째로 숨긴다. 라벨 없는 묶음(선택 설정·상태)은
+  // 래퍼가 없어 여기에 등록되지 않으며, 자체적으로 표시를 관리한다.
+  function setSectionVisible(id, visible) {
+    const sectionElement = sectionElements.get(String(id));
+    if (!sectionElement) return false;
+    applyStyles(sectionElement, { display: visible ? 'flex' : 'none' });
+    return true;
+  }
+
   return {
     element,
     header,
@@ -283,6 +332,7 @@ function createFabricDrawingPalette(options = {}) {
       applyCollapsedState();
       return applyPosition(state);
     },
+    setSectionVisible,
     setCollapsed,
     isCollapsed: () => state.collapsed,
     getState: () => ({ ...state })

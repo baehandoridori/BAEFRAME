@@ -92,6 +92,38 @@ const BRUSH_COLOR_LABELS = Object.freeze({
   '#ff6b9d': '핑크'
 });
 const DEFAULT_BRUSH_STYLE = Object.freeze({ color: '#ff4757', size: 3, opacity: 1 });
+// 레거시 팔레트(renderer/index.html)의 도구 아이콘을 그대로 쓴다. 한글 라벨은
+// 190px 팔레트의 5열 그리드에서 잘리므로 아이콘만 두고 이름은 title/aria-label 로 준다.
+const TOOL_ICON_SVG = Object.freeze({
+  brush: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>',
+  pen: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>',
+  eraser: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
+  line: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="19" x2="19" y2="5"/></svg>',
+  rect: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
+  circle: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
+  select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>'
+});
+// 도형 버튼 우하단의 플라이아웃 예고 삼각형.
+const SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
+// 상시 요약 줄에 띄우는 도구 이름.
+const TOOL_STATUS_LABELS = Object.freeze({
+  brush: '브러시',
+  pen: '펜',
+  eraser: '지우개',
+  line: '직선',
+  rect: '사각형',
+  circle: '원',
+  arrow: '화살표',
+  select: '선택'
+});
+const SHAPE_TOOL_LABELS = Object.freeze({
+  line: '직선',
+  rect: '사각형',
+  circle: '원',
+  arrow: '화살표'
+});
+const RECENT_COLOR_LIMIT = 4;
 const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
 // [ / ] 로 띄운 크기 HUD 가 스스로 사라지기까지. 레거시 감각과 같다.
@@ -2777,6 +2809,16 @@ function createFabricOverlayRuntime(options = {}) {
   // 여기서는 어느 경로로 커밋할지만 고른다.
   let eraserMode = 'stroke';
   let eraserModeControls = null;
+  // 도형 도구 4종은 버튼 1개 + 드롭다운으로 접는다. 런타임의 도구 값은 여전히
+  // line/rect/circle/arrow 그대로이고, 팔레트가 "그 4종 중 활성인 것"으로 표시만 묶는다.
+  let shapeMenuControls = null;
+  let lastShapeTool = 'rect';
+  let brushStatusRow = null;
+  // 최근 사용 색 4개. 팔레트 색상 8종 중 실제로 쓰는 건 보통 2~3개인데 매번 전체를
+  // 훑어야 했다. 오버레이 문서는 data: URL 오리진이라 localStorage 가 SecurityError 를
+  // 던지므로 세션 메모리에만 둔다.
+  const recentColors = [];
+  let recentColorControls = null;
   let transformStart = null;
   let selectGesture = null;
   const ignoredModifiedTargets = new WeakSet();
@@ -2829,6 +2871,15 @@ function createFabricOverlayRuntime(options = {}) {
     return button;
   }
 
+  // 아이콘 전용 버튼. 이름은 title/aria-label 로만 남기므로 스크린리더와 툴팁은
+  // 그대로 동작하고, 좁은 팔레트에서 한글 라벨이 잘리는 문제만 사라진다.
+  function iconToolbarButton(button, label, icon) {
+    labelToolbarButton(button, label);
+    button.textContent = '';
+    if (icon) button.innerHTML = icon;
+    return button;
+  }
+
   function syncPersistenceBadge(targetFrame = null) {
     if (!badge) return;
     const fullLabel = formatFabricPersistenceBadge(targetFrame);
@@ -2853,6 +2904,151 @@ function createFabricOverlayRuntime(options = {}) {
     selectionControls.summary.textContent = selectionTarget === 'partial'
       ? `현재: 부분 자르기 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`
       : `현재: 획 전체 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`;
+  }
+
+  // 팔레트를 펼치지 않아도 현재 브러시 상태가 보이게 하는 상시 요약 줄.
+  // brushControls.sizePreview / summary 는 설정 패널·버튼 안에 그대로 둔다
+  // (appendChild 로 옮기면 원래 자리에서 사라진다).
+  function createBrushStatusRow() {
+    const row = documentRef.createElement('div');
+    row.className = 'mpv-fabric-pilot-brush-status';
+    const swatch = documentRef.createElement('span');
+    swatch.dataset.fabricPilotOutput = 'brush-status-swatch';
+    const text = documentRef.createElement('span');
+    text.dataset.fabricPilotOutput = 'brush-status-text';
+    text.setAttribute?.('role', 'status');
+    text.setAttribute?.('aria-live', 'polite');
+    row.appendChild(swatch);
+    row.appendChild(text);
+    return { row, swatch, text };
+  }
+
+  function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
+    if (!brushStatusRow) return;
+    const diameter = Math.min(22, Math.max(2, brushStyle.size));
+    setStyles(brushStatusRow.swatch, {
+      display: 'inline-block',
+      width: `${diameter}px`,
+      height: `${diameter}px`,
+      borderRadius: '50%',
+      background: brushStyle.color,
+      opacity: String(brushStyle.opacity)
+    });
+    const toolName = TOOL_STATUS_LABELS[tool] || '';
+    brushStatusRow.text.textContent = toolName
+      ? `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}% · ${toolName}`
+      : `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}%`;
+  }
+
+  function createRecentColorControls() {
+    const row = documentRef.createElement('div');
+    row.className = 'mpv-fabric-pilot-recent-colors';
+    row.setAttribute?.('role', 'group');
+    row.setAttribute?.('aria-label', '최근 사용 색');
+    const buttons = [];
+    for (let index = 0; index < RECENT_COLOR_LIMIT; index += 1) {
+      const button = createButton('', `recent-color-${index}`);
+      button.dataset.fabricPilotRecentColor = '';
+      setStyles(button, { display: 'none', minWidth: '20px', minHeight: '20px', padding: '0' });
+      addDomListener(button, 'click', () => {
+        const color = button.dataset.fabricPilotRecentColor;
+        if (color) setBrushColor(color);
+      });
+      row.appendChild(button);
+      buttons.push(button);
+    }
+    return { row, buttons };
+  }
+
+  function syncRecentColorControls() {
+    if (!recentColorControls) return;
+    recentColorControls.buttons.forEach((button, index) => {
+      const color = recentColors[index];
+      button.dataset.fabricPilotRecentColor = color || '';
+      setStyles(button, {
+        display: color ? 'inline-block' : 'none',
+        background: color || 'transparent'
+      });
+      button.setAttribute?.('aria-label', color ? `최근 색 ${color}` : '');
+      button.setAttribute?.('title', color ? `최근 색 ${color}` : '');
+    });
+  }
+
+  function noteRecentColor(color) {
+    if (typeof color !== 'string' || color.length === 0) return;
+    const index = recentColors.indexOf(color);
+    if (index >= 0) recentColors.splice(index, 1);
+    recentColors.unshift(color);
+    while (recentColors.length > RECENT_COLOR_LIMIT) recentColors.pop();
+    syncRecentColorControls();
+  }
+
+  function createShapeMenuControls() {
+    const button = labelToolbarButton(createButton('', 'shape-menu'), '도형 도구');
+    button.dataset.active = 'false';
+    button.setAttribute?.('aria-haspopup', 'true');
+    button.setAttribute?.('aria-expanded', 'false');
+    setStyles(button, { position: 'relative' });
+    const icon = documentRef.createElement('span');
+    icon.dataset.fabricPilotOutput = 'shape-menu-icon';
+    const caret = documentRef.createElement('span');
+    caret.dataset.fabricPilotOutput = 'shape-menu-caret';
+    caret.innerHTML = SHAPE_MENU_CARET_SVG;
+    setStyles(caret, {
+      position: 'absolute',
+      right: '2px',
+      bottom: '2px',
+      lineHeight: '0',
+      pointerEvents: 'none'
+    });
+    button.appendChild(icon);
+    button.appendChild(caret);
+
+    const flyout = documentRef.createElement('div');
+    flyout.className = 'mpv-fabric-pilot-shape-menu';
+    flyout.dataset.fabricPilotPanel = 'shape-menu';
+    flyout.setAttribute?.('role', 'group');
+    flyout.setAttribute?.('aria-label', '도형 도구');
+    setStyles(flyout, {
+      display: 'none',
+      gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+      gap: '3px',
+      width: '100%'
+    });
+    const shapeButtons = new Map();
+    for (const tool of FABRIC_SHAPE_TOOLS) {
+      const shapeButton = iconToolbarButton(
+        createButton('', tool),
+        `${SHAPE_TOOL_LABELS[tool] || tool} 도구`,
+        TOOL_ICON_SVG[tool]
+      );
+      setStyles(shapeButton, { minWidth: '0', padding: '0' });
+      flyout.appendChild(shapeButton);
+      shapeButtons.set(tool, shapeButton);
+    }
+    return { button, icon, flyout, shapeButtons };
+  }
+
+  function setShapeMenuOpen(open) {
+    if (!shapeMenuControls) return false;
+    const visible = open === true;
+    setStyles(shapeMenuControls.flyout, { display: visible ? 'grid' : 'none' });
+    shapeMenuControls.button.setAttribute?.('aria-expanded', String(visible));
+    return visible;
+  }
+
+  function syncShapeMenuControls(tool = currentSession?.tool) {
+    if (!shapeMenuControls) return;
+    const isShapeTool = FABRIC_SHAPE_TOOLS.includes(tool);
+    if (isShapeTool) lastShapeTool = tool;
+    // 버튼에는 마지막에 쓴 도형이 남아, 다시 누르면 그 도형으로 바로 돌아간다.
+    shapeMenuControls.icon.innerHTML = TOOL_ICON_SVG[lastShapeTool] || '';
+    const label = `도형 도구 (${SHAPE_TOOL_LABELS[lastShapeTool] || lastShapeTool})`;
+    shapeMenuControls.button.setAttribute?.('aria-label', label);
+    shapeMenuControls.button.setAttribute?.('title', label);
+    shapeMenuControls.button.dataset.active = String(isShapeTool);
+    shapeMenuControls.button.setAttribute?.('aria-pressed', String(isShapeTool));
+    if (!isShapeTool) setShapeMenuOpen(false);
   }
 
   function createEraserModeControls() {
@@ -2892,6 +3088,18 @@ function createFabricOverlayRuntime(options = {}) {
       button.dataset.active = String(active);
       button.setAttribute?.('aria-pressed', String(active));
     }
+  }
+
+  // 도구별로 의미 있는 섹션만 남긴다. 섹션이 늘어나면 세로 팔레트가 화면을 덮으므로,
+  // 지금 쓰는 것만 보이게 하는 편이 훨씬 편하다.
+  // selection 섹션은 syncSelectionControls 가 자체 관리하므로 여기서 건드리지 않는다
+  // (라벨이 없어 셸의 sectionElements 에도 등록되지 않는다).
+  function syncToolSectionVisibility(tool) {
+    if (!paletteShell?.setSectionVisible) return;
+    // 브러시·펜·도형은 크기·불투명도·색상이 필요하다. 지우개는 지우개 방식만.
+    // 선택 도구는 둘 다 필요 없다.
+    paletteShell.setSectionVisible('brush', tool !== 'eraser' && tool !== 'select');
+    paletteShell.setSectionVisible('eraser', tool === 'eraser');
   }
 
   function usesNativeRectangleSelection(tool = currentSession?.tool) {
@@ -3095,6 +3303,8 @@ function createFabricOverlayRuntime(options = {}) {
     if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
     brushStyle = { ...brushStyle, color };
     syncBrushControls();
+    // 팔레트 클릭과 원격 변경을 모두 여기서 거치므로 최근 색 기록도 여기 둔다.
+    noteRecentColor(brushStyle.color);
     return brushStyle.color;
   }
 
@@ -3121,6 +3331,8 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function syncBrushControls() {
+    // 상시 요약 줄은 설정 패널과 별개 요소다. brushControls 가 아직 없어도 갱신한다.
+    syncBrushStatusRow();
     if (!brushControls) return;
     const opacityPercent = Math.round(brushStyle.opacity * 100);
     brushControls.settingsButton.setAttribute?.('aria-expanded', String(brushPanelOpen));
@@ -3312,8 +3524,10 @@ function createFabricOverlayRuntime(options = {}) {
       output: 'opacity'
     });
 
+    const recentColors = createRecentColorControls();
     panel.appendChild(previewRow);
     panel.appendChild(palette);
+    panel.appendChild(recentColors.row);
     panel.appendChild(sizeRow.row);
     panel.appendChild(opacityRow.row);
 
@@ -3345,7 +3559,8 @@ function createFabricOverlayRuntime(options = {}) {
       opacityOutput: opacityRow.output,
       summary,
       colorPreview,
-      sizePreview
+      sizePreview,
+      recentColors
     };
   }
 
@@ -3838,6 +4053,10 @@ function createFabricOverlayRuntime(options = {}) {
     }
     syncSelectionControls(tool);
     syncEraserModeControls(tool);
+    syncShapeMenuControls(tool);
+    // 상시 요약 줄이 현재 도구 이름을 함께 띄우므로 도구가 바뀔 때도 갱신한다.
+    syncBrushStatusRow(tool);
+    syncToolSectionVisibility(tool);
     refreshSelectionInteractionPolicy();
     fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
     fabricCanvas.requestRenderAll();
@@ -7227,6 +7446,9 @@ function createFabricOverlayRuntime(options = {}) {
     brushControls = null;
     selectionControls = null;
     eraserModeControls = null;
+    shapeMenuControls = null;
+    brushStatusRow = null;
+    recentColorControls = null;
     badge = null;
     sizeAdjustHud = null;
     sizeAdjustHudLabel = null;
@@ -7267,14 +7489,17 @@ function createFabricOverlayRuntime(options = {}) {
       canvasElement.className = 'mpv-fabric-delta-canvas';
       toolbar = documentRef.createElement('div');
       toolbar.className = 'mpv-fabric-pilot-toolbar';
-      const brushButton = labelToolbarButton(createButton('브러시', 'brush'), '브러시 도구 (B)');
-      const penButton = labelToolbarButton(createButton('펜', 'pen'), '펜 도구');
-      const eraserButton = labelToolbarButton(createButton('지우개', 'eraser'), '지우개 도구');
-      const lineButton = labelToolbarButton(createButton('직선', 'line'), '직선 도구');
-      const rectButton = labelToolbarButton(createButton('사각형', 'rect'), '사각형 도구');
-      const circleButton = labelToolbarButton(createButton('원', 'circle'), '원 도구');
-      const arrowButton = labelToolbarButton(createButton('화살표', 'arrow'), '화살표 도구');
-      const selectButton = labelToolbarButton(createButton('선택', 'select'), '선택 도구 (V)');
+      // 도구 줄은 아이콘 5개 한 줄이다 — 브러시·펜·지우개·도형▾·선택.
+      // 도형 4종은 드롭다운으로 접히므로 190px 팔레트에서도 라벨이 잘리지 않는다.
+      const brushButton = iconToolbarButton(
+        createButton('', 'brush'), '브러시 도구 (B)', TOOL_ICON_SVG.brush);
+      const penButton = iconToolbarButton(
+        createButton('', 'pen'), '펜 도구', TOOL_ICON_SVG.pen);
+      const eraserButton = iconToolbarButton(
+        createButton('', 'eraser'), '지우개 도구', TOOL_ICON_SVG.eraser);
+      const selectButton = iconToolbarButton(
+        createButton('', 'select'), '선택 도구 (V)', TOOL_ICON_SVG.select);
+      shapeMenuControls = createShapeMenuControls();
       const undoButton = labelToolbarButton(createButton('실행 취소', 'undo'), '실행 취소 (Ctrl+Z)');
       const redoButton = labelToolbarButton(createButton('다시 실행', 'redo'), '다시 실행 (Ctrl+Y)');
       const deleteButton = labelToolbarButton(
@@ -7286,6 +7511,8 @@ function createFabricOverlayRuntime(options = {}) {
         '현재 프레임 드로잉 전체 삭제'
       );
       brushControls = createBrushSettingsControls();
+      brushStatusRow = createBrushStatusRow();
+      recentColorControls = brushControls.recentColors;
       selectionControls = createSelectionControls();
       eraserModeControls = createEraserModeControls();
       badge = documentRef.createElement('span');
@@ -7307,11 +7534,15 @@ function createFabricOverlayRuntime(options = {}) {
           {
             id: 'tools',
             label: '도구',
+            layout: 'grid',
+            columns: 5,
+            gap: '3px',
             items: [
-              brushButton, penButton, eraserButton, lineButton,
-              rectButton, circleButton, arrowButton, selectButton
-            ]
+              brushButton, penButton, eraserButton, shapeMenuControls.button, selectButton
+            ],
+            appended: [shapeMenuControls.flyout]
           },
+          { id: 'brush-status', items: [brushStatusRow.row] },
           { id: 'selection', items: [selectionControls.group] },
           { id: 'eraser', label: '지우개 방식', items: [eraserModeControls.group] },
           {
@@ -7351,13 +7582,26 @@ function createFabricOverlayRuntime(options = {}) {
         [brushButton, 'brush'],
         [penButton, 'pen'],
         [eraserButton, 'eraser'],
-        [lineButton, 'line'],
-        [rectButton, 'rect'],
-        [circleButton, 'circle'],
-        [arrowButton, 'arrow'],
         [selectButton, 'select']
       ]) {
         addDomListener(toolButton, 'click', () => updateLocalDrawingTool(toolName));
+      }
+      // 도형 버튼: 이미 도형 도구를 쓰고 있으면 메뉴만 여닫고, 아니면 마지막에 쓴
+      // 도형으로 바로 전환한다. 새 상태를 만들지 않고 기존 경로를 그대로 부른다.
+      addDomListener(shapeMenuControls.button, 'click', () => {
+        const active = FABRIC_SHAPE_TOOLS.includes(sceneStore.getDiagnostics().tool);
+        if (active) {
+          setShapeMenuOpen(shapeMenuControls.flyout.style.display === 'none');
+          return;
+        }
+        updateLocalDrawingTool(lastShapeTool);
+        setShapeMenuOpen(true);
+      });
+      for (const [shapeTool, shapeButton] of shapeMenuControls.shapeButtons) {
+        addDomListener(shapeButton, 'click', () => {
+          updateLocalDrawingTool(shapeTool);
+          setShapeMenuOpen(false);
+        });
       }
       addDomListener(eraserModeControls.pixelButton, 'click', () => setEraserMode('pixel'));
       addDomListener(eraserModeControls.strokeButton, 'click', () => setEraserMode('stroke'));

@@ -7,6 +7,8 @@ const path = require('node:path');
 const PROBE_PREFIX = '__BAEFRAME_FABRIC_TOOLBAR_LAYOUT__';
 const rootDir = path.resolve(__dirname, '../..');
 
+const TOOL_ROW_ACTIONS = new Set(['brush', 'pen', 'eraser', 'shape-menu', 'select']);
+
 function boxesOverlap(a, b, tolerance = 0.5) {
   return a.left < b.right - tolerance &&
     a.right > b.left + tolerance &&
@@ -105,6 +107,9 @@ async function runElectronProbe() {
         (() => {
           const actions = [
             'brush',
+            'pen',
+            'eraser',
+            'shape-menu',
             'select',
             'select-target-stroke',
             'select-target-partial',
@@ -114,10 +119,14 @@ async function runElectronProbe() {
             'redo',
             'delete-selection',
             'clear-session',
-            'brush-settings',
             'toggle-collapse'
           ];
           const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
+          const sectionProbe = [...document.querySelectorAll('[data-fabric-pilot-section]')].map(node => [
+            node.dataset.fabricPilotSection,
+            getComputedStyle(node).display,
+            Math.round(node.getBoundingClientRect().width)
+          ]);
           const rect = element => {
             const value = element.getBoundingClientRect();
             return {
@@ -168,6 +177,7 @@ async function runElectronProbe() {
             };
           });
           return {
+            sectionProbe,
             root: rect(root),
             toolbar: rect(toolbar),
             toolbarWidth: toolbar.offsetWidth,
@@ -363,12 +373,26 @@ if (process.versions.electron) {
       assert.ok(toolbar.right <= root.right - 11.5, `${label} right inset`);
       assert.ok(toolbar.bottom <= root.bottom - 11.5, `${label} bottom inset`);
 
+      // 맥락 표시: 이 하네스는 select 도구로 입력을 켠다. 브러시 설정과 지우개
+      // 방식은 select 에서 쓸 일이 없으므로 섹션째 숨어야 한다.
+      const sectionDisplay = new Map(
+        measurement.sectionProbe.map(([id, display]) => [id, display])
+      );
+      assert.equal(sectionDisplay.get('tools') !== 'none', true, `${label} tools section`);
+      assert.equal(sectionDisplay.get('actions') !== 'none', true, `${label} actions section`);
+      assert.equal(sectionDisplay.get('brush'), 'none', `${label} brush section hidden for select`);
+      assert.equal(sectionDisplay.get('eraser'), 'none', `${label} eraser section hidden for select`);
+
       assert.equal(measurement.badgeDisplay, 'block', `${label} badge container`);
       assert.equal(measurement.badgeTextOverflow, 'ellipsis', `${label} badge ellipsis`);
       assert.equal(measurement.badgeOverflowX, 'hidden', `${label} badge overflow`);
 
       for (const control of controls) {
-        const minimum = control.action === 'toggle-collapse' ? 23.5 : 39.5;
+        // 도구 줄은 아이콘 5열 그리드라 텍스트 버튼보다 좁다 —
+        // 220px 팔레트에서 약 37px, 190px 에서 약 31px.
+        const minimum = control.action === 'toggle-collapse'
+          ? 23.5
+          : (TOOL_ROW_ACTIONS.has(control.action) ? 28.5 : 39.5);
         assert.notEqual(control.display, 'none', `${label} ${control.action} display`);
         assert.equal(control.visibility, 'visible', `${label} ${control.action} visibility`);
         assert.equal(control.pointerEvents, 'auto', `${label} ${control.action} pointer`);

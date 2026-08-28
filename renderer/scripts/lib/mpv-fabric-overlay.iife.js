@@ -5881,6 +5881,7 @@
         header.appendChild(collapseButton);
         const content = documentRef.createElement("div");
         content.className = "mpv-fabric-pilot-toolbar-content";
+        const sectionElements = /* @__PURE__ */ new Map();
         for (const section of sections) {
           const items = Array.isArray(section?.items) ? section.items : [];
           const appended = Array.isArray(section?.appended) ? section.appended : [];
@@ -5897,10 +5898,41 @@
           label.textContent = section.label;
           const row = documentRef.createElement("div");
           row.className = "mpv-fabric-pilot-section-row";
+          if (section.layout === "grid") {
+            const columns = Math.max(1, Number(section.columns) || 4);
+            const gap = typeof section.gap === "string" ? section.gap : "4px";
+            row.dataset.layout = "grid";
+            applyStyles(row, {
+              display: "grid",
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              gap
+            });
+            for (const item of items) {
+              applyStyles(item, { minWidth: "0", padding: "0" });
+            }
+          }
           for (const item of items) row.appendChild(item);
+          label.setAttribute?.("role", "button");
+          label.setAttribute?.("tabindex", "0");
+          label.dataset.collapsed = "false";
+          const toggleSection = () => {
+            const collapsed = label.dataset.collapsed !== "true";
+            label.dataset.collapsed = String(collapsed);
+            applyStyles(row, {
+              display: collapsed ? "none" : row.dataset.layout === "grid" ? "grid" : "flex"
+            });
+            for (const item of appended) applyStyles(item, { display: collapsed ? "none" : "" });
+          };
+          listen(label, "click", toggleSection);
+          listen(label, "keydown", (event) => {
+            if (event?.key !== "Enter" && event?.key !== " ") return;
+            event.preventDefault?.();
+            toggleSection();
+          });
           sectionElement.appendChild(label);
           sectionElement.appendChild(row);
           for (const item of appended) sectionElement.appendChild(item);
+          sectionElements.set(String(section.id || section.label), sectionElement);
           content.appendChild(sectionElement);
         }
         element.appendChild(header);
@@ -5978,6 +6010,12 @@
         listen(documentRef, "pointercancel", endDrag);
         listen(windowRef, "resize", () => applyPosition(state));
         applyCollapsedState();
+        function setSectionVisible(id, visible) {
+          const sectionElement = sectionElements.get(String(id));
+          if (!sectionElement) return false;
+          applyStyles(sectionElement, { display: visible ? "flex" : "none" });
+          return true;
+        }
         return {
           element,
           header,
@@ -5987,6 +6025,7 @@
             applyCollapsedState();
             return applyPosition(state);
           },
+          setSectionVisible,
           setCollapsed,
           isCollapsed: () => state.collapsed,
           getState: () => ({ ...state })
@@ -13525,6 +13564,34 @@ void main() {
         "#ff6b9d": "\uD551\uD06C"
       });
       var DEFAULT_BRUSH_STYLE = Object.freeze({ color: "#ff4757", size: 3, opacity: 1 });
+      var TOOL_ICON_SVG = Object.freeze({
+        brush: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>',
+        pen: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>',
+        eraser: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
+        line: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="19" x2="19" y2="5"/></svg>',
+        rect: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
+        circle: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>',
+        arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
+        select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>'
+      });
+      var SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
+      var TOOL_STATUS_LABELS = Object.freeze({
+        brush: "\uBE0C\uB7EC\uC2DC",
+        pen: "\uD39C",
+        eraser: "\uC9C0\uC6B0\uAC1C",
+        line: "\uC9C1\uC120",
+        rect: "\uC0AC\uAC01\uD615",
+        circle: "\uC6D0",
+        arrow: "\uD654\uC0B4\uD45C",
+        select: "\uC120\uD0DD"
+      });
+      var SHAPE_TOOL_LABELS = Object.freeze({
+        line: "\uC9C1\uC120",
+        rect: "\uC0AC\uAC01\uD615",
+        circle: "\uC6D0",
+        arrow: "\uD654\uC0B4\uD45C"
+      });
+      var RECENT_COLOR_LIMIT = 4;
       var MIN_BRUSH_SIZE = 1;
       var MAX_BRUSH_SIZE = 50;
       var SIZE_ADJUST_HUD_FLASH_MS = 700;
@@ -15751,6 +15818,11 @@ void main() {
         let selectionControls = null;
         let eraserMode = "stroke";
         let eraserModeControls = null;
+        let shapeMenuControls = null;
+        let lastShapeTool = "rect";
+        let brushStatusRow = null;
+        const recentColors = [];
+        let recentColorControls = null;
         let transformStart = null;
         let selectGesture = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
@@ -15796,6 +15868,12 @@ void main() {
           button.setAttribute?.("title", label);
           return button;
         }
+        function iconToolbarButton(button, label, icon) {
+          labelToolbarButton(button, label);
+          button.textContent = "";
+          if (icon) button.innerHTML = icon;
+          return button;
+        }
         function syncPersistenceBadge(targetFrame = null) {
           if (!badge) return;
           const fullLabel = formatFabricPersistenceBadge(targetFrame);
@@ -15817,6 +15895,136 @@ void main() {
             button.setAttribute?.("aria-pressed", String(active));
           }
           selectionControls.summary.textContent = selectionTarget === "partial" ? `\uD604\uC7AC: \uBD80\uBD84 \uC790\uB974\uAE30 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}` : `\uD604\uC7AC: \uD68D \uC804\uCCB4 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}`;
+        }
+        function createBrushStatusRow() {
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-brush-status";
+          const swatch = documentRef.createElement("span");
+          swatch.dataset.fabricPilotOutput = "brush-status-swatch";
+          const text = documentRef.createElement("span");
+          text.dataset.fabricPilotOutput = "brush-status-text";
+          text.setAttribute?.("role", "status");
+          text.setAttribute?.("aria-live", "polite");
+          row.appendChild(swatch);
+          row.appendChild(text);
+          return { row, swatch, text };
+        }
+        function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
+          if (!brushStatusRow) return;
+          const diameter = Math.min(22, Math.max(2, brushStyle.size));
+          setStyles(brushStatusRow.swatch, {
+            display: "inline-block",
+            width: `${diameter}px`,
+            height: `${diameter}px`,
+            borderRadius: "50%",
+            background: brushStyle.color,
+            opacity: String(brushStyle.opacity)
+          });
+          const toolName = TOOL_STATUS_LABELS[tool] || "";
+          brushStatusRow.text.textContent = toolName ? `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}% \xB7 ${toolName}` : `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}%`;
+        }
+        function createRecentColorControls() {
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-recent-colors";
+          row.setAttribute?.("role", "group");
+          row.setAttribute?.("aria-label", "\uCD5C\uADFC \uC0AC\uC6A9 \uC0C9");
+          const buttons = [];
+          for (let index = 0; index < RECENT_COLOR_LIMIT; index += 1) {
+            const button = createButton("", `recent-color-${index}`);
+            button.dataset.fabricPilotRecentColor = "";
+            setStyles(button, { display: "none", minWidth: "20px", minHeight: "20px", padding: "0" });
+            addDomListener(button, "click", () => {
+              const color = button.dataset.fabricPilotRecentColor;
+              if (color) setBrushColor(color);
+            });
+            row.appendChild(button);
+            buttons.push(button);
+          }
+          return { row, buttons };
+        }
+        function syncRecentColorControls() {
+          if (!recentColorControls) return;
+          recentColorControls.buttons.forEach((button, index) => {
+            const color = recentColors[index];
+            button.dataset.fabricPilotRecentColor = color || "";
+            setStyles(button, {
+              display: color ? "inline-block" : "none",
+              background: color || "transparent"
+            });
+            button.setAttribute?.("aria-label", color ? `\uCD5C\uADFC \uC0C9 ${color}` : "");
+            button.setAttribute?.("title", color ? `\uCD5C\uADFC \uC0C9 ${color}` : "");
+          });
+        }
+        function noteRecentColor(color) {
+          if (typeof color !== "string" || color.length === 0) return;
+          const index = recentColors.indexOf(color);
+          if (index >= 0) recentColors.splice(index, 1);
+          recentColors.unshift(color);
+          while (recentColors.length > RECENT_COLOR_LIMIT) recentColors.pop();
+          syncRecentColorControls();
+        }
+        function createShapeMenuControls() {
+          const button = labelToolbarButton(createButton("", "shape-menu"), "\uB3C4\uD615 \uB3C4\uAD6C");
+          button.dataset.active = "false";
+          button.setAttribute?.("aria-haspopup", "true");
+          button.setAttribute?.("aria-expanded", "false");
+          setStyles(button, { position: "relative" });
+          const icon = documentRef.createElement("span");
+          icon.dataset.fabricPilotOutput = "shape-menu-icon";
+          const caret = documentRef.createElement("span");
+          caret.dataset.fabricPilotOutput = "shape-menu-caret";
+          caret.innerHTML = SHAPE_MENU_CARET_SVG;
+          setStyles(caret, {
+            position: "absolute",
+            right: "2px",
+            bottom: "2px",
+            lineHeight: "0",
+            pointerEvents: "none"
+          });
+          button.appendChild(icon);
+          button.appendChild(caret);
+          const flyout = documentRef.createElement("div");
+          flyout.className = "mpv-fabric-pilot-shape-menu";
+          flyout.dataset.fabricPilotPanel = "shape-menu";
+          flyout.setAttribute?.("role", "group");
+          flyout.setAttribute?.("aria-label", "\uB3C4\uD615 \uB3C4\uAD6C");
+          setStyles(flyout, {
+            display: "none",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: "3px",
+            width: "100%"
+          });
+          const shapeButtons = /* @__PURE__ */ new Map();
+          for (const tool of FABRIC_SHAPE_TOOLS) {
+            const shapeButton = iconToolbarButton(
+              createButton("", tool),
+              `${SHAPE_TOOL_LABELS[tool] || tool} \uB3C4\uAD6C`,
+              TOOL_ICON_SVG[tool]
+            );
+            setStyles(shapeButton, { minWidth: "0", padding: "0" });
+            flyout.appendChild(shapeButton);
+            shapeButtons.set(tool, shapeButton);
+          }
+          return { button, icon, flyout, shapeButtons };
+        }
+        function setShapeMenuOpen(open) {
+          if (!shapeMenuControls) return false;
+          const visible = open === true;
+          setStyles(shapeMenuControls.flyout, { display: visible ? "grid" : "none" });
+          shapeMenuControls.button.setAttribute?.("aria-expanded", String(visible));
+          return visible;
+        }
+        function syncShapeMenuControls(tool = currentSession?.tool) {
+          if (!shapeMenuControls) return;
+          const isShapeTool = FABRIC_SHAPE_TOOLS.includes(tool);
+          if (isShapeTool) lastShapeTool = tool;
+          shapeMenuControls.icon.innerHTML = TOOL_ICON_SVG[lastShapeTool] || "";
+          const label = `\uB3C4\uD615 \uB3C4\uAD6C (${SHAPE_TOOL_LABELS[lastShapeTool] || lastShapeTool})`;
+          shapeMenuControls.button.setAttribute?.("aria-label", label);
+          shapeMenuControls.button.setAttribute?.("title", label);
+          shapeMenuControls.button.dataset.active = String(isShapeTool);
+          shapeMenuControls.button.setAttribute?.("aria-pressed", String(isShapeTool));
+          if (!isShapeTool) setShapeMenuOpen(false);
         }
         function createEraserModeControls() {
           const group = documentRef.createElement("div");
@@ -15853,6 +16061,11 @@ void main() {
             button.dataset.active = String(active);
             button.setAttribute?.("aria-pressed", String(active));
           }
+        }
+        function syncToolSectionVisibility(tool) {
+          if (!paletteShell?.setSectionVisible) return;
+          paletteShell.setSectionVisible("brush", tool !== "eraser" && tool !== "select");
+          paletteShell.setSectionVisible("eraser", tool === "eraser");
         }
         function usesNativeRectangleSelection(tool = currentSession?.tool) {
           return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
@@ -16038,6 +16251,7 @@ void main() {
           if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
           brushStyle = { ...brushStyle, color };
           syncBrushControls();
+          noteRecentColor(brushStyle.color);
           return brushStyle.color;
         }
         function setBrushSize(value) {
@@ -16061,6 +16275,7 @@ void main() {
           return percent;
         }
         function syncBrushControls() {
+          syncBrushStatusRow();
           if (!brushControls) return;
           const opacityPercent = Math.round(brushStyle.opacity * 100);
           brushControls.settingsButton.setAttribute?.("aria-expanded", String(brushPanelOpen));
@@ -16241,8 +16456,10 @@ void main() {
             increaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uB298\uB9AC\uAE30",
             output: "opacity"
           });
+          const recentColors2 = createRecentColorControls();
           panel.appendChild(previewRow);
           panel.appendChild(palette);
+          panel.appendChild(recentColors2.row);
           panel.appendChild(sizeRow.row);
           panel.appendChild(opacityRow.row);
           addDomListener(settingsButton, "click", () => {
@@ -16272,7 +16489,8 @@ void main() {
             opacityOutput: opacityRow.output,
             summary,
             colorPreview,
-            sizePreview
+            sizePreview,
+            recentColors: recentColors2
           };
         }
         function createId(prefix) {
@@ -16698,6 +16916,9 @@ void main() {
           }
           syncSelectionControls(tool);
           syncEraserModeControls(tool);
+          syncShapeMenuControls(tool);
+          syncBrushStatusRow(tool);
+          syncToolSectionVisibility(tool);
           refreshSelectionInteractionPolicy();
           fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
           fabricCanvas.requestRenderAll();
@@ -19681,6 +19902,9 @@ void main() {
           brushControls = null;
           selectionControls = null;
           eraserModeControls = null;
+          shapeMenuControls = null;
+          brushStatusRow = null;
+          recentColorControls = null;
           badge = null;
           sizeAdjustHud = null;
           sizeAdjustHudLabel = null;
@@ -19717,14 +19941,27 @@ void main() {
             canvasElement.className = "mpv-fabric-delta-canvas";
             toolbar = documentRef.createElement("div");
             toolbar.className = "mpv-fabric-pilot-toolbar";
-            const brushButton = labelToolbarButton(createButton("\uBE0C\uB7EC\uC2DC", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
-            const penButton = labelToolbarButton(createButton("\uD39C", "pen"), "\uD39C \uB3C4\uAD6C");
-            const eraserButton = labelToolbarButton(createButton("\uC9C0\uC6B0\uAC1C", "eraser"), "\uC9C0\uC6B0\uAC1C \uB3C4\uAD6C");
-            const lineButton = labelToolbarButton(createButton("\uC9C1\uC120", "line"), "\uC9C1\uC120 \uB3C4\uAD6C");
-            const rectButton = labelToolbarButton(createButton("\uC0AC\uAC01\uD615", "rect"), "\uC0AC\uAC01\uD615 \uB3C4\uAD6C");
-            const circleButton = labelToolbarButton(createButton("\uC6D0", "circle"), "\uC6D0 \uB3C4\uAD6C");
-            const arrowButton = labelToolbarButton(createButton("\uD654\uC0B4\uD45C", "arrow"), "\uD654\uC0B4\uD45C \uB3C4\uAD6C");
-            const selectButton = labelToolbarButton(createButton("\uC120\uD0DD", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
+            const brushButton = iconToolbarButton(
+              createButton("", "brush"),
+              "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)",
+              TOOL_ICON_SVG.brush
+            );
+            const penButton = iconToolbarButton(
+              createButton("", "pen"),
+              "\uD39C \uB3C4\uAD6C",
+              TOOL_ICON_SVG.pen
+            );
+            const eraserButton = iconToolbarButton(
+              createButton("", "eraser"),
+              "\uC9C0\uC6B0\uAC1C \uB3C4\uAD6C",
+              TOOL_ICON_SVG.eraser
+            );
+            const selectButton = iconToolbarButton(
+              createButton("", "select"),
+              "\uC120\uD0DD \uB3C4\uAD6C (V)",
+              TOOL_ICON_SVG.select
+            );
+            shapeMenuControls = createShapeMenuControls();
             const undoButton = labelToolbarButton(createButton("\uC2E4\uD589 \uCDE8\uC18C", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
             const redoButton = labelToolbarButton(createButton("\uB2E4\uC2DC \uC2E4\uD589", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
             const deleteButton = labelToolbarButton(
@@ -19736,6 +19973,8 @@ void main() {
               "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C"
             );
             brushControls = createBrushSettingsControls();
+            brushStatusRow = createBrushStatusRow();
+            recentColorControls = brushControls.recentColors;
             selectionControls = createSelectionControls();
             eraserModeControls = createEraserModeControls();
             badge = documentRef.createElement("span");
@@ -19755,17 +19994,19 @@ void main() {
                 {
                   id: "tools",
                   label: "\uB3C4\uAD6C",
+                  layout: "grid",
+                  columns: 5,
+                  gap: "3px",
                   items: [
                     brushButton,
                     penButton,
                     eraserButton,
-                    lineButton,
-                    rectButton,
-                    circleButton,
-                    arrowButton,
+                    shapeMenuControls.button,
                     selectButton
-                  ]
+                  ],
+                  appended: [shapeMenuControls.flyout]
                 },
+                { id: "brush-status", items: [brushStatusRow.row] },
                 { id: "selection", items: [selectionControls.group] },
                 { id: "eraser", label: "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD", items: [eraserModeControls.group] },
                 {
@@ -19804,13 +20045,24 @@ void main() {
               [brushButton, "brush"],
               [penButton, "pen"],
               [eraserButton, "eraser"],
-              [lineButton, "line"],
-              [rectButton, "rect"],
-              [circleButton, "circle"],
-              [arrowButton, "arrow"],
               [selectButton, "select"]
             ]) {
               addDomListener(toolButton, "click", () => updateLocalDrawingTool(toolName));
+            }
+            addDomListener(shapeMenuControls.button, "click", () => {
+              const active = FABRIC_SHAPE_TOOLS.includes(sceneStore.getDiagnostics().tool);
+              if (active) {
+                setShapeMenuOpen(shapeMenuControls.flyout.style.display === "none");
+                return;
+              }
+              updateLocalDrawingTool(lastShapeTool);
+              setShapeMenuOpen(true);
+            });
+            for (const [shapeTool, shapeButton] of shapeMenuControls.shapeButtons) {
+              addDomListener(shapeButton, "click", () => {
+                updateLocalDrawingTool(shapeTool);
+                setShapeMenuOpen(false);
+              });
             }
             addDomListener(eraserModeControls.pixelButton, "click", () => setEraserMode("pixel"));
             addDomListener(eraserModeControls.strokeButton, "click", () => setEraserMode("stroke"));
