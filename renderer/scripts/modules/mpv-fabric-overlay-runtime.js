@@ -2403,6 +2403,14 @@ function createFabricOverlayRuntime(options = {}) {
   let strokeEraseGesture = null;
   let sizeAdjustHud = null;
   const overlayModifierState = { alt: false, ctrl: false };
+  // Alt 제스처 실기 미동작(v2.4.3-beta) 원인 확정용 관측값.
+  // "오버레이 문서가 Alt keydown을 받기는 하는가"와 "마우스 pointerdown이 altKey를
+  // 싣고 오는가"를 분리해 재현 1회로 원인을 가른다. 씬·스키마와 무관한 진단 전용 상태다.
+  const gestureProbe = {
+    overlayAltKeyDownCount: 0,
+    overlayCtrlKeyDownCount: 0,
+    lastPointerdown: null
+  };
   let pendingPointerdownFrame = null;
   let lastSelectionGesture = null;
   let pendingLassoSelection = null;
@@ -5230,6 +5238,21 @@ function createFabricOverlayRuntime(options = {}) {
     return overlayModifierState.ctrl === true;
   }
 
+  function recordPointerdownProbe(event) {
+    gestureProbe.lastPointerdown = {
+      pointerType: typeof event?.pointerType === 'string' ? event.pointerType : null,
+      button: Number.isFinite(event?.button) ? event.button : null,
+      altKey: event?.altKey === true,
+      ctrlKey: event?.ctrlKey === true,
+      latchAlt: overlayModifierState.alt === true,
+      latchCtrl: overlayModifierState.ctrl === true,
+      documentHasFocus: typeof documentRef?.hasFocus === 'function'
+        ? documentRef.hasFocus() === true
+        : null,
+      replayed: event?.[REPLAYED_POINTERDOWN] === true
+    };
+  }
+
   // 마우스 이벤트는 modifier 상태를 정확히 실어 오므로, 래치가 stuck이면 여기서 되돌린다.
   // 펜만 쓰다 마우스를 한 번 잡아도 복구되도록 포인터 진입 지점에서 동기화한다.
   function syncOverlayModifierStateFromPointer(event) {
@@ -5244,8 +5267,14 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onOverlayKeyDown(event) {
-    if (event?.key === 'Alt') overlayModifierState.alt = true;
-    if (event?.key === 'Control') overlayModifierState.ctrl = true;
+    if (event?.key === 'Alt') {
+      overlayModifierState.alt = true;
+      gestureProbe.overlayAltKeyDownCount += 1;
+    }
+    if (event?.key === 'Control') {
+      overlayModifierState.ctrl = true;
+      gestureProbe.overlayCtrlKeyDownCount += 1;
+    }
   }
 
   function onOverlayKeyUp(event) {
@@ -5818,6 +5847,9 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerDown(event) {
+    // 표본은 래치 자가복구(syncOverlayModifierStateFromPointer)보다 먼저 찍는다.
+    // 뒤에 찍으면 마우스 경로에서 래치가 지워진 뒤라 원인 판별 정보가 사라진다.
+    recordPointerdownProbe(event);
     syncOverlayModifierStateFromPointer(event);
     if (event?.[REPLAYED_POINTERDOWN] === true) {
       beginPointerDown(event, false);
@@ -7085,7 +7117,12 @@ function createFabricOverlayRuntime(options = {}) {
         ctrlStrokeEraseActive: !!strokeEraseGesture,
         strokeEraseCandidateCount: strokeEraseGesture ? strokeEraseGesture.erasedIds.size : 0,
         modifierAlt: overlayModifierState.alt,
-        modifierCtrl: overlayModifierState.ctrl
+        modifierCtrl: overlayModifierState.ctrl,
+        overlayAltKeyDownCount: gestureProbe.overlayAltKeyDownCount,
+        overlayCtrlKeyDownCount: gestureProbe.overlayCtrlKeyDownCount,
+        lastPointerdown: gestureProbe.lastPointerdown
+          ? { ...gestureProbe.lastPointerdown }
+          : null
       },
       presentationRevision: presentationState.presentationRevision,
       presentedStableVideoIdentity: currentSession?.stableVideoIdentity ??

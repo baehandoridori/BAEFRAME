@@ -1862,6 +1862,101 @@ test('drawing persistence IPC normalization resyncs malformed nested deltas with
   );
 });
 
+test('drawing diagnostics relay the bounded gesture probe', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.getDiagnostics(')) return undefined;
+      return {
+        state: 'active',
+        prepared: true,
+        inputEnabled: true,
+        gestures: {
+          altSizeAdjustActive: 'true',
+          ctrlStrokeEraseActive: true,
+          strokeEraseCandidateCount: '3.7',
+          modifierAlt: true,
+          modifierCtrl: 0,
+          overlayAltKeyDownCount: 2.9,
+          overlayCtrlKeyDownCount: -5,
+          lastPointerdown: {
+            pointerType: 'mouse',
+            button: 0,
+            altKey: false,
+            ctrlKey: 'yes',
+            latchAlt: true,
+            latchCtrl: false,
+            documentHasFocus: false,
+            replayed: false,
+            extraSecret: 'must-not-leak'
+          },
+          extraSecret: 'must-not-leak'
+        }
+      };
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-gesture-probe' });
+
+  const diagnostics = await harness.host.getDrawingDiagnostics();
+  assert.equal(diagnostics.success, true);
+  assert.deepEqual(diagnostics.gestures, {
+    altSizeAdjustActive: false,
+    ctrlStrokeEraseActive: true,
+    strokeEraseCandidateCount: 3,
+    modifierAlt: true,
+    modifierCtrl: false,
+    overlayAltKeyDownCount: 2,
+    overlayCtrlKeyDownCount: 0,
+    lastPointerdown: {
+      pointerType: 'mouse',
+      button: 0,
+      altKey: false,
+      ctrlKey: false,
+      latchAlt: true,
+      latchCtrl: false,
+      documentHasFocus: false,
+      replayed: false
+    }
+  });
+});
+
+test('drawing diagnostics report a missing gesture probe as null', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.getDiagnostics(')) return undefined;
+      return { state: 'active', prepared: true, inputEnabled: true };
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-gesture-probe-missing' });
+
+  const diagnostics = await harness.host.getDrawingDiagnostics();
+  assert.equal(diagnostics.success, true);
+  assert.equal(diagnostics.gestures, null);
+});
+
+test('enabling drawing input focuses the overlay after restacking', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, { sessionId: 'session-enable-focus' });
+
+  const names = harness.events.map(([name]) => name);
+  const focusableTrueIndex = harness.events
+    .findIndex(([name, value]) => name === 'setFocusable' && value === true);
+  const ignoreFalseIndex = harness.events
+    .findIndex(([name, value]) => name === 'setIgnoreMouseEvents' && value === false);
+  // moveTop 은 창 수명 초반(ensure/show)에도 불리므로 enable 구간 이후만 본다.
+  const moveTopIndex = names.indexOf('moveTop', ignoreFalseIndex);
+  const focusIndex = names.indexOf('overlay.focus', moveTopIndex);
+
+  assert.ok(focusableTrueIndex >= 0, 'native input enable must make the overlay focusable');
+  assert.ok(ignoreFalseIndex > focusableTrueIndex);
+  assert.ok(moveTopIndex > ignoreFalseIndex);
+  // Windows 마우스 메시지에는 Alt 플래그가 없어 Chromium 이 창의 키보드 큐에서 읽는다.
+  // 포커스를 주지 않으면 Alt 드래그가 altKey:false 로 도착해 크기 조절이 열리지 않는다.
+  assert.ok(
+    focusIndex > moveTopIndex,
+    'the overlay must take keyboard focus after the native restack settles'
+  );
+});
+
 test('passive diagnostics expose accepted host tokens before the Fabric runtime is prepared', async () => {
   const { host, getReadCount } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
@@ -2860,8 +2955,8 @@ test('rejects stale host video input session and tool revisions at the host boun
   assert.equal((await host.updateDrawingTool({ ...currentTool, toolRevision: 1, tool: 'brush' })).success, false);
   assert.equal(
     events.filter(([name]) => name === 'overlay.focus').length,
-    1,
-    'only the accepted V tool change restores overlay focus for the next toolbar click'
+    2,
+    'drawing input enable and the accepted V tool change each restore overlay focus'
   );
 });
 
