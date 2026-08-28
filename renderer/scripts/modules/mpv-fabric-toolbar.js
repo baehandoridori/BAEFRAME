@@ -102,7 +102,8 @@ function createFabricDrawingPalette(options = {}) {
     element,
     setStyles,
     addDomListener,
-    sections = []
+    sections = [],
+    onSectionToggle = null
   } = options;
   if (!documentRef?.createElement || !element) {
     throw new Error('Fabric palette requires a document and a root element');
@@ -204,9 +205,6 @@ function createFabricDrawingPalette(options = {}) {
     label.setAttribute?.('role', 'button');
     label.setAttribute?.('tabindex', '0');
     label.dataset.collapsed = 'false';
-    // 접기 직전의 붙임 패널 표시 상태. 다시 펼칠 때 '' 로 비우면 도형 플라이아웃과
-    // 브러시 설정 패널이 닫혀 있었는데도 함께 열려 버린다.
-    const appendedDisplay = new WeakMap();
     const sectionId = String(section.id || section.label);
     const toggleSection = () => {
       const collapsed = label.dataset.collapsed !== 'true';
@@ -217,14 +215,16 @@ function createFabricDrawingPalette(options = {}) {
       applyStyles(row, {
         display: collapsed ? 'none' : (row.dataset.layout === 'grid' ? 'grid' : 'flex')
       });
+      // 붙임 패널의 표시 상태는 캐시하지 않는다. 접혀 있는 동안 소유자 쪽 상태가
+      // 바뀌면(도구 전환으로 도형 메뉴가 닫히는 등) 캐시가 낡아, 펼칠 때
+      // aria-expanded 와 어긋난 채 패널만 되살아난다.
+      // 접을 때는 감추고, 펼칠 때는 비운 뒤 소유자에게 다시 쓰게 한다.
       for (const item of appended) {
-        if (collapsed) {
-          appendedDisplay.set(item, item?.style?.display ?? '');
-          applyStyles(item, { display: 'none' });
-          continue;
-        }
-        applyStyles(item, { display: appendedDisplay.get(item) ?? '' });
+        applyStyles(item, { display: collapsed ? 'none' : '' });
       }
+      if (!collapsed) onSectionToggle?.(sectionId, false);
+      // 섹션이 여닫히면 팔레트 높이가 달라진다. 화면 밖으로 나가지 않게 다시 잡는다.
+      applyPosition(state);
     };
     listen(label, 'click', toggleSection);
     listen(label, 'keydown', event => {
@@ -335,10 +335,14 @@ function createFabricDrawingPalette(options = {}) {
   function setSectionVisible(id, visible) {
     const sectionElement = sectionElements.get(String(id));
     if (!sectionElement) return false;
+    const wasHidden = sectionElement.style?.display === 'none';
     // 보일 때는 인라인 값을 비워 CSS 가 정한 세로 배치를 그대로 쓴다.
     // 'flex' 를 강제하면 flex-direction 이 없어 라벨·버튼 줄·설정 패널이
     // 가로로 늘어서서 좁은 팔레트를 넘친다.
     applyStyles(sectionElement, { display: visible ? '' : 'none' });
+    // 숨어 있던 섹션이 다시 나오면 팔레트가 높아진다. 화면 아래쪽에 놓여 있었다면
+    // 새로 드러난 컨트롤이 화면 밖으로 밀려나므로 위치를 다시 잡는다.
+    if (wasHidden !== !visible) applyPosition(state);
     return true;
   }
 

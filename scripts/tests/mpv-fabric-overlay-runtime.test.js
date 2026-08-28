@@ -15762,3 +15762,40 @@ test('a collapsed section keeps its appended panel shut even when the panel resy
     await harness.destroy();
   }
 });
+
+test('a panel closed while its section was collapsed stays closed when the section reopens', async () => {
+  // 접혀 있는 동안 소유자 쪽 상태가 바뀌면(도구 전환으로 도형 메뉴가 닫히는 등)
+  // 셸이 캐시해 둔 표시값은 낡는다. 그대로 되살리면 aria-expanded 는 false 인데
+  // 플라이아웃만 열려 있는 모순된 상태가 된다.
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    const label = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    const shapeButton = paletteButton(harness.root, 'shape-menu');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    click(shapeButton);
+    assert.equal(flyout.style.display, 'grid');
+
+    click(label);
+    assert.equal(flyout.style.display, 'none');
+
+    // 접힌 채로 다른 도구로 전환한다 — 도형 메뉴는 닫힌 것으로 바뀐다.
+    enableRealFabricShapeTool(harness, 'select', 7);
+    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
+
+    click(label);
+    assert.equal(
+      flyout.style.display,
+      'none',
+      '접혀 있는 동안 닫힌 메뉴가 펼치기만으로 되살아나면 안 된다'
+    );
+    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
+  } finally {
+    await harness.destroy();
+  }
+});

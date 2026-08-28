@@ -2824,6 +2824,9 @@ function createFabricOverlayRuntime(options = {}) {
   // 도형 도구 4종은 버튼 1개 + 드롭다운으로 접는다. 런타임의 도구 값은 여전히
   // line/rect/circle/arrow 그대로이고, 팔레트가 "그 4종 중 활성인 것"으로 표시만 묶는다.
   let shapeMenuControls = null;
+  // 도형 메뉴가 열려 있어야 하는가. 실제 표시는 이 값과 섹션 접힘의 곱이다.
+  // 캔버스 쪽 상태를 팔레트 셸이 캐시하면 접혀 있는 동안 낡는다.
+  let shapeMenuOpen = false;
   let lastShapeTool = 'rect';
   let brushStatusRow = null;
   // 최근 사용 색 4개. 팔레트 색상 8종 중 실제로 쓰는 건 보통 2~3개인데 매번 전체를
@@ -3043,9 +3046,16 @@ function createFabricOverlayRuntime(options = {}) {
 
   function setShapeMenuOpen(open) {
     if (!shapeMenuControls) return false;
-    const visible = open === true;
+    shapeMenuOpen = open === true;
+    return applyShapeMenuVisibility();
+  }
+
+  function applyShapeMenuVisibility() {
+    if (!shapeMenuControls) return false;
+    const collapsed = paletteShell?.isSectionCollapsed?.('tools') === true;
+    const visible = shapeMenuOpen && !collapsed;
     setStyles(shapeMenuControls.flyout, { display: visible ? 'grid' : 'none' });
-    shapeMenuControls.button.setAttribute?.('aria-expanded', String(visible));
+    shapeMenuControls.button.setAttribute?.('aria-expanded', String(shapeMenuOpen));
     return visible;
   }
 
@@ -3061,6 +3071,7 @@ function createFabricOverlayRuntime(options = {}) {
     shapeMenuControls.button.dataset.active = String(isShapeTool);
     shapeMenuControls.button.setAttribute?.('aria-pressed', String(isShapeTool));
     if (!isShapeTool) setShapeMenuOpen(false);
+    else applyShapeMenuVisibility();
   }
 
   function createEraserModeControls() {
@@ -7654,6 +7665,12 @@ function createFabricOverlayRuntime(options = {}) {
         element: toolbar,
         setStyles,
         addDomListener,
+        // 섹션을 펼치면 셸이 붙임 패널의 인라인 표시를 비운다. 그 직후 소유자가
+        // 자기 상태를 다시 써야 접혀 있는 동안 바뀐 값이 반영된다.
+        onSectionToggle: () => {
+          syncBrushControls();
+          applyShapeMenuVisibility();
+        },
         sections: [
           {
             id: 'tools',
@@ -7715,7 +7732,7 @@ function createFabricOverlayRuntime(options = {}) {
       addDomListener(shapeMenuControls.button, 'click', () => {
         const active = FABRIC_SHAPE_TOOLS.includes(sceneStore.getDiagnostics().tool);
         if (active) {
-          setShapeMenuOpen(shapeMenuControls.flyout.style.display === 'none');
+          setShapeMenuOpen(!shapeMenuOpen);
           return;
         }
         updateLocalDrawingTool(lastShapeTool);

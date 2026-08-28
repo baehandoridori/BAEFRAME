@@ -5840,7 +5840,8 @@
           element,
           setStyles,
           addDomListener,
-          sections = []
+          sections = [],
+          onSectionToggle = null
         } = options;
         if (!documentRef?.createElement || !element) {
           throw new Error("Fabric palette requires a document and a root element");
@@ -5917,7 +5918,6 @@
           label.setAttribute?.("role", "button");
           label.setAttribute?.("tabindex", "0");
           label.dataset.collapsed = "false";
-          const appendedDisplay = /* @__PURE__ */ new WeakMap();
           const sectionId = String(section.id || section.label);
           const toggleSection = () => {
             const collapsed = label.dataset.collapsed !== "true";
@@ -5928,13 +5928,10 @@
               display: collapsed ? "none" : row.dataset.layout === "grid" ? "grid" : "flex"
             });
             for (const item of appended) {
-              if (collapsed) {
-                appendedDisplay.set(item, item?.style?.display ?? "");
-                applyStyles(item, { display: "none" });
-                continue;
-              }
-              applyStyles(item, { display: appendedDisplay.get(item) ?? "" });
+              applyStyles(item, { display: collapsed ? "none" : "" });
             }
+            if (!collapsed) onSectionToggle?.(sectionId, false);
+            applyPosition(state);
           };
           listen(label, "click", toggleSection);
           listen(label, "keydown", (event) => {
@@ -6026,7 +6023,9 @@
         function setSectionVisible(id, visible) {
           const sectionElement = sectionElements.get(String(id));
           if (!sectionElement) return false;
+          const wasHidden = sectionElement.style?.display === "none";
           applyStyles(sectionElement, { display: visible ? "" : "none" });
+          if (wasHidden !== !visible) applyPosition(state);
           return true;
         }
         function isSectionCollapsed(id) {
@@ -15842,6 +15841,7 @@ void main() {
         let eraserMode = "stroke";
         let eraserModeControls = null;
         let shapeMenuControls = null;
+        let shapeMenuOpen = false;
         let lastShapeTool = "rect";
         let brushStatusRow = null;
         const recentColors = [];
@@ -16032,9 +16032,15 @@ void main() {
         }
         function setShapeMenuOpen(open) {
           if (!shapeMenuControls) return false;
-          const visible = open === true;
+          shapeMenuOpen = open === true;
+          return applyShapeMenuVisibility();
+        }
+        function applyShapeMenuVisibility() {
+          if (!shapeMenuControls) return false;
+          const collapsed = paletteShell?.isSectionCollapsed?.("tools") === true;
+          const visible = shapeMenuOpen && !collapsed;
           setStyles(shapeMenuControls.flyout, { display: visible ? "grid" : "none" });
-          shapeMenuControls.button.setAttribute?.("aria-expanded", String(visible));
+          shapeMenuControls.button.setAttribute?.("aria-expanded", String(shapeMenuOpen));
           return visible;
         }
         function syncShapeMenuControls(tool = currentSession?.tool) {
@@ -16048,6 +16054,7 @@ void main() {
           shapeMenuControls.button.dataset.active = String(isShapeTool);
           shapeMenuControls.button.setAttribute?.("aria-pressed", String(isShapeTool));
           if (!isShapeTool) setShapeMenuOpen(false);
+          else applyShapeMenuVisibility();
         }
         function createEraserModeControls() {
           const group = documentRef.createElement("div");
@@ -20098,6 +20105,12 @@ void main() {
               element: toolbar,
               setStyles,
               addDomListener,
+              // 섹션을 펼치면 셸이 붙임 패널의 인라인 표시를 비운다. 그 직후 소유자가
+              // 자기 상태를 다시 써야 접혀 있는 동안 바뀐 값이 반영된다.
+              onSectionToggle: () => {
+                syncBrushControls();
+                applyShapeMenuVisibility();
+              },
               sections: [
                 {
                   id: "tools",
@@ -20160,7 +20173,7 @@ void main() {
             addDomListener(shapeMenuControls.button, "click", () => {
               const active = FABRIC_SHAPE_TOOLS.includes(sceneStore.getDiagnostics().tool);
               if (active) {
-                setShapeMenuOpen(shapeMenuControls.flyout.style.display === "none");
+                setShapeMenuOpen(!shapeMenuOpen);
                 return;
               }
               updateLocalDrawingTool(lastShapeTool);

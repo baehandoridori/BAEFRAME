@@ -1529,7 +1529,7 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.match(fabricRuntimeSource, /toolbar\.className = 'mpv-fabric-pilot-toolbar';/);
   assert.match(
     fabricRuntimeSource,
-    /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n\s+sections: \[/
+    /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n[\s\S]{0,400}?\n\s+sections: \[/
   );
   // 도구 줄은 아이콘 5개 한 줄이고 도형 4종은 드롭다운으로 접힌다(목업 확정).
   // 섹션이 존재하고 도구 버튼을 담는다는 계약은 그대로다.
@@ -1802,4 +1802,20 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
   assert.match(appSource, /shift: shortcut\.shift === true,/);
   assert.match(appSource, /alt: shortcut\.alt === true/);
   assert.doesNotMatch(appSource, /addUnmodified/);
+});
+
+test('palette height changes reclamp the position so revealed controls stay on screen', () => {
+  // 섹션을 여닫거나 도구에 따라 숨겼다 보이면 팔레트 높이가 달라진다.
+  // 위치를 다시 잡지 않으면 화면 아래쪽에 놓인 팔레트에서 새로 드러난 컨트롤이
+  // 화면 밖으로 밀린다. jsdom 에는 레이아웃이 없어 높이가 상수라 동작으로는
+  // 확인할 수 없으므로 배선 자체를 고정한다.
+  assert.match(fabricPaletteSource, /if \(!collapsed\) onSectionToggle\?\.\(sectionId, false\);/);
+  assert.match(
+    fabricPaletteSource,
+    /const toggleSection = \(\) => \{[\s\S]*?applyPosition\(state\);\n\s+\};/
+  );
+  assert.match(
+    fabricPaletteSource,
+    /function setSectionVisible\(id, visible\) \{[\s\S]*?if \(wasHidden !== !visible\) applyPosition\(state\);/
+  );
 });
