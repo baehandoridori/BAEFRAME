@@ -19357,6 +19357,10 @@ void main() {
             start.target.set?.(start.transform);
             applyMoveOnlyConstraints(start.target);
             start.target.setCoords?.();
+            for (const pair of start.outlinePairs || []) {
+              pair.object.set?.({ left: pair.startLeft, top: pair.startTop });
+              pair.object.setCoords?.();
+            }
             if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
           } catch (error) {
             lastError = error.message;

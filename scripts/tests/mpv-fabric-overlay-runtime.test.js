@@ -16402,3 +16402,37 @@ test('a translucent outlined stroke does not double-composite its centre', async
     await harness.destroy();
   }
 });
+
+test('a cancelled drag puts the outline back where the body goes', async () => {
+  // 드래그 미리보기가 짝인 외곽선도 함께 옮겨 놨다. 취소·실패로 본체만 되돌리면
+  // 외곽선이 마지막 미리보기 자리에 남아, 저장된 값은 그대로인데 화면만 어긋난다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 6 });
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 8801);
+    const outlineId = outlineObjects(harness)[0].id;
+    const bodyId = bodyObjects(harness)[0].id;
+
+    enableRealFabricShapeTool(harness, 'select', 7);
+    const outlinePath = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === outlineId);
+    const bodyPath = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === bodyId);
+    const startLeft = outlinePath.left;
+    const startTop = outlinePath.top;
+
+    harness.canvas.setActiveObject?.(bodyPath);
+    harness.canvas.fire?.('before:transform', { target: bodyPath });
+    bodyPath.set({ left: bodyPath.left + 30, top: bodyPath.top + 18 });
+    harness.canvas.fire?.('object:moving', { target: bodyPath });
+    assert.notEqual(outlinePath.left, startLeft, '미리보기가 외곽선을 옮겨 놨어야 한다');
+
+    // 드래그 도중 선택 설정을 바꾸면 진행 중인 변형이 롤백된다.
+    clickSelectionControl(harness.root, 'select-shape-lasso');
+
+    assert.equal(outlinePath.left, startLeft, '외곽선이 출발 자리로 돌아와야 한다');
+    assert.equal(outlinePath.top, startTop);
+  } finally {
+    await harness.destroy();
+  }
+});

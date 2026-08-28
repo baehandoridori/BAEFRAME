@@ -6938,6 +6938,12 @@ function createFabricOverlayRuntime(options = {}) {
       start.target.set?.(start.transform);
       applyMoveOnlyConstraints(start.target);
       start.target.setCoords?.();
+      // 드래그 미리보기가 짝인 외곽선도 함께 옮겨 놨다. 본체만 되돌리면
+      // 외곽선이 마지막 미리보기 자리에 남아, 저장된 값은 그대로인데 화면만 어긋난다.
+      for (const pair of start.outlinePairs || []) {
+        pair.object.set?.({ left: pair.startLeft, top: pair.startTop });
+        pair.object.setCoords?.();
+      }
       if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
     } catch (error) {
       lastError = error.message;
