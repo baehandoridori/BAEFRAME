@@ -15908,6 +15908,27 @@ function enableOutline(harness, { color = null, width = null } = {}) {
   }
 }
 
+
+// 외곽선은 더 굵어 pathOffset 이 달라 자기 자연 위치를 갖는다. 두 transform 이
+// 같아야 하는 게 아니라 **간격이 유지돼야** 소스 좌표가 맞는다.
+// 큰 좌표에 dx 를 더하면 미세한 차이는 부동소수 상쇄로 사라지므로 허용 오차를 둔다
+// (외곽선이 제자리에 남는 실패는 px 단위로 벌어져 이 오차와 혼동되지 않는다).
+function assertOutlineOffsetPreserved(before, after, message) {
+  assert.ok(
+    Math.abs(after.left - before.left) < 1e-3 && Math.abs(after.top - before.top) < 1e-3,
+    `${message} (전 ${JSON.stringify(before)} / 후 ${JSON.stringify(after)})`
+  );
+}
+
+function outlineOffset(objects) {
+  const outline = objects.find(object => object.id.endsWith('~outline'));
+  const body = objects.find(object => !object.id.endsWith('~outline'));
+  return {
+    left: body.transform.left - outline.transform.left,
+    top: body.transform.top - outline.transform.top
+  };
+}
+
 function outlineObjects(harness) {
   return harness.sceneStore.getActiveSceneSnapshot().objects
     .filter(object => object.id.endsWith('~outline'));
@@ -15989,17 +16010,25 @@ test('moving a body carries its outline with the same transform', async () => {
     harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8131);
     const bodyId = bodyObjects(harness)[0].id;
 
+    const offsetBefore = outlineOffset(harness.sceneStore.getActiveSceneSnapshot().objects);
+
     assert.deepEqual(harness.sceneStore.selectObjects([bodyId]).selection, [bodyId]);
     const moved = harness.sceneStore.transformSelection({ dx: 12, dy: -7 });
     assert.equal(moved.applied, true);
     assert.equal(moved.objectIds.length, 2, '본체와 외곽선이 함께 움직여야 한다');
 
-    const [outline, body] = harness.sceneStore.getActiveSceneSnapshot().objects;
-    assert.deepEqual(outline.transform, body.transform, '외곽선은 본체와 같은 자리여야 한다');
+    assertOutlineOffsetPreserved(
+      offsetBefore,
+      outlineOffset(harness.sceneStore.getActiveSceneSnapshot().objects),
+      '이동 뒤에도 본체-외곽선 간격이 그대로여야 한다'
+    );
     // 실행취소 1건으로 둘 다 되돌아온다.
     assert.equal(harness.sceneStore.undo().applied, true);
-    const [restoredOutline, restoredBody] = harness.sceneStore.getActiveSceneSnapshot().objects;
-    assert.deepEqual(restoredOutline.transform, restoredBody.transform);
+    assertOutlineOffsetPreserved(
+      offsetBefore,
+      outlineOffset(harness.sceneStore.getActiveSceneSnapshot().objects),
+      '되돌린 뒤에도 간격이 유지돼야 한다'
+    );
   } finally {
     await harness.destroy();
   }
@@ -16159,6 +16188,8 @@ test('an outline follows its body when a partial selection is dragged', async ()
     const bodyId = bodyObjects(harness)[0].id;
     const outlineId = outlineObjects(harness)[0].id;
 
+    const dragOffsetBefore = outlineOffset(harness.sceneStore.getActiveSceneSnapshot().objects);
+
     // 본체만 선택된 상태에서 dx/dy 로 옮긴다(라쏘 조각 이동과 같은 경로).
     assert.equal(harness.sceneStore.replaceObjects({
       replacements: [{ removeId: bodyId, addObjects: [{ ...bodyObjects(harness)[0] }] }],
@@ -16172,10 +16203,40 @@ test('an outline follows its body when a partial selection is dragged', async ()
     const body = objects.find(object => object.id === bodyId);
     const outline = objects.find(object => object.id === outlineId);
     assert.ok(body && outline, '짝이 모두 남아 있어야 한다');
-    assert.deepEqual(
-      outline.transform,
-      body.transform,
+    // 외곽선이 제자리에 남으면 간격이 (15, -9) 만큼 벌어진다.
+    assertOutlineOffsetPreserved(
+      dragOffsetBefore,
+      outlineOffset(objects),
       '외곽선이 제자리에 남으면 눈에 띄게 어긋난다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an eraser that only grazes the outline still erases the pair', async () => {
+  // 외곽선은 본체보다 최대 20px 더 뻗는다. 후보에서 통째로 빼면 그 테두리만 스친
+  // 지우개가 칠해진 데를 분명히 지나갔는데도 아무 일도 하지 않는다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 10 });
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 8301);
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 2);
+    const bodyHalf = objects.find(o => !o.id.endsWith('~outline')).style.size / 2;
+
+    enableRealFabricShapeTool(harness, 'eraser', 4);
+    // 본체 위쪽 가장자리 바깥, 외곽선 안쪽만 지나간다.
+    const grazeY = 100 - bodyHalf - 5;
+    const pointerId = 8302;
+    harness.dispatchPointer(harness.element, 'pointerdown', 60, grazeY, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, grazeY, pointerId, 1);
+    harness.dispatchCapturedPointerUp(120, grazeY, pointerId);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      0,
+      '외곽선만 스쳐도 짝이 함께 지워져야 한다'
     );
   } finally {
     await harness.destroy();

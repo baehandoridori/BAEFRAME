@@ -17906,10 +17906,10 @@ void main() {
             // strokeData.sourcePoints 가 아니라 본체 것을 복사한다 — 재생성이 멱등해야
             // 조각을 다시 자를 때도 같은 외곽선이 나온다.
             sourcePoints: clonePlain(record.sourcePoints),
-            style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size },
-            transform: clonePlain(record.transform || {})
+            style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
           };
           if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
+          derived.transform = captureTransform(makeFabricPath(derived));
           return derived;
         }
         function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null, geometryOptions = null) {
@@ -19094,7 +19094,9 @@ void main() {
           const polygonBounds = boundsForPoints(polygon);
           let hidden = 0;
           for (const record of context.snapshot?.objects || []) {
-            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id) || gesture.erasedIds.has(record.id)) continue;
+            if (record.type !== "stroke") continue;
+            const targetId = sceneStore.isDerivedOutline(record.id) ? bodyIdFor(record.id) : record.id;
+            if (!targetId || gesture.erasedIds.has(targetId)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = context.canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -19106,11 +19108,16 @@ void main() {
             if (!fillSelection.query || fillSelection.reason) continue;
             const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
             if (touch.limitExceeded || !touch.hit) continue;
-            gesture.erasedIds.add(record.id);
-            if (object && gesture.mode !== "pixel") {
-              gesture.hiddenObjects.push(object);
-              object.set?.({ visible: false });
-              hidden += 1;
+            gesture.erasedIds.add(targetId);
+            if (gesture.mode !== "pixel") {
+              const outlineId = outlineIdFor(targetId);
+              for (const hideId of outlineId ? [targetId, outlineId] : [targetId]) {
+                const hideObject = context.canvasObjects.get(hideId);
+                if (!hideObject || hideObject.visible === false) continue;
+                gesture.hiddenObjects.push(hideObject);
+                hideObject.set?.({ visible: false });
+                hidden += 1;
+              }
             }
           }
           context.hidden += hidden;

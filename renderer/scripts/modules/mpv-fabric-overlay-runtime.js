@@ -5235,10 +5235,15 @@ function createFabricOverlayRuntime(options = {}) {
       // strokeData.sourcePoints 가 아니라 본체 것을 복사한다 — 재생성이 멱등해야
       // 조각을 다시 자를 때도 같은 외곽선이 나온다.
       sourcePoints: clonePlain(record.sourcePoints),
-      style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size },
-      transform: clonePlain(record.transform || {})
+      style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
     };
     if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
+    // 본체 transform 을 그대로 베끼면 안 된다. 외곽선은 더 굵어 pathData 의
+    // pathOffset·바운딩 박스 중심이 본체와 다르고, 같은 transform 을 주면 두
+    // **오브젝트 중심**이 맞춰질 뿐 소스 좌표가 어긋난다. 압력이 실린 획이나
+    // 좌우 비대칭 획에서 처음 그릴 때부터 눈에 띄게 밀린다.
+    // 본체와 똑같이 자기 경로에서 자연 위치를 뽑는다.
+    derived.transform = captureTransform(makeFabricPath(derived));
     return derived;
   }
 
@@ -6594,10 +6599,15 @@ function createFabricOverlayRuntime(options = {}) {
     let hidden = 0;
     for (const record of context.snapshot?.objects || []) {
       // 이미 지운 획은 판정 자체를 건너뛴다 — 같은 획 위를 여러 번 지나가도 1회만 처리된다.
-      // 외곽선은 본체의 짝이라 따로 판정하지 않는다. 본체가 걸리면 함께 처리된다.
-      // 짝을 잃은 고아는 평범한 획이므로 그대로 지워질 수 있어야 한다.
-      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id) ||
-          gesture.erasedIds.has(record.id)) continue;
+      if (record.type !== 'stroke') continue;
+      // 외곽선은 본체보다 최대 20px 더 뻗는다. 후보에서 통째로 빼면 그 테두리만
+      // 스친 지우개가 칠해진 데를 분명히 지나갔는데도 아무 일도 하지 않는다.
+      // 그래서 판정은 하되 **결과를 짝인 본체로 돌린다** — 이후 짝 처리 로직이
+      // 삭제·분할을 함께 다룬다. 짝을 잃은 고아는 평범한 획이라 자기 자신이 대상이다.
+      const targetId = sceneStore.isDerivedOutline(record.id)
+        ? bodyIdFor(record.id)
+        : record.id;
+      if (!targetId || gesture.erasedIds.has(targetId)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = context.canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -6610,7 +6620,7 @@ function createFabricOverlayRuntime(options = {}) {
       const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
       // 기하 예산을 초과한 획은 삭제 후보에서 제외한다 (오삭제보다 미삭제가 안전하다).
       if (touch.limitExceeded || !touch.hit) continue;
-      gesture.erasedIds.add(record.id);
+      gesture.erasedIds.add(targetId);
       // 획 단위 모드는 닿은 획을 통째로 지우므로, 드래그 중 숨기는 미리보기가
       // 커밋 결과와 정확히 일치한다.
       //
@@ -6620,10 +6630,16 @@ function createFabricOverlayRuntime(options = {}) {
       // 자리에서만 닿은 획은 숨었다가 되살아나 사용자를 혼란스럽게 한다.
       // 어차피 일치시킬 수 없다면 **숨기지 않는 편이 정직하다** — 픽셀 모드는
       // 손을 뗄 때 잘린 결과만 보여 준다.
-      if (object && gesture.mode !== 'pixel') {
-        gesture.hiddenObjects.push(object);
-        object.set?.({ visible: false });
-        hidden += 1;
+      if (gesture.mode !== 'pixel') {
+        // 삭제는 짝을 함께 다루므로 미리보기도 짝을 함께 감춘다.
+        const outlineId = outlineIdFor(targetId);
+        for (const hideId of outlineId ? [targetId, outlineId] : [targetId]) {
+          const hideObject = context.canvasObjects.get(hideId);
+          if (!hideObject || hideObject.visible === false) continue;
+          gesture.hiddenObjects.push(hideObject);
+          hideObject.set?.({ visible: false });
+          hidden += 1;
+        }
       }
     }
     // requestRenderAll()은 호출자가 이벤트당 1회만 수행한다 (루프 밖).
