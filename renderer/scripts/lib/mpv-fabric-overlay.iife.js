@@ -13468,8 +13468,6 @@ void main() {
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
       var SIZE_ADJUST_PIXELS_PER_STEP = 4;
-      var SIZE_ADJUST_HUD_OFFSET_X = 16;
-      var SIZE_ADJUST_HUD_OFFSET_Y = 28;
       var FABRIC_PERSISTENCE_BADGE_PREFIX = "\uC0C8 \uB4DC\uB85C\uC789 \xB7 \uB9AC\uBDF0 \uC790\uB3D9 \uC800\uC7A5";
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
       var MIN_SELECTION_HIT_TOLERANCE = 2;
@@ -15442,6 +15440,7 @@ void main() {
         let sizeAdjustGesture = null;
         let strokeEraseGesture = null;
         let sizeAdjustHud = null;
+        let sizeAdjustHudLabel = null;
         const overlayModifierState = { alt: false, ctrl: false };
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
@@ -17994,22 +17993,55 @@ void main() {
             top: "0px",
             zIndex: "3",
             pointerEvents: "none",
-            padding: "4px 8px",
-            borderRadius: "6px",
-            font: "600 12px/1 sans-serif",
-            whiteSpace: "nowrap",
-            background: "rgba(24, 24, 28, 0.92)",
-            color: "#fff"
+            boxSizing: "border-box",
+            borderRadius: "50%",
+            borderStyle: "solid",
+            borderWidth: "2px",
+            borderColor: "rgba(255, 255, 255, 0.9)",
+            // 앵커 좌표를 원의 중심으로 삼는다. 레거시와 같다.
+            transform: "translate(-50%, -50%)",
+            boxShadow: "0 4px 16px rgba(0, 0, 0, 0.35)"
           });
+          const label = documentRef.createElement("span");
+          label.className = "mpv-fabric-pilot-size-hud-label";
+          label.dataset.fabricPilotOutput = "size-adjust-label";
+          setStyles(label, {
+            position: "absolute",
+            left: "50%",
+            top: "-22px",
+            transform: "translateX(-50%)",
+            padding: "3px 6px",
+            borderRadius: "6px",
+            background: "rgba(9, 12, 18, 0.84)",
+            color: "#fff",
+            font: "700 11px/1 sans-serif",
+            whiteSpace: "nowrap",
+            pointerEvents: "none"
+          });
+          hud.appendChild(label);
+          sizeAdjustHudLabel = label;
           return hud;
+        }
+        function sourceToClientScale(session) {
+          const sourceWidth = Math.max(0, finiteNumber(session?.sourceWidth, 0));
+          if (sourceWidth <= 0) return 1;
+          const rect = resolveEffectiveCanvasRect(session.canvasRect, session.viewportTransform);
+          if (!(rect.width > 0)) return 1;
+          return rect.width / sourceWidth;
         }
         function showSizeAdjustHud(clientX, clientY, size) {
           if (!sizeAdjustHud) return;
-          sizeAdjustHud.textContent = `${size}px`;
+          const diameter = Math.max(2, Math.round(size * sourceToClientScale(currentSession)));
+          if (sizeAdjustHudLabel) sizeAdjustHudLabel.textContent = `${size}px`;
           setStyles(sizeAdjustHud, {
             display: "block",
-            left: `${Math.round(finiteNumber(clientX) + SIZE_ADJUST_HUD_OFFSET_X)}px`,
-            top: `${Math.round(finiteNumber(clientY) - SIZE_ADJUST_HUD_OFFSET_Y)}px`
+            left: `${Math.round(finiteNumber(clientX))}px`,
+            top: `${Math.round(finiteNumber(clientY))}px`,
+            width: `${diameter}px`,
+            height: `${diameter}px`,
+            // 색은 8자리 hex 로 알파를 붙인다(스키마상 style.color 는 항상 #RRGGBB).
+            background: `${brushStyle.color}80`,
+            borderColor: brushStyle.color
           });
         }
         function hideSizeAdjustHud() {
@@ -19105,6 +19137,7 @@ void main() {
           selectionControls = null;
           badge = null;
           sizeAdjustHud = null;
+          sizeAdjustHudLabel = null;
           container = null;
           root = null;
           prepared = false;
