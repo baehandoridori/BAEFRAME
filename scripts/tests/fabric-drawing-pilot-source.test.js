@@ -1835,3 +1835,20 @@ test('section labels do not advertise keyboard activation the overlay cannot del
   // 마우스로 무엇을 하는지는 툴팁으로 알린다.
   assert.match(fabricPaletteSource, /label\.setAttribute\?\.\('title', `\$\{section\.label\} 접기\/펴기`\);/);
 });
+
+test('the outline section sits under the colour palette in the brush panel', () => {
+  // 목업이 "색상 아래 자리를 비워 둔다"고 한 그 자리다.
+  assert.match(
+    fabricRuntimeSource,
+    /panel\.appendChild\(previewRow\);\n\s+panel\.appendChild\(palette\);\n\s+panel\.appendChild\(recentColors\.row\);\n\s+panel\.appendChild\(outlineGroup\);/
+  );
+  // 외곽선은 본체에서 파생된 짝 레코드다 — id 규약으로 관계를 표현해 스키마를 지킨다.
+  assert.match(fabricRuntimeSource, /const OUTLINE_ID_SUFFIX = '~outline';/);
+  assert.match(fabricRuntimeSource, /function deriveOutlineRecord\(record, outline, geometryOptions = null\) \{/);
+  // 짝은 한 커맨드로 들어가야 실행취소가 1건이다.
+  assert.match(fabricRuntimeSource, /function addStroke\(stroke, outlineRecord = null\) \{/);
+  // 분할에서 외곽선은 자르지 않고 다시 만든다.
+  assert.match(fabricRuntimeSource, /function expandOutlineReplacements\(replacements\) \{/);
+  // style 에 필드를 늘리면 구버전 앱이 문서를 통째로 거부한다.
+  assert.doesNotMatch(fabricRuntimeSource, /outlineWidth:/);
+});

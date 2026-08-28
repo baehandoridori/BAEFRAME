@@ -15880,3 +15880,245 @@ test('stroke mode still previews the strokes it is about to delete', async () =>
     await harness.destroy();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 외곽선 — 본체에서 파생된 짝 레코드
+// ---------------------------------------------------------------------------
+
+function enableOutline(harness, { color = null, width = null } = {}) {
+  const click = action => {
+    const button = paletteButton(harness.root, action);
+    assert.ok(button, `${action} 버튼이 없다`);
+    button.dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+    return button;
+  };
+  click('outline-toggle');
+  if (color) {
+    const button = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutlineColor === color);
+    assert.ok(button, `외곽선 색 ${color} 버튼이 없다`);
+    button.dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+  }
+  if (width !== null) {
+    const input = findOne(harness.root, node =>
+      node.dataset?.fabricPilotSetting === 'outline-width');
+    assert.ok(input, '외곽선 굵기 슬라이더가 없다');
+    input.value = String(width);
+    input.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+  }
+}
+
+function outlineObjects(harness) {
+  return harness.sceneStore.getActiveSceneSnapshot().objects
+    .filter(object => object.id.endsWith('~outline'));
+}
+
+function bodyObjects(harness) {
+  return harness.sceneStore.getActiveSceneSnapshot().objects
+    .filter(object => !object.id.endsWith('~outline'));
+}
+
+test('an outlined stroke stores a paired record behind the body in one undo step', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { color: '#ffffff', width: 3 });
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8101);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 2, '본체와 외곽선 두 레코드가 있어야 한다');
+    // Map 삽입 순서가 곧 z-order — 외곽선이 먼저 나와야 뒤에 깔린다.
+    assert.equal(objects[0].id.endsWith('~outline'), true, '외곽선이 본체보다 앞이어야 한다');
+    assert.equal(objects[1].id + '~outline', objects[0].id, '짝 id 규약');
+    assert.equal(objects[0].style.color, '#ffffff');
+    assert.equal(objects[0].style.size, objects[1].style.size + 6, '굵기 = 본체 + 2 × 외곽선');
+    assert.equal(objects[0].style.opacity, objects[1].style.opacity);
+    // 실행취소 1건으로 둘 다 사라진다.
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(harness.sceneStore.undo().applied, true);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an outline record keeps the drawingsV3 schema unchanged', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8111);
+
+    const outline = outlineObjects(harness)[0];
+    assert.ok(outline);
+    assert.equal(outline.type, 'stroke');
+    // 결정 1 — 스키마를 한 글자도 바꾸지 않는다.
+    assert.deepEqual(
+      Object.keys(outline).sort(),
+      ['id', 'pathData', 'sourcePoints', 'style', 'transform', 'type']
+    );
+    assert.deepEqual(Object.keys(outline.style).sort(), ['color', 'opacity', 'size']);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an outline is never selectable on its own', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8121);
+    enableRealFabricShapeTool(harness, 'select', 4);
+
+    const outlinePath = harness.canvas.getObjects()
+      .find(object => outlineObjects(harness).some(record => record.id === object.__baeframeObjectId));
+    assert.ok(outlinePath, '외곽선 경로가 캔버스에 있어야 한다');
+    assert.equal(outlinePath.selectable, false);
+    assert.equal(outlinePath.evented, false);
+
+    // 스토어도 외곽선 id 를 선택 집합에 들이지 않는다.
+    const outlineId = outlineObjects(harness)[0].id;
+    assert.deepEqual(harness.sceneStore.selectObjects([outlineId]).selection, []);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('moving a body carries its outline with the same transform', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8131);
+    const bodyId = bodyObjects(harness)[0].id;
+
+    assert.deepEqual(harness.sceneStore.selectObjects([bodyId]).selection, [bodyId]);
+    const moved = harness.sceneStore.transformSelection({ dx: 12, dy: -7 });
+    assert.equal(moved.applied, true);
+    assert.equal(moved.objectIds.length, 2, '본체와 외곽선이 함께 움직여야 한다');
+
+    const [outline, body] = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.deepEqual(outline.transform, body.transform, '외곽선은 본체와 같은 자리여야 한다');
+    // 실행취소 1건으로 둘 다 되돌아온다.
+    assert.equal(harness.sceneStore.undo().applied, true);
+    const [restoredOutline, restoredBody] = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.deepEqual(restoredOutline.transform, restoredBody.transform);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('deleting a body deletes its outline too', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8141);
+    const bodyId = bodyObjects(harness)[0].id;
+
+    harness.sceneStore.selectObjects([bodyId]);
+    const deleted = harness.sceneStore.deleteSelection();
+    assert.equal(deleted.applied, true);
+    assert.equal(deleted.deletedCount, 2);
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      0,
+      '외곽선만 덩그러니 남으면 속 빈 윤곽이 떠 있게 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a pixel erase regenerates outlines for each body fragment', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 2 });
+    harness.drawStroke([{ x: 10, y: 100 }, { x: 100, y: 100 }, { x: 190, y: 100 }], 8151);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+    const before = harness.runtime.getDiagnostics().undoDepth;
+
+    enableRealFabricShapeTool(harness, 'eraser', 5);
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 8152;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 130, pointerId);
+
+    const bodies = bodyObjects(harness);
+    const outlines = outlineObjects(harness);
+    assert.equal(bodies.length, 2, '본체가 조각으로 나뉘어야 한다');
+    // 외곽선은 쪼개지 않고 조각마다 다시 만든다 — 굵기가 달라 조각 수가 어긋나기 때문이다.
+    assert.equal(outlines.length, 2, '조각마다 외곽선이 재생성돼야 한다');
+    for (const body of bodies) {
+      assert.ok(
+        outlines.some(outline => outline.id === `${body.id}~outline`),
+        `조각 ${body.id} 의 외곽선이 없다`
+      );
+    }
+    // z-order — 각 외곽선이 자기 본체보다 앞에 있어야 한다.
+    const order = harness.sceneStore.getActiveSceneSnapshot().objects.map(object => object.id);
+    for (const body of bodies) {
+      assert.ok(
+        order.indexOf(`${body.id}~outline`) < order.indexOf(body.id),
+        `조각 ${body.id} 의 외곽선이 뒤에 깔리지 않았다`
+      );
+    }
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, before + 1, '분할도 실행취소 1건');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('drawing with the outline off is unchanged from before', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8161);
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 1, '기본값은 꺼짐 — 레코드가 하나여야 한다');
+    assert.equal(objects[0].id.endsWith('~outline'), false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('shapes and pen strokes get outlines built with their own geometry options', async () => {
+  for (const tool of ['pen', 'rect']) {
+    const harness = createRealFabricHarness();
+    try {
+      enableOutline(harness, { width: 2 });
+      enableRealFabricShapeTool(harness, tool, 3);
+      if (tool === 'pen') {
+        harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8171);
+      } else {
+        harness.dispatchPointer(harness.element, 'pointerdown', 20, 30, 8172, 1);
+        harness.dispatchPointer(harness.element, 'pointermove', 140, 110, 8172, 1);
+        harness.dispatchCapturedPointerUp(140, 110, 8172);
+      }
+
+      const bodies = bodyObjects(harness);
+      const outlines = outlineObjects(harness);
+      assert.equal(bodies.length, 1, `${tool} 본체`);
+      assert.equal(outlines.length, 1, `${tool} 외곽선`);
+      // 같은 중심선이므로 표본이 일치해야 한다 — 재생성이 멱등하다는 뜻이다.
+      assert.deepEqual(outlines[0].sourcePoints, bodies[0].sourcePoints);
+      assert.equal(outlines[0].style.size, bodies[0].style.size + 4);
+    } finally {
+      await harness.destroy();
+    }
+  }
+});
+
+test('an outline is skipped when the body id leaves no room for the suffix', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    const longId = `stroke-${'x'.repeat(510)}`;
+    const record = makeHistoryStroke(longId);
+    assert.equal(harness.sceneStore.addStroke(record).applied, true);
+    assert.equal(
+      outlineObjects(harness).length,
+      0,
+      '512자 한도를 넘길 바에는 외곽선을 만들지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});

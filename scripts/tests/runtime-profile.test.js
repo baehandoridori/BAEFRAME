@@ -249,7 +249,7 @@ test('stable engine promotion uses the 2.3.0 beta release version consistently',
   const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
   const packageLock = JSON.parse(fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8'));
 
-  assert.equal(packageJson.version, '2.5.0-beta');
-  assert.equal(packageLock.version, '2.5.0-beta');
-  assert.equal(packageLock.packages[''].version, '2.5.0-beta');
+  assert.equal(packageJson.version, '2.6.0-beta');
+  assert.equal(packageLock.version, '2.6.0-beta');
+  assert.equal(packageLock.packages[''].version, '2.6.0-beta');
 });

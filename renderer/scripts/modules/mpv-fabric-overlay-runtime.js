@@ -127,6 +127,10 @@ const SHAPE_TOOL_LABELS = Object.freeze({
 const RECENT_COLOR_LIMIT = 4;
 const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
+const MIN_OUTLINE_WIDTH = 1;
+const MAX_OUTLINE_WIDTH = 20;
+const DEFAULT_OUTLINE_WIDTH = 2;
+const DEFAULT_OUTLINE_COLOR = '#000000';
 // [ / ] 로 띄운 크기 HUD 가 스스로 사라지기까지. 레거시 감각과 같다.
 const SIZE_ADJUST_HUD_FLASH_MS = 700;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
@@ -1713,7 +1717,9 @@ function createSessionSceneStore(options = {}) {
     return { accepted: true, active: false };
   }
 
-  function addStroke(stroke) {
+  // outlineRecord 는 본체에서 파생된 짝이다. 같은 커맨드로 넣어야 실행취소가 1건이다.
+  // Map 삽입 순서가 곧 z-order 이므로 외곽선을 **먼저** 넣는다.
+  function addStroke(stroke, outlineRecord = null) {
     // 낡은 사본 위에 커밋하면 이미 지워진 내용이 되살아난다.
     const scene = syncProvisionalSceneForMutation(activeScene());
     if (!scene) return { applied: false, reason: 'no-active-session' };
@@ -1721,31 +1727,42 @@ function createSessionSceneStore(options = {}) {
       return { applied: false, reason: 'invalid-stroke' };
     }
     if (scene.objects.has(stroke.id)) return { applied: false, reason: 'duplicate-object-id' };
-    if (scene.objects.size >= maxObjects) return { applied: false, reason: 'scene-object-limit-exceeded' };
+    const pending = outlineRecord ? 2 : 1;
+    if (scene.objects.size + pending > maxObjects) {
+      return { applied: false, reason: 'scene-object-limit-exceeded' };
+    }
     if (!Array.isArray(stroke.sourcePoints) || stroke.sourcePoints.length > MAX_STROKE_POINTS) {
       return { applied: false, reason: 'invalid-stroke-points' };
     }
 
     const record = clonePlain(stroke);
+    const outline = outlineRecord && !scene.objects.has(outlineRecord.id)
+      ? clonePlain(outlineRecord)
+      : null;
     const nextObjects = new Map(scene.objects);
+    if (outline) nextObjects.set(outline.id, outline);
     nextObjects.set(record.id, record);
-    const touchedIds = [record.id];
+    const touchedIds = outline ? [outline.id, record.id] : [record.id];
+    const baseTransforms = new Map([[record.id, clonePlain(record.transform || {})]]);
+    if (outline) baseTransforms.set(outline.id, clonePlain(outline.transform || {}));
     const result = commitStagedMutation(scene, {
       kind: 'add-objects',
       nextObjects,
       nextSelection: scene.selectedObjectIds,
       undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
       redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
-      baseTransforms: new Map([[record.id, clonePlain(record.transform || {})]])
+      baseTransforms
     });
     if (!result.applied) return result;
-    return { applied: true, objectId: record.id };
+    return { applied: true, objectId: record.id, outlineId: outline?.id || null };
   }
 
   function selectObjects(objectIds = []) {
     const scene = activeScene();
     if (!scene) return { changed: false, selection: [] };
-    const next = new Set(objectIds.filter(id => scene.objects.has(id)));
+    // 외곽선은 본체에서 파생된 짝이라 따로 고르지 않는다. 본체를 고르면 변형·삭제가
+    // 짝을 함께 다룬다.
+    const next = new Set(objectIds.filter(id => scene.objects.has(id) && !isOutlineId(id)));
     const changed = next.size !== scene.selectedObjectIds.size ||
       [...next].some(id => !scene.selectedObjectIds.has(id));
     scene.selectedObjectIds = next;
@@ -1776,6 +1793,13 @@ function createSessionSceneStore(options = {}) {
       if (!objectChanged) continue;
       nextObjects.set(id, { ...clonePlain(object), transform: next });
       changedIds.push(id);
+      // 외곽선은 본체와 같은 자리에 있어야 한다. 같은 transform 을 그대로 쓴다.
+      const outlineId = outlineIdFor(id);
+      const outlineObject = outlineId ? scene.objects.get(outlineId) : null;
+      if (outlineObject) {
+        nextObjects.set(outlineId, { ...clonePlain(outlineObject), transform: next });
+        changedIds.push(outlineId);
+      }
     }
 
     if (changedIds.length === 0) return { applied: false, objectIds: [] };
@@ -2109,7 +2133,14 @@ function createSessionSceneStore(options = {}) {
     if (!scene || scene.selectedObjectIds.size === 0) {
       return { applied: false, deletedCount: 0, deletedIds: [] };
     }
-    const deletedIds = [...scene.selectedObjectIds].filter(id => scene.objects.has(id));
+    const selectedIds = [...scene.selectedObjectIds].filter(id => scene.objects.has(id));
+    // 본체를 지우면 그 외곽선도 함께 지운다. 남으면 속이 빈 윤곽만 떠 있게 된다.
+    const deletedIds = [];
+    for (const id of selectedIds) {
+      deletedIds.push(id);
+      const outlineId = outlineIdFor(id);
+      if (outlineId && scene.objects.has(outlineId)) deletedIds.push(outlineId);
+    }
     if (deletedIds.length === 0) return { applied: false, deletedCount: 0, deletedIds };
     const nextObjects = new Map(scene.objects);
     for (const id of deletedIds) nextObjects.delete(id);
@@ -2494,6 +2525,50 @@ const STROKE_GEOMETRY_CANDIDATES = Object.freeze([
   PEN_STROKE_GEOMETRY
 ]);
 
+// 외곽선은 본체에서 파생된 짝 레코드다. 관계를 id 규약으로 표현해 drawingsV3
+// 스키마를 건드리지 않는다 — style 은 exact-keys ['color','size','opacity'] 라
+// 필드를 늘리면 구버전 앱이 문서를 통째로 거부한다. 규약을 모르는 구버전은
+// 독립 획 2개로 읽고 그림은 똑같이 보인다.
+//
+// '~' 는 createId() 가 만드는 값에 등장하지 않는다(UUID 는 hex+'-',
+// 폴백은 `${prefix}-${Date.now()}-${n}`).
+const OUTLINE_ID_SUFFIX = '~outline';
+const MAX_OUTLINE_BODY_ID_LENGTH = 512 - OUTLINE_ID_SUFFIX.length;
+
+function isOutlineId(id) {
+  return typeof id === 'string' && id.endsWith(OUTLINE_ID_SUFFIX);
+}
+
+function outlineIdFor(bodyId) {
+  if (typeof bodyId !== 'string' || bodyId.length === 0) return null;
+  if (bodyId.length > MAX_OUTLINE_BODY_ID_LENGTH) return null;
+  if (isOutlineId(bodyId)) return null;
+  return bodyId + OUTLINE_ID_SUFFIX;
+}
+
+function bodyIdFor(outlineId) {
+  return isOutlineId(outlineId)
+    ? outlineId.slice(0, -OUTLINE_ID_SUFFIX.length)
+    : null;
+}
+
+// 외곽선 레코드에서 그것을 만든 사양을 되읽는다. 부분 분할이 조각마다 외곽선을
+// 다시 만들 때 쓴다 — 씬에 있는 외곽선이 곧 사양의 진실이다.
+function outlineSpecFromPair(bodyRecord, outlineRecord) {
+  if (!bodyRecord || !outlineRecord) return null;
+  const bodySize = finiteNumber(bodyRecord.style?.size, 0);
+  const outlineSize = finiteNumber(outlineRecord.style?.size, 0);
+  const width = Math.round((outlineSize - bodySize) / 2);
+  if (!Number.isInteger(width) || width < MIN_OUTLINE_WIDTH || width > MAX_OUTLINE_WIDTH) {
+    return null;
+  }
+  return {
+    enabled: true,
+    width,
+    color: outlineRecord.style?.color || DEFAULT_OUTLINE_COLOR
+  };
+}
+
 const SHAPE_STROKE_OPTIONS = Object.freeze({
   ...SHAPE_STROKE_GEOMETRY,
   alreadyNormalizedPressure: true,
@@ -2809,6 +2884,14 @@ function createFabricOverlayRuntime(options = {}) {
   let pendingLassoSelection = null;
   let preservingPendingLassoSelectionEvent = false;
   let brushStyle = { ...DEFAULT_BRUSH_STYLE };
+  // 외곽선 설정. 그리는 시점의 값이 그 획에 굳는다 — 나중에 켜도 이미 그린 획에는
+  // 붙지 않는다(그러려면 모든 획을 다시 만들어야 하고 이 라운드 범위 밖이다).
+  let outlineStyle = {
+    enabled: false,
+    color: DEFAULT_OUTLINE_COLOR,
+    width: DEFAULT_OUTLINE_WIDTH
+  };
+  let outlineControls = null;
   let brushControls = null;
   let brushPanelOpen = false;
   let selectionTarget = 'stroke';
@@ -2950,9 +3033,10 @@ function createFabricOverlayRuntime(options = {}) {
       opacity: String(brushStyle.opacity)
     });
     const toolName = TOOL_STATUS_LABELS[tool] || '';
+    const outlineSuffix = outlineStyle.enabled ? ` · 외곽선 ${outlineStyle.width}px` : '';
     brushStatusRow.text.textContent = toolName
-      ? `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}% · ${toolName}`
-      : `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}%`;
+      ? `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}% · ${toolName}${outlineSuffix}`
+      : `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}%${outlineSuffix}`;
   }
 
   function createRecentColorControls() {
@@ -3322,6 +3406,28 @@ function createFabricOverlayRuntime(options = {}) {
     };
   }
 
+  function setOutlineEnabled(enabled) {
+    outlineStyle = { ...outlineStyle, enabled: enabled === true };
+    syncBrushControls();
+    return outlineStyle.enabled;
+  }
+
+  function setOutlineColor(color) {
+    if (!BRUSH_COLORS.includes(color)) return outlineStyle.color;
+    outlineStyle = { ...outlineStyle, color };
+    syncBrushControls();
+    return outlineStyle.color;
+  }
+
+  function setOutlineWidth(value) {
+    outlineStyle = {
+      ...outlineStyle,
+      width: boundedInteger(value, MIN_OUTLINE_WIDTH, MAX_OUTLINE_WIDTH, outlineStyle.width)
+    };
+    syncBrushControls();
+    return outlineStyle.width;
+  }
+
   function setBrushColor(color) {
     if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
     brushStyle = { ...brushStyle, color };
@@ -3374,6 +3480,23 @@ function createFabricOverlayRuntime(options = {}) {
     brushControls.sizePreview.style.height = brushControls.sizePreview.style.width;
     brushControls.sizePreview.style.background = brushStyle.color;
     brushControls.sizePreview.style.opacity = String(brushStyle.opacity);
+    if (outlineControls) {
+      outlineControls.toggle.dataset.active = String(outlineStyle.enabled);
+      outlineControls.toggle.setAttribute?.('aria-pressed', String(outlineStyle.enabled));
+      // 꺼져 있으면 색·굵기 컨트롤을 감춘다 — 아무 효과도 없는 컨트롤을 띄우지 않는다.
+      const detailDisplay = outlineStyle.enabled ? 'flex' : 'none';
+      setStyles(outlineControls.palette, { display: detailDisplay });
+      setStyles(outlineControls.widthRow.row, { display: detailDisplay });
+      outlineControls.widthRow.input.value = String(outlineStyle.width);
+      outlineControls.widthRow.output.textContent = `${outlineStyle.width}px`;
+      for (const button of outlineControls.colorButtons) {
+        const active = button.dataset.fabricPilotOutlineColor === outlineStyle.color;
+        button.setAttribute?.('aria-pressed', String(active));
+        button.style.boxShadow = active
+          ? '0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)'
+          : 'none';
+      }
+    }
     for (const button of brushControls.colorButtons) {
       const active = button.dataset.fabricPilotColor === brushStyle.color;
       button.setAttribute?.('aria-pressed', String(active));
@@ -3551,10 +3674,59 @@ function createFabricOverlayRuntime(options = {}) {
       output: 'opacity'
     });
 
+    // 외곽선 — 목업이 "색상 아래 자리를 비워 둔다"고 한 그 자리다.
+    const outlineGroup = documentRef.createElement('div');
+    outlineGroup.className = 'mpv-fabric-pilot-outline';
+    outlineGroup.setAttribute?.('role', 'group');
+    outlineGroup.setAttribute?.('aria-label', '외곽선');
+    setStyles(outlineGroup, { display: 'flex', flexFlow: 'row wrap', gap: '6px' });
+    const outlineToggle = labelToolbarButton(
+      createButton('외곽선', 'outline-toggle'),
+      '외곽선 켜기/끄기'
+    );
+    outlineToggle.dataset.active = 'false';
+    outlineToggle.setAttribute?.('aria-pressed', 'false');
+    setStyles(outlineToggle, { flex: '1 1 100%' });
+    outlineGroup.appendChild(outlineToggle);
+
+    const outlinePalette = documentRef.createElement('div');
+    setStyles(outlinePalette, { display: 'flex', flexFlow: 'row wrap', gap: '4px', flex: '1 1 100%' });
+    const outlineColorButtons = BRUSH_COLORS.map(color => {
+      const button = createButton('', `outline-color-${color.replace('#', '')}`);
+      button.dataset.fabricPilotOutlineColor = color;
+      button.setAttribute?.('aria-label', `외곽선 색 ${color}`);
+      button.setAttribute?.('title', `외곽선 색 ${color}`);
+      setStyles(button, {
+        minWidth: '20px',
+        minHeight: '20px',
+        padding: '0',
+        background: color,
+        border: color === '#ffffff' ? '1px solid rgba(0, 0, 0, 0.7)' : 'none'
+      });
+      outlinePalette.appendChild(button);
+      return button;
+    });
+    outlineGroup.appendChild(outlinePalette);
+
+    const outlineWidthRow = createRangeRow({
+      label: '외곽선 굵기',
+      setting: 'outline-width',
+      min: MIN_OUTLINE_WIDTH,
+      max: MAX_OUTLINE_WIDTH,
+      decreaseAction: 'outline-width-decrease',
+      decreaseLabel: '외곽선 굵기 1px 줄이기',
+      increaseAction: 'outline-width-increase',
+      increaseLabel: '외곽선 굵기 1px 늘리기',
+      output: 'outline-width'
+    });
+    setStyles(outlineWidthRow.row, { flex: '1 1 100%' });
+    outlineGroup.appendChild(outlineWidthRow.row);
+
     const recentColors = createRecentColorControls();
     panel.appendChild(previewRow);
     panel.appendChild(palette);
     panel.appendChild(recentColors.row);
+    panel.appendChild(outlineGroup);
     panel.appendChild(sizeRow.row);
     panel.appendChild(opacityRow.row);
 
@@ -3575,6 +3747,13 @@ function createFabricOverlayRuntime(options = {}) {
     for (const button of colorButtons) {
       addDomListener(button, 'click', () => setBrushColor(button.dataset.fabricPilotColor));
     }
+    addDomListener(outlineToggle, 'click', () => setOutlineEnabled(!outlineStyle.enabled));
+    for (const button of outlineColorButtons) {
+      addDomListener(button, 'click', () => setOutlineColor(button.dataset.fabricPilotOutlineColor));
+    }
+    addDomListener(outlineWidthRow.input, 'input', () => setOutlineWidth(outlineWidthRow.input.value));
+    addDomListener(outlineWidthRow.decrease, 'click', () => setOutlineWidth(outlineStyle.width - 1));
+    addDomListener(outlineWidthRow.increase, 'click', () => setOutlineWidth(outlineStyle.width + 1));
 
     return {
       settingsButton,
@@ -3587,7 +3766,14 @@ function createFabricOverlayRuntime(options = {}) {
       summary,
       colorPreview,
       sizePreview,
-      recentColors
+      recentColors,
+      outline: {
+        group: outlineGroup,
+        toggle: outlineToggle,
+        palette: outlinePalette,
+        colorButtons: outlineColorButtons,
+        widthRow: outlineWidthRow
+      }
     };
   }
 
@@ -3681,8 +3867,12 @@ function createFabricOverlayRuntime(options = {}) {
       opacity: normalizePathOpacity(record.style?.opacity),
       stroke: null,
       strokeWidth: 0,
-      selectable: !transient && sceneStore.getDiagnostics().tool === 'select',
-      evented: !transient && sceneStore.getDiagnostics().tool === 'select',
+      // 외곽선은 본체에서 파생된 짝이다. 따로 잡히면 사용자가 본체 대신 윤곽만
+      // 옮기게 되어 쌍이 어긋난다.
+      selectable: !transient && !isOutlineId(record.id) &&
+        sceneStore.getDiagnostics().tool === 'select',
+      evented: !transient && !isOutlineId(record.id) &&
+        sceneStore.getDiagnostics().tool === 'select',
       objectCaching: !transient,
       perPixelTargetFind: !transient,
       padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
@@ -4072,7 +4262,9 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas.freeDrawingCursor = 'crosshair';
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
-      object.set({ selectable: nativeSelectMode, evented: nativeSelectMode });
+      // 외곽선은 본체의 짝이라 어떤 도구에서도 따로 잡히지 않는다.
+      const pickable = nativeSelectMode && !isOutlineId(object.__baeframeObjectId);
+      object.set({ selectable: pickable, evented: pickable });
     }
     if (!selectMode) {
       fabricCanvas.discardActiveObject();
@@ -4949,6 +5141,83 @@ function createFabricOverlayRuntime(options = {}) {
     return { plans, reason: null };
   }
 
+  // 본체 레코드에서 외곽선 레코드를 만든다. 굵기만 키우고 색을 바꾼 같은 획이다.
+  // geometryOptions 는 본체를 만든 생성 규약이어야 한다 — 도형·펜은 브러시와 다르다.
+  // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 **조각 수가 달라질 수 있다.**
+  // 조각끼리 짝을 지을 방법이 없으므로 자르지 않고 본체 조각에서 **다시 만든다.**
+  //
+  // 씬 Map 에서 외곽선은 언제나 본체보다 앞에 있고, replaceObjects 는 제거되는 id 의
+  // 자리에 그 조각들을 끼워 넣는다. 그래서 z-order 가 자동으로 유지된다.
+  function expandOutlineReplacements(replacements) {
+    const snapshot = sceneStore.getActiveSceneSnapshot();
+    const objectsById = new Map((snapshot?.objects || []).map(object => [object.id, object]));
+    const expanded = [];
+    for (const replacement of replacements) {
+      const bodyId = replacement?.removeId;
+      const outlineId = outlineIdFor(bodyId);
+      const outlineObject = outlineId ? objectsById.get(outlineId) : null;
+      if (!outlineObject) {
+        expanded.push(replacement);
+        continue;
+      }
+      const spec = outlineSpecFromPair(objectsById.get(bodyId), outlineObject);
+      const addObjects = [];
+      if (spec) {
+        const budget = createGeometryBudget(maxSelectionGeometryOperations);
+        for (const fragment of replacement.addObjects || []) {
+          const derived = deriveOutlineRecord(
+            fragment,
+            spec,
+            resolveStrokeGeometryOptions(fragment, budget)
+          );
+          if (derived) addObjects.push(derived);
+        }
+      }
+      expanded.push({ removeId: outlineId, addObjects });
+      expanded.push(replacement);
+    }
+    return expanded;
+  }
+
+  function deriveOutlineRecord(record, outline, geometryOptions = null) {
+    if (outline?.enabled !== true) return null;
+    const id = outlineIdFor(record?.id);
+    if (!id || !Array.isArray(record.sourcePoints) || record.sourcePoints.length === 0) return null;
+    const width = boundedInteger(
+      outline.width,
+      MIN_OUTLINE_WIDTH,
+      MAX_OUTLINE_WIDTH,
+      DEFAULT_OUTLINE_WIDTH
+    );
+    const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * width;
+    let strokeData;
+    try {
+      strokeData = strokePathFactory(record.sourcePoints, {
+        size,
+        last: true,
+        alreadyNormalizedPressure: true,
+        start: { cap: record.strokeCaps?.start !== false },
+        end: { cap: record.strokeCaps?.end !== false },
+        ...(geometryOptions || null)
+      });
+    } catch (_error) {
+      return null;
+    }
+    if (!strokeData?.pathData) return null;
+    const derived = {
+      id,
+      type: 'stroke',
+      pathData: strokeData.pathData,
+      // strokeData.sourcePoints 가 아니라 본체 것을 복사한다 — 재생성이 멱등해야
+      // 조각을 다시 자를 때도 같은 외곽선이 나온다.
+      sourcePoints: clonePlain(record.sourcePoints),
+      style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size },
+      transform: clonePlain(record.transform || {})
+    };
+    if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
+    return derived;
+  }
+
   function createStrokeFragment(
     record,
     points,
@@ -5247,7 +5516,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const selectedObjectIds = [...pending.selectedIds];
     const result = sceneStore.replaceObjects({
-      replacements: pending.replacements,
+      replacements: expandOutlineReplacements(pending.replacements),
       selectedObjectIds,
       dx,
       dy,
@@ -5295,7 +5564,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
     const result = sceneStore.replaceObjects({
-      replacements,
+      replacements: expandOutlineReplacements(replacements),
       selectedObjectIds: [],
       kind: 'split-stroke'
     });
@@ -5325,7 +5594,8 @@ function createFabricOverlayRuntime(options = {}) {
     const objects = objectIds.map(id => objectsById.get(id)).filter(Boolean);
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
-      const selected = ids.has(object.__baeframeObjectId);
+      const selected = ids.has(object.__baeframeObjectId) &&
+        !isOutlineId(object.__baeframeObjectId);
       object.set({ selectable: selected, evented: selected });
     }
     if (objects.length === 1) {
@@ -5419,7 +5689,9 @@ function createFabricOverlayRuntime(options = {}) {
       };
     };
     for (const record of snapshot?.objects || []) {
-      if (record.type !== 'stroke') continue;
+      // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
+      // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
+      if (record.type !== 'stroke' || isOutlineId(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -5503,7 +5775,9 @@ function createFabricOverlayRuntime(options = {}) {
     }
 
     for (const record of snapshot?.objects || []) {
-      if (record.type !== 'stroke') continue;
+      // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
+      // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
+      if (record.type !== 'stroke' || isOutlineId(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -5861,12 +6135,19 @@ function createFabricOverlayRuntime(options = {}) {
     };
     const path = makeFabricPath(record);
     record.transform = captureTransform(path);
-    const result = sceneStore.addStroke(record);
+    const outlineRecord = deriveOutlineRecord(
+      record,
+      outlineStyle,
+      activeStrokeTool === 'pen' ? PEN_STROKE_GEOMETRY : null
+    );
+    const result = sceneStore.addStroke(record, outlineRecord);
     activeStroke = null;
     if (!result.applied) {
       settleArmedFramePreview();
       return result;
     }
+    // 외곽선이 본체보다 먼저 캔버스에 올라가야 뒤에 깔린다.
+    if (result.outlineId && outlineRecord) fabricCanvas.add(makeFabricPath(outlineRecord));
     fabricCanvas.add(path);
     fabricCanvas.requestRenderAll();
     updateObjectMetric();
@@ -6139,11 +6420,14 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const path = makeFabricPath(record);
     record.transform = captureTransform(path);
-    const result = sceneStore.addStroke(record);
+    const outlineRecord = deriveOutlineRecord(record, outlineStyle, SHAPE_STROKE_GEOMETRY);
+    const result = sceneStore.addStroke(record, outlineRecord);
     if (!result.applied) {
       settleArmedFramePreview();
       return result;
     }
+    // 외곽선이 본체보다 먼저 캔버스에 올라가야 뒤에 깔린다.
+    if (result.outlineId && outlineRecord) fabricCanvas.add(makeFabricPath(outlineRecord));
     fabricCanvas.add(path);
     fabricCanvas.requestRenderAll();
     updateObjectMetric();
@@ -6284,7 +6568,9 @@ function createFabricOverlayRuntime(options = {}) {
     let hidden = 0;
     for (const record of context.snapshot?.objects || []) {
       // 이미 지운 획은 판정 자체를 건너뛴다 — 같은 획 위를 여러 번 지나가도 1회만 처리된다.
-      if (record.type !== 'stroke' || gesture.erasedIds.has(record.id)) continue;
+      // 외곽선은 본체의 짝이라 따로 판정하지 않는다. 본체가 걸리면 함께 처리된다.
+      if (record.type !== 'stroke' || isOutlineId(record.id) ||
+          gesture.erasedIds.has(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = context.canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -7415,9 +7701,12 @@ function createFabricOverlayRuntime(options = {}) {
       const activeInCustomSelection = selectTool &&
         !nativeSelection &&
         activeIds.has(object.__baeframeObjectId);
+      // 외곽선은 본체의 짝이라 어떤 선택 방식에서도 따로 잡히지 않는다.
+      const pickable = (nativeSelection || activeInCustomSelection) &&
+        !isOutlineId(object.__baeframeObjectId);
       object.set({
-        selectable: nativeSelection || activeInCustomSelection,
-        evented: nativeSelection || activeInCustomSelection
+        selectable: pickable,
+        evented: pickable
       });
       object.setCoords?.();
     }
@@ -7631,6 +7920,7 @@ function createFabricOverlayRuntime(options = {}) {
     shapeMenuControls = null;
     brushStatusRow = null;
     recentColorControls = null;
+    outlineControls = null;
     badge = null;
     sizeAdjustHud = null;
     sizeAdjustHudLabel = null;
@@ -7695,6 +7985,7 @@ function createFabricOverlayRuntime(options = {}) {
       brushControls = createBrushSettingsControls();
       brushStatusRow = createBrushStatusRow();
       recentColorControls = brushControls.recentColors;
+      outlineControls = brushControls.outline;
       selectionControls = createSelectionControls();
       eraserModeControls = createEraserModeControls();
       badge = documentRef.createElement('span');
