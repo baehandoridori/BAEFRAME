@@ -14955,10 +14955,15 @@ void main() {
           if (!result.applied) return result;
           return { applied: true, objectId: record.id, outlineId: outline?.id || null };
         }
+        function isDerivedOutline(id, objects = activeScene()?.objects) {
+          if (!objects || !isOutlineId(id)) return false;
+          const bodyId = bodyIdFor(id);
+          return bodyId !== null && objects.has(bodyId);
+        }
         function selectObjects(objectIds = []) {
           const scene = activeScene();
           if (!scene) return { changed: false, selection: [] };
-          const next = new Set(objectIds.filter((id) => scene.objects.has(id) && !isOutlineId(id)));
+          const next = new Set(objectIds.filter((id) => scene.objects.has(id) && !isDerivedOutline(id, scene.objects)));
           const changed = next.size !== scene.selectedObjectIds.size || [...next].some((id) => !scene.selectedObjectIds.has(id));
           scene.selectedObjectIds = next;
           return { changed, selection: [...next] };
@@ -15063,7 +15068,11 @@ void main() {
           const dy = finiteNumber(change.dy, 0);
           const transformTargetIds = new Set(transformById.keys());
           if (dx !== 0 || dy !== 0) {
-            for (const id of nextSelection) transformTargetIds.add(id);
+            for (const id of nextSelection) {
+              transformTargetIds.add(id);
+              const outlineId = outlineIdFor(id);
+              if (outlineId && nextObjects.has(outlineId)) transformTargetIds.add(outlineId);
+            }
           }
           const changedTransformIds = [];
           for (const id of transformTargetIds) {
@@ -15493,6 +15502,7 @@ void main() {
           exportVideo,
           addStroke,
           selectObjects,
+          isDerivedOutline,
           transformSelection,
           replaceObjects,
           undo,
@@ -15621,6 +15631,9 @@ void main() {
         if (bodyId.length > MAX_OUTLINE_BODY_ID_LENGTH) return null;
         if (isOutlineId(bodyId)) return null;
         return bodyId + OUTLINE_ID_SUFFIX;
+      }
+      function bodyIdFor(outlineId) {
+        return isOutlineId(outlineId) ? outlineId.slice(0, -OUTLINE_ID_SUFFIX.length) : null;
       }
       function outlineSpecFromPair(bodyRecord, outlineRecord) {
         if (!bodyRecord || !outlineRecord) return null;
@@ -16743,9 +16756,9 @@ void main() {
             stroke: null,
             strokeWidth: 0,
             // 외곽선은 본체에서 파생된 짝이다. 따로 잡히면 사용자가 본체 대신 윤곽만
-            // 옮기게 되어 쌍이 어긋난다.
-            selectable: !transient && !isOutlineId(record.id) && sceneStore.getDiagnostics().tool === "select",
-            evented: !transient && !isOutlineId(record.id) && sceneStore.getDiagnostics().tool === "select",
+            // 옮기게 되어 쌍이 어긋난다. 짝을 잃은 고아는 평범한 획으로 되돌아간다.
+            selectable: !transient && !sceneStore.isDerivedOutline(record.id) && sceneStore.getDiagnostics().tool === "select",
+            evented: !transient && !sceneStore.isDerivedOutline(record.id) && sceneStore.getDiagnostics().tool === "select",
             objectCaching: !transient,
             perPixelTargetFind: !transient,
             padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
@@ -17082,7 +17095,7 @@ void main() {
           fabricCanvas.freeDrawingCursor = "crosshair";
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
-            const pickable = nativeSelectMode && !isOutlineId(object.__baeframeObjectId);
+            const pickable = nativeSelectMode && !sceneStore.isDerivedOutline(object.__baeframeObjectId);
             object.set({ selectable: pickable, evented: pickable });
           }
           if (!selectMode) {
@@ -17847,6 +17860,7 @@ void main() {
             if (spec) {
               const budget = createGeometryBudget(maxSelectionGeometryOperations);
               for (const fragment of replacement.addObjects || []) {
+                if (fragment.renderGeometry !== void 0) continue;
                 const derived = deriveOutlineRecord(
                   fragment,
                   spec,
@@ -18239,7 +18253,7 @@ void main() {
           const objects = objectIds.map((id) => objectsById.get(id)).filter(Boolean);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
-            const selected = ids.has(object.__baeframeObjectId) && !isOutlineId(object.__baeframeObjectId);
+            const selected = ids.has(object.__baeframeObjectId) && !sceneStore.isDerivedOutline(object.__baeframeObjectId);
             object.set({ selectable: selected, evented: selected });
           }
           if (objects.length === 1) {
@@ -18316,7 +18330,7 @@ void main() {
             };
           };
           for (const record of snapshot?.objects || []) {
-            if (record.type !== "stroke" || isOutlineId(record.id)) continue;
+            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -18389,7 +18403,7 @@ void main() {
             return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
           }
           for (const record of snapshot?.objects || []) {
-            if (record.type !== "stroke" || isOutlineId(record.id)) continue;
+            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -19080,7 +19094,7 @@ void main() {
           const polygonBounds = boundsForPoints(polygon);
           let hidden = 0;
           for (const record of context.snapshot?.objects || []) {
-            if (record.type !== "stroke" || isOutlineId(record.id) || gesture.erasedIds.has(record.id)) continue;
+            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id) || gesture.erasedIds.has(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = context.canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -20083,7 +20097,7 @@ void main() {
             applyMoveOnlyConstraints(object);
             applyUnselectedPermanentPathPolicy(object, tolerance);
             const activeInCustomSelection = selectTool && !nativeSelection && activeIds.has(object.__baeframeObjectId);
-            const pickable = (nativeSelection || activeInCustomSelection) && !isOutlineId(object.__baeframeObjectId);
+            const pickable = (nativeSelection || activeInCustomSelection) && !sceneStore.isDerivedOutline(object.__baeframeObjectId);
             object.set({
               selectable: pickable,
               evented: pickable

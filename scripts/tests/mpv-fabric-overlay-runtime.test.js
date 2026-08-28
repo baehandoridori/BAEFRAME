@@ -16026,7 +16026,7 @@ test('deleting a body deletes its outline too', async () => {
   }
 });
 
-test('a pixel erase regenerates outlines for each body fragment', async () => {
+test('a pixel erase drops outlines rather than repainting erased areas', async () => {
   const harness = createRealFabricHarness();
   try {
     enableOutline(harness, { width: 2 });
@@ -16045,22 +16045,17 @@ test('a pixel erase regenerates outlines for each body fragment', async () => {
     const bodies = bodyObjects(harness);
     const outlines = outlineObjects(harness);
     assert.equal(bodies.length, 2, '본체가 조각으로 나뉘어야 한다');
-    // 외곽선은 쪼개지 않고 조각마다 다시 만든다 — 굵기가 달라 조각 수가 어긋나기 때문이다.
-    assert.equal(outlines.length, 2, '조각마다 외곽선이 재생성돼야 한다');
-    for (const body of bodies) {
-      assert.ok(
-        outlines.some(outline => outline.id === `${body.id}~outline`),
-        `조각 ${body.id} 의 외곽선이 없다`
-      );
-    }
-    // z-order — 각 외곽선이 자기 본체보다 앞에 있어야 한다.
-    const order = harness.sceneStore.getActiveSceneSnapshot().objects.map(object => object.id);
-    for (const body of bodies) {
-      assert.ok(
-        order.indexOf(`${body.id}~outline`) < order.indexOf(body.id),
-        `조각 ${body.id} 의 외곽선이 뒤에 깔리지 않았다`
-      );
-    }
+    // 분할 조각은 renderGeometry 로 **실제 칠할 영역**을 따로 쥔다. sourcePoints 는
+    // 두께 방향으로 잘린 경우에도 원래 중심선을 그대로 담고 있어서, 그걸로 외곽선을
+    // 다시 만들면 지운 자리를 되칠한다. 마스크를 반영해 외곽선을 깎는 기계가 아직
+    // 없으므로 **덜 그리는 쪽**을 택했다 — 조각에는 외곽선이 붙지 않는다.
+    assert.equal(outlines.length, 0, '지운 자리를 되칠하느니 외곽선을 붙이지 않는다');
+    // 낡은 외곽선이 고아로 남아서도 안 된다.
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      2,
+      '본체 조각 2개만 남아야 한다'
+    );
     assert.equal(harness.runtime.getDiagnostics().undoDepth, before + 1, '분할도 실행취소 1건');
   } finally {
     await harness.destroy();
@@ -16117,6 +16112,70 @@ test('an outline is skipped when the body id leaves no room for the suffix', asy
       outlineObjects(harness).length,
       0,
       '512자 한도를 넘길 바에는 외곽선을 만들지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an orphaned outline record behaves like an ordinary stroke', async () => {
+  // 구버전 앱이 본체만 지우고 저장하면 `…~outline` 만 남는다. 접미사만 보고
+  // 걸러 내면 화면에 보이는데 선택도 삭제도 안 되는 획이 된다 — 프레임 전체를
+  // 지우는 것 말고는 손댈 방법이 없어진다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8201);
+    const bodyId = bodyObjects(harness)[0].id;
+    const outlineId = outlineObjects(harness)[0].id;
+
+    // 짝을 잃게 만든다 — 본체만 씬에서 뺀다.
+    assert.equal(harness.sceneStore.selectObjects([bodyId]).selection.length, 1);
+    assert.equal(harness.sceneStore.replaceObjects({
+      replacements: [{ removeId: bodyId, addObjects: [] }],
+      selectedObjectIds: [],
+      kind: 'split-stroke'
+    }).applied, true);
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.deepEqual(survivors.map(object => object.id), [outlineId], '고아만 남아야 한다');
+
+    // 이제 평범한 획이다 — 고를 수 있어야 한다.
+    assert.deepEqual(harness.sceneStore.selectObjects([outlineId]).selection, [outlineId]);
+    assert.equal(harness.sceneStore.isDerivedOutline(outlineId), false);
+    assert.equal(harness.sceneStore.deleteSelection().applied, true);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an outline follows its body when a partial selection is dragged', async () => {
+  // replaceObjects 는 dx/dy 를 선택 집합에만 적용한다. 외곽선은 선택 대상이
+  // 아니므로, 변형 대상에 따로 넣지 않으면 본체만 움직이고 외곽선은 제자리에 남는다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 160, y: 100 }], 8211);
+    const bodyId = bodyObjects(harness)[0].id;
+    const outlineId = outlineObjects(harness)[0].id;
+
+    // 본체만 선택된 상태에서 dx/dy 로 옮긴다(라쏘 조각 이동과 같은 경로).
+    assert.equal(harness.sceneStore.replaceObjects({
+      replacements: [{ removeId: bodyId, addObjects: [{ ...bodyObjects(harness)[0] }] }],
+      selectedObjectIds: [bodyId],
+      dx: 15,
+      dy: -9,
+      kind: 'split-stroke'
+    }).applied, true);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    const body = objects.find(object => object.id === bodyId);
+    const outline = objects.find(object => object.id === outlineId);
+    assert.ok(body && outline, '짝이 모두 남아 있어야 한다');
+    assert.deepEqual(
+      outline.transform,
+      body.transform,
+      '외곽선이 제자리에 남으면 눈에 띄게 어긋난다'
     );
   } finally {
     await harness.destroy();

@@ -1757,12 +1757,22 @@ function createSessionSceneStore(options = {}) {
     return { applied: true, objectId: record.id, outlineId: outline?.id || null };
   }
 
+  // 접미사만으로는 부족하다. 구버전 앱이 본체만 지우고 저장하면 `…~outline` 만
+  // 남는데, 그것까지 선택·지우기에서 빼면 화면에 보이는데 손댈 수 없는 획이 된다.
+  // **짝이 실제로 살아 있을 때만** 파생 외곽선으로 취급한다.
+  function isDerivedOutline(id, objects = activeScene()?.objects) {
+    if (!objects || !isOutlineId(id)) return false;
+    const bodyId = bodyIdFor(id);
+    return bodyId !== null && objects.has(bodyId);
+  }
+
   function selectObjects(objectIds = []) {
     const scene = activeScene();
     if (!scene) return { changed: false, selection: [] };
     // 외곽선은 본체에서 파생된 짝이라 따로 고르지 않는다. 본체를 고르면 변형·삭제가
-    // 짝을 함께 다룬다.
-    const next = new Set(objectIds.filter(id => scene.objects.has(id) && !isOutlineId(id)));
+    // 짝을 함께 다룬다. 짝을 잃은 고아는 평범한 획으로 되돌아간다.
+    const next = new Set(objectIds.filter(id =>
+      scene.objects.has(id) && !isDerivedOutline(id, scene.objects)));
     const changed = next.size !== scene.selectedObjectIds.size ||
       [...next].some(id => !scene.selectedObjectIds.has(id));
     scene.selectedObjectIds = next;
@@ -1883,7 +1893,14 @@ function createSessionSceneStore(options = {}) {
     const dy = finiteNumber(change.dy, 0);
     const transformTargetIds = new Set(transformById.keys());
     if (dx !== 0 || dy !== 0) {
-      for (const id of nextSelection) transformTargetIds.add(id);
+      for (const id of nextSelection) {
+        transformTargetIds.add(id);
+        // 외곽선은 본체와 함께 움직여야 한다. 선택 집합에는 넣지 않고 변형 대상에만
+        // 넣는다 — 외곽선은 선택 대상이 아니기 때문이다. 이게 없으면 조각을 끌었을 때
+        // 본체만 가고 외곽선은 제자리에 남아 눈에 띄게 어긋난다.
+        const outlineId = outlineIdFor(id);
+        if (outlineId && nextObjects.has(outlineId)) transformTargetIds.add(outlineId);
+      }
     }
     const changedTransformIds = [];
     for (const id of transformTargetIds) {
@@ -2378,6 +2395,7 @@ function createSessionSceneStore(options = {}) {
     exportVideo,
     addStroke,
     selectObjects,
+    isDerivedOutline,
     transformSelection,
     replaceObjects,
     undo,
@@ -3868,10 +3886,10 @@ function createFabricOverlayRuntime(options = {}) {
       stroke: null,
       strokeWidth: 0,
       // 외곽선은 본체에서 파생된 짝이다. 따로 잡히면 사용자가 본체 대신 윤곽만
-      // 옮기게 되어 쌍이 어긋난다.
-      selectable: !transient && !isOutlineId(record.id) &&
+      // 옮기게 되어 쌍이 어긋난다. 짝을 잃은 고아는 평범한 획으로 되돌아간다.
+      selectable: !transient && !sceneStore.isDerivedOutline(record.id) &&
         sceneStore.getDiagnostics().tool === 'select',
-      evented: !transient && !isOutlineId(record.id) &&
+      evented: !transient && !sceneStore.isDerivedOutline(record.id) &&
         sceneStore.getDiagnostics().tool === 'select',
       objectCaching: !transient,
       perPixelTargetFind: !transient,
@@ -4263,7 +4281,7 @@ function createFabricOverlayRuntime(options = {}) {
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
       // 외곽선은 본체의 짝이라 어떤 도구에서도 따로 잡히지 않는다.
-      const pickable = nativeSelectMode && !isOutlineId(object.__baeframeObjectId);
+      const pickable = nativeSelectMode && !sceneStore.isDerivedOutline(object.__baeframeObjectId);
       object.set({ selectable: pickable, evented: pickable });
     }
     if (!selectMode) {
@@ -5165,6 +5183,12 @@ function createFabricOverlayRuntime(options = {}) {
       if (spec) {
         const budget = createGeometryBudget(maxSelectionGeometryOperations);
         for (const fragment of replacement.addObjects || []) {
+          // 두께 방향으로 잘린 조각은 renderGeometry 가 실제로 칠할 영역을 쥐고 있고,
+          // sourcePoints 는 그보다 넓은 중심선을 그대로 담고 있다. 그 상태에서
+          // sourcePoints 만으로 외곽선을 다시 만들면 마스크를 무시해 **지운 자리를
+          // 되칠한다.** 마스크를 반영해 외곽선을 깎는 기계가 아직 없으므로,
+          // 그런 조각에는 외곽선을 붙이지 않는다(덜 그리는 쪽이 안전하다).
+          if (fragment.renderGeometry !== undefined) continue;
           const derived = deriveOutlineRecord(
             fragment,
             spec,
@@ -5595,7 +5619,7 @@ function createFabricOverlayRuntime(options = {}) {
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
       const selected = ids.has(object.__baeframeObjectId) &&
-        !isOutlineId(object.__baeframeObjectId);
+        !sceneStore.isDerivedOutline(object.__baeframeObjectId);
       object.set({ selectable: selected, evented: selected });
     }
     if (objects.length === 1) {
@@ -5691,7 +5715,8 @@ function createFabricOverlayRuntime(options = {}) {
     for (const record of snapshot?.objects || []) {
       // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
       // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
-      if (record.type !== 'stroke' || isOutlineId(record.id)) continue;
+      // 짝을 잃은 고아는 평범한 획이므로 그대로 잘릴 수 있어야 한다.
+      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -5777,7 +5802,8 @@ function createFabricOverlayRuntime(options = {}) {
     for (const record of snapshot?.objects || []) {
       // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
       // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
-      if (record.type !== 'stroke' || isOutlineId(record.id)) continue;
+      // 짝을 잃은 고아는 평범한 획이므로 그대로 잘릴 수 있어야 한다.
+      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -6569,7 +6595,8 @@ function createFabricOverlayRuntime(options = {}) {
     for (const record of context.snapshot?.objects || []) {
       // 이미 지운 획은 판정 자체를 건너뛴다 — 같은 획 위를 여러 번 지나가도 1회만 처리된다.
       // 외곽선은 본체의 짝이라 따로 판정하지 않는다. 본체가 걸리면 함께 처리된다.
-      if (record.type !== 'stroke' || isOutlineId(record.id) ||
+      // 짝을 잃은 고아는 평범한 획이므로 그대로 지워질 수 있어야 한다.
+      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id) ||
           gesture.erasedIds.has(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = context.canvasObjects.get(record.id);
@@ -7703,7 +7730,7 @@ function createFabricOverlayRuntime(options = {}) {
         activeIds.has(object.__baeframeObjectId);
       // 외곽선은 본체의 짝이라 어떤 선택 방식에서도 따로 잡히지 않는다.
       const pickable = (nativeSelection || activeInCustomSelection) &&
-        !isOutlineId(object.__baeframeObjectId);
+        !sceneStore.isDerivedOutline(object.__baeframeObjectId);
       object.set({
         selectable: pickable,
         evented: pickable
