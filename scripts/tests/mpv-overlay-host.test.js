@@ -1862,6 +1862,30 @@ test('drawing persistence IPC normalization resyncs malformed nested deltas with
   );
 });
 
+test('drawing actions relay the keyframe set change flag', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.applyDrawingAction(')) {
+        return { applied: true, repainted: true, deletedCount: 0, keyframeSetChanged: true };
+      }
+      return undefined;
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-keyframe-set' });
+
+  const result = await harness.host.applyDrawingAction({
+    hostGeneration: harness.host.hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-keyframe-set',
+    actionId: 'undo-keyframe-set-1',
+    action: 'undo'
+  });
+  // 전이는 객체 단위라 "이 키프레임이 사라졌다"를 표현할 수 없다. 이 신호가 없으면
+  // 타임라인이 다음 저장 주기까지 옛 마커를 들고 있는다.
+  assert.equal(result.keyframeSetChanged, true);
+});
+
 test('drawing actions that repaint force the transparent overlay to composite', async () => {
   const harness = createDrawingHostHarness({
     executeDrawing(script) {
@@ -3121,8 +3145,12 @@ test('deduplicates drawing actions and allowlists lightweight host responses', a
   };
   const first = await host.applyDrawingAction(action);
   const duplicate = await host.applyDrawingAction(action);
-  assert.deepEqual(first, { success: true, applied: true, duplicate: false, deletedCount: 1 });
-  assert.deepEqual(duplicate, { success: true, applied: false, duplicate: true, deletedCount: 0 });
+  assert.deepEqual(first, {
+    success: true, applied: true, duplicate: false, deletedCount: 1, keyframeSetChanged: false
+  });
+  assert.deepEqual(duplicate, {
+    success: true, applied: false, duplicate: true, deletedCount: 0, keyframeSetChanged: false
+  });
   assert.equal(
     events.filter(([name, value]) => name === 'executeJavaScript' && value.includes?.('.applyDrawingAction(')).length,
     1
@@ -3262,13 +3290,15 @@ test('allowlists undo and redo while rejecting unknown drawing actions', async (
     success: true,
     applied: true,
     duplicate: false,
-    deletedCount: 1
+    deletedCount: 1,
+    keyframeSetChanged: false
   });
   assert.deepEqual(await harness.host.applyDrawingAction(makeAction('redo', 'history-redo-1')), {
     success: true,
     applied: true,
     duplicate: false,
-    deletedCount: 1
+    deletedCount: 1,
+    keyframeSetChanged: false
   });
   assert.deepEqual(await harness.host.applyDrawingAction(makeAction('export-scene', 'unknown-1')), {
     success: false,
@@ -3320,7 +3350,8 @@ test('serializes different actions and continues after the first action fails', 
     success: true,
     applied: true,
     duplicate: false,
-    deletedCount: 0
+    deletedCount: 0,
+    keyframeSetChanged: false
   });
   assert.deepEqual(actionOrder, ['undo', 'redo']);
 });
@@ -3581,12 +3612,15 @@ test('shares an in-flight action failure and keeps the action ID retryable until
   await waitForAsyncReposition();
   assert.equal(actionCallCount, 2);
   retryAttempt.resolve({ applied: true, deletedCount: 2 });
-  assert.deepEqual(await retry, { success: true, applied: true, duplicate: false, deletedCount: 2 });
+  assert.deepEqual(await retry, {
+    success: true, applied: true, duplicate: false, deletedCount: 2, keyframeSetChanged: false
+  });
   assert.deepEqual(await host.applyDrawingAction(action), {
     success: true,
     applied: false,
     duplicate: true,
-    deletedCount: 0
+    deletedCount: 0,
+    keyframeSetChanged: false
   });
   assert.equal(actionCallCount, 2);
 });

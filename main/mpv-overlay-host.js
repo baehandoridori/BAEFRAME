@@ -3258,7 +3258,11 @@ class MPVOverlayHost {
       return { success: false, applied: false, error: 'stale or invalid drawing action request' };
     }
     if (this.completedActionIds.has(request.actionId)) {
-      return { success: true, applied: false, duplicate: true, deletedCount: 0 };
+      // 중복 액션은 아무것도 바꾸지 않으므로 keyframeSetChanged 는 항상 false 다.
+      // 성공 응답의 형태를 _performDrawingAction 과 같게 유지한다.
+      return {
+        success: true, applied: false, duplicate: true, deletedCount: 0, keyframeSetChanged: false
+      };
     }
     const inFlight = this.inFlightDrawingActions.get(request.actionId);
     if (inFlight) return inFlight;
@@ -3330,7 +3334,8 @@ class MPVOverlayHost {
         applied: result?.applied === true,
         duplicate: result?.duplicate === true,
         ...(typeof result?.reason === 'string' ? { reason: result.reason } : {}),
-        deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount)))
+        deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount))),
+        keyframeSetChanged: result?.keyframeSetChanged === true
       };
     } catch (error) {
       return { success: false, applied: false, error: error.message };

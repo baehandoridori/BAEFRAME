@@ -1989,12 +1989,14 @@ function createSessionSceneStore(options = {}) {
 
   function applyHistoryEntry(scene, order, direction) {
     let transition = null;
+    let entryMaterializesScene = false;
     const result = scene.history[direction]((state, _historyDirection, entry) => {
       const applied = applyHistoryState(scene, state);
       if (applied.applied) {
         // 키프레임 생성(임시 씬 정식화)까지 함께 되돌린다. 되돌리면 그 프레임은
         // 다시 "키프레임 아님"이 되어 이후 프레임이 앞 키프레임을 따라간다.
         if (entry.materializesScene === true) {
+          entryMaterializesScene = true;
           scene.provisional = direction === 'undo';
           scene.provisionalSourceFrame = direction === 'undo'
             ? (entry.provisionalSourceFrame ?? null)
@@ -2031,7 +2033,11 @@ function createSessionSceneStore(options = {}) {
       // 재설정을 건너뛴다. 다만 활성 씬이 임시 씬이면 그 화면은 커밋된 원본에서
       // 파생되므로, 어느 씬이 바뀌었든 다시 그려야 한다.
       affectedActiveScene: scene === activeScene() || activeScene()?.provisional === true,
-      affectedTargetFrame: scene.targetFrame
+      affectedTargetFrame: scene.targetFrame,
+      // 키프레임이 생기거나 사라졌으면 지속화 스토어의 키프레임 목록과 어긋난다.
+      // 전이(transition)는 객체 단위라 "이 키프레임이 사라졌다"를 표현할 수 없어,
+      // 타임라인이 다음 저장 주기까지 옛 마커를 들고 있게 된다. 재동기를 요청하도록 알린다.
+      keyframeSetChanged: entryMaterializesScene
     };
   }
 
@@ -7357,7 +7363,7 @@ function createFabricOverlayRuntime(options = {}) {
         }
         updateObjectMetric();
         settleArmedFramePreview();
-        return { ...result, repainted };
+        return { ...result, repainted, keyframeSetChanged: result.keyframeSetChanged === true };
       }
       const deletedIds = new Set(result.deletedIds);
       for (const object of fabricCanvas.getObjects()) {
