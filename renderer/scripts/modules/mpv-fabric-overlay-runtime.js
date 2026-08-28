@@ -14,7 +14,8 @@ const {
   boundsIntersect,
   createGeometryBudget,
   createPolygonEdgeIndex,
-  simplifyClosedPolygon
+  simplifyClosedPolygon,
+  simplifyOpenPolyline
 } = require('./drawing-v3/lasso-geometry.js');
 const {
   clipSimplePathFillPair,
@@ -51,6 +52,11 @@ const {
   FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE: MAX_PERSISTED_TRANSFORM_MAGNITUDE,
   FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH
 } = require('../../../shared/fabric-drawing-limits.js');
+const {
+  FABRIC_SHAPE_TOOLS,
+  isFabricDrawingTool,
+  normalizeFabricDrawingTool
+} = require('../../../shared/fabric-drawing-tools.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -87,8 +93,42 @@ const BRUSH_COLOR_LABELS = Object.freeze({
   '#ff6b9d': '핑크'
 });
 const DEFAULT_BRUSH_STYLE = Object.freeze({ color: '#ff4757', size: 3, opacity: 1 });
+// 레거시 팔레트(renderer/index.html)의 도구 아이콘을 그대로 쓴다. 한글 라벨은
+// 190px 팔레트의 5열 그리드에서 잘리므로 아이콘만 두고 이름은 title/aria-label 로 준다.
+const TOOL_ICON_SVG = Object.freeze({
+  brush: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>',
+  pen: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>',
+  eraser: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
+  line: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="19" x2="19" y2="5"/></svg>',
+  rect: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
+  circle: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>',
+  arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
+  select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>'
+});
+// 도형 버튼 우하단의 플라이아웃 예고 삼각형.
+const SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
+// 상시 요약 줄에 띄우는 도구 이름.
+const TOOL_STATUS_LABELS = Object.freeze({
+  brush: '브러시',
+  pen: '펜',
+  eraser: '지우개',
+  line: '직선',
+  rect: '사각형',
+  circle: '원',
+  arrow: '화살표',
+  select: '선택'
+});
+const SHAPE_TOOL_LABELS = Object.freeze({
+  line: '직선',
+  rect: '사각형',
+  circle: '원',
+  arrow: '화살표'
+});
+const RECENT_COLOR_LIMIT = 4;
 const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
+// [ / ] 로 띄운 크기 HUD 가 스스로 사라지기까지. 레거시 감각과 같다.
+const SIZE_ADJUST_HUD_FLASH_MS = 700;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
 // 레거시 Canvas2D 엔진(drawing-canvas.js `_updateSizeAdjust`)의 delta/4 감도를 그대로 계승한다.
@@ -1617,7 +1657,7 @@ function createSessionSceneStore(options = {}) {
       sourceFrame: restored ? sourceFrame : (sourceScene ? sourceFrame : null),
       sceneKey,
       videoGeneration,
-      tool: session.tool === 'select' ? 'select' : 'brush',
+      tool: normalizeFabricDrawingTool(session.tool),
       toolRevision: -1
     };
     const scene = activeScene();
@@ -2110,7 +2150,7 @@ function createSessionSceneStore(options = {}) {
     if (!Number.isInteger(toolRevision) || toolRevision <= activeSession.toolRevision) {
       return { accepted: false, reason: 'stale-tool-revision' };
     }
-    if (command.tool !== 'brush' && command.tool !== 'select') {
+    if (!isFabricDrawingTool(command.tool)) {
       return { accepted: false, reason: 'invalid-tool' };
     }
     activeSession.toolRevision = toolRevision;
@@ -2122,7 +2162,7 @@ function createSessionSceneStore(options = {}) {
     if (!activeSession || command.sessionId !== activeSession.sessionId) {
       return { accepted: false, reason: 'stale-session' };
     }
-    if (command.tool !== 'brush' && command.tool !== 'select') {
+    if (!isFabricDrawingTool(command.tool)) {
       return { accepted: false, reason: 'invalid-tool' };
     }
     activeSession.tool = command.tool;
@@ -2351,6 +2391,114 @@ function outlineToPathData(outline) {
   commands.push('Z');
   return commands.join(' ');
 }
+
+// 도형 중심선 표본 생성기. 도형은 "미리 계산된 경로를 따라 그은 획"으로 저장하므로
+// (drawingsV3 스키마 무변경), 여기서 만든 표본을 브러시와 같은 createStrokePathData 에
+// 그대로 통과시킨다. 시간은 표본 순서대로 1씩 증가시켜 저장 스키마의
+// "한 획의 sourcePoints[].time 은 단조 증가" 불변식을 만족시킨다.
+const SHAPE_EDGE_SEGMENTS = 24;
+const SHAPE_ELLIPSE_SEGMENTS = 128;
+const SHAPE_ARROW_HEAD_MIN = 15;
+const SHAPE_ARROW_HEAD_SIZE_FACTOR = 4;
+const SHAPE_ARROW_HEAD_ANGLE = Math.PI / 6;
+// 클릭만 하고 드래그하지 않았을 때 점 하나짜리 도형이 씬에 들어가 undo 를 소모하는
+// 것을 막는다. 소스 좌표 기준이다.
+const SHAPE_MIN_DRAG_DISTANCE = 2;
+
+function interpolateShapeEdge(points, from, to, segments) {
+  for (let index = 1; index <= segments; index += 1) {
+    const amount = index / segments;
+    points.push({
+      x: from.x + (to.x - from.x) * amount,
+      y: from.y + (to.y - from.y) * amount
+    });
+  }
+}
+
+function shapeCenterlinePoints(tool, start, end, brushSize) {
+  const points = [{ x: start.x, y: start.y }];
+  if (tool === 'line') {
+    interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+    return points;
+  }
+  if (tool === 'rect') {
+    const topRight = { x: end.x, y: start.y };
+    const bottomRight = { x: end.x, y: end.y };
+    const bottomLeft = { x: start.x, y: end.y };
+    interpolateShapeEdge(points, start, topRight, SHAPE_EDGE_SEGMENTS);
+    interpolateShapeEdge(points, topRight, bottomRight, SHAPE_EDGE_SEGMENTS);
+    interpolateShapeEdge(points, bottomRight, bottomLeft, SHAPE_EDGE_SEGMENTS);
+    interpolateShapeEdge(points, bottomLeft, start, SHAPE_EDGE_SEGMENTS);
+    return points;
+  }
+  if (tool === 'circle') {
+    // 레거시 _traceShapePath 의 ctx.ellipse 와 같은 기하 — 드래그 사각형에 내접하는 타원.
+    const radiusX = Math.abs(end.x - start.x) / 2;
+    const radiusY = Math.abs(end.y - start.y) / 2;
+    const centerX = start.x + (end.x - start.x) / 2;
+    const centerY = start.y + (end.y - start.y) / 2;
+    // 시작점은 곡선 위에 있지 않다. 버리지 않으면 중심에서 뻗어 나온 꼬리가 생긴다.
+    points.length = 0;
+    for (let index = 0; index <= SHAPE_ELLIPSE_SEGMENTS; index += 1) {
+      const angle = (index / SHAPE_ELLIPSE_SEGMENTS) * Math.PI * 2;
+      points.push({
+        x: centerX + Math.cos(angle) * radiusX,
+        y: centerY + Math.sin(angle) * radiusY
+      });
+    }
+    return points;
+  }
+  // arrow — 레거시 _drawArrow 와 같은 화살촉 기하를 하나의 폴리라인으로 잇는다.
+  // 축(start→end) 뒤에 촉을 그리려면 end 를 다시 지나야 하는데, 되짚기 구간은
+  // getStroke 가 만든 윤곽이 자기 자신과 겹칠 뿐이고 makeFabricPath 의 기본
+  // fillRule('nonzero')에서 합집합으로 칠해지므로 시각적으로 정확한 화살표가 된다.
+  // 레코드를 둘로 쪼개면 undo·선택·이동이 축과 촉을 따로 다루게 되어 더 나쁘다.
+  const headLength = Math.max(SHAPE_ARROW_HEAD_MIN, brushSize * SHAPE_ARROW_HEAD_SIZE_FACTOR);
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const barbA = {
+    x: end.x - headLength * Math.cos(angle - SHAPE_ARROW_HEAD_ANGLE),
+    y: end.y - headLength * Math.sin(angle - SHAPE_ARROW_HEAD_ANGLE)
+  };
+  const barbB = {
+    x: end.x - headLength * Math.cos(angle + SHAPE_ARROW_HEAD_ANGLE),
+    y: end.y - headLength * Math.sin(angle + SHAPE_ARROW_HEAD_ANGLE)
+  };
+  interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+  interpolateShapeEdge(points, end, barbA, SHAPE_EDGE_SEGMENTS);
+  interpolateShapeEdge(points, barbA, end, SHAPE_EDGE_SEGMENTS);
+  interpolateShapeEdge(points, end, barbB, SHAPE_EDGE_SEGMENTS);
+  return points;
+}
+
+// 도형 표본은 압력 1 상수·시간 단조 증가로 만든다. pointerType 을 넣지 않는 이유는
+// 저장 스키마에서 선택 키이고, 도형은 어떤 포인터로 그렸든 결과가 같아야 하기 때문이다.
+function shapeCenterlineSamples(tool, start, end, brushSize) {
+  return shapeCenterlinePoints(tool, start, end, brushSize).map((point, index) => ({
+    x: point.x,
+    y: point.y,
+    pressure: 1,
+    time: index
+  }));
+}
+
+// 도형·펜은 브러시와 다른 기하 파라미터로 획을 만든다. 저장 레코드는 어떤 도구로
+// 그렸는지를 남기지 않으므로(스키마 무변경), 재구성할 때 후보를 순서대로 시도해
+// pathData 가 일치하는 것을 그 획의 생성 규약으로 삼는다.
+// 이게 없으면 도형·펜 획은 canonicalStrokePathMatches 를 절대 통과하지 못해
+// 부분 선택·픽셀 지우개가 그 획을 통째로 삭제하는 쪽으로 떨어진다.
+const PEN_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0.4, streamline: 0.35 });
+const SHAPE_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0, streamline: 0 });
+const STROKE_GEOMETRY_CANDIDATES = Object.freeze([
+  null,
+  SHAPE_STROKE_GEOMETRY,
+  PEN_STROKE_GEOMETRY
+]);
+
+const SHAPE_STROKE_OPTIONS = Object.freeze({
+  ...SHAPE_STROKE_GEOMETRY,
+  alreadyNormalizedPressure: true,
+  last: true
+});
 
 function createStrokePathData(samples, options = {}) {
   if (!Array.isArray(samples) || samples.length === 0) {
@@ -2639,8 +2787,14 @@ function createFabricOverlayRuntime(options = {}) {
   // Alt 드래그 크기 조절 / Ctrl 임시 획 지우개 — 씬 스키마와 무관한 순수 입력 계층 상태
   let sizeAdjustGesture = null;
   let strokeEraseGesture = null;
+  // 도형 도구(line/rect/circle/arrow)의 시작점→끝점 드래그 상태.
+  // 커밋 전까지는 미리보기 경로만 캔버스에 올리고 씬에는 아무것도 넣지 않는다.
+  let shapeGesture = null;
   let sizeAdjustHud = null;
   let sizeAdjustHudLabel = null;
+  // [ / ] 로 띄운 HUD 를 되돌리는 타이머. Alt 제스처는 자기 수명 동안 HUD 를
+  // 계속 잡고 있어야 하므로 제스처가 시작되면 이 타이머를 취소한다.
+  let sizeAdjustHudTimer = null;
   const overlayModifierState = { alt: false, ctrl: false };
   // Alt 제스처 실기 미동작(v2.4.3-beta) 원인 확정용 관측값.
   // "오버레이 문서가 Alt keydown을 받기는 하는가"와 "마우스 pointerdown이 altKey를
@@ -2662,6 +2816,24 @@ function createFabricOverlayRuntime(options = {}) {
   let selectionControlEventCount = 0;
   let lastSelectionControlAction = null;
   let selectionControls = null;
+  // 지우개 방식 — 레거시 eraserModeSection 동치. 'stroke'는 지나간 획 전체를,
+  // 'pixel'은 지나간 구간만 잘라낸다. 부분 삭제 엔진(stroke-splitter)은 이미 있으므로
+  // 여기서는 어느 경로로 커밋할지만 고른다.
+  let eraserMode = 'stroke';
+  let eraserModeControls = null;
+  // 도형 도구 4종은 버튼 1개 + 드롭다운으로 접는다. 런타임의 도구 값은 여전히
+  // line/rect/circle/arrow 그대로이고, 팔레트가 "그 4종 중 활성인 것"으로 표시만 묶는다.
+  let shapeMenuControls = null;
+  // 도형 메뉴가 열려 있어야 하는가. 실제 표시는 이 값과 섹션 접힘의 곱이다.
+  // 캔버스 쪽 상태를 팔레트 셸이 캐시하면 접혀 있는 동안 낡는다.
+  let shapeMenuOpen = false;
+  let lastShapeTool = 'rect';
+  let brushStatusRow = null;
+  // 최근 사용 색 4개. 팔레트 색상 8종 중 실제로 쓰는 건 보통 2~3개인데 매번 전체를
+  // 훑어야 했다. 오버레이 문서는 data: URL 오리진이라 localStorage 가 SecurityError 를
+  // 던지므로 세션 메모리에만 둔다.
+  const recentColors = [];
+  let recentColorControls = null;
   let transformStart = null;
   let selectGesture = null;
   const ignoredModifiedTargets = new WeakSet();
@@ -2700,7 +2872,7 @@ function createFabricOverlayRuntime(options = {}) {
     button.type = 'button';
     button.textContent = label;
     button.dataset.fabricPilotAction = action;
-    if (action === 'brush' || action === 'select') {
+    if (isFabricDrawingTool(action)) {
       button.dataset.active = 'false';
       button.setAttribute?.('aria-pressed', 'false');
       toolButtons.set(action, button);
@@ -2711,6 +2883,15 @@ function createFabricOverlayRuntime(options = {}) {
   function labelToolbarButton(button, label) {
     button.setAttribute?.('aria-label', label);
     button.setAttribute?.('title', label);
+    return button;
+  }
+
+  // 아이콘 전용 버튼. 이름은 title/aria-label 로만 남기므로 스크린리더와 툴팁은
+  // 그대로 동작하고, 좁은 팔레트에서 한글 라벨이 잘리는 문제만 사라진다.
+  function iconToolbarButton(button, label, icon) {
+    labelToolbarButton(button, label);
+    button.textContent = '';
+    if (icon) button.innerHTML = icon;
     return button;
   }
 
@@ -2738,6 +2919,210 @@ function createFabricOverlayRuntime(options = {}) {
     selectionControls.summary.textContent = selectionTarget === 'partial'
       ? `현재: 부분 자르기 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`
       : `현재: 획 전체 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`;
+  }
+
+  // 팔레트를 펼치지 않아도 현재 브러시 상태가 보이게 하는 상시 요약 줄.
+  // brushControls.sizePreview / summary 는 설정 패널·버튼 안에 그대로 둔다
+  // (appendChild 로 옮기면 원래 자리에서 사라진다).
+  function createBrushStatusRow() {
+    const row = documentRef.createElement('div');
+    row.className = 'mpv-fabric-pilot-brush-status';
+    const swatch = documentRef.createElement('span');
+    swatch.dataset.fabricPilotOutput = 'brush-status-swatch';
+    const text = documentRef.createElement('span');
+    text.dataset.fabricPilotOutput = 'brush-status-text';
+    text.setAttribute?.('role', 'status');
+    text.setAttribute?.('aria-live', 'polite');
+    row.appendChild(swatch);
+    row.appendChild(text);
+    return { row, swatch, text };
+  }
+
+  function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
+    if (!brushStatusRow) return;
+    const diameter = Math.min(22, Math.max(2, brushStyle.size));
+    setStyles(brushStatusRow.swatch, {
+      display: 'inline-block',
+      width: `${diameter}px`,
+      height: `${diameter}px`,
+      borderRadius: '50%',
+      background: brushStyle.color,
+      opacity: String(brushStyle.opacity)
+    });
+    const toolName = TOOL_STATUS_LABELS[tool] || '';
+    brushStatusRow.text.textContent = toolName
+      ? `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}% · ${toolName}`
+      : `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}%`;
+  }
+
+  function createRecentColorControls() {
+    const row = documentRef.createElement('div');
+    row.className = 'mpv-fabric-pilot-recent-colors';
+    row.setAttribute?.('role', 'group');
+    row.setAttribute?.('aria-label', '최근 사용 색');
+    const buttons = [];
+    for (let index = 0; index < RECENT_COLOR_LIMIT; index += 1) {
+      const button = createButton('', `recent-color-${index}`);
+      button.dataset.fabricPilotRecentColor = '';
+      setStyles(button, { display: 'none', minWidth: '20px', minHeight: '20px', padding: '0' });
+      addDomListener(button, 'click', () => {
+        const color = button.dataset.fabricPilotRecentColor;
+        if (color) setBrushColor(color);
+      });
+      row.appendChild(button);
+      buttons.push(button);
+    }
+    return { row, buttons };
+  }
+
+  function syncRecentColorControls() {
+    if (!recentColorControls) return;
+    recentColorControls.buttons.forEach((button, index) => {
+      const color = recentColors[index];
+      button.dataset.fabricPilotRecentColor = color || '';
+      setStyles(button, {
+        display: color ? 'inline-block' : 'none',
+        background: color || 'transparent'
+      });
+      button.setAttribute?.('aria-label', color ? `최근 색 ${color}` : '');
+      button.setAttribute?.('title', color ? `최근 색 ${color}` : '');
+    });
+  }
+
+  function noteRecentColor(color) {
+    if (typeof color !== 'string' || color.length === 0) return;
+    const index = recentColors.indexOf(color);
+    if (index >= 0) recentColors.splice(index, 1);
+    recentColors.unshift(color);
+    while (recentColors.length > RECENT_COLOR_LIMIT) recentColors.pop();
+    syncRecentColorControls();
+  }
+
+  function createShapeMenuControls() {
+    const button = labelToolbarButton(createButton('', 'shape-menu'), '도형 도구');
+    button.dataset.active = 'false';
+    button.setAttribute?.('aria-haspopup', 'true');
+    button.setAttribute?.('aria-expanded', 'false');
+    setStyles(button, { position: 'relative' });
+    const icon = documentRef.createElement('span');
+    icon.dataset.fabricPilotOutput = 'shape-menu-icon';
+    const caret = documentRef.createElement('span');
+    caret.dataset.fabricPilotOutput = 'shape-menu-caret';
+    caret.innerHTML = SHAPE_MENU_CARET_SVG;
+    setStyles(caret, {
+      position: 'absolute',
+      right: '2px',
+      bottom: '2px',
+      lineHeight: '0',
+      pointerEvents: 'none'
+    });
+    button.appendChild(icon);
+    button.appendChild(caret);
+
+    const flyout = documentRef.createElement('div');
+    flyout.className = 'mpv-fabric-pilot-shape-menu';
+    flyout.dataset.fabricPilotPanel = 'shape-menu';
+    flyout.setAttribute?.('role', 'group');
+    flyout.setAttribute?.('aria-label', '도형 도구');
+    setStyles(flyout, {
+      display: 'none',
+      gridTemplateColumns: 'repeat(4, minmax(0, 1fr))',
+      gap: '3px',
+      width: '100%'
+    });
+    const shapeButtons = new Map();
+    for (const tool of FABRIC_SHAPE_TOOLS) {
+      const shapeButton = iconToolbarButton(
+        createButton('', tool),
+        `${SHAPE_TOOL_LABELS[tool] || tool} 도구`,
+        TOOL_ICON_SVG[tool]
+      );
+      setStyles(shapeButton, { minWidth: '0', padding: '0' });
+      flyout.appendChild(shapeButton);
+      shapeButtons.set(tool, shapeButton);
+    }
+    return { button, icon, flyout, shapeButtons };
+  }
+
+  function setShapeMenuOpen(open) {
+    if (!shapeMenuControls) return false;
+    shapeMenuOpen = open === true;
+    return applyShapeMenuVisibility();
+  }
+
+  function applyShapeMenuVisibility() {
+    if (!shapeMenuControls) return false;
+    const collapsed = paletteShell?.isSectionCollapsed?.('tools') === true;
+    const visible = shapeMenuOpen && !collapsed;
+    setStyles(shapeMenuControls.flyout, { display: visible ? 'grid' : 'none' });
+    shapeMenuControls.button.setAttribute?.('aria-expanded', String(shapeMenuOpen));
+    return visible;
+  }
+
+  function syncShapeMenuControls(tool = currentSession?.tool) {
+    if (!shapeMenuControls) return;
+    const isShapeTool = FABRIC_SHAPE_TOOLS.includes(tool);
+    if (isShapeTool) lastShapeTool = tool;
+    // 버튼에는 마지막에 쓴 도형이 남아, 다시 누르면 그 도형으로 바로 돌아간다.
+    shapeMenuControls.icon.innerHTML = TOOL_ICON_SVG[lastShapeTool] || '';
+    const label = `도형 도구 (${SHAPE_TOOL_LABELS[lastShapeTool] || lastShapeTool})`;
+    shapeMenuControls.button.setAttribute?.('aria-label', label);
+    shapeMenuControls.button.setAttribute?.('title', label);
+    shapeMenuControls.button.dataset.active = String(isShapeTool);
+    shapeMenuControls.button.setAttribute?.('aria-pressed', String(isShapeTool));
+    if (!isShapeTool) setShapeMenuOpen(false);
+    else applyShapeMenuVisibility();
+  }
+
+  function createEraserModeControls() {
+    const group = documentRef.createElement('div');
+    group.className = 'mpv-fabric-pilot-eraser-mode';
+    group.setAttribute?.('role', 'group');
+    group.setAttribute?.('aria-label', '지우개 방식');
+    const pixelButton = labelToolbarButton(
+      createButton('픽셀', 'eraser-mode-pixel'),
+      '지우개 방식: 지나간 부분만 지움'
+    );
+    const strokeButton = labelToolbarButton(
+      createButton('획', 'eraser-mode-stroke'),
+      '지우개 방식: 지나간 획 전체를 지움'
+    );
+    group.appendChild(pixelButton);
+    group.appendChild(strokeButton);
+    return { group, pixelButton, strokeButton };
+  }
+
+  function setEraserMode(mode) {
+    eraserMode = mode === 'pixel' ? 'pixel' : 'stroke';
+    syncEraserModeControls();
+    return eraserMode;
+  }
+
+  function syncEraserModeControls(tool = currentSession?.tool) {
+    if (!eraserModeControls) return;
+    setStyles(eraserModeControls.group, {
+      display: tool === 'eraser' ? 'flex' : 'none'
+    });
+    for (const [modeName, button] of [
+      ['pixel', eraserModeControls.pixelButton],
+      ['stroke', eraserModeControls.strokeButton]
+    ]) {
+      const active = eraserMode === modeName;
+      button.dataset.active = String(active);
+      button.setAttribute?.('aria-pressed', String(active));
+    }
+  }
+
+  // 도구별로 의미 있는 섹션만 남긴다. 섹션이 늘어나면 세로 팔레트가 화면을 덮으므로,
+  // 지금 쓰는 것만 보이게 하는 편이 훨씬 편하다.
+  // selection 섹션은 syncSelectionControls 가 자체 관리하므로 여기서 건드리지 않는다
+  // (라벨이 없어 셸의 sectionElements 에도 등록되지 않는다).
+  function syncToolSectionVisibility(tool) {
+    if (!paletteShell?.setSectionVisible) return;
+    // 브러시·펜·도형은 크기·불투명도·색상이 필요하다. 지우개는 지우개 방식만.
+    // 선택 도구는 둘 다 필요 없다.
+    paletteShell.setSectionVisible('brush', tool !== 'eraser' && tool !== 'select');
+    paletteShell.setSectionVisible('eraser', tool === 'eraser');
   }
 
   function usesNativeRectangleSelection(tool = currentSession?.tool) {
@@ -2941,6 +3326,8 @@ function createFabricOverlayRuntime(options = {}) {
     if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
     brushStyle = { ...brushStyle, color };
     syncBrushControls();
+    // 팔레트 클릭과 원격 변경을 모두 여기서 거치므로 최근 색 기록도 여기 둔다.
+    noteRecentColor(brushStyle.color);
     return brushStyle.color;
   }
 
@@ -2967,10 +3354,16 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function syncBrushControls() {
+    // 상시 요약 줄은 설정 패널과 별개 요소다. brushControls 가 아직 없어도 갱신한다.
+    syncBrushStatusRow();
     if (!brushControls) return;
     const opacityPercent = Math.round(brushStyle.opacity * 100);
     brushControls.settingsButton.setAttribute?.('aria-expanded', String(brushPanelOpen));
-    brushControls.panel.style.display = brushPanelOpen ? 'flex' : 'none';
+    // 섹션이 접혀 있으면 패널도 접힌 상태다. 이 판정을 빼면 [ / ] 로 크기를
+    // 바꿀 때마다 syncBrushControls 가 패널을 도로 열어, 라벨과 버튼 줄은
+    // 접힌 채 설정 패널만 떠 있는 상태가 된다.
+    const sectionCollapsed = paletteShell?.isSectionCollapsed?.('brush') === true;
+    brushControls.panel.style.display = brushPanelOpen && !sectionCollapsed ? 'flex' : 'none';
     brushControls.sizeInput.value = String(brushStyle.size);
     brushControls.opacityInput.value = String(opacityPercent);
     brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
@@ -3158,8 +3551,10 @@ function createFabricOverlayRuntime(options = {}) {
       output: 'opacity'
     });
 
+    const recentColors = createRecentColorControls();
     panel.appendChild(previewRow);
     panel.appendChild(palette);
+    panel.appendChild(recentColors.row);
     panel.appendChild(sizeRow.row);
     panel.appendChild(opacityRow.row);
 
@@ -3191,7 +3586,8 @@ function createFabricOverlayRuntime(options = {}) {
       opacityOutput: opacityRow.output,
       summary,
       colorPreview,
-      sizePreview
+      sizePreview,
+      recentColors
     };
   }
 
@@ -3378,7 +3774,7 @@ function createFabricOverlayRuntime(options = {}) {
   function activeFrameInteractionInProgress() {
     // 제스처 중 renderArmedFramePreview()가 캔버스를 재구성하면 Ctrl 지우개의 은닉 표시가 사라진다.
     return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture ||
-      transformStart || sizeAdjustGesture || strokeEraseGesture);
+      transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
   }
 
   function renderedCandidateMatches(candidate) {
@@ -3683,6 +4079,11 @@ function createFabricOverlayRuntime(options = {}) {
       sceneStore.selectObjects([]);
     }
     syncSelectionControls(tool);
+    syncEraserModeControls(tool);
+    syncShapeMenuControls(tool);
+    // 상시 요약 줄이 현재 도구 이름을 함께 띄우므로 도구가 바뀔 때도 갱신한다.
+    syncBrushStatusRow(tool);
+    syncToolSectionVisibility(tool);
     refreshSelectionInteractionPolicy();
     fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
     fabricCanvas.requestRenderAll();
@@ -3740,7 +4141,10 @@ function createFabricOverlayRuntime(options = {}) {
     const startedAt = now();
     removeTransientPreview();
     try {
-      const strokeData = strokePathFactory(activeStroke.samples, { size: activeStroke.style.size });
+      const strokeData = strokePathFactory(activeStroke.samples, {
+        size: activeStroke.style.size,
+        ...(activeStroke.tool === 'pen' ? PEN_STROKE_GEOMETRY : null)
+      });
       if (!strokeData.pathData) return;
       activeStroke.preview = makeFabricPath({
         id: null,
@@ -4035,24 +4439,30 @@ function createFabricOverlayRuntime(options = {}) {
     };
   }
 
-  function canonicalStrokePathMatches(record, budget) {
-    if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return false;
+  // 일치하는 생성 규약을 돌려준다. 못 찾으면 null.
+  // 조각을 다시 만들 때도 같은 규약을 써야 도형·펜의 생김새가 바뀌지 않는다.
+  function resolveStrokeGeometryOptions(record, budget) {
+    if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return null;
     const logicalCost = record.sourcePoints.length * 2 +
       Math.ceil(record.pathData.length / 8);
-    if (!budget?.consume(logicalCost)) return false;
-    let canonical;
-    try {
-      canonical = strokePathFactory(record.sourcePoints, {
-        size: record.style?.size,
-        last: true,
-        alreadyNormalizedPressure: true,
-        start: { cap: record.strokeCaps?.start !== false },
-        end: { cap: record.strokeCaps?.end !== false }
-      });
-    } catch (_error) {
-      return false;
+    for (const candidate of STROKE_GEOMETRY_CANDIDATES) {
+      if (!budget?.consume(logicalCost)) return null;
+      let canonical;
+      try {
+        canonical = strokePathFactory(record.sourcePoints, {
+          size: record.style?.size,
+          last: true,
+          alreadyNormalizedPressure: true,
+          start: { cap: record.strokeCaps?.start !== false },
+          end: { cap: record.strokeCaps?.end !== false },
+          ...(candidate || null)
+        });
+      } catch (_error) {
+        return null;
+      }
+      if (canonical?.pathData === record.pathData) return candidate || {};
     }
-    return canonical?.pathData === record.pathData;
+    return null;
   }
 
   function sourceGeometryMatches(signature, sourcePoints) {
@@ -4545,7 +4955,8 @@ function createFabricOverlayRuntime(options = {}) {
     selected,
     caps = {},
     sourceObject = null,
-    renderGeometry = null
+    renderGeometry = null,
+    geometryOptions = null
   ) {
     if (!Array.isArray(points) || points.length < 2) return null;
     let strokeData;
@@ -4555,7 +4966,9 @@ function createFabricOverlayRuntime(options = {}) {
         last: true,
         alreadyNormalizedPressure: true,
         start: { cap: caps.start !== false },
-        end: { cap: caps.end !== false }
+        end: { cap: caps.end !== false },
+        // 원본이 도형·펜이면 브러시 기본값으로 다시 만들면 안 된다.
+        ...(geometryOptions || null)
       });
     } catch (error) {
       lastError = error.message;
@@ -5071,7 +5484,7 @@ function createFabricOverlayRuntime(options = {}) {
         selectedObjectIds: restoredSelectionIds
       };
     };
-    const queueReplacementPlan = (record, object, componentPlans) => {
+    const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
       accumulatedFragments += componentPlans.length;
       const projectedObjectCount = snapshot.objects.length -
         (replacementPlans.length + 1) +
@@ -5080,7 +5493,7 @@ function createFabricOverlayRuntime(options = {}) {
           projectedObjectCount > sceneLimits.maxObjects) {
         return false;
       }
-      replacementPlans.push({ record, object, componentPlans });
+      replacementPlans.push({ record, object, componentPlans, geometryOptions });
       return true;
     };
     if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -5116,7 +5529,8 @@ function createFabricOverlayRuntime(options = {}) {
       );
       if (touch.limitExceeded) return fail('selection-complexity-limit-exceeded');
       if (!touch.hit) continue;
-      if (!canonicalStrokePathMatches(record, geometryBudget)) {
+      const geometryOptions = resolveStrokeGeometryOptions(record, geometryBudget);
+      if (!geometryOptions) {
         return fail(geometryBudget.limitExceeded
           ? 'selection-complexity-limit-exceeded'
           : 'selection-geometry-unavailable');
@@ -5152,7 +5566,7 @@ function createFabricOverlayRuntime(options = {}) {
         if (!compact.plans || compact.reason) {
           return fail(compact.reason || 'selection-geometry-unavailable');
         }
-        if (!queueReplacementPlan(record, object, compact.plans)) {
+        if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
           return fail('lasso-fragment-limit-exceeded');
         }
         continue;
@@ -5199,7 +5613,7 @@ function createFabricOverlayRuntime(options = {}) {
           if (!compact.plans || compact.reason) {
             return fail(compact.reason || 'selection-geometry-unavailable');
           }
-          if (!queueReplacementPlan(record, object, compact.plans)) {
+          if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
             return fail('lasso-fragment-limit-exceeded');
           }
           continue;
@@ -5287,7 +5701,7 @@ function createFabricOverlayRuntime(options = {}) {
         Number(left.selected) - Number(right.selected) ||
         left.interval[1] - right.interval[1]
       ));
-      if (!queueReplacementPlan(record, object, componentPlans)) {
+      if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
         return fail('lasso-fragment-limit-exceeded');
       }
     }
@@ -5304,7 +5718,8 @@ function createFabricOverlayRuntime(options = {}) {
           plan.selected,
           plan.caps,
           replacementPlan.object,
-          plan.renderGeometry
+          plan.renderGeometry,
+          replacementPlan.geometryOptions
         );
         if (!fragment) {
           fragmentBuildFailed = true;
@@ -5419,10 +5834,17 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const samples = activeStroke.samples;
     const style = { ...activeStroke.style };
+    // activeStroke 는 커밋 도중 null 이 되므로 도구를 먼저 지역 변수로 뽑는다.
+    const activeStrokeTool = activeStroke.tool;
     removeTransientPreview();
     let strokeData;
     try {
-      strokeData = strokePathFactory(samples, { size: style.size, last: true });
+      strokeData = strokePathFactory(samples, {
+        size: style.size,
+        last: true,
+        // 펜은 압력에 따라 굵기가 변하지 않는다(레거시 pen 동치).
+        ...(activeStrokeTool === 'pen' ? PEN_STROKE_GEOMETRY : null)
+      });
     } catch (error) {
       lastError = error.message;
       metrics.recordSurfaceError();
@@ -5525,6 +5947,7 @@ function createFabricOverlayRuntime(options = {}) {
     resetOverlayModifierState();
     endSizeAdjustGesture(event);
     cancelStrokeEraseGesture(event);
+    cancelShapeGesture();
     onPointerCancel(event);
   }
 
@@ -5612,7 +6035,135 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(sizeAdjustHud, { display: 'none' });
   }
 
+  function cancelSizeAdjustHudTimer() {
+    if (sizeAdjustHudTimer === null) return;
+    clearTimeoutRef?.(sizeAdjustHudTimer);
+    sizeAdjustHudTimer = null;
+  }
+
+  // 좌표 없이 크기가 바뀌는 경로([ / ] 단축키)는 레거시와 같이 HUD 를 화면
+  // 중앙에 띄운다. 그러지 않으면 팔레트 숫자만 바뀌어 굵기 변화가 안 보인다.
+  function flashSizeAdjustHudAtViewportCenter(size) {
+    if (!sizeAdjustHud) return false;
+    cancelSizeAdjustHudTimer();
+    showSizeAdjustHud(
+      finiteNumber(windowRef?.innerWidth, 0) / 2,
+      finiteNumber(windowRef?.innerHeight, 0) / 2,
+      size
+    );
+    if (typeof setTimeoutRef !== 'function') return true;
+    sizeAdjustHudTimer = setTimeoutRef(() => {
+      sizeAdjustHudTimer = null;
+      // Alt 제스처가 그 사이에 시작됐다면 그쪽 HUD 를 지우면 안 된다.
+      if (sizeAdjustGesture) return;
+      hideSizeAdjustHud();
+    }, SIZE_ADJUST_HUD_FLASH_MS);
+    return true;
+  }
+
+  function shapeGestureRecord(gesture, transient) {
+    const samples = shapeCenterlineSamples(
+      gesture.tool,
+      gesture.origin,
+      gesture.current,
+      gesture.style.size
+    );
+    if (samples.length < 2) return null;
+    let strokeData;
+    try {
+      strokeData = strokePathFactory(samples, {
+        ...SHAPE_STROKE_OPTIONS,
+        size: gesture.style.size
+      });
+    } catch (_error) {
+      return null;
+    }
+    if (!strokeData?.pathData) return null;
+    return {
+      // 미리보기는 오브젝트 id 를 갖지 않는다. 기존 미리보기 경로
+      // (updateTransientPreview / updateLassoPreview)와 같은 관례다 —
+      // makeFabricPath 가 path.__baeframeObjectId = record.id || null 로 넘긴다.
+      id: transient ? null : createId('shape'),
+      type: 'stroke',
+      pathData: strokeData.pathData,
+      sourcePoints: strokeData.sourcePoints,
+      style: { ...gesture.style }
+    };
+  }
+
+  function clearShapePreviewFor(gesture) {
+    if (!gesture?.preview || !fabricCanvas) return;
+    fabricCanvas.remove(gesture.preview);
+    gesture.preview = null;
+    fabricCanvas.requestRenderAll();
+  }
+
+  function updateShapePreview() {
+    if (!shapeGesture || !fabricCanvas) return;
+    const record = shapeGestureRecord(shapeGesture, true);
+    clearShapePreviewFor(shapeGesture);
+    if (!record) {
+      fabricCanvas.requestRenderAll();
+      return;
+    }
+    const preview = makeFabricPath(record, true);
+    preview.__baeframeTransient = true;
+    shapeGesture.preview = preview;
+    fabricCanvas.add(preview);
+    fabricCanvas.requestRenderAll();
+  }
+
+  function shapeGestureDragDistance(gesture) {
+    return Math.hypot(
+      finiteNumber(gesture.current?.x) - finiteNumber(gesture.origin?.x),
+      finiteNumber(gesture.current?.y) - finiteNumber(gesture.origin?.y)
+    );
+  }
+
+  function commitShapeGesture() {
+    // 제스처를 먼저 비운 뒤 정리·커밋한다. 이렇게 해야 동기 lostpointercapture 가
+    // 취소로 해석되지 않는다(기존 finalizeStrokeEraseGesture 와 같은 이유).
+    const gesture = shapeGesture;
+    shapeGesture = null;
+    if (!gesture) return { applied: false, reason: 'no-shape-gesture' };
+    clearShapePreviewFor(gesture);
+    // 클릭만 하고 드래그하지 않은 경우 아무것도 만들지 않는다.
+    if (shapeGestureDragDistance(gesture) < SHAPE_MIN_DRAG_DISTANCE) {
+      settleArmedFramePreview();
+      return { applied: false, reason: 'shape-too-small' };
+    }
+    const record = shapeGestureRecord(gesture, false);
+    if (!record) {
+      settleArmedFramePreview();
+      return { applied: false, reason: 'shape-path-error' };
+    }
+    const path = makeFabricPath(record);
+    record.transform = captureTransform(path);
+    const result = sceneStore.addStroke(record);
+    if (!result.applied) {
+      settleArmedFramePreview();
+      return result;
+    }
+    fabricCanvas.add(path);
+    fabricCanvas.requestRenderAll();
+    updateObjectMetric();
+    settleArmedFramePreview();
+    return result;
+  }
+
+  function cancelShapeGesture() {
+    const gesture = shapeGesture;
+    shapeGesture = null;
+    if (!gesture) return false;
+    clearShapePreviewFor(gesture);
+    settleArmedFramePreview();
+    return true;
+  }
+
   function beginSizeAdjustGesture(event) {
+    // 키보드 HUD 와 제스처 HUD 가 같은 요소를 공유한다. 남은 타이머가
+    // 제스처 도중 HUD 를 지우지 않게 먼저 회수한다.
+    cancelSizeAdjustHudTimer();
     sizeAdjustGesture = {
       pointerId: event.pointerId,
       startClientX: finiteNumber(event.clientX),
@@ -5724,6 +6275,9 @@ function createFabricOverlayRuntime(options = {}) {
     if (!point) return 0;
     const polygon = strokeEraseSweepPolygon(gesture.lastPoint, point, context.radius);
     gesture.lastPoint = point;
+    // 픽셀 모드 커밋에서 리본 폴리곤을 만들 원본 경로. 히트 여부와 무관하게 누적해야
+    // 획 사이 빈 구간을 지나간 뒤 다시 획을 만나도 리본이 끊기지 않는다.
+    gesture.pathPoints?.push(point);
     if (!polygonHasArea(polygon, 1)) return 0;
 
     const polygonBounds = boundsForPoints(polygon);
@@ -5744,7 +6298,16 @@ function createFabricOverlayRuntime(options = {}) {
       // 기하 예산을 초과한 획은 삭제 후보에서 제외한다 (오삭제보다 미삭제가 안전하다).
       if (touch.limitExceeded || !touch.hit) continue;
       gesture.erasedIds.add(record.id);
-      if (object) {
+      // 획 단위 모드는 닿은 획을 통째로 지우므로, 드래그 중 숨기는 미리보기가
+      // 커밋 결과와 정확히 일치한다.
+      //
+      // 픽셀 모드는 다르다. 히트 판정은 스윕 사각형들의 합집합으로 하는데 커밋은
+      // 그것을 근사한 단순 폴리곤 하나로 하고, 이 저장소에는 폴리곤 불리언
+      // 유니온이 없다(부록 C 참조). 그래서 안쪽 모서리처럼 근사가 미치지 못하는
+      // 자리에서만 닿은 획은 숨었다가 되살아나 사용자를 혼란스럽게 한다.
+      // 어차피 일치시킬 수 없다면 **숨기지 않는 편이 정직하다** — 픽셀 모드는
+      // 손을 뗄 때 잘린 결과만 보여 준다.
+      if (object && gesture.mode !== 'pixel') {
         gesture.hiddenObjects.push(object);
         object.set?.({ visible: false });
         hidden += 1;
@@ -5774,6 +6337,174 @@ function createFabricOverlayRuntime(options = {}) {
     return true;
   }
 
+  // 지우개가 지나간 경로를 반경만큼 좌/우로 부풀린 닫힌 폴리곤.
+  // 폴리곤 불리언 유니온이 저장소에 없으므로, 스윕 quad 들을 합치는 대신
+  // 경로 자체를 리본으로 만들어 부분 선택 경로에 한 번에 넘긴다.
+  // 스윕 사각형은 각 변을 반경만큼 부풀린 직사각형이고, 꺾임에서 두 사각형의
+  // 합집합은 **바깥** 모서리를 마이터 지점까지 채운다(90도면 V 에서 1.414r).
+  // 꼭짓점을 평균 법선 하나로만 밀면 그 삼각형이 커밋 폴리곤에서 빠져, 그 안에서만
+  // 닿은 획이 드래그 중 숨었다가 되살아난다.
+  //
+  // 마이터는 **바깥쪽에만** 넣는다. 양쪽에 넣으면 안쪽 오프셋이 서로를 가로질러
+  // 단순 폴리곤이 못 되고, 그러면 커밋 자체가 무산된다(실측 확인).
+  function offsetRibbonFromSpine(spine, radius) {
+    const left = [];
+    const right = [];
+    const unitNormal = (dx, dy) => {
+      const length = Math.hypot(dx, dy) || 1;
+      return { x: -dy / length, y: dx / length };
+    };
+    const at = (point, normal, sign) => ({
+      x: point.x + normal.x * radius * sign,
+      y: point.y + normal.y * radius * sign
+    });
+    for (let index = 0; index < spine.length; index += 1) {
+      const current = spine[index];
+      const previous = spine[index - 1];
+      const next = spine[index + 1];
+      if (!previous || !next) {
+        const from = previous || current;
+        const to = next || current;
+        const normal = unitNormal(to.x - from.x, to.y - from.y);
+        left.push(at(current, normal, 1));
+        right.push(at(current, normal, -1));
+        continue;
+      }
+      const inNormal = unitNormal(current.x - previous.x, current.y - previous.y);
+      const outNormal = unitNormal(next.x - current.x, next.y - current.y);
+      const averageNormal = unitNormal(next.x - previous.x, next.y - previous.y);
+      const miterX = inNormal.x + outNormal.x;
+      const miterY = inNormal.y + outNormal.y;
+      const miterLength = Math.hypot(miterX, miterY);
+      let miterNormal = null;
+      if (miterLength > 1e-6) {
+        const mx = miterX / miterLength;
+        const my = miterY / miterLength;
+        const projection = mx * inNormal.x + my * inNormal.y;
+        // 아주 급한 꺾임에서는 마이터가 무한히 뻗는다. 스윕이 실제로 덮는 범위를
+        // 넘지 않도록 2r 에서 자르고, 넘으면 마이터 없이 두 법선만 남긴다.
+        if (projection > 0.5) miterNormal = { x: mx / projection, y: my / projection };
+      }
+      // 진행 방향의 외적 부호가 어느 쪽이 바깥인지를 알려 준다.
+      const turn = (current.x - previous.x) * (next.y - current.y) -
+        (current.y - previous.y) * (next.x - current.x);
+      const outer = turn < 0 ? left : right;
+      const inner = turn < 0 ? right : left;
+      const outerSign = turn < 0 ? 1 : -1;
+      outer.push(at(current, inNormal, outerSign));
+      if (miterNormal) outer.push(at(current, miterNormal, outerSign));
+      outer.push(at(current, outNormal, outerSign));
+      inner.push(at(current, averageNormal, -outerSign));
+    }
+    return [...left, ...right.reverse()];
+  }
+
+  // 스윕 사각형(strokeEraseSweepPolygon)은 시작·끝에서 진행 방향으로도 반경만큼
+  // 더 뻗는다. 리본이 척추 끝점에서 딱 끊기면 "지워진 것으로 표시됐는데 커밋
+  // 폴리곤에는 안 들어간" 획이 생겨 그 획만 되살아난다. 끝을 같은 만큼 연장한다.
+  function extendSpineEndpoints(spine, radius) {
+    const extend = (from, to) => {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1e-6) return { x: to.x, y: to.y };
+      return { x: to.x + (dx / length) * radius, y: to.y + (dy / length) * radius };
+    };
+    const extended = spine.map(point => ({ x: point.x, y: point.y }));
+    extended[0] = extend(spine[1], spine[0]);
+    extended[extended.length - 1] = extend(spine[spine.length - 2], spine[spine.length - 1]);
+    return extended;
+  }
+
+  function strokeEraseCorridorPolygon(spine, radius) {
+    const first = spine[0];
+    let far = spine[0];
+    let farDistance = 0;
+    for (const point of spine) {
+      const distance = Math.hypot(point.x - first.x, point.y - first.y);
+      if (distance > farDistance) {
+        farDistance = distance;
+        far = point;
+      }
+    }
+    if (farDistance < 1e-6) return [];
+    const ux = (far.x - first.x) / farDistance;
+    const uy = (far.y - first.y) / farDistance;
+    let minAlong = 0;
+    let maxAlong = 0;
+    let maxPerpendicular = 0;
+    for (const point of spine) {
+      const dx = point.x - first.x;
+      const dy = point.y - first.y;
+      const along = dx * ux + dy * uy;
+      const perpendicular = Math.abs(dx * -uy + dy * ux);
+      if (along < minAlong) minAlong = along;
+      if (along > maxAlong) maxAlong = along;
+      if (perpendicular > maxPerpendicular) maxPerpendicular = perpendicular;
+    }
+    // 주축에서 반경 이상 벗어났다면 복도가 아니다(원·지그재그·고리 모양).
+    // 그런 제스처는 어떤 단일 폴리곤으로도 안전하게 근사할 수 없다.
+    if (maxPerpendicular > radius) return [];
+    const startAlong = minAlong - radius;
+    const endAlong = maxAlong + radius;
+    const corner = (along, side) => ({
+      x: first.x + ux * along + -uy * radius * side,
+      y: first.y + uy * along + ux * radius * side
+    });
+    return [
+      corner(startAlong, 1),
+      corner(endAlong, 1),
+      corner(endAlong, -1),
+      corner(startAlong, -1)
+    ];
+  }
+
+  function strokeEraseRibbonPolygon(pathPoints, radius, budget) {
+    if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
+    // 지우개 경로는 닫힌 폴리곤이 아니라 열린 폴리라인이다.
+    // simplifyClosedPolygon 을 쓰면 첫 점과 끝 점을 잇는 변까지 기준으로 삼아
+    // 왕복 구간이 잘못 남는다.
+    const simplified = simplifyOpenPolyline(pathPoints, Math.max(0.25, radius / 4));
+    const spine = simplified.length >= 2 ? simplified : pathPoints;
+    if (spine.length === 1) {
+      const point = spine[0];
+      return rectanglePolygon(
+        { x: point.x - radius, y: point.y - radius },
+        { x: point.x + radius, y: point.y + radius }
+      );
+    }
+    const extended = extendSpineEndpoints(spine, radius);
+    const ribbon = offsetRibbonFromSpine(extended, radius);
+    if (validateSimpleContour(ribbon, budget)) return ribbon;
+    // 앞뒤로 문지르는(A→B→A) 동작은 좌/우 오프셋이 서로를 가로질러 단순 폴리곤이
+    // 되지 않는다. 한 축을 따르는 스크럽이면 복도로 되살리고, 그 밖의 모양이면
+    // 빈 폴리곤을 돌려 **아무것도 지우지 않는다.**
+    //
+    // 복도는 **연장하지 않은** 척추에서 만든다. strokeEraseCorridorPolygon 이
+    // 자체적으로 양 끝에 반경을 더하므로, 이미 연장된 척추를 넘기면 실제 스윕보다
+    // 반경만큼 더 뻗어 지나가지도 않은 획을 삼킨다.
+    return strokeEraseCorridorPolygon(spine, radius);
+  }
+
+  function commitStrokeEraseAsWholeStrokes(gesture) {
+    const selection = sceneStore.selectObjects([...gesture.erasedIds]);
+    if (selection.selection.length === 0) {
+      restoreErasedStrokeVisibility(gesture);
+      return { applied: false, reason: 'stroke-erase-target-missing' };
+    }
+    // 기존 삭제 액션 경로를 그대로 쓴다 — dedupe·프레임 재조준·undo 1건·영속화 관찰자까지 동일.
+    const result = applyDrawingAction({
+      sessionId: currentSession.sessionId,
+      actionId: createId('stroke-erase'),
+      action: 'delete-selection'
+    });
+    if (!result.applied) {
+      sceneStore.selectObjects([]);
+      restoreErasedStrokeVisibility(gesture);
+    }
+    return result;
+  }
+
   function finalizeStrokeEraseGesture() {
     const gesture = strokeEraseGesture;
     strokeEraseGesture = null;
@@ -5793,22 +6524,38 @@ function createFabricOverlayRuntime(options = {}) {
       restoreErasedStrokeVisibility(gesture);
       return { applied: false, reason: retargeted?.reason || 'retarget-failed' };
     }
-    const selection = sceneStore.selectObjects([...gesture.erasedIds]);
-    if (selection.selection.length === 0) {
-      restoreErasedStrokeVisibility(gesture);
-      return { applied: false, reason: 'stroke-erase-target-missing' };
+    // stroke 모드: 지나간 획 전체를 지운다(기존 경로 그대로).
+    if (gesture.mode !== 'pixel') return commitStrokeEraseAsWholeStrokes(gesture);
+
+    // pixel 모드: 리본 폴리곤으로 부분 선택을 만든 뒤 1회 커밋으로 잘라낸다.
+    // 부분 분할은 캔버스 오브젝트를 실제로 읽으므로, 드래그 중 숨겨 둔 획을 먼저 되살린다.
+    restoreErasedStrokeVisibility(gesture);
+    const ribbon = strokeEraseRibbonPolygon(
+      gesture.pathPoints,
+      strokeEraseRadius(),
+      createGeometryBudget(maxSelectionGeometryOperations)
+    );
+    const staged = finalizePartialSelectionPolygon(ribbon, null);
+    if (staged?.pending === true) return commitPendingLassoDelete();
+    // 조각이 하나도 안 생겼지만 리본이 획을 통째로 덮은 경우가 있다(점·짧은 획).
+    // 그때 finalizePartialSelectionPolygon 은 pending 없이 선택만 세워 돌려주므로,
+    // 여기서 삭제 경로로 넘겨야 한다. reason 이 있으면 기하 실패이지 덮음이 아니다.
+    if (!staged?.reason && staged?.selectedObjectIds?.length > 0) {
+      return applyDrawingAction({
+        sessionId: currentSession.sessionId,
+        actionId: createId('pixel-erase'),
+        action: 'delete-selection'
+      });
     }
-    // 기존 삭제 액션 경로를 그대로 쓴다 — dedupe·프레임 재조준·undo 1건·영속화 관찰자까지 동일.
-    const result = applyDrawingAction({
-      sessionId: currentSession.sessionId,
-      actionId: createId('stroke-erase'),
-      action: 'delete-selection'
-    });
-    if (!result.applied) {
-      sceneStore.selectObjects([]);
-      restoreErasedStrokeVisibility(gesture);
-    }
-    return result;
+    // 여기까지 왔다면 기하가 성립하지 않았다는 뜻이다. **아무것도 지우지 않는다** —
+    // 픽셀 지우개가 지나가지도 않은 부분까지 날리는 쪽이 훨씬 나쁜 실패다.
+    sceneStore.selectObjects([]);
+    return {
+      applied: false,
+      reason: staged?.reason || 'pixel-erase-unavailable',
+      deletedCount: 0,
+      deletedIds: []
+    };
   }
 
   function rollbackSelectTransform(event, shouldEndTransform) {
@@ -5931,15 +6678,24 @@ function createFabricOverlayRuntime(options = {}) {
     const tool = sceneStore.getDiagnostics().tool;
     // 레거시 _resolveEffectiveTool 계승: Ctrl은 pointerdown 시점에 래치되고 pointerup에서 풀린다.
     // fabric에서는 새 획을 만들지 않고 포인터가 지나가는 기존 스트로크를 지운다.
-    if (tool === 'brush' && isCtrlActive(event)) {
-      if (activeStroke || selectGesture || strokeEraseGesture) return;
+    // 지우개 도구는 modifier 없이 같은 제스처를 연다. Ctrl 임시 지우개는 브러시·펜에서
+    // 그대로 유지된다(레거시 _resolveEffectiveTool 계승).
+    if (tool === 'eraser' || ((tool === 'brush' || tool === 'pen') && isCtrlActive(event))) {
+      if (activeStroke || selectGesture || strokeEraseGesture || shapeGesture) return;
       strokeEraseGesture = {
         pointerId: event.pointerId,
         sessionId: currentSession?.sessionId,
         inputRevision: tokenState.inputRevision,
         lastPoint: null,
         erasedIds: new Set(),
-        hiddenObjects: []
+        hiddenObjects: [],
+        // 제스처 시작 시점의 모드를 고정한다. 드래그 도중 팔레트로 모드를 바꿔도
+        // 한 제스처 안에서 커밋 방식이 갈리지 않게 한다.
+        // Ctrl 임시 지우개는 항상 'stroke' 다 — 레거시 동작과 같고, modifier 제스처가
+        // 팔레트 상태에 따라 달라지면 사용자가 예측할 수 없다.
+        mode: tool === 'eraser' ? eraserMode : 'stroke',
+        // 픽셀 모드에서 리본 폴리곤을 만들기 위한 지나간 경로. stroke 모드에서는 쓰지 않는다.
+        pathPoints: []
       };
       try {
         event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -5950,17 +6706,36 @@ function createFabricOverlayRuntime(options = {}) {
       event.preventDefault?.();
       return;
     }
-    if (tool === 'brush') {
+    if (tool === 'brush' || tool === 'pen') {
       if (activeStroke || selectGesture) return;
       activeStroke = {
         pointerId: event.pointerId,
         samples: [],
         preview: null,
-        style: { ...brushStyle }
+        style: { ...brushStyle },
+        tool
       };
       event.currentTarget?.setPointerCapture?.(event.pointerId);
       appendPointerSample(event);
       updateTransientPreview();
+      event.preventDefault?.();
+      return;
+    }
+    if (FABRIC_SHAPE_TOOLS.includes(tool)) {
+      if (activeStroke || selectGesture || shapeGesture) return;
+      const origin = strokeErasePoint(event);
+      if (!origin) return;
+      shapeGesture = {
+        pointerId: event.pointerId,
+        tool,
+        origin,
+        current: origin,
+        preview: null,
+        style: { ...brushStyle }
+      };
+      try {
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+      } catch (_error) { /* pointer capture is best-effort */ }
       event.preventDefault?.();
       return;
     }
@@ -6137,13 +6912,13 @@ function createFabricOverlayRuntime(options = {}) {
     // 레거시와 같이 좌/우 버튼 모두 허용한다.
     if (inputEnabled && isAltActive(event) &&
         (event.button === 0 || event.button === 2) &&
-        !sizeAdjustGesture && !strokeEraseGesture && !pendingPointerdownFrame &&
+        !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture && !pendingPointerdownFrame &&
         !activeStroke && !activeLasso && !selectGesture) {
       beginSizeAdjustGesture(event);
       return;
     }
     if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame ||
-        activeStroke || activeLasso || selectGesture || strokeEraseGesture) {
+        activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
       return;
     }
     if (!requestPointerdownFrame) {
@@ -6276,6 +7051,16 @@ function createFabricOverlayRuntime(options = {}) {
       event.preventDefault?.();
       return;
     }
+    if (shapeGesture) {
+      if (event.pointerId !== shapeGesture.pointerId) return;
+      const point = strokeErasePoint(event);
+      if (point) {
+        shapeGesture.current = point;
+        updateShapePreview();
+      }
+      event.preventDefault?.();
+      return;
+    }
     if (activeLasso) {
       if (event.pointerId !== activeLasso.pointerId) return;
       appendLassoPoint(event);
@@ -6306,6 +7091,19 @@ function createFabricOverlayRuntime(options = {}) {
       if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
       // 제스처를 먼저 비운 뒤 캡처를 놓아, 동기 lostpointercapture가 취소로 해석되지 않게 한다.
       finalizeStrokeEraseGesture();
+      releasePointerCapture(event.currentTarget, event.pointerId);
+      event.preventDefault?.();
+      return;
+    }
+    if (shapeGesture) {
+      if (event.pointerId !== shapeGesture.pointerId) return;
+      // 빠른 드래그·이벤트 병합·문서 경로에서는 마지막 pointermove 보다 release
+      // 좌표가 더 뒤에 있다. 커밋 전에 끝점을 갱신하지 않으면 도형이 직전 move
+      // 위치에서 끝나고, move 가 하나도 없던 드래그는 클릭으로 오인돼 버려진다.
+      const releasePoint = strokeErasePoint(event);
+      if (releasePoint) shapeGesture.current = releasePoint;
+      // 커밋이 shapeGesture 를 먼저 비우므로, 그 뒤에 캡처를 놓는다.
+      commitShapeGesture();
       releasePointerCapture(event.currentTarget, event.pointerId);
       event.preventDefault?.();
       return;
@@ -6345,6 +7143,10 @@ function createFabricOverlayRuntime(options = {}) {
     if (strokeEraseGesture) {
       if (event.pointerId !== undefined && event.pointerId !== strokeEraseGesture.pointerId) return;
       cancelStrokeEraseGesture(event);
+      return;
+    }
+    if (shapeGesture && (event?.pointerId === undefined || event.pointerId === shapeGesture.pointerId)) {
+      cancelShapeGesture();
       return;
     }
     if (pendingPointerdownFrame) {
@@ -6394,6 +7196,10 @@ function createFabricOverlayRuntime(options = {}) {
       onPointerUp(event);
       return;
     }
+    if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
+      onPointerUp(event);
+      return;
+    }
     if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
       consumePendingPointerEvent(event);
       return;
@@ -6412,6 +7218,10 @@ function createFabricOverlayRuntime(options = {}) {
       return;
     }
     if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+      onPointerCancel(event);
+      return;
+    }
+    if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
       onPointerCancel(event);
       return;
     }
@@ -6775,6 +7585,7 @@ function createFabricOverlayRuntime(options = {}) {
   function releaseSurfaceResources() {
     endSizeAdjustGesture();
     cancelStrokeEraseGesture();
+    cancelShapeGesture();
     resetOverlayModifierState();
     cancelPendingPointerdownFrame();
     cancelSelectInteraction();
@@ -6816,9 +7627,14 @@ function createFabricOverlayRuntime(options = {}) {
     paletteShell = null;
     brushControls = null;
     selectionControls = null;
+    eraserModeControls = null;
+    shapeMenuControls = null;
+    brushStatusRow = null;
+    recentColorControls = null;
     badge = null;
     sizeAdjustHud = null;
     sizeAdjustHudLabel = null;
+    cancelSizeAdjustHudTimer();
     container = null;
     root = null;
     prepared = false;
@@ -6855,8 +7671,17 @@ function createFabricOverlayRuntime(options = {}) {
       canvasElement.className = 'mpv-fabric-delta-canvas';
       toolbar = documentRef.createElement('div');
       toolbar.className = 'mpv-fabric-pilot-toolbar';
-      const brushButton = labelToolbarButton(createButton('브러시', 'brush'), '브러시 도구 (B)');
-      const selectButton = labelToolbarButton(createButton('선택', 'select'), '선택 도구 (V)');
+      // 도구 줄은 아이콘 5개 한 줄이다 — 브러시·펜·지우개·도형▾·선택.
+      // 도형 4종은 드롭다운으로 접히므로 190px 팔레트에서도 라벨이 잘리지 않는다.
+      const brushButton = iconToolbarButton(
+        createButton('', 'brush'), '브러시 도구 (B)', TOOL_ICON_SVG.brush);
+      const penButton = iconToolbarButton(
+        createButton('', 'pen'), '펜 도구', TOOL_ICON_SVG.pen);
+      const eraserButton = iconToolbarButton(
+        createButton('', 'eraser'), '지우개 도구', TOOL_ICON_SVG.eraser);
+      const selectButton = iconToolbarButton(
+        createButton('', 'select'), '선택 도구 (V)', TOOL_ICON_SVG.select);
+      shapeMenuControls = createShapeMenuControls();
       const undoButton = labelToolbarButton(createButton('실행 취소', 'undo'), '실행 취소 (Ctrl+Z)');
       const redoButton = labelToolbarButton(createButton('다시 실행', 'redo'), '다시 실행 (Ctrl+Y)');
       const deleteButton = labelToolbarButton(
@@ -6868,7 +7693,10 @@ function createFabricOverlayRuntime(options = {}) {
         '현재 프레임 드로잉 전체 삭제'
       );
       brushControls = createBrushSettingsControls();
+      brushStatusRow = createBrushStatusRow();
+      recentColorControls = brushControls.recentColors;
       selectionControls = createSelectionControls();
+      eraserModeControls = createEraserModeControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
       badge.setAttribute?.('role', 'status');
@@ -6884,9 +7712,27 @@ function createFabricOverlayRuntime(options = {}) {
         element: toolbar,
         setStyles,
         addDomListener,
+        // 섹션을 펼치면 셸이 붙임 패널의 인라인 표시를 비운다. 그 직후 소유자가
+        // 자기 상태를 다시 써야 접혀 있는 동안 바뀐 값이 반영된다.
+        onSectionToggle: () => {
+          syncBrushControls();
+          applyShapeMenuVisibility();
+        },
         sections: [
-          { id: 'tools', label: '도구', items: [brushButton, selectButton] },
+          {
+            id: 'tools',
+            label: '도구',
+            layout: 'grid',
+            columns: 5,
+            gap: '3px',
+            items: [
+              brushButton, penButton, eraserButton, shapeMenuControls.button, selectButton
+            ],
+            appended: [shapeMenuControls.flyout]
+          },
+          { id: 'brush-status', items: [brushStatusRow.row] },
           { id: 'selection', items: [selectionControls.group] },
+          { id: 'eraser', label: '지우개 방식', items: [eraserModeControls.group] },
           {
             id: 'brush',
             label: '브러시 설정',
@@ -6920,8 +7766,33 @@ function createFabricOverlayRuntime(options = {}) {
         freeDrawingCursor: 'crosshair'
       });
       configureCanvasEvents();
-      addDomListener(brushButton, 'click', () => updateLocalDrawingTool('brush'));
-      addDomListener(selectButton, 'click', () => updateLocalDrawingTool('select'));
+      for (const [toolButton, toolName] of [
+        [brushButton, 'brush'],
+        [penButton, 'pen'],
+        [eraserButton, 'eraser'],
+        [selectButton, 'select']
+      ]) {
+        addDomListener(toolButton, 'click', () => updateLocalDrawingTool(toolName));
+      }
+      // 도형 버튼: 이미 도형 도구를 쓰고 있으면 메뉴만 여닫고, 아니면 마지막에 쓴
+      // 도형으로 바로 전환한다. 새 상태를 만들지 않고 기존 경로를 그대로 부른다.
+      addDomListener(shapeMenuControls.button, 'click', () => {
+        const active = FABRIC_SHAPE_TOOLS.includes(sceneStore.getDiagnostics().tool);
+        if (active) {
+          setShapeMenuOpen(!shapeMenuOpen);
+          return;
+        }
+        updateLocalDrawingTool(lastShapeTool);
+        setShapeMenuOpen(true);
+      });
+      for (const [shapeTool, shapeButton] of shapeMenuControls.shapeButtons) {
+        addDomListener(shapeButton, 'click', () => {
+          updateLocalDrawingTool(shapeTool);
+          setShapeMenuOpen(false);
+        });
+      }
+      addDomListener(eraserModeControls.pixelButton, 'click', () => setEraserMode('pixel'));
+      addDomListener(eraserModeControls.strokeButton, 'click', () => setEraserMode('stroke'));
       addDomListener(undoButton, 'click', () => applyDrawingAction({
         sessionId: currentSession?.sessionId,
         actionId: createId('undo'),
@@ -6969,6 +7840,7 @@ function createFabricOverlayRuntime(options = {}) {
 
     endSizeAdjustGesture();
     cancelStrokeEraseGesture();
+    cancelShapeGesture();
     resetOverlayModifierState();
     cancelPendingPointerdownFrame();
     abortPendingLassoSelection();
@@ -6982,7 +7854,7 @@ function createFabricOverlayRuntime(options = {}) {
       tokenState.hostGeneration = Number(request.hostGeneration);
       tokenState.videoGeneration = Number(request.videoGeneration);
       tokenState.inputRevision = Number(request.inputRevision);
-      const lastTool = currentSession?.tool === 'select' ? 'select' : 'brush';
+      const lastTool = normalizeFabricDrawingTool(currentSession?.tool);
       disableInput({ preservePassiveDisplay: !ownerChanged });
       if (ownerChanged) {
         resetPassivePresentationState();
@@ -7004,7 +7876,7 @@ function createFabricOverlayRuntime(options = {}) {
       videoGeneration: Number(request.videoGeneration),
       viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
       viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
-      tool: request.session.tool === 'select' ? 'select' : 'brush'
+      tool: normalizeFabricDrawingTool(request.session.tool)
     };
     const activation = typeof sceneStore.replaceActiveSession === 'function'
       ? sceneStore.replaceActiveSession(session)
@@ -7273,14 +8145,20 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: true, deferred: true, revision };
     }
 
+    // 진행 중인 제스처의 좌표는 전부 이전 뷰포트로 매핑돼 있다. 그대로 두면
+    // 다음 표본이 새 뷰포트로 매핑돼 두 좌표계 사이에 있지도 않은 획이 생긴다.
+    // 도형은 끝점만 어긋나 찌그러지고, 지우개는 그 가짜 스윕이 지나가지도 않은
+    // 획을 지운다. 자유 획과 같이 전부 취소한다.
     cancelActiveStroke();
+    cancelShapeGesture();
+    cancelStrokeEraseGesture();
     applyViewportCommand(normalizedCommand);
     return { accepted: true, revision };
   }
 
   function updateDrawingTool(command = {}) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
-    const normalized = { ...command, tool: command.tool === 'select' || command.tool === 'V' ? 'select' : command.tool };
+    const normalized = { ...command, tool: command.tool === 'V' ? 'select' : command.tool };
     const result = sceneStore.updateTool(normalized);
     if (!result.accepted) {
       metrics.recordStaleMessageDrop();
@@ -7289,6 +8167,21 @@ function createFabricOverlayRuntime(options = {}) {
     currentSession.tool = result.tool;
     setToolMode(result.tool);
     return result;
+  }
+
+  // 브러시 크기 원격 변경. 도구 변경과 같은 토큰 규약을 쓰되 revision 은 별도로 센다.
+  // 크기는 씬 스키마와 무관한 입력 계층 상태이므로 히스토리에 남기지 않는다.
+  // step 은 현재 굵기 기준 상대 증감이다. 팔레트 슬라이더와 Alt 드래그는 오버레이
+  // 안에서만 굵기를 바꾸므로 컨트롤러가 든 값은 언제든 낡을 수 있다. 절대값을 받으면
+  // 20px 로 바꾼 뒤 ] 를 눌렀을 때 21 이 아니라 4 가 되어 버린다.
+  function updateDrawingBrush(command = {}) {
+    if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
+    const step = Math.trunc(Number(command.step));
+    const size = setBrushSize(
+      Number.isInteger(step) && step !== 0 ? brushStyle.size + step : command.size
+    );
+    flashSizeAdjustHudAtViewportCenter(size);
+    return { accepted: true, size };
   }
 
   function updateLocalDrawingTool(tool) {
@@ -7441,6 +8334,10 @@ function createFabricOverlayRuntime(options = {}) {
       tool: scene.tool,
       selectionTarget,
       selectionShape,
+      eraserMode,
+      // 진행 중 지우기 제스처가 시작 시점에 래치한 모드. 드래그 도중 팔레트를 눌러도
+      // 이 값은 바뀌지 않는다.
+      activeEraseMode: strokeEraseGesture ? strokeEraseGesture.mode : null,
       selectionControlEventCount,
       lastSelectionControlAction: lastSelectionControlAction
         ? clonePlain(lastSelectionControlAction)
@@ -7505,6 +8402,7 @@ function createFabricOverlayRuntime(options = {}) {
     confirmDrawingPointerdownFrame,
     exportDrawingVideo,
     updateDrawingTool,
+    updateDrawingBrush,
     updateViewport,
     applyDrawingAction,
     getDiagnostics,
@@ -7574,6 +8472,8 @@ module.exports = {
   createSessionSceneStore,
   normalizePressure,
   createStrokePathData,
+  shapeCenterlinePoints,
+  shapeCenterlineSamples,
   createActionDeduper,
   shouldAcceptInputRequest,
   resolveEffectiveCanvasRect,

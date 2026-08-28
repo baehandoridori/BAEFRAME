@@ -75,7 +75,20 @@ const DEFAULT_SHORTCUTS = {
   nextFrameDraw: { key: 'KeyD', ctrl: false, shift: true, alt: false, label: '1프레임 다음 (Shift+D)' },
   brushSizeDown: { key: 'BracketLeft', ctrl: false, shift: false, alt: false, label: '브러시 크기 줄이기' },
   brushSizeUp: { key: 'BracketRight', ctrl: false, shift: false, alt: false, label: '브러시 크기 키우기' },
-  drawingToolSelect: { key: 'KeyV', ctrl: false, shift: false, alt: false, label: '선택 도구 (드로잉)' }
+  drawingToolSelect: { key: 'KeyV', ctrl: false, shift: false, alt: false, label: '선택 도구 (드로잉)' },
+  // 도형·펜·지우개 도구는 기본 단축키를 두지 않는다. 무수식 알파벳 키가 이미 대부분
+  // 점유되어 있어 기본값을 넣으면 기존 기능을 소리 없이 뺏는다. 액션만 등록해 두면
+  // 사용자가 단축키 설정에서 직접 배정할 수 있다.
+  // key: null 은 matchShortcut(event.code === shortcut.key)에서 어떤 키와도 매치되지 않는다.
+  // 빈 문자열을 쓰면 안 된다 — findActionByEvent 가 event.code === '' 인 합성 이벤트에
+  // 걸려 엉뚱한 도구 전환을 일으킨다.
+  drawingToolBrush: { key: null, ctrl: false, shift: false, alt: false, label: '브러시 도구 (드로잉)' },
+  drawingToolPen: { key: null, ctrl: false, shift: false, alt: false, label: '펜 도구 (드로잉)' },
+  drawingToolEraser: { key: null, ctrl: false, shift: false, alt: false, label: '지우개 도구 (드로잉)' },
+  drawingToolLine: { key: null, ctrl: false, shift: false, alt: false, label: '직선 도구 (드로잉)' },
+  drawingToolRect: { key: null, ctrl: false, shift: false, alt: false, label: '사각형 도구 (드로잉)' },
+  drawingToolCircle: { key: null, ctrl: false, shift: false, alt: false, label: '원 도구 (드로잉)' },
+  drawingToolArrow: { key: null, ctrl: false, shift: false, alt: false, label: '화살표 도구 (드로잉)' }
 };
 
 // 이름별 테마 매핑

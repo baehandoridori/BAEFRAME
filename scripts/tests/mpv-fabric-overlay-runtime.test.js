@@ -14,11 +14,16 @@ const {
   createFabricOverlayRuntime,
   createSessionSceneStore,
   createStrokePathData,
+  shapeCenterlinePoints,
+  shapeCenterlineSamples,
   resolveEffectiveCanvasRect,
   resolveSelectionHitTolerance,
   mapClientPointToSource,
   splitStrokePointsByPolygon
 } = require(runtimePath);
+const {
+  FABRIC_DRAWING_TOOLS
+} = require(path.join(rootDir, 'shared/fabric-drawing-tools.js'));
 const {
   createGeometryBudget,
   createPolygonEdgeIndex,
@@ -8293,6 +8298,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'prepare',
     'presentDrawingFrame',
     'setDrawingInput',
+    'updateDrawingBrush',
     'updateDrawingFrame',
     'updateDrawingTool',
     'updateViewport'
@@ -14682,4 +14688,1195 @@ test('재생된 pointerdown은 재생 시각이 아니라 원본 timeStamp를 �
   const replayed = dispatched.find(entry => entry.type === 'pointerdown');
   assert.ok(replayed, '확정 뒤 pointerdown이 재생되어야 한다');
   assert.equal(replayed.timeStamp, 4242, '재생 이벤트가 원본 timeStamp를 유지해야 한다');
+});
+
+// ---------------------------------------------------------------------------
+// 작업 3 — 드로잉 도구 6종 (도형은 "미리 계산된 경로를 따라 그은 획")
+// ---------------------------------------------------------------------------
+
+function enableRealFabricShapeTool(harness, tool, toolRevision = 1) {
+  const result = harness.runtime.updateDrawingTool({
+    sessionId: 'real-fabric-session',
+    toolRevision,
+    tool
+  });
+  assert.equal(result.accepted, true, `도구 ${tool} 가 거부됐다`);
+  assert.equal(result.tool, tool);
+  return result;
+}
+
+function transientPreviews(canvas) {
+  return canvas.getObjects().filter(object => object.__baeframeTransient === true);
+}
+
+test('shape centerline for line is a dense two-point interpolation', () => {
+  const start = { x: 10, y: 20 };
+  const end = { x: 110, y: 70 };
+  const points = shapeCenterlinePoints('line', start, end, 8);
+
+  // SHAPE_EDGE_SEGMENTS(24) + 시작점 1개.
+  assert.equal(points.length, 25);
+  assert.deepEqual(points[0], start);
+  assert.deepEqual(points.at(-1), end);
+  // 중점이 정확히 중간에 놓여야 등간격 보간이다.
+  assert.deepEqual(points[12], { x: 60, y: 45 });
+});
+
+test('rect centerline closes back on the origin', () => {
+  const start = { x: 10, y: 20 };
+  const end = { x: 110, y: 90 };
+  const points = shapeCenterlinePoints('rect', start, end, 8);
+
+  // 네 변 × 24분할 + 시작점 1개.
+  assert.equal(points.length, 24 * 4 + 1);
+  assert.deepEqual(points[0], start);
+  assert.deepEqual(points.at(-1), start, '닫힌 사각형이라 마지막 점이 시작점으로 돌아와야 한다');
+  // 각 꼭짓점을 실제로 지나는지.
+  for (const corner of [{ x: 110, y: 20 }, { x: 110, y: 90 }, { x: 10, y: 90 }]) {
+    assert.ok(
+      points.some(point => point.x === corner.x && point.y === corner.y),
+      `꼭짓점 ${corner.x},${corner.y} 를 지나지 않는다`
+    );
+  }
+});
+
+test('circle centerline inscribes the drag rectangle', () => {
+  const points = shapeCenterlinePoints('circle', { x: 20, y: 40 }, { x: 120, y: 100 }, 8);
+
+  // SHAPE_ELLIPSE_SEGMENTS(128) + 마지막 닫힘점.
+  assert.equal(points.length, 129);
+  const xs = points.map(point => point.x);
+  const ys = points.map(point => point.y);
+  for (const [actual, expected, label] of [
+    [Math.min(...xs), 20, 'left'],
+    [Math.max(...xs), 120, 'right'],
+    [Math.min(...ys), 40, 'top'],
+    [Math.max(...ys), 100, 'bottom']
+  ]) {
+    assert.ok(Math.abs(actual - expected) < 1e-9, `${label} 극점이 드래그 사각형 경계와 다르다`);
+  }
+  // 시작점(20,40)은 곡선 위가 아니다 — 버려져야 중심에서 뻗은 꼬리가 생기지 않는다.
+  assert.equal(points.some(point => point.x === 20 && point.y === 40), false);
+});
+
+test('arrow centerline passes through the tip twice', () => {
+  const start = { x: 10, y: 10 };
+  const end = { x: 110, y: 60 };
+  const points = shapeCenterlinePoints('arrow', start, end, 8);
+
+  // 축 끝에서 한 번, 촉 A 를 찍고 돌아와 한 번. interpolateShapeEdge 가 구간 시작점을
+  // 다시 push 하지 않으므로 정확히 2회다.
+  const tipCount = points.filter(point =>
+    Math.abs(point.x - end.x) < 1e-9 && Math.abs(point.y - end.y) < 1e-9).length;
+  assert.equal(tipCount, 2);
+  assert.equal(points.length, 24 * 4 + 1);
+  assert.deepEqual(points[0], start);
+});
+
+test('shape samples have monotonically increasing time', () => {
+  for (const tool of ['line', 'rect', 'circle', 'arrow']) {
+    const samples = shapeCenterlineSamples(tool, { x: 10, y: 10 }, { x: 90, y: 70 }, 8);
+    assert.ok(samples.length >= 2, `${tool} 표본이 너무 적다`);
+    for (let index = 1; index < samples.length; index += 1) {
+      assert.ok(
+        samples[index].time > samples[index - 1].time,
+        `${tool} 의 time 이 ${index} 에서 증가하지 않는다 — 저장 스키마 불변식 위반`
+      );
+    }
+    assert.equal(samples.every(sample => sample.pressure === 1), true, `${tool} 압력이 상수가 아니다`);
+    assert.equal(samples.every(sample => sample.pointerType === undefined), true);
+  }
+});
+
+test('shape commit stores a stroke record with the unchanged drawingsV3 schema', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'rect');
+    const pointerId = 5101;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 90, pointerId, 1);
+    harness.dispatchCapturedPointerUp(120, 90, pointerId);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 1);
+    const record = objects[0];
+    assert.equal(record.type, 'stroke', '도형도 저장 타입은 stroke 하나뿐이다');
+    // 결정 1(스키마 무변경)을 고정하는 핵심 단언 — 새 필드가 생기면 여기서 깨진다.
+    assert.deepEqual(
+      Object.keys(record).sort(),
+      ['id', 'pathData', 'sourcePoints', 'style', 'transform', 'type']
+    );
+    assert.ok(record.pathData.length > 0);
+    assert.equal(record.sourcePoints.length, 24 * 4 + 1);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('shape preview is transient and never enters the scene', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'circle');
+    const pointerId = 5102;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 80, pointerId, 1);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      0,
+      '커밋 전에는 씬에 아무것도 들어가지 않는다'
+    );
+    const previews = transientPreviews(harness.canvas);
+    assert.equal(previews.length, 1);
+    assert.equal(previews[0].__baeframeObjectId, null, '미리보기는 오브젝트 id 를 갖지 않는다');
+
+    harness.dispatchCapturedPointerUp(100, 80, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    assert.equal(transientPreviews(harness.canvas).length, 0, '커밋 후 미리보기가 남으면 안 된다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('cancelled shape gesture leaves no object and no preview', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'arrow');
+    const pointerId = 5103;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 90, pointerId, 1);
+    assert.equal(transientPreviews(harness.canvas).length, 1);
+
+    harness.dispatchPointer(harness.element, 'pointercancel', 120, 90, pointerId, 0);
+    assert.equal(harness.canvas.getObjects().length, 0);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a click without drag creates no shape', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'line');
+    const pointerId = 5104;
+    // SHAPE_MIN_DRAG_DISTANCE(2) 미만 — 클릭 오차로 점 하나짜리 도형이 undo 를 소모하면 안 된다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 40, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 41, 40, pointerId, 1);
+    harness.dispatchCapturedPointerUp(41, 40, pointerId);
+
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+    assert.equal(harness.canvas.getObjects().length, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('document pointerup commits a shape when capture was lost', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'rect');
+    const pointerId = 5105;
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 130, 100, pointerId, 1);
+
+    // 포인터 캡처가 듣지 않는 환경에서는 pointerup 이 문서로만 온다.
+    // onDocumentPointerUp 은 취소가 아니라 onPointerUp 위임(= 커밋) 경로여야 한다.
+    harness.dispatchPointer(harness.environment.document, 'pointerup', 130, 100, pointerId, 0);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      1,
+      '문서 경로에서 도형이 조용히 사라지면 안 된다'
+    );
+    assert.equal(transientPreviews(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('every declared drawing tool is accepted by setLocalTool', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    for (const tool of FABRIC_DRAWING_TOOLS) {
+      const result = harness.sceneStore.setLocalTool({
+        sessionId: 'real-fabric-session',
+        tool
+      });
+      assert.equal(result.accepted, true, `도구 ${tool} 가 거부됐다`);
+      assert.equal(result.tool, tool);
+    }
+    // 실재하지 않는 값은 여전히 거부돼야 한다.
+    const rejected = harness.sceneStore.setLocalTool({
+      sessionId: 'real-fabric-session',
+      tool: 'lasso'
+    });
+    assert.equal(rejected.accepted, false);
+    assert.equal(rejected.reason, 'invalid-tool');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('disabling drawing input preserves the active tool', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'pen');
+    const result = harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    });
+    assert.equal(result.accepted, true);
+    // §3.5 #5 회귀 — 예전에는 여기서 도구가 brush 로 접혔다.
+    assert.equal(result.tool, 'pen');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 작업 4 — 지우개 도구와 지우개 방식(픽셀 / 획)
+// ---------------------------------------------------------------------------
+
+function clickEraserMode(root, mode) {
+  const button = root.querySelector(`[data-fabric-pilot-action="eraser-mode-${mode}"]`);
+  assert.ok(button, `지우개 방식 버튼 ${mode} 가 없다`);
+  button.dispatchEvent(new root.ownerDocument.defaultView.Event('click', { bubbles: true }));
+  return button;
+}
+
+test('eraser tool opens the erase gesture without modifiers', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 6201);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 6202;
+    // modifier 없이 그대로 지우기 제스처가 열려야 한다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('ctrl drag still erases while the brush or pen tool is active', async () => {
+  for (const tool of ['brush', 'pen']) {
+    const harness = createRealFabricHarness();
+    try {
+      harness.drawStrokeAt(60, 6210);
+      assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+      if (tool !== 'brush') enableRealFabricShapeTool(harness, tool);
+
+      const pointerId = 6211;
+      const ctrl = { ctrlKey: true };
+      harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1, ctrl);
+      harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1, ctrl);
+      harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+      assert.equal(
+        harness.sceneStore.getActiveSceneSnapshot().objects.length,
+        0,
+        `${tool} 에서 Ctrl 임시 지우개가 동작해야 한다`
+      );
+    } finally {
+      await harness.destroy();
+    }
+  }
+});
+
+test('ctrl temporary eraser is always stroke mode', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 6220);
+    // 팔레트를 픽셀 모드로 바꿔도 Ctrl 임시 지우개는 획 단위여야 한다.
+    clickEraserMode(harness.root, 'pixel');
+    assert.equal(harness.runtime.getDiagnostics().eraserMode, 'pixel');
+
+    const pointerId = 6221;
+    const ctrl = { ctrlKey: true };
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 60, pointerId, 1, ctrl);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 60, pointerId, 1, ctrl);
+    harness.dispatchCapturedPointerUp(40, 60, pointerId);
+
+    // 획 단위이므로 조각이 남지 않고 통째로 사라진다.
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('eraser mode is latched at gesture start', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 6230);
+    enableRealFabricShapeTool(harness, 'eraser');
+
+    const pointerId = 6231;
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 60, pointerId, 1);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+
+    // 드래그 도중 팔레트로 모드를 바꿔도 이 제스처의 커밋 방식은 바뀌지 않는다.
+    clickEraserMode(harness.root, 'pixel');
+    assert.equal(harness.runtime.getDiagnostics().eraserMode, 'pixel');
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(40, 60, pointerId);
+    // 시작 시점 모드가 stroke 였으므로 획 전체가 사라진다.
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stroke-mode erase commits as a single undo entry', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(40, 6240);
+    harness.drawStrokeAt(60, 6241);
+    const before = harness.runtime.getDiagnostics().undoDepth;
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 6242;
+    // 두 획을 한 번에 가로지른다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 50, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 70, pointerId, 1);
+    harness.dispatchCapturedPointerUp(40, 70, pointerId);
+
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+    assert.equal(
+      harness.runtime.getDiagnostics().undoDepth,
+      before + 1,
+      '두 획을 지워도 실행취소는 1건이어야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pixel-mode erase splits a stroke through the ribbon polygon', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    // 가로로 긴 획 하나를 그리고 가운데를 세로로 가로지른다.
+    harness.drawStroke([{ x: 10, y: 100 }, { x: 100, y: 100 }, { x: 190, y: 100 }], 6250);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    const before = harness.runtime.getDiagnostics().undoDepth;
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 6251;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'pixel');
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 130, pointerId);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    // 가운데만 잘려 좌우 조각이 남아야 한다 — 폴백(획 전체 삭제)으로 떨어지면 0개다.
+    assert.equal(objects.length, 2, '픽셀 모드가 획을 조각으로 나눠야 한다');
+    assert.equal(objects.every(object => object.type === 'stroke'), true);
+    assert.equal(
+      harness.runtime.getDiagnostics().undoDepth,
+      before + 1,
+      '분할도 실행취소 1건이어야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 작업 5 — 런타임 브러시 크기 진입점과 화면 중앙 HUD
+// ---------------------------------------------------------------------------
+
+function sizeAdjustHudElement(root) {
+  return root.querySelector('[data-fabric-pilot-output="size-adjust"]');
+}
+
+test('updateDrawingBrush applies the size and flashes the HUD at the viewport center', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const result = harness.runtime.updateDrawingBrush({ size: 12 });
+    assert.equal(result.accepted, true);
+    assert.equal(result.size, 12);
+
+    const hud = sizeAdjustHudElement(harness.root);
+    assert.ok(hud, '크기 HUD 요소가 있어야 한다');
+    assert.equal(hud.style.display, 'block', '[ / ] 로 바꿨을 때도 굵기가 눈에 보여야 한다');
+    assert.match(hud.textContent, /12px/);
+    // 좌표 없는 경로이므로 레거시와 같이 화면 중앙에 뜬다.
+    const { innerWidth, innerHeight } = harness.environment.window;
+    assert.equal(hud.style.left, `${Math.round(innerWidth / 2)}px`);
+    assert.equal(hud.style.top, `${Math.round(innerHeight / 2)}px`);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('updateDrawingBrush clamps the size to the runtime brush range', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    assert.equal(harness.runtime.updateDrawingBrush({ size: 0 }).size, 1);
+    assert.equal(harness.runtime.updateDrawingBrush({ size: 999 }).size, 50);
+    // 잘린 값이 실제로 반영됐는지는 HUD 라벨로 확인한다.
+    assert.match(sizeAdjustHudElement(harness.root).textContent, /50px/);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a relative brush step applies against the overlay size, not a caller guess', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    // 팔레트 슬라이더로 굵기를 바꾼 상황을 흉내 낸다 — 컨트롤러는 이 값을 모른다.
+    assert.equal(harness.runtime.updateDrawingBrush({ size: 20 }).size, 20);
+
+    // 여기서 증감 +1 은 21 이어야 한다. 컨트롤러가 절대값을 세면 4 가 나온다.
+    assert.equal(harness.runtime.updateDrawingBrush({ step: 1 }).size, 21);
+    assert.equal(harness.runtime.updateDrawingBrush({ step: -3 }).size, 18);
+
+    // 상한·하한은 런타임이 자른다.
+    assert.equal(harness.runtime.updateDrawingBrush({ step: 999 }).size, 50);
+    assert.equal(harness.runtime.updateDrawingBrush({ step: -999 }).size, 1);
+    assert.equal(harness.runtime.updateDrawingBrush({ step: -1 }).size, 1, '하한에서 더 내려가지 않는다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('updateDrawingBrush is rejected while drawing input is disabled', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+
+    const result = harness.runtime.updateDrawingBrush({ size: 20 });
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'input-disabled');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an Alt size gesture takes the HUD away from the keyboard flash timer', async () => {
+  const timers = [];
+  const harness = createRealFabricHarness({
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    clearTimeout: handle => {
+      const entry = timers[handle - 1];
+      if (entry) entry.cancelled = true;
+    }
+  });
+  try {
+    harness.runtime.updateDrawingBrush({ size: 9 });
+    const flash = timers.at(-1);
+    assert.ok(flash, '자동 숨김 타이머가 걸려야 한다');
+    assert.equal(flash.delay, 700);
+
+    // Alt 제스처가 시작되면 그 타이머는 회수된다 — 아니면 제스처 중 HUD 가 사라진다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 40, 5301, 1, { altKey: true });
+    assert.equal(flash.cancelled, true);
+    assert.equal(sizeAdjustHudElement(harness.root).style.display, 'block');
+
+    // 취소된 타이머가 늦게 발화하더라도 제스처 HUD 를 지우지 않는다.
+    flash.callback();
+    assert.equal(sizeAdjustHudElement(harness.root).style.display, 'block');
+    harness.dispatchCapturedPointerUp(40, 40, 5301);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 작업 6 — 팔레트 재구성 (도구 줄 5개 + 도형 드롭다운, 맥락 표시, 상시 요약, 최근 색)
+// ---------------------------------------------------------------------------
+
+function paletteSection(root, id) {
+  return findOne(root, node => node.dataset?.fabricPilotSection === id);
+}
+
+function paletteButton(root, action) {
+  return findOne(root, node => node.dataset?.fabricPilotAction === action);
+}
+
+test('the tool row is five icon buttons with the shape tools folded into a dropdown', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    assert.ok(toolsSection, '도구 섹션이 있어야 한다');
+    const row = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-row');
+    assert.ok(row, '도구 줄이 있어야 한다');
+    assert.equal(row.dataset.layout, 'grid');
+    assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
+    assert.equal(row.style.gap, '3px');
+    assert.equal(row.children.length, 5, '한 줄에 5개 — 브러시·펜·지우개·도형·선택');
+
+    // 도형 4종은 줄이 아니라 플라이아웃 안에 있고 기본은 닫혀 있다.
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    assert.ok(flyout);
+    assert.equal(flyout.style.display, 'none');
+    for (const tool of ['line', 'rect', 'circle', 'arrow']) {
+      assert.ok(paletteButton(harness.root, tool), `${tool} 버튼이 플라이아웃에 있어야 한다`);
+    }
+
+    // 아이콘 전용이지만 이름은 접근성 속성으로 남는다.
+    const brushButton = paletteButton(harness.root, 'brush');
+    assert.equal(brushButton.textContent, '');
+    assert.equal(brushButton.getAttribute('title'), '브러시 도구 (B)');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the shape button opens the dropdown and remembers the last shape used', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const shapeButton = paletteButton(harness.root, 'shape-menu');
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    // 도형 도구가 아닐 때 누르면 마지막 도형으로 전환하고 메뉴를 연다.
+    click(shapeButton);
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'rect');
+    assert.equal(flyout.style.display, 'grid');
+    assert.equal(shapeButton.dataset.active, 'true');
+
+    // 다른 도형을 고르면 그 도구로 바뀌고 메뉴가 닫힌다.
+    click(paletteButton(harness.root, 'arrow'));
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'arrow');
+    assert.equal(flyout.style.display, 'none');
+    assert.equal(shapeButton.getAttribute('title'), '도형 도구 (화살표)');
+
+    // 도형이 아닌 도구로 나가면 버튼 활성 표시가 풀리고 메뉴도 닫힌다.
+    click(paletteButton(harness.root, 'brush'));
+    assert.equal(shapeButton.dataset.active, 'false');
+    assert.equal(flyout.style.display, 'none');
+    // 마지막에 쓴 도형은 기억된다 — 다시 누르면 화살표로 돌아간다.
+    click(shapeButton);
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'arrow');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('only the sections that matter for the active tool stay visible', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const brushSection = paletteSection(harness.root, 'brush');
+    const eraserSection = paletteSection(harness.root, 'eraser');
+    const expect = (tool, brushVisible, eraserVisible) => {
+      enableRealFabricShapeTool(harness, tool, harness.__toolRevision = (harness.__toolRevision || 0) + 1);
+      assert.equal(brushSection.style.display !== 'none', brushVisible, `${tool} 브러시 섹션`);
+      assert.equal(eraserSection.style.display !== 'none', eraserVisible, `${tool} 지우개 섹션`);
+    };
+
+    expect('pen', true, false);
+    expect('rect', true, false);
+    expect('eraser', false, true);
+    expect('select', false, false);
+    expect('brush', true, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the always-on status row reports size, opacity and tool without moving panel elements', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const text = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === 'brush-status-text');
+    const swatch = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === 'brush-status-swatch');
+    assert.ok(text && swatch);
+    assert.equal(text.textContent, '3px · 100% · 브러시');
+
+    harness.runtime.updateDrawingBrush({ size: 14 });
+    assert.equal(text.textContent, '14px · 100% · 브러시');
+    assert.equal(swatch.style.width, '14px');
+
+    // §6.6 회귀 방지 — summary 와 sizePreview 는 원래 자리에 남아 있어야 한다.
+    // appendChild 로 옮기면 브러시 설정 버튼의 표시가 사라진다.
+    const settingsButton = paletteButton(harness.root, 'brush-settings');
+    const summary = findOne(settingsButton, node =>
+      node.dataset?.fabricPilotOutput === 'summary');
+    assert.ok(summary, 'summary 는 설정 버튼의 자식으로 남아야 한다');
+    assert.equal(summary.textContent, '14px · 100%');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('recent colors keep the newest first without duplicates and cap at four', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const readRecent = () => [0, 1, 2, 3]
+      .map(index => paletteButton(harness.root, `recent-color-${index}`))
+      .map(button => ({
+        color: button.dataset.fabricPilotRecentColor,
+        display: button.style.display
+      }));
+
+    const click = action => paletteButton(harness.root, action).dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+    const colorButtons = findAll(harness.root, node =>
+      typeof node.dataset?.fabricPilotColor === 'string' && node.dataset.fabricPilotColor.length > 0);
+    assert.ok(colorButtons.length >= 5, '색상 버튼이 5개 이상이어야 한다');
+
+    const used = [];
+    for (const button of colorButtons.slice(0, 5)) {
+      used.push(button.dataset.fabricPilotColor);
+      button.dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+    }
+    // 최근 4개만, 최신이 앞에.
+    assert.deepEqual(readRecent().map(entry => entry.color), used.slice(1).reverse());
+
+    // 이미 쓴 색을 다시 고르면 중복 없이 맨 앞으로 온다.
+    const revisited = used[2];
+    colorButtons.find(button => button.dataset.fabricPilotColor === revisited)
+      .dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+    const recent = readRecent().map(entry => entry.color);
+    assert.equal(recent[0], revisited);
+    assert.equal(recent.filter(color => color === revisited).length, 1);
+
+    // 최근 색 버튼을 누르면 그 색으로 돌아가고, 그 색이 다시 맨 앞으로 온다.
+    const revived = recent[1];
+    click('recent-color-1');
+    assert.equal(readRecent()[0].color, revived);
+    assert.equal(
+      findOne(harness.root, node => node.dataset?.fabricPilotColor === revived)
+        .getAttribute('aria-pressed'),
+      'true',
+      '해당 색상 버튼이 활성으로 표시돼야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('collapsing a section and reopening it keeps the tool grid layout', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    const label = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const row = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-row');
+    const click = () => label.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    click();
+    assert.equal(label.dataset.collapsed, 'true');
+    assert.equal(row.style.display, 'none');
+
+    click();
+    assert.equal(label.dataset.collapsed, 'false');
+    // flex 로 되돌리면 도구 줄이 한 줄로 무너진다.
+    assert.equal(row.style.display, 'grid');
+    assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 코덱스 1차 리뷰 회귀 방지
+// ---------------------------------------------------------------------------
+
+test('a retraced pixel eraser never deletes whole strokes', async () => {
+  // 앞뒤로 문지르는 것은 지우개의 가장 자연스러운 동작이다. 그때 만들어지는
+  // 리본은 자기 자신을 가로질러 단순 폴리곤이 되지 못하는데, 그 실패를
+  // "획 전체 삭제"로 떨어뜨리면 지나가지도 않은 부분까지 사라진다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 10, y: 100 }, { x: 100, y: 100 }, { x: 190, y: 100 }], 7101);
+    const before = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(before.length, 1);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7102;
+    // 가운데를 세로로 가로지른 뒤 같은 길을 되짚어 올라온다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 140, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 60, pointerId);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot().objects;
+    // 한 축을 따르는 스크럽은 복도로 되살아나 실제로 잘려야 한다.
+    assert.equal(after.length, 2, '되짚는 스크럽도 조각으로 나뉘어야 한다');
+    assert.equal(after.every(object => object.type === 'stroke'), true);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a pixel eraser splits shapes and pen strokes, not just brush strokes', async () => {
+  // 도형·펜은 브러시와 다른 기하 파라미터로 만들어진다. 재구성이 브러시 기본값을
+  // 쓰면 pathData 가 절대 일치하지 않아 부분 분할이 통째로 거부되고,
+  // 지우개가 그 획을 전부 지우는 쪽으로 떨어진다.
+  for (const [tool, draw] of [
+    ['pen', harness => {
+      enableRealFabricShapeTool(harness, 'pen');
+      harness.drawStroke([{ x: 10, y: 100 }, { x: 100, y: 100 }, { x: 190, y: 100 }], 7201);
+    }],
+    ['line', harness => {
+      enableRealFabricShapeTool(harness, 'line');
+      harness.dispatchPointer(harness.element, 'pointerdown', 10, 100, 7202, 1);
+      harness.dispatchPointer(harness.element, 'pointermove', 190, 100, 7202, 1);
+      harness.dispatchCapturedPointerUp(190, 100, 7202);
+    }]
+  ]) {
+    const harness = createRealFabricHarness();
+    try {
+      draw(harness);
+      assert.equal(
+        harness.sceneStore.getActiveSceneSnapshot().objects.length,
+        1,
+        `${tool} 획이 하나 있어야 한다`
+      );
+      const before = harness.runtime.getDiagnostics().undoDepth;
+
+      enableRealFabricShapeTool(harness, 'eraser', 9);
+      clickEraserMode(harness.root, 'pixel');
+      const pointerId = 7210;
+      harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+      harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+      harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+      harness.dispatchCapturedPointerUp(100, 130, pointerId);
+
+      const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+      assert.equal(objects.length, 2, `${tool} 획이 조각으로 나뉘어야 한다`);
+      assert.equal(
+        harness.runtime.getDiagnostics().undoDepth,
+        before + 1,
+        `${tool} 분할도 실행취소 1건이어야 한다`
+      );
+    } finally {
+      await harness.destroy();
+    }
+  }
+});
+
+test('a shape commits at the pointerup position even without an intervening move', async () => {
+  // 빠른 드래그·이벤트 병합에서는 release 좌표가 마지막 move 보다 뒤에 있다.
+  // move 가 하나도 없으면 예전에는 클릭으로 오인돼 도형이 통째로 버려졌다.
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'rect');
+    const pointerId = 7301;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, pointerId, 1);
+    // pointermove 없이 곧바로 멀리 떨어진 곳에서 손을 뗀다.
+    harness.dispatchCapturedPointerUp(140, 110, pointerId);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 1, 'move 가 없어도 드래그였으면 도형이 남아야 한다');
+    assert.equal(objects[0].sourcePoints.length, 24 * 4 + 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('expanding a collapsed section does not force its appended panels open', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    const label = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    const shapeButton = paletteButton(harness.root, 'shape-menu');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    assert.equal(flyout.style.display, 'none');
+    click(label);
+    click(label);
+    assert.equal(
+      flyout.style.display,
+      'none',
+      '접었다 펴는 것만으로 도형 플라이아웃이 열리면 안 된다'
+    );
+    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
+
+    // 열어 둔 상태였다면 그 상태 그대로 돌아와야 한다.
+    click(shapeButton);
+    assert.equal(flyout.style.display, 'grid');
+    click(label);
+    assert.equal(flyout.style.display, 'none');
+    click(label);
+    assert.equal(flyout.style.display, 'grid', '열려 있던 패널은 그대로 돌아와야 한다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 코덱스 2차 리뷰 회귀 방지
+// ---------------------------------------------------------------------------
+
+test('circling around a stroke never erases what the eraser did not touch', async () => {
+  // 볼록 껍질로 폴백하면 고리 안쪽의 건드리지도 않은 획이 통째로 사라진다.
+  // 주축에서 반경 이상 벗어난 제스처는 어떤 단일 폴리곤으로도 안전하게
+  // 근사할 수 없으므로 아무것도 지우지 않아야 한다.
+  const harness = createRealFabricHarness();
+  try {
+    // 가운데에 짧은 획 하나(고리 안쪽에 들어갈 대상).
+    harness.drawStroke([{ x: 95, y: 100 }, { x: 105, y: 100 }], 7401);
+    const inner = harness.sceneStore.getActiveSceneSnapshot().objects[0].id;
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7402;
+    // 그 획을 건드리지 않고 크게 한 바퀴 돈다.
+    const loop = [
+      { x: 40, y: 40 }, { x: 160, y: 40 }, { x: 160, y: 160 },
+      { x: 40, y: 160 }, { x: 40, y: 45 }
+    ];
+    harness.dispatchPointer(harness.element, 'pointerdown', loop[0].x, loop[0].y, pointerId, 1);
+    for (const point of loop.slice(1)) {
+      harness.dispatchPointer(harness.element, 'pointermove', point.x, point.y, pointerId, 1);
+    }
+    harness.dispatchCapturedPointerUp(loop.at(-1).x, loop.at(-1).y, pointerId);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.some(object => object.id === inner),
+      true,
+      '고리 안쪽의 건드리지 않은 획이 살아 있어야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pixel mode deletes strokes the ribbon fully covers', async () => {
+  // 점이나 짧은 획은 리본이 통째로 덮어 조각이 생기지 않는다. 그 경우
+  // finalizePartialSelectionPolygon 은 pending 없이 선택만 세워 돌려주므로
+  // 삭제 경로로 넘기지 않으면 지우개가 아무 일도 하지 않는다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 100, y: 100 }, { x: 103, y: 100 }], 7411);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    const before = harness.runtime.getDiagnostics().undoDepth;
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7412;
+    harness.dispatchPointer(harness.element, 'pointerdown', 80, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 101, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 125, 100, pointerId, 1);
+    harness.dispatchCapturedPointerUp(125, 100, pointerId);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      0,
+      '완전히 덮인 획은 지워져야 한다'
+    );
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, before + 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a viewport change during a shape gesture cancels it instead of distorting it', async () => {
+  // 시작점은 이전 뷰포트로, 끝점은 새 뷰포트로 매핑되면 도형이 튄다.
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'rect');
+    const pointerId = 7421;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 80, 60, pointerId, 1);
+    assert.equal(
+      harness.canvas.getObjects().filter(object => object.__baeframeTransient === true).length,
+      1
+    );
+
+    assert.equal(harness.runtime.updateViewport({
+      revision: 5,
+      canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+      scale: 2,
+      panX: 10,
+      panY: 10
+    }).accepted, true);
+
+    harness.dispatchCapturedPointerUp(140, 110, pointerId);
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      0,
+      '뷰포트가 바뀌면 진행 중인 도형은 취소돼야 한다'
+    );
+    assert.equal(harness.canvas.getObjects().length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('showing a section restores its stacked layout rather than forcing a row', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const brushSection = paletteSection(harness.root, 'brush');
+    // 선택 도구에서는 숨는다.
+    enableRealFabricShapeTool(harness, 'select', 11);
+    assert.equal(brushSection.style.display, 'none');
+
+    // 다시 보일 때 인라인 display 를 비워 CSS 의 세로 배치를 그대로 쓴다.
+    // 'flex' 를 강제하면 flex-direction 이 없어 라벨과 패널이 가로로 늘어선다.
+    enableRealFabricShapeTool(harness, 'brush', 12);
+    assert.equal(brushSection.style.display, '');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the retrace corridor never reaches further than the eraser actually swept', async () => {
+  // extendSpineEndpoints 로 이미 반경만큼 늘린 척추를 복도 생성기에 넘기면
+  // 복도가 반경을 한 번 더 더해 실제 스윕보다 두 배로 뻗는다. 그 여분 띠에
+  // 걸친 획은 지우개가 지나가지도 않았는데 사라진다.
+  // 하네스 기준 지우개 반경은 3px 이다.
+  const harness = createRealFabricHarness();
+  try {
+    // 스크럽 시작점(y=100)보다 5px 위 — 반경 1배(97) 밖, 2배(94) 안쪽이다.
+    // 가드는 굵기가 균일한 도형으로 그어 경계를 예측 가능하게 만든다
+    // (브러시 획은 압력에 따라 끝이 가늘어져 여백이 들쭉날쭉하다).
+    enableRealFabricShapeTool(harness, 'line');
+    harness.dispatchPointer(harness.element, 'pointerdown', 60, 95, 7501, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 140, 95, 7501, 1);
+    harness.dispatchCapturedPointerUp(140, 95, 7501);
+    const guardId = harness.sceneStore.getActiveSceneSnapshot().objects[0].id;
+    // 스크럽이 실제로 가로지르는 대상. 이게 없으면 지우개가 아무것도 건드리지
+    // 못해 조기 반환하고 복도 자체가 계산되지 않는다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 60, 120, 7503, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 140, 120, 7503, 1);
+    harness.dispatchCapturedPointerUp(140, 120, 7503);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+
+    enableRealFabricShapeTool(harness, 'eraser', 5);
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7502;
+    // 아래로 내려갔다 같은 길로 되짚어 올라온다 — 복도 폴백 경로.
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 140, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 100, pointerId);
+
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(
+      survivors.some(object => object.id === guardId),
+      true,
+      '스윕 밖의 획이 여분 띠에 걸려 사라지면 안 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a viewport change during a pixel erase cancels the gesture instead of bridging coordinates', async () => {
+  // pathPoints 와 lastPoint 는 이전 뷰포트 좌표계다. 그대로 두면 다음 표본이
+  // 새 좌표계로 매핑돼 두 좌표계 사이를 잇는 가짜 스윕이 생기고, 포인터가
+  // 지나가지도 않은 획이 그 구간에서 지워진다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 20, y: 60 }, { x: 180, y: 60 }], 7601);
+    const survivorId = harness.sceneStore.getActiveSceneSnapshot().objects[0].id;
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 7602;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 150, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 150, pointerId, 1);
+
+    assert.equal(harness.runtime.updateViewport({
+      revision: 9,
+      canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+      scale: 2,
+      panX: 30,
+      panY: 30
+    }).accepted, true);
+
+    harness.dispatchPointer(harness.element, 'pointermove', 180, 20, pointerId, 1);
+    harness.dispatchCapturedPointerUp(180, 20, pointerId);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.some(object => object.id === survivorId),
+      true,
+      '뷰포트가 바뀌면 지우기 제스처가 취소돼 가짜 스윕이 생기지 않아야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a collapsed section keeps its appended panel shut even when the panel resyncs', async () => {
+  // syncBrushControls 는 [ / ] 로 크기가 바뀔 때마다 불린다. 섹션 접힘을 무시하면
+  // 라벨과 버튼 줄은 접힌 채 설정 패널만 혼자 떠 있는 상태가 된다.
+  const harness = createRealFabricHarness();
+  try {
+    const brushSection = paletteSection(harness.root, 'brush');
+    const label = Array.from(brushSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const panel = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'brush-settings');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    click(paletteButton(harness.root, 'brush-settings'));
+    assert.equal(panel.style.display, 'flex', '설정 패널이 열려 있어야 한다');
+
+    click(label);
+    assert.equal(panel.style.display, 'none');
+
+    // 접힌 상태에서 크기를 바꿔도 패널이 스스로 다시 열리면 안 된다.
+    harness.runtime.updateDrawingBrush({ step: 1 });
+    assert.equal(panel.style.display, 'none', '접힌 섹션의 패널이 되살아나면 안 된다');
+
+    // 다시 펼치면 원래 열려 있던 상태로 돌아온다.
+    click(label);
+    assert.equal(panel.style.display, 'flex');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a panel closed while its section was collapsed stays closed when the section reopens', async () => {
+  // 접혀 있는 동안 소유자 쪽 상태가 바뀌면(도구 전환으로 도형 메뉴가 닫히는 등)
+  // 셸이 캐시해 둔 표시값은 낡는다. 그대로 되살리면 aria-expanded 는 false 인데
+  // 플라이아웃만 열려 있는 모순된 상태가 된다.
+  const harness = createRealFabricHarness();
+  try {
+    const toolsSection = paletteSection(harness.root, 'tools');
+    const label = Array.from(toolsSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
+    const shapeButton = paletteButton(harness.root, 'shape-menu');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    click(shapeButton);
+    assert.equal(flyout.style.display, 'grid');
+
+    click(label);
+    assert.equal(flyout.style.display, 'none');
+
+    // 접힌 채로 다른 도구로 전환한다 — 도형 메뉴는 닫힌 것으로 바뀐다.
+    enableRealFabricShapeTool(harness, 'select', 7);
+    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
+
+    click(label);
+    assert.equal(
+      flyout.style.display,
+      'none',
+      '접혀 있는 동안 닫힌 메뉴가 펼치기만으로 되살아나면 안 된다'
+    );
+    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a sharp eraser turn commits the corner it actually swept', async () => {
+  // 꼭짓점을 평균 법선 하나로만 밀면 90도 꺾임에서 모서리가 (0.707r, 0.707r)
+  // 까지만 덮여, 스윕 사각형들이 실제로 지나간 (r, r) 모서리 삼각형이 커밋에서
+  // 빠진다. 그 안에서만 닿은 획은 드래그 중 숨었다가 되살아난다.
+  // 하네스 기준 지우개 반경은 3px 이다.
+  const harness = createRealFabricHarness();
+  try {
+    // 평균 법선은 V 에서 대각선 2.12px 까지만 덮고, 마이터는 4.24px(=(103,103))
+    // 까지 덮는다. 그 사이 띠에만 들어가려면 획이 아주 가늘어야 한다.
+    harness.runtime.updateDrawingBrush({ size: 1 });
+    harness.drawStroke([{ x: 101.9, y: 102.6 }, { x: 102.6, y: 101.9 }], 7801);
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 1, '모서리 획이 하나 있어야 한다');
+    const cornerId = objects[0].id;
+
+    enableRealFabricShapeTool(harness, 'eraser', 6);
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7802;
+    // 오른쪽으로 갔다가 위로 꺾는다 — 바깥 모서리가 (100,100) 남동쪽이다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 40, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 40, pointerId);
+
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(
+      survivors.some(object => object.id === cornerId),
+      false,
+      '모서리에서 닿은 획이 커밋에서 빠져 되살아나면 안 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pixel mode never hides a stroke it might not cut', async () => {
+  // 히트 판정은 스윕 사각형들의 합집합이고 커밋은 그것을 근사한 단순 폴리곤
+  // 하나다. 저장소에 폴리곤 불리언 유니온이 없어 둘을 정확히 일치시킬 수 없으므로,
+  // 근사가 미치지 못하는 자리(안쪽 모서리 등)에서만 닿은 획은 숨었다가 되살아난다.
+  // 픽셀 모드는 아예 숨기지 않아 그 깜빡임을 없앤다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 7901);
+    const target = harness.canvas.getObjects()[0];
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7902;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    assert.notEqual(target.visible, false, '픽셀 모드는 드래그 중 획을 숨기지 않는다');
+
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 130, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stroke mode still previews the strokes it is about to delete', async () => {
+  // 획 단위 모드는 닿은 획을 통째로 지우므로 미리보기가 커밋과 정확히 일치한다.
+  // 픽셀 모드 때문에 이 미리보기를 잃으면 안 된다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 7911);
+    const target = harness.canvas.getObjects()[0];
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 7912;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    assert.equal(target.visible, false, '지울 획은 드래그 중 미리 사라져야 한다');
+
+    harness.dispatchCapturedPointerUp(100, 100, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
 });

@@ -9,6 +9,9 @@ const {
   normalizeMpvOverlayCollaborationAction,
   normalizeFabricDrawingPersistenceMessage
 } = require('../../main/mpv-overlay-host');
+const {
+  FABRIC_DRAWING_TOOLS
+} = require('../../shared/fabric-drawing-tools.js');
 
 function waitForAsyncReposition() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -5762,4 +5765,185 @@ test('rejected export logs which record check failed and where', async () => {
 
   // 응답 자체에는 여전히 failedCheck 가 실리지 않는다
   assert.doesNotMatch(JSON.stringify(rejected), /failedCheck/);
+});
+
+test('updateDrawingTool accepts every declared tool and rejects unknown ones', async () => {
+  // 런타임이 실제로 받은 도구를 그대로 돌려주게 해, 호스트가 도구를 접지 않는지 본다.
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingTool(')) return undefined;
+      const match = script.match(/"tool":"([^"]+)"/);
+      return { accepted: true, tool: match ? match[1] : null };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const session = {
+    sessionId: 'session-tools',
+    stableVideoIdentity: 'video-tools',
+    targetFrame: 3,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    tool: 'brush'
+  };
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: true,
+    session
+  }))).success, true);
+
+  let toolRevision = 0;
+  for (const tool of FABRIC_DRAWING_TOOLS) {
+    toolRevision += 1;
+    const response = await host.updateDrawingTool({
+      hostGeneration,
+      videoGeneration: 1,
+      inputRevision: 2,
+      sessionId: 'session-tools',
+      toolRevision,
+      tool
+    });
+    assert.equal(response.success, true, `호스트가 도구 ${tool} 를 거부했다`);
+    assert.equal(response.tool, tool, `호스트가 도구 ${tool} 를 접어 버렸다`);
+  }
+
+  // 실재하지 않는 도구는 경계에서 막혀야 한다.
+  toolRevision += 1;
+  const rejected = await host.updateDrawingTool({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-tools',
+    toolRevision,
+    tool: 'lasso'
+  });
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.accepted, false);
+});
+
+async function enableBrushSession(host, hostGeneration, sessionId, inputRevision) {
+  const session = {
+    sessionId,
+    stableVideoIdentity: 'video-brush',
+    targetFrame: 4,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    tool: 'brush'
+  };
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: inputRevision - 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision,
+    enabled: true,
+    session
+  }))).success, true);
+  return (brushRevision, size, overrides = {}) => host.updateDrawingBrush({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision,
+    sessionId,
+    brushRevision,
+    ...(size === undefined ? null : { size }),
+    ...overrides
+  });
+}
+
+function createBrushHost() {
+  return createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingBrush(')) return undefined;
+      const match = script.match(/"size":(\d+)/);
+      return { accepted: true, size: match ? Number(match[1]) : 0 };
+    }
+  });
+}
+
+test('updateDrawingBrush relays a valid request and advances the brush revision', async () => {
+  const { host } = createBrushHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableBrushSession(host, ensured.drawingCapability.hostGeneration, 'session-brush', 2);
+
+  const first = await send(1, 8);
+  assert.equal(first.success, true);
+  assert.equal(first.accepted, true);
+  assert.equal(first.size, 8);
+
+  const second = await send(2, 9);
+  assert.equal(second.success, true);
+  assert.equal(second.size, 9);
+});
+
+test('updateDrawingBrush rejects stale tokens, backward revisions and out-of-range sizes', async () => {
+  const { host } = createBrushHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const send = await enableBrushSession(host, hostGeneration, 'session-brush-stale', 2);
+
+  assert.equal((await send(1, 8)).success, true);
+  // 역행하거나 같은 revision 은 거부된다.
+  assert.equal((await send(1, 9)).success, false);
+  assert.equal((await send(0, 9)).success, false);
+  // 토큰 불일치.
+  assert.equal((await send(2, 9, { hostGeneration: hostGeneration - 1 })).success, false);
+  assert.equal((await send(2, 9, { videoGeneration: 7 })).success, false);
+  assert.equal((await send(2, 9, { inputRevision: 99 })).success, false);
+  assert.equal((await send(2, 9, { sessionId: 'session-other' })).success, false);
+  // 범위 밖 크기.
+  assert.equal((await send(2, 0)).success, false);
+  assert.equal((await send(2, 1.5)).success, false);
+
+  // 상대 증감도 같은 경계 검사를 받는다.
+  assert.equal((await send(2, undefined, { step: 0 })).success, false, '0 증감은 의미가 없다');
+  assert.equal((await send(2, undefined, { step: 1.5 })).success, false);
+  assert.equal((await send(2, undefined, { step: 999 })).success, false, '한 번에 너무 큰 증감');
+  // 절대 크기와 증감을 함께 보내면 어느 쪽이 이기는지 모호해지므로 거부한다.
+  assert.equal((await send(2, 8, { step: 1 })).success, false);
+  assert.equal((await send(2, undefined, { step: -1 })).success, true);
+});
+
+test('updateDrawingBrush applies a relative step against the overlay size', async () => {
+  // 컨트롤러는 절대 크기를 모른다. 오버레이가 현재 값에 증감을 적용해 결과를 돌려준다.
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingBrush(')) return undefined;
+      const match = script.match(/"step":(-?\d+)/);
+      return { accepted: true, size: 20 + (match ? Number(match[1]) : 0) };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableBrushSession(host, ensured.drawingCapability.hostGeneration, 'session-brush-step', 2);
+
+  const response = await send(1, undefined, { step: 1 });
+  assert.equal(response.success, true);
+  assert.equal(response.size, 21, '팔레트로 20px 이 된 상태에서 ] 는 21 이어야 한다');
+});
+
+test('enabling drawing input resets the brush revision for the new session', async () => {
+  // 이 리셋이 없으면 첫 세션에서 [ / ] 를 여러 번 누른 뒤 새 세션이
+  // brushRevision 0 으로 시작해 앱 재시작까지 전부 stale 거부된다.
+  const { host } = createBrushHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+
+  const first = await enableBrushSession(host, hostGeneration, 'session-brush-a', 2);
+  for (let revision = 1; revision <= 12; revision += 1) {
+    assert.equal((await first(revision, 10)).success, true);
+  }
+
+  const second = await enableBrushSession(host, hostGeneration, 'session-brush-b', 6);
+  assert.equal(
+    (await second(1, 7)).success,
+    true,
+    '새 세션은 brushRevision 1 부터 다시 받아야 한다'
+  );
 });

@@ -399,6 +399,7 @@ module.exports = {
   createGeometryBudget,
   createPolygonEdgeIndex,
   simplifyClosedPolygon,
+  simplifyOpenPolyline,
   segmentEdgeIntersectionParameters,
   segmentPolygonIntersectionParameters
 };

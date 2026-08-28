@@ -1563,6 +1563,8 @@ async function initApp() {
    * 키 코드를 표시 문자열로 변환
    */
   function keyCodeToDisplay(keyCode) {
+    // 기본 단축키가 없는 액션(도형 도구 등)은 key 가 null 이다.
+    if (!keyCode) return '미지정';
     const keyMap = {
       'Space': 'Space',
       'ArrowLeft': '←',
@@ -7734,11 +7736,37 @@ async function initApp() {
       });
     }
   });
+  // 드로잉 도구 단축키 액션 ↔ 파일럿 도구 이름. 기본 키는 없고 사용자가 설정에서
+  // 배정한다(user-settings.js 의 key: null 항목들).
+  const DRAWING_TOOL_SHORTCUT_ACTIONS = {
+    drawingToolBrush: 'brush',
+    drawingToolPen: 'pen',
+    drawingToolEraser: 'eraser',
+    drawingToolLine: 'line',
+    drawingToolRect: 'rect',
+    drawingToolCircle: 'circle',
+    drawingToolArrow: 'arrow'
+  };
+
   const fabricDrawingPilotController = createFabricDrawingPilotController({
     electronAPI: window.electronAPI,
     getContext: getFabricDrawingPilotContext,
     matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
     matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
+    // 설정에서 배정한 도구 단축키를 실제 도구 전환으로 잇는다.
+    // drawingToolSelect(V)는 matchesSelectionShortcut 이 이미 처리한다.
+    matchesToolShortcut: event => {
+      for (const [actionId, tool] of Object.entries(DRAWING_TOOL_SHORTCUT_ACTIONS)) {
+        if (userSettings.matchShortcut(actionId, event)) return tool;
+      }
+      return null;
+    },
+    // 액션 id 로 판정한다 — 사용자가 [ / ] 를 다른 키로 재지정해도 따라간다.
+    matchesBrushSizeShortcut: event => {
+      if (userSettings.matchShortcut('brushSizeUp', event)) return 1;
+      if (userSettings.matchShortcut('brushSizeDown', event)) return -1;
+      return 0;
+    },
     persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange,
     getHistoryRevision: () => globalHistoryRevision,
@@ -8875,6 +8903,21 @@ async function initApp() {
 
   // 작업4: 오버레이 키 릴레이(메인 포커스 handoff 판정·IME 조합 통과)와
   // 릴레이 dispatch 대상 선택이 하드코딩 'KeyB' 대신 실제 사용자 단축키를 쓰게 한다.
+  // 그리기 모드에서만 의미가 있는 단축키들. 에디터 포커스가 남아 있어도
+  // 오버레이가 키보드를 소유한 동안에는 이 키들이 오버레이로 가야 한다.
+  const MPV_OVERLAY_RELAY_DRAWING_ACTIONS = Object.freeze([
+    'drawingToolSelect',
+    'drawingToolBrush',
+    'drawingToolPen',
+    'drawingToolEraser',
+    'drawingToolLine',
+    'drawingToolRect',
+    'drawingToolCircle',
+    'drawingToolArrow',
+    'brushSizeDown',
+    'brushSizeUp'
+  ]);
+
   function getMpvOverlayDrawModeShortcutDescriptor() {
     const shortcut = userSettings.getShortcut('drawMode');
     if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return null;
@@ -8887,14 +8930,47 @@ async function initApp() {
   }
 
   function getMpvOverlayRelayGlobalShortcutCodes() {
+    // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가
+    // 에디터면 릴레이된 키가 그쪽으로 가고 컨트롤러가 editable-target 으로 버린다.
+    // 그리기 중에만 쓰는 단축키를 우회 목록에 넣는다.
+    //
+    // 수식키가 붙은 배정도 그대로 넘긴다. 릴레이가 chord 전체를 대조하므로
+    // Shift+E 를 넣어도 평문 E 는 텍스트 입력에 그대로 남는다.
+    const seen = new Set();
+    const shortcuts = [];
+    const add = descriptor => {
+      if (!descriptor) return;
+      const signature = [
+        descriptor.code,
+        descriptor.ctrl ? 'c' : '',
+        descriptor.shift ? 's' : '',
+        descriptor.alt ? 'a' : ''
+      ].join('|');
+      if (seen.has(signature)) return;
+      seen.add(signature);
+      shortcuts.push(descriptor);
+    };
+    const describe = actionId => {
+      const shortcut = userSettings.getShortcut(actionId);
+      if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return null;
+      return {
+        code: shortcut.key,
+        ctrl: shortcut.ctrl === true,
+        shift: shortcut.shift === true,
+        alt: shortcut.alt === true
+      };
+    };
     const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
-    // 릴레이 우회는 code만 보고 판정하므로, 수식키가 붙은 단축키는 평문 키까지
-    // 텍스트 포커스에서 빼앗는 과잉 우회가 된다 — 단독 키일 때만 등록한다.
-    if (!drawModeShortcut ||
-        drawModeShortcut.ctrl || drawModeShortcut.shift || drawModeShortcut.alt) {
-      return [];
+    if (drawModeShortcut) {
+      add({
+        code: drawModeShortcut.key,
+        ctrl: drawModeShortcut.ctrl,
+        shift: drawModeShortcut.shift,
+        alt: drawModeShortcut.alt
+      });
     }
-    return [drawModeShortcut.key];
+    for (const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS) add(describe(actionId));
+    return shortcuts;
   }
 
   function getMpvOverlayState() {
@@ -15079,12 +15155,14 @@ async function initApp() {
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeConvertToFrame', 'keyframeConvertToKeyframe', 'keyframeDelete', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame', 'frameCopy', 'framePaste'],
     '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerVisibilityToggle', 'drawingLayerLockToggle', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
-    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp', 'drawingToolSelect']
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp', 'drawingToolSelect', 'drawingToolBrush', 'drawingToolPen', 'drawingToolEraser', 'drawingToolLine', 'drawingToolRect', 'drawingToolCircle', 'drawingToolArrow']
   };
 
   let capturingShortcutAction = null;
 
   function keyCodeToDisplay(code) {
+    // 기본 단축키가 없는 액션(도형 도구 등)은 key 가 null 이다.
+    if (!code) return '미지정';
     const map = {
       'Space': 'Space', 'ArrowLeft': '←', 'ArrowRight': '→', 'ArrowUp': '↑', 'ArrowDown': '↓',
       'Home': 'Home', 'End': 'End', 'Delete': 'Del', 'Backspace': 'Back', 'Backquote': '`',
@@ -16417,6 +16495,8 @@ async function initApp() {
 
   // 키 코드를 표시용 문자열로 변환
   function formatKeyCode(code) {
+    // 기본 단축키가 없는 액션(도형 도구 등)은 key 가 null 이다.
+    if (!code) return '미지정';
     const keyMap = {
       'Space': 'Space',
       'ArrowLeft': '←',

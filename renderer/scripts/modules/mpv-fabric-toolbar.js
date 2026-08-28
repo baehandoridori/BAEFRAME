@@ -102,7 +102,8 @@ function createFabricDrawingPalette(options = {}) {
     element,
     setStyles,
     addDomListener,
-    sections = []
+    sections = [],
+    onSectionToggle = null
   } = options;
   if (!documentRef?.createElement || !element) {
     throw new Error('Fabric palette requires a document and a root element');
@@ -158,6 +159,12 @@ function createFabricDrawingPalette(options = {}) {
   const content = documentRef.createElement('div');
   content.className = 'mpv-fabric-pilot-toolbar-content';
 
+  // 라벨이 있는 섹션의 래퍼. 도구에 따라 관련 섹션만 남기기 위해 id 로 찾는다.
+  const sectionElements = new Map();
+  // 섹션별 접힘 상태. 붙임 패널을 스스로 갱신하는 쪽(브러시 설정)이 접힘을
+  // 무시하고 다시 열지 않도록 조회할 수 있어야 한다.
+  const collapsedSections = new Set();
+
   for (const section of sections) {
     const items = Array.isArray(section?.items) ? section.items : [];
     const appended = Array.isArray(section?.appended) ? section.appended : [];
@@ -176,10 +183,60 @@ function createFabricDrawingPalette(options = {}) {
     label.textContent = section.label;
     const row = documentRef.createElement('div');
     row.className = 'mpv-fabric-pilot-section-row';
+    // 항목이 많은 섹션(도구 줄)은 한 줄로 늘어놓으면 팔레트를 넘친다.
+    // 렌더러 구조는 그대로 두고 표시만 그리드로 바꾼다.
+    // minmax(0, 1fr) 이어야 트랙이 버튼의 min-width 보다 작아질 수 있다 —
+    // 1fr 만 쓰면 min-content(= min-width 40px)가 하한이 되어 팔레트를 넘친다.
+    if (section.layout === 'grid') {
+      const columns = Math.max(1, Number(section.columns) || 4);
+      const gap = typeof section.gap === 'string' ? section.gap : '4px';
+      row.dataset.layout = 'grid';
+      applyStyles(row, {
+        display: 'grid',
+        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        gap
+      });
+      for (const item of items) {
+        applyStyles(item, { minWidth: '0', padding: '0' });
+      }
+    }
     for (const item of items) row.appendChild(item);
+    // 섹션 라벨을 눌러 그 섹션만 접는다. 팔레트 전체 접기와는 별개다.
+    //
+    // 키보드 활성화는 배선하지 않는다. 그리기 입력이 켜져 있는 동안 오버레이
+    // 호스트의 before-input-event 가 모든 키를 메인 렌더러로 넘기며
+    // preventDefault() 하므로 Enter·Space 가 이 문서에 아예 도달하지 못하고,
+    // Tab 으로 포커스를 옮길 수도 없다. role="button" 과 tabindex 를 달면
+    // 도달할 수 없는 컨트롤을 도달할 수 있는 것처럼 알리는 셈이 된다.
+    // 오버레이가 포커스 상태를 호스트에 알리는 경로가 생기면 그때 배선한다.
+    label.setAttribute?.('title', `${section.label} 접기/펴기`);
+    label.dataset.collapsed = 'false';
+    const sectionId = String(section.id || section.label);
+    const toggleSection = () => {
+      const collapsed = label.dataset.collapsed !== 'true';
+      label.dataset.collapsed = String(collapsed);
+      if (collapsed) collapsedSections.add(sectionId);
+      else collapsedSections.delete(sectionId);
+      // grid 로 만든 섹션을 flex 로 되돌리면 도구 줄이 한 줄로 무너진다.
+      applyStyles(row, {
+        display: collapsed ? 'none' : (row.dataset.layout === 'grid' ? 'grid' : 'flex')
+      });
+      // 붙임 패널의 표시 상태는 캐시하지 않는다. 접혀 있는 동안 소유자 쪽 상태가
+      // 바뀌면(도구 전환으로 도형 메뉴가 닫히는 등) 캐시가 낡아, 펼칠 때
+      // aria-expanded 와 어긋난 채 패널만 되살아난다.
+      // 접을 때는 감추고, 펼칠 때는 비운 뒤 소유자에게 다시 쓰게 한다.
+      for (const item of appended) {
+        applyStyles(item, { display: collapsed ? 'none' : '' });
+      }
+      if (!collapsed) onSectionToggle?.(sectionId, false);
+      // 섹션이 여닫히면 팔레트 높이가 달라진다. 화면 밖으로 나가지 않게 다시 잡는다.
+      applyPosition(state);
+    };
+    listen(label, 'click', toggleSection);
     sectionElement.appendChild(label);
     sectionElement.appendChild(row);
     for (const item of appended) sectionElement.appendChild(item);
+    sectionElements.set(sectionId, sectionElement);
     content.appendChild(sectionElement);
   }
 
@@ -274,15 +331,37 @@ function createFabricDrawingPalette(options = {}) {
 
   applyCollapsedState();
 
+  // 도구에 따라 라벨이 있는 섹션을 통째로 숨긴다. 라벨 없는 묶음(선택 설정·상태)은
+  // 래퍼가 없어 여기에 등록되지 않으며, 자체적으로 표시를 관리한다.
+  function setSectionVisible(id, visible) {
+    const sectionElement = sectionElements.get(String(id));
+    if (!sectionElement) return false;
+    const wasHidden = sectionElement.style?.display === 'none';
+    // 보일 때는 인라인 값을 비워 CSS 가 정한 세로 배치를 그대로 쓴다.
+    // 'flex' 를 강제하면 flex-direction 이 없어 라벨·버튼 줄·설정 패널이
+    // 가로로 늘어서서 좁은 팔레트를 넘친다.
+    applyStyles(sectionElement, { display: visible ? '' : 'none' });
+    // 숨어 있던 섹션이 다시 나오면 팔레트가 높아진다. 화면 아래쪽에 놓여 있었다면
+    // 새로 드러난 컨트롤이 화면 밖으로 밀려나므로 위치를 다시 잡는다.
+    if (wasHidden !== !visible) applyPosition(state);
+    return true;
+  }
+
+  function isSectionCollapsed(id) {
+    return collapsedSections.has(String(id));
+  }
+
   return {
     element,
     header,
     content,
     collapseButton,
+    isSectionCollapsed,
     restore() {
       applyCollapsedState();
       return applyPosition(state);
     },
+    setSectionVisible,
     setCollapsed,
     isCollapsed: () => state.collapsed,
     getState: () => ({ ...state })

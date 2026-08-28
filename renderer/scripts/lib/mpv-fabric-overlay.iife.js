@@ -473,6 +473,7 @@
         createGeometryBudget,
         createPolygonEdgeIndex,
         simplifyClosedPolygon,
+        simplifyOpenPolyline,
         segmentEdgeIntersectionParameters,
         segmentPolygonIntersectionParameters
       };
@@ -5839,7 +5840,8 @@
           element,
           setStyles,
           addDomListener,
-          sections = []
+          sections = [],
+          onSectionToggle = null
         } = options;
         if (!documentRef?.createElement || !element) {
           throw new Error("Fabric palette requires a document and a root element");
@@ -5881,6 +5883,8 @@
         header.appendChild(collapseButton);
         const content = documentRef.createElement("div");
         content.className = "mpv-fabric-pilot-toolbar-content";
+        const sectionElements = /* @__PURE__ */ new Map();
+        const collapsedSections = /* @__PURE__ */ new Set();
         for (const section of sections) {
           const items = Array.isArray(section?.items) ? section.items : [];
           const appended = Array.isArray(section?.appended) ? section.appended : [];
@@ -5897,10 +5901,42 @@
           label.textContent = section.label;
           const row = documentRef.createElement("div");
           row.className = "mpv-fabric-pilot-section-row";
+          if (section.layout === "grid") {
+            const columns = Math.max(1, Number(section.columns) || 4);
+            const gap = typeof section.gap === "string" ? section.gap : "4px";
+            row.dataset.layout = "grid";
+            applyStyles(row, {
+              display: "grid",
+              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              gap
+            });
+            for (const item of items) {
+              applyStyles(item, { minWidth: "0", padding: "0" });
+            }
+          }
           for (const item of items) row.appendChild(item);
+          label.setAttribute?.("title", `${section.label} \uC811\uAE30/\uD3B4\uAE30`);
+          label.dataset.collapsed = "false";
+          const sectionId = String(section.id || section.label);
+          const toggleSection = () => {
+            const collapsed = label.dataset.collapsed !== "true";
+            label.dataset.collapsed = String(collapsed);
+            if (collapsed) collapsedSections.add(sectionId);
+            else collapsedSections.delete(sectionId);
+            applyStyles(row, {
+              display: collapsed ? "none" : row.dataset.layout === "grid" ? "grid" : "flex"
+            });
+            for (const item of appended) {
+              applyStyles(item, { display: collapsed ? "none" : "" });
+            }
+            if (!collapsed) onSectionToggle?.(sectionId, false);
+            applyPosition(state);
+          };
+          listen(label, "click", toggleSection);
           sectionElement.appendChild(label);
           sectionElement.appendChild(row);
           for (const item of appended) sectionElement.appendChild(item);
+          sectionElements.set(sectionId, sectionElement);
           content.appendChild(sectionElement);
         }
         element.appendChild(header);
@@ -5978,15 +6014,28 @@
         listen(documentRef, "pointercancel", endDrag);
         listen(windowRef, "resize", () => applyPosition(state));
         applyCollapsedState();
+        function setSectionVisible(id, visible) {
+          const sectionElement = sectionElements.get(String(id));
+          if (!sectionElement) return false;
+          const wasHidden = sectionElement.style?.display === "none";
+          applyStyles(sectionElement, { display: visible ? "" : "none" });
+          if (wasHidden !== !visible) applyPosition(state);
+          return true;
+        }
+        function isSectionCollapsed(id) {
+          return collapsedSections.has(String(id));
+        }
         return {
           element,
           header,
           content,
           collapseButton,
+          isSectionCollapsed,
           restore() {
             applyCollapsedState();
             return applyPosition(state);
           },
+          setSectionVisible,
           setCollapsed,
           isCollapsed: () => state.collapsed,
           getState: () => ({ ...state })
@@ -6042,6 +6091,40 @@
         FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE,
         FABRIC_DRAWING_MAX_TRANSITION_BYTES,
         FABRIC_DRAWING_STORE_LIMITS
+      };
+    }
+  });
+
+  // shared/fabric-drawing-tools.js
+  var require_fabric_drawing_tools = __commonJS({
+    "shared/fabric-drawing-tools.js"(exports, module) {
+      "use strict";
+      var FABRIC_FREEHAND_TOOLS = Object.freeze(["brush", "pen"]);
+      var FABRIC_SHAPE_TOOLS = Object.freeze(["line", "rect", "circle", "arrow"]);
+      var FABRIC_ERASER_TOOL = "eraser";
+      var FABRIC_SELECT_TOOL = "select";
+      var FABRIC_DRAWING_TOOLS = Object.freeze([
+        ...FABRIC_FREEHAND_TOOLS,
+        FABRIC_ERASER_TOOL,
+        ...FABRIC_SHAPE_TOOLS,
+        FABRIC_SELECT_TOOL
+      ]);
+      var FABRIC_DEFAULT_DRAWING_TOOL = "brush";
+      function isFabricDrawingTool(value) {
+        return typeof value === "string" && FABRIC_DRAWING_TOOLS.includes(value);
+      }
+      function normalizeFabricDrawingTool(value) {
+        return isFabricDrawingTool(value) ? value : FABRIC_DEFAULT_DRAWING_TOOL;
+      }
+      module.exports = {
+        FABRIC_DEFAULT_DRAWING_TOOL,
+        FABRIC_DRAWING_TOOLS,
+        FABRIC_ERASER_TOOL,
+        FABRIC_FREEHAND_TOOLS,
+        FABRIC_SELECT_TOOL,
+        FABRIC_SHAPE_TOOLS,
+        isFabricDrawingTool,
+        normalizeFabricDrawingTool
       };
     }
   });
@@ -13414,7 +13497,8 @@ void main() {
         boundsIntersect,
         createGeometryBudget,
         createPolygonEdgeIndex,
-        simplifyClosedPolygon
+        simplifyClosedPolygon,
+        simplifyOpenPolyline
       } = require_lasso_geometry();
       var {
         clipSimplePathFillPair,
@@ -13451,6 +13535,11 @@ void main() {
         FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE: MAX_PERSISTED_TRANSFORM_MAGNITUDE,
         FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH
       } = require_fabric_drawing_limits();
+      var {
+        FABRIC_SHAPE_TOOLS,
+        isFabricDrawingTool,
+        normalizeFabricDrawingTool
+      } = require_fabric_drawing_tools();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -13486,8 +13575,37 @@ void main() {
         "#ff6b9d": "\uD551\uD06C"
       });
       var DEFAULT_BRUSH_STYLE = Object.freeze({ color: "#ff4757", size: 3, opacity: 1 });
+      var TOOL_ICON_SVG = Object.freeze({
+        brush: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9.06 11.9l8.07-8.06a2.85 2.85 0 1 1 4.03 4.03l-8.06 8.08"/><path d="M7.07 14.94c-1.66 0-3 1.35-3 3.02 0 1.33-2.5 1.52-2 2.02 1.08 1.1 2.49 2.02 4 2.02 2.2 0 4-1.8 4-4.04a3.01 3.01 0 0 0-3-3.02z"/></svg>',
+        pen: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M17 3a2.828 2.828 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"/></svg>',
+        eraser: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/></svg>',
+        line: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="19" x2="19" y2="5"/></svg>',
+        rect: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/></svg>',
+        circle: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/></svg>',
+        arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
+        select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>'
+      });
+      var SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
+      var TOOL_STATUS_LABELS = Object.freeze({
+        brush: "\uBE0C\uB7EC\uC2DC",
+        pen: "\uD39C",
+        eraser: "\uC9C0\uC6B0\uAC1C",
+        line: "\uC9C1\uC120",
+        rect: "\uC0AC\uAC01\uD615",
+        circle: "\uC6D0",
+        arrow: "\uD654\uC0B4\uD45C",
+        select: "\uC120\uD0DD"
+      });
+      var SHAPE_TOOL_LABELS = Object.freeze({
+        line: "\uC9C1\uC120",
+        rect: "\uC0AC\uAC01\uD615",
+        circle: "\uC6D0",
+        arrow: "\uD654\uC0B4\uD45C"
+      });
+      var RECENT_COLOR_LIMIT = 4;
       var MIN_BRUSH_SIZE = 1;
       var MAX_BRUSH_SIZE = 50;
+      var SIZE_ADJUST_HUD_FLASH_MS = 700;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
       var SIZE_ADJUST_PIXELS_PER_STEP = 4;
@@ -14754,7 +14872,7 @@ void main() {
             sourceFrame: restored ? sourceFrame : sourceScene ? sourceFrame : null,
             sceneKey,
             videoGeneration,
-            tool: session.tool === "select" ? "select" : "brush",
+            tool: normalizeFabricDrawingTool(session.tool),
             toolRevision: -1
           };
           const scene = activeScene();
@@ -15181,7 +15299,7 @@ void main() {
           if (!Number.isInteger(toolRevision) || toolRevision <= activeSession.toolRevision) {
             return { accepted: false, reason: "stale-tool-revision" };
           }
-          if (command.tool !== "brush" && command.tool !== "select") {
+          if (!isFabricDrawingTool(command.tool)) {
             return { accepted: false, reason: "invalid-tool" };
           }
           activeSession.toolRevision = toolRevision;
@@ -15192,7 +15310,7 @@ void main() {
           if (!activeSession || command.sessionId !== activeSession.sessionId) {
             return { accepted: false, reason: "stale-session" };
           }
-          if (command.tool !== "brush" && command.tool !== "select") {
+          if (!isFabricDrawingTool(command.tool)) {
             return { accepted: false, reason: "invalid-tool" };
           }
           activeSession.tool = command.tool;
@@ -15393,6 +15511,88 @@ void main() {
         commands.push("Z");
         return commands.join(" ");
       }
+      var SHAPE_EDGE_SEGMENTS = 24;
+      var SHAPE_ELLIPSE_SEGMENTS = 128;
+      var SHAPE_ARROW_HEAD_MIN = 15;
+      var SHAPE_ARROW_HEAD_SIZE_FACTOR = 4;
+      var SHAPE_ARROW_HEAD_ANGLE = Math.PI / 6;
+      var SHAPE_MIN_DRAG_DISTANCE = 2;
+      function interpolateShapeEdge(points, from, to, segments) {
+        for (let index = 1; index <= segments; index += 1) {
+          const amount = index / segments;
+          points.push({
+            x: from.x + (to.x - from.x) * amount,
+            y: from.y + (to.y - from.y) * amount
+          });
+        }
+      }
+      function shapeCenterlinePoints(tool, start, end, brushSize) {
+        const points = [{ x: start.x, y: start.y }];
+        if (tool === "line") {
+          interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+          return points;
+        }
+        if (tool === "rect") {
+          const topRight = { x: end.x, y: start.y };
+          const bottomRight = { x: end.x, y: end.y };
+          const bottomLeft = { x: start.x, y: end.y };
+          interpolateShapeEdge(points, start, topRight, SHAPE_EDGE_SEGMENTS);
+          interpolateShapeEdge(points, topRight, bottomRight, SHAPE_EDGE_SEGMENTS);
+          interpolateShapeEdge(points, bottomRight, bottomLeft, SHAPE_EDGE_SEGMENTS);
+          interpolateShapeEdge(points, bottomLeft, start, SHAPE_EDGE_SEGMENTS);
+          return points;
+        }
+        if (tool === "circle") {
+          const radiusX = Math.abs(end.x - start.x) / 2;
+          const radiusY = Math.abs(end.y - start.y) / 2;
+          const centerX = start.x + (end.x - start.x) / 2;
+          const centerY = start.y + (end.y - start.y) / 2;
+          points.length = 0;
+          for (let index = 0; index <= SHAPE_ELLIPSE_SEGMENTS; index += 1) {
+            const angle2 = index / SHAPE_ELLIPSE_SEGMENTS * Math.PI * 2;
+            points.push({
+              x: centerX + Math.cos(angle2) * radiusX,
+              y: centerY + Math.sin(angle2) * radiusY
+            });
+          }
+          return points;
+        }
+        const headLength = Math.max(SHAPE_ARROW_HEAD_MIN, brushSize * SHAPE_ARROW_HEAD_SIZE_FACTOR);
+        const angle = Math.atan2(end.y - start.y, end.x - start.x);
+        const barbA = {
+          x: end.x - headLength * Math.cos(angle - SHAPE_ARROW_HEAD_ANGLE),
+          y: end.y - headLength * Math.sin(angle - SHAPE_ARROW_HEAD_ANGLE)
+        };
+        const barbB = {
+          x: end.x - headLength * Math.cos(angle + SHAPE_ARROW_HEAD_ANGLE),
+          y: end.y - headLength * Math.sin(angle + SHAPE_ARROW_HEAD_ANGLE)
+        };
+        interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+        interpolateShapeEdge(points, end, barbA, SHAPE_EDGE_SEGMENTS);
+        interpolateShapeEdge(points, barbA, end, SHAPE_EDGE_SEGMENTS);
+        interpolateShapeEdge(points, end, barbB, SHAPE_EDGE_SEGMENTS);
+        return points;
+      }
+      function shapeCenterlineSamples(tool, start, end, brushSize) {
+        return shapeCenterlinePoints(tool, start, end, brushSize).map((point, index) => ({
+          x: point.x,
+          y: point.y,
+          pressure: 1,
+          time: index
+        }));
+      }
+      var PEN_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0.4, streamline: 0.35 });
+      var SHAPE_STROKE_GEOMETRY = Object.freeze({ thinning: 0, smoothing: 0, streamline: 0 });
+      var STROKE_GEOMETRY_CANDIDATES = Object.freeze([
+        null,
+        SHAPE_STROKE_GEOMETRY,
+        PEN_STROKE_GEOMETRY
+      ]);
+      var SHAPE_STROKE_OPTIONS = Object.freeze({
+        ...SHAPE_STROKE_GEOMETRY,
+        alreadyNormalizedPressure: true,
+        last: true
+      });
       function createStrokePathData(samples, options = {}) {
         if (!Array.isArray(samples) || samples.length === 0) {
           return { sourcePoints: [], outline: [], pathData: "" };
@@ -15610,8 +15810,10 @@ void main() {
         let activeLasso = null;
         let sizeAdjustGesture = null;
         let strokeEraseGesture = null;
+        let shapeGesture = null;
         let sizeAdjustHud = null;
         let sizeAdjustHudLabel = null;
+        let sizeAdjustHudTimer = null;
         const overlayModifierState = { alt: false, ctrl: false };
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
@@ -15630,6 +15832,14 @@ void main() {
         let selectionControlEventCount = 0;
         let lastSelectionControlAction = null;
         let selectionControls = null;
+        let eraserMode = "stroke";
+        let eraserModeControls = null;
+        let shapeMenuControls = null;
+        let shapeMenuOpen = false;
+        let lastShapeTool = "rect";
+        let brushStatusRow = null;
+        const recentColors = [];
+        let recentColorControls = null;
         let transformStart = null;
         let selectGesture = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
@@ -15663,7 +15873,7 @@ void main() {
           button.type = "button";
           button.textContent = label;
           button.dataset.fabricPilotAction = action;
-          if (action === "brush" || action === "select") {
+          if (isFabricDrawingTool(action)) {
             button.dataset.active = "false";
             button.setAttribute?.("aria-pressed", "false");
             toolButtons.set(action, button);
@@ -15673,6 +15883,12 @@ void main() {
         function labelToolbarButton(button, label) {
           button.setAttribute?.("aria-label", label);
           button.setAttribute?.("title", label);
+          return button;
+        }
+        function iconToolbarButton(button, label, icon) {
+          labelToolbarButton(button, label);
+          button.textContent = "";
+          if (icon) button.innerHTML = icon;
           return button;
         }
         function syncPersistenceBadge(targetFrame = null) {
@@ -15696,6 +15912,184 @@ void main() {
             button.setAttribute?.("aria-pressed", String(active));
           }
           selectionControls.summary.textContent = selectionTarget === "partial" ? `\uD604\uC7AC: \uBD80\uBD84 \uC790\uB974\uAE30 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}` : `\uD604\uC7AC: \uD68D \uC804\uCCB4 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}`;
+        }
+        function createBrushStatusRow() {
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-brush-status";
+          const swatch = documentRef.createElement("span");
+          swatch.dataset.fabricPilotOutput = "brush-status-swatch";
+          const text = documentRef.createElement("span");
+          text.dataset.fabricPilotOutput = "brush-status-text";
+          text.setAttribute?.("role", "status");
+          text.setAttribute?.("aria-live", "polite");
+          row.appendChild(swatch);
+          row.appendChild(text);
+          return { row, swatch, text };
+        }
+        function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
+          if (!brushStatusRow) return;
+          const diameter = Math.min(22, Math.max(2, brushStyle.size));
+          setStyles(brushStatusRow.swatch, {
+            display: "inline-block",
+            width: `${diameter}px`,
+            height: `${diameter}px`,
+            borderRadius: "50%",
+            background: brushStyle.color,
+            opacity: String(brushStyle.opacity)
+          });
+          const toolName = TOOL_STATUS_LABELS[tool] || "";
+          brushStatusRow.text.textContent = toolName ? `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}% \xB7 ${toolName}` : `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}%`;
+        }
+        function createRecentColorControls() {
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-recent-colors";
+          row.setAttribute?.("role", "group");
+          row.setAttribute?.("aria-label", "\uCD5C\uADFC \uC0AC\uC6A9 \uC0C9");
+          const buttons = [];
+          for (let index = 0; index < RECENT_COLOR_LIMIT; index += 1) {
+            const button = createButton("", `recent-color-${index}`);
+            button.dataset.fabricPilotRecentColor = "";
+            setStyles(button, { display: "none", minWidth: "20px", minHeight: "20px", padding: "0" });
+            addDomListener(button, "click", () => {
+              const color = button.dataset.fabricPilotRecentColor;
+              if (color) setBrushColor(color);
+            });
+            row.appendChild(button);
+            buttons.push(button);
+          }
+          return { row, buttons };
+        }
+        function syncRecentColorControls() {
+          if (!recentColorControls) return;
+          recentColorControls.buttons.forEach((button, index) => {
+            const color = recentColors[index];
+            button.dataset.fabricPilotRecentColor = color || "";
+            setStyles(button, {
+              display: color ? "inline-block" : "none",
+              background: color || "transparent"
+            });
+            button.setAttribute?.("aria-label", color ? `\uCD5C\uADFC \uC0C9 ${color}` : "");
+            button.setAttribute?.("title", color ? `\uCD5C\uADFC \uC0C9 ${color}` : "");
+          });
+        }
+        function noteRecentColor(color) {
+          if (typeof color !== "string" || color.length === 0) return;
+          const index = recentColors.indexOf(color);
+          if (index >= 0) recentColors.splice(index, 1);
+          recentColors.unshift(color);
+          while (recentColors.length > RECENT_COLOR_LIMIT) recentColors.pop();
+          syncRecentColorControls();
+        }
+        function createShapeMenuControls() {
+          const button = labelToolbarButton(createButton("", "shape-menu"), "\uB3C4\uD615 \uB3C4\uAD6C");
+          button.dataset.active = "false";
+          button.setAttribute?.("aria-haspopup", "true");
+          button.setAttribute?.("aria-expanded", "false");
+          setStyles(button, { position: "relative" });
+          const icon = documentRef.createElement("span");
+          icon.dataset.fabricPilotOutput = "shape-menu-icon";
+          const caret = documentRef.createElement("span");
+          caret.dataset.fabricPilotOutput = "shape-menu-caret";
+          caret.innerHTML = SHAPE_MENU_CARET_SVG;
+          setStyles(caret, {
+            position: "absolute",
+            right: "2px",
+            bottom: "2px",
+            lineHeight: "0",
+            pointerEvents: "none"
+          });
+          button.appendChild(icon);
+          button.appendChild(caret);
+          const flyout = documentRef.createElement("div");
+          flyout.className = "mpv-fabric-pilot-shape-menu";
+          flyout.dataset.fabricPilotPanel = "shape-menu";
+          flyout.setAttribute?.("role", "group");
+          flyout.setAttribute?.("aria-label", "\uB3C4\uD615 \uB3C4\uAD6C");
+          setStyles(flyout, {
+            display: "none",
+            gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
+            gap: "3px",
+            width: "100%"
+          });
+          const shapeButtons = /* @__PURE__ */ new Map();
+          for (const tool of FABRIC_SHAPE_TOOLS) {
+            const shapeButton = iconToolbarButton(
+              createButton("", tool),
+              `${SHAPE_TOOL_LABELS[tool] || tool} \uB3C4\uAD6C`,
+              TOOL_ICON_SVG[tool]
+            );
+            setStyles(shapeButton, { minWidth: "0", padding: "0" });
+            flyout.appendChild(shapeButton);
+            shapeButtons.set(tool, shapeButton);
+          }
+          return { button, icon, flyout, shapeButtons };
+        }
+        function setShapeMenuOpen(open) {
+          if (!shapeMenuControls) return false;
+          shapeMenuOpen = open === true;
+          return applyShapeMenuVisibility();
+        }
+        function applyShapeMenuVisibility() {
+          if (!shapeMenuControls) return false;
+          const collapsed = paletteShell?.isSectionCollapsed?.("tools") === true;
+          const visible = shapeMenuOpen && !collapsed;
+          setStyles(shapeMenuControls.flyout, { display: visible ? "grid" : "none" });
+          shapeMenuControls.button.setAttribute?.("aria-expanded", String(shapeMenuOpen));
+          return visible;
+        }
+        function syncShapeMenuControls(tool = currentSession?.tool) {
+          if (!shapeMenuControls) return;
+          const isShapeTool = FABRIC_SHAPE_TOOLS.includes(tool);
+          if (isShapeTool) lastShapeTool = tool;
+          shapeMenuControls.icon.innerHTML = TOOL_ICON_SVG[lastShapeTool] || "";
+          const label = `\uB3C4\uD615 \uB3C4\uAD6C (${SHAPE_TOOL_LABELS[lastShapeTool] || lastShapeTool})`;
+          shapeMenuControls.button.setAttribute?.("aria-label", label);
+          shapeMenuControls.button.setAttribute?.("title", label);
+          shapeMenuControls.button.dataset.active = String(isShapeTool);
+          shapeMenuControls.button.setAttribute?.("aria-pressed", String(isShapeTool));
+          if (!isShapeTool) setShapeMenuOpen(false);
+          else applyShapeMenuVisibility();
+        }
+        function createEraserModeControls() {
+          const group = documentRef.createElement("div");
+          group.className = "mpv-fabric-pilot-eraser-mode";
+          group.setAttribute?.("role", "group");
+          group.setAttribute?.("aria-label", "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD");
+          const pixelButton = labelToolbarButton(
+            createButton("\uD53D\uC140", "eraser-mode-pixel"),
+            "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD: \uC9C0\uB098\uAC04 \uBD80\uBD84\uB9CC \uC9C0\uC6C0"
+          );
+          const strokeButton = labelToolbarButton(
+            createButton("\uD68D", "eraser-mode-stroke"),
+            "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD: \uC9C0\uB098\uAC04 \uD68D \uC804\uCCB4\uB97C \uC9C0\uC6C0"
+          );
+          group.appendChild(pixelButton);
+          group.appendChild(strokeButton);
+          return { group, pixelButton, strokeButton };
+        }
+        function setEraserMode(mode) {
+          eraserMode = mode === "pixel" ? "pixel" : "stroke";
+          syncEraserModeControls();
+          return eraserMode;
+        }
+        function syncEraserModeControls(tool = currentSession?.tool) {
+          if (!eraserModeControls) return;
+          setStyles(eraserModeControls.group, {
+            display: tool === "eraser" ? "flex" : "none"
+          });
+          for (const [modeName, button] of [
+            ["pixel", eraserModeControls.pixelButton],
+            ["stroke", eraserModeControls.strokeButton]
+          ]) {
+            const active = eraserMode === modeName;
+            button.dataset.active = String(active);
+            button.setAttribute?.("aria-pressed", String(active));
+          }
+        }
+        function syncToolSectionVisibility(tool) {
+          if (!paletteShell?.setSectionVisible) return;
+          paletteShell.setSectionVisible("brush", tool !== "eraser" && tool !== "select");
+          paletteShell.setSectionVisible("eraser", tool === "eraser");
         }
         function usesNativeRectangleSelection(tool = currentSession?.tool) {
           return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
@@ -15881,6 +16275,7 @@ void main() {
           if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
           brushStyle = { ...brushStyle, color };
           syncBrushControls();
+          noteRecentColor(brushStyle.color);
           return brushStyle.color;
         }
         function setBrushSize(value) {
@@ -15904,10 +16299,12 @@ void main() {
           return percent;
         }
         function syncBrushControls() {
+          syncBrushStatusRow();
           if (!brushControls) return;
           const opacityPercent = Math.round(brushStyle.opacity * 100);
           brushControls.settingsButton.setAttribute?.("aria-expanded", String(brushPanelOpen));
-          brushControls.panel.style.display = brushPanelOpen ? "flex" : "none";
+          const sectionCollapsed = paletteShell?.isSectionCollapsed?.("brush") === true;
+          brushControls.panel.style.display = brushPanelOpen && !sectionCollapsed ? "flex" : "none";
           brushControls.sizeInput.value = String(brushStyle.size);
           brushControls.opacityInput.value = String(opacityPercent);
           brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
@@ -16084,8 +16481,10 @@ void main() {
             increaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uB298\uB9AC\uAE30",
             output: "opacity"
           });
+          const recentColors2 = createRecentColorControls();
           panel.appendChild(previewRow);
           panel.appendChild(palette);
+          panel.appendChild(recentColors2.row);
           panel.appendChild(sizeRow.row);
           panel.appendChild(opacityRow.row);
           addDomListener(settingsButton, "click", () => {
@@ -16115,7 +16514,8 @@ void main() {
             opacityOutput: opacityRow.output,
             summary,
             colorPreview,
-            sizePreview
+            sizePreview,
+            recentColors: recentColors2
           };
         }
         function createId(prefix) {
@@ -16267,7 +16667,7 @@ void main() {
           activeFrameState.previewed = false;
         }
         function activeFrameInteractionInProgress() {
-          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture);
+          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
         }
         function renderedCandidateMatches(candidate) {
           return candidate.sourceFrame === activeFrameState.renderedSourceFrame && candidate.sceneInstanceId === activeFrameState.renderedSceneInstanceId && candidate.mutationSequence === activeFrameState.renderedMutationSequence;
@@ -16540,6 +16940,10 @@ void main() {
             sceneStore.selectObjects([]);
           }
           syncSelectionControls(tool);
+          syncEraserModeControls(tool);
+          syncShapeMenuControls(tool);
+          syncBrushStatusRow(tool);
+          syncToolSectionVisibility(tool);
           refreshSelectionInteractionPolicy();
           fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
           fabricCanvas.requestRenderAll();
@@ -16588,7 +16992,10 @@ void main() {
           const startedAt = now();
           removeTransientPreview();
           try {
-            const strokeData = strokePathFactory(activeStroke.samples, { size: activeStroke.style.size });
+            const strokeData = strokePathFactory(activeStroke.samples, {
+              size: activeStroke.style.size,
+              ...activeStroke.tool === "pen" ? PEN_STROKE_GEOMETRY : null
+            });
             if (!strokeData.pathData) return;
             activeStroke.preview = makeFabricPath({
               id: null,
@@ -16838,23 +17245,27 @@ void main() {
             reason: query ? null : budget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable"
           };
         }
-        function canonicalStrokePathMatches(record, budget) {
-          if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return false;
+        function resolveStrokeGeometryOptions(record, budget) {
+          if (!record || !Array.isArray(record.sourcePoints) || !record.pathData) return null;
           const logicalCost = record.sourcePoints.length * 2 + Math.ceil(record.pathData.length / 8);
-          if (!budget?.consume(logicalCost)) return false;
-          let canonical;
-          try {
-            canonical = strokePathFactory(record.sourcePoints, {
-              size: record.style?.size,
-              last: true,
-              alreadyNormalizedPressure: true,
-              start: { cap: record.strokeCaps?.start !== false },
-              end: { cap: record.strokeCaps?.end !== false }
-            });
-          } catch (_error) {
-            return false;
+          for (const candidate of STROKE_GEOMETRY_CANDIDATES) {
+            if (!budget?.consume(logicalCost)) return null;
+            let canonical;
+            try {
+              canonical = strokePathFactory(record.sourcePoints, {
+                size: record.style?.size,
+                last: true,
+                alreadyNormalizedPressure: true,
+                start: { cap: record.strokeCaps?.start !== false },
+                end: { cap: record.strokeCaps?.end !== false },
+                ...candidate || null
+              });
+            } catch (_error) {
+              return null;
+            }
+            if (canonical?.pathData === record.pathData) return candidate || {};
           }
-          return canonical?.pathData === record.pathData;
+          return null;
         }
         function sourceGeometryMatches(signature, sourcePoints) {
           if (!Array.isArray(signature) || signature.length !== sourcePoints.length * 3) return false;
@@ -17269,7 +17680,7 @@ void main() {
           }
           return { plans, reason: null };
         }
-        function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null) {
+        function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null, geometryOptions = null) {
           if (!Array.isArray(points) || points.length < 2) return null;
           let strokeData;
           try {
@@ -17278,7 +17689,9 @@ void main() {
               last: true,
               alreadyNormalizedPressure: true,
               start: { cap: caps.start !== false },
-              end: { cap: caps.end !== false }
+              end: { cap: caps.end !== false },
+              // 원본이 도형·펜이면 브러시 기본값으로 다시 만들면 안 된다.
+              ...geometryOptions || null
             });
           } catch (error) {
             lastError = error.message;
@@ -17745,13 +18158,13 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
-          const queueReplacementPlan = (record, object, componentPlans) => {
+          const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
             accumulatedFragments += componentPlans.length;
             const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
             if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
               return false;
             }
-            replacementPlans.push({ record, object, componentPlans });
+            replacementPlans.push({ record, object, componentPlans, geometryOptions });
             return true;
           };
           if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -17784,7 +18197,8 @@ void main() {
             );
             if (touch.limitExceeded) return fail("selection-complexity-limit-exceeded");
             if (!touch.hit) continue;
-            if (!canonicalStrokePathMatches(record, geometryBudget)) {
+            const geometryOptions = resolveStrokeGeometryOptions(record, geometryBudget);
+            if (!geometryOptions) {
               return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
             }
             if (!strokeHasSplittableLength(record.sourcePoints)) {
@@ -17818,7 +18232,7 @@ void main() {
               if (!compact.plans || compact.reason) {
                 return fail(compact.reason || "selection-geometry-unavailable");
               }
-              if (!queueReplacementPlan(record, object, compact.plans)) {
+              if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
                 return fail("lasso-fragment-limit-exceeded");
               }
               continue;
@@ -17865,7 +18279,7 @@ void main() {
                 if (!compact.plans || compact.reason) {
                   return fail(compact.reason || "selection-geometry-unavailable");
                 }
-                if (!queueReplacementPlan(record, object, compact.plans)) {
+                if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
                   return fail("lasso-fragment-limit-exceeded");
                 }
                 continue;
@@ -17939,7 +18353,7 @@ void main() {
               );
             }
             componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
-            if (!queueReplacementPlan(record, object, componentPlans)) {
+            if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
               return fail("lasso-fragment-limit-exceeded");
             }
           }
@@ -17955,7 +18369,8 @@ void main() {
                 plan.selected,
                 plan.caps,
                 replacementPlan.object,
-                plan.renderGeometry
+                plan.renderGeometry,
+                replacementPlan.geometryOptions
               );
               if (!fragment) {
                 fragmentBuildFailed = true;
@@ -18056,10 +18471,16 @@ void main() {
           }
           const samples = activeStroke.samples;
           const style = { ...activeStroke.style };
+          const activeStrokeTool = activeStroke.tool;
           removeTransientPreview();
           let strokeData;
           try {
-            strokeData = strokePathFactory(samples, { size: style.size, last: true });
+            strokeData = strokePathFactory(samples, {
+              size: style.size,
+              last: true,
+              // 펜은 압력에 따라 굵기가 변하지 않는다(레거시 pen 동치).
+              ...activeStrokeTool === "pen" ? PEN_STROKE_GEOMETRY : null
+            });
           } catch (error) {
             lastError = error.message;
             metrics.recordSurfaceError();
@@ -18144,6 +18565,7 @@ void main() {
           resetOverlayModifierState();
           endSizeAdjustGesture(event);
           cancelStrokeEraseGesture(event);
+          cancelShapeGesture();
           onPointerCancel(event);
         }
         function onCanvasContextMenu(event) {
@@ -18219,7 +18641,119 @@ void main() {
           if (!sizeAdjustHud) return;
           setStyles(sizeAdjustHud, { display: "none" });
         }
+        function cancelSizeAdjustHudTimer() {
+          if (sizeAdjustHudTimer === null) return;
+          clearTimeoutRef?.(sizeAdjustHudTimer);
+          sizeAdjustHudTimer = null;
+        }
+        function flashSizeAdjustHudAtViewportCenter(size) {
+          if (!sizeAdjustHud) return false;
+          cancelSizeAdjustHudTimer();
+          showSizeAdjustHud(
+            finiteNumber(windowRef?.innerWidth, 0) / 2,
+            finiteNumber(windowRef?.innerHeight, 0) / 2,
+            size
+          );
+          if (typeof setTimeoutRef !== "function") return true;
+          sizeAdjustHudTimer = setTimeoutRef(() => {
+            sizeAdjustHudTimer = null;
+            if (sizeAdjustGesture) return;
+            hideSizeAdjustHud();
+          }, SIZE_ADJUST_HUD_FLASH_MS);
+          return true;
+        }
+        function shapeGestureRecord(gesture, transient) {
+          const samples = shapeCenterlineSamples(
+            gesture.tool,
+            gesture.origin,
+            gesture.current,
+            gesture.style.size
+          );
+          if (samples.length < 2) return null;
+          let strokeData;
+          try {
+            strokeData = strokePathFactory(samples, {
+              ...SHAPE_STROKE_OPTIONS,
+              size: gesture.style.size
+            });
+          } catch (_error) {
+            return null;
+          }
+          if (!strokeData?.pathData) return null;
+          return {
+            // 미리보기는 오브젝트 id 를 갖지 않는다. 기존 미리보기 경로
+            // (updateTransientPreview / updateLassoPreview)와 같은 관례다 —
+            // makeFabricPath 가 path.__baeframeObjectId = record.id || null 로 넘긴다.
+            id: transient ? null : createId("shape"),
+            type: "stroke",
+            pathData: strokeData.pathData,
+            sourcePoints: strokeData.sourcePoints,
+            style: { ...gesture.style }
+          };
+        }
+        function clearShapePreviewFor(gesture) {
+          if (!gesture?.preview || !fabricCanvas) return;
+          fabricCanvas.remove(gesture.preview);
+          gesture.preview = null;
+          fabricCanvas.requestRenderAll();
+        }
+        function updateShapePreview() {
+          if (!shapeGesture || !fabricCanvas) return;
+          const record = shapeGestureRecord(shapeGesture, true);
+          clearShapePreviewFor(shapeGesture);
+          if (!record) {
+            fabricCanvas.requestRenderAll();
+            return;
+          }
+          const preview = makeFabricPath(record, true);
+          preview.__baeframeTransient = true;
+          shapeGesture.preview = preview;
+          fabricCanvas.add(preview);
+          fabricCanvas.requestRenderAll();
+        }
+        function shapeGestureDragDistance(gesture) {
+          return Math.hypot(
+            finiteNumber(gesture.current?.x) - finiteNumber(gesture.origin?.x),
+            finiteNumber(gesture.current?.y) - finiteNumber(gesture.origin?.y)
+          );
+        }
+        function commitShapeGesture() {
+          const gesture = shapeGesture;
+          shapeGesture = null;
+          if (!gesture) return { applied: false, reason: "no-shape-gesture" };
+          clearShapePreviewFor(gesture);
+          if (shapeGestureDragDistance(gesture) < SHAPE_MIN_DRAG_DISTANCE) {
+            settleArmedFramePreview();
+            return { applied: false, reason: "shape-too-small" };
+          }
+          const record = shapeGestureRecord(gesture, false);
+          if (!record) {
+            settleArmedFramePreview();
+            return { applied: false, reason: "shape-path-error" };
+          }
+          const path = makeFabricPath(record);
+          record.transform = captureTransform(path);
+          const result = sceneStore.addStroke(record);
+          if (!result.applied) {
+            settleArmedFramePreview();
+            return result;
+          }
+          fabricCanvas.add(path);
+          fabricCanvas.requestRenderAll();
+          updateObjectMetric();
+          settleArmedFramePreview();
+          return result;
+        }
+        function cancelShapeGesture() {
+          const gesture = shapeGesture;
+          shapeGesture = null;
+          if (!gesture) return false;
+          clearShapePreviewFor(gesture);
+          settleArmedFramePreview();
+          return true;
+        }
         function beginSizeAdjustGesture(event) {
+          cancelSizeAdjustHudTimer();
           sizeAdjustGesture = {
             pointerId: event.pointerId,
             startClientX: finiteNumber(event.clientX),
@@ -18315,6 +18849,7 @@ void main() {
           if (!point) return 0;
           const polygon = strokeEraseSweepPolygon(gesture.lastPoint, point, context.radius);
           gesture.lastPoint = point;
+          gesture.pathPoints?.push(point);
           if (!polygonHasArea(polygon, 1)) return 0;
           const polygonBounds = boundsForPoints(polygon);
           let hidden = 0;
@@ -18332,7 +18867,7 @@ void main() {
             const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
             if (touch.limitExceeded || !touch.hit) continue;
             gesture.erasedIds.add(record.id);
-            if (object) {
+            if (object && gesture.mode !== "pixel") {
               gesture.hiddenObjects.push(object);
               object.set?.({ visible: false });
               hidden += 1;
@@ -18358,6 +18893,139 @@ void main() {
           );
           return true;
         }
+        function offsetRibbonFromSpine(spine, radius) {
+          const left = [];
+          const right = [];
+          const unitNormal = (dx, dy) => {
+            const length = Math.hypot(dx, dy) || 1;
+            return { x: -dy / length, y: dx / length };
+          };
+          const at = (point, normal, sign) => ({
+            x: point.x + normal.x * radius * sign,
+            y: point.y + normal.y * radius * sign
+          });
+          for (let index = 0; index < spine.length; index += 1) {
+            const current = spine[index];
+            const previous = spine[index - 1];
+            const next = spine[index + 1];
+            if (!previous || !next) {
+              const from = previous || current;
+              const to = next || current;
+              const normal = unitNormal(to.x - from.x, to.y - from.y);
+              left.push(at(current, normal, 1));
+              right.push(at(current, normal, -1));
+              continue;
+            }
+            const inNormal = unitNormal(current.x - previous.x, current.y - previous.y);
+            const outNormal = unitNormal(next.x - current.x, next.y - current.y);
+            const averageNormal = unitNormal(next.x - previous.x, next.y - previous.y);
+            const miterX = inNormal.x + outNormal.x;
+            const miterY = inNormal.y + outNormal.y;
+            const miterLength = Math.hypot(miterX, miterY);
+            let miterNormal = null;
+            if (miterLength > 1e-6) {
+              const mx = miterX / miterLength;
+              const my = miterY / miterLength;
+              const projection = mx * inNormal.x + my * inNormal.y;
+              if (projection > 0.5) miterNormal = { x: mx / projection, y: my / projection };
+            }
+            const turn = (current.x - previous.x) * (next.y - current.y) - (current.y - previous.y) * (next.x - current.x);
+            const outer = turn < 0 ? left : right;
+            const inner = turn < 0 ? right : left;
+            const outerSign = turn < 0 ? 1 : -1;
+            outer.push(at(current, inNormal, outerSign));
+            if (miterNormal) outer.push(at(current, miterNormal, outerSign));
+            outer.push(at(current, outNormal, outerSign));
+            inner.push(at(current, averageNormal, -outerSign));
+          }
+          return [...left, ...right.reverse()];
+        }
+        function extendSpineEndpoints(spine, radius) {
+          const extend = (from, to) => {
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const length = Math.hypot(dx, dy);
+            if (length < 1e-6) return { x: to.x, y: to.y };
+            return { x: to.x + dx / length * radius, y: to.y + dy / length * radius };
+          };
+          const extended = spine.map((point) => ({ x: point.x, y: point.y }));
+          extended[0] = extend(spine[1], spine[0]);
+          extended[extended.length - 1] = extend(spine[spine.length - 2], spine[spine.length - 1]);
+          return extended;
+        }
+        function strokeEraseCorridorPolygon(spine, radius) {
+          const first = spine[0];
+          let far = spine[0];
+          let farDistance = 0;
+          for (const point of spine) {
+            const distance = Math.hypot(point.x - first.x, point.y - first.y);
+            if (distance > farDistance) {
+              farDistance = distance;
+              far = point;
+            }
+          }
+          if (farDistance < 1e-6) return [];
+          const ux = (far.x - first.x) / farDistance;
+          const uy = (far.y - first.y) / farDistance;
+          let minAlong = 0;
+          let maxAlong = 0;
+          let maxPerpendicular = 0;
+          for (const point of spine) {
+            const dx = point.x - first.x;
+            const dy = point.y - first.y;
+            const along = dx * ux + dy * uy;
+            const perpendicular = Math.abs(dx * -uy + dy * ux);
+            if (along < minAlong) minAlong = along;
+            if (along > maxAlong) maxAlong = along;
+            if (perpendicular > maxPerpendicular) maxPerpendicular = perpendicular;
+          }
+          if (maxPerpendicular > radius) return [];
+          const startAlong = minAlong - radius;
+          const endAlong = maxAlong + radius;
+          const corner = (along, side) => ({
+            x: first.x + ux * along + -uy * radius * side,
+            y: first.y + uy * along + ux * radius * side
+          });
+          return [
+            corner(startAlong, 1),
+            corner(endAlong, 1),
+            corner(endAlong, -1),
+            corner(startAlong, -1)
+          ];
+        }
+        function strokeEraseRibbonPolygon(pathPoints, radius, budget) {
+          if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
+          const simplified = simplifyOpenPolyline(pathPoints, Math.max(0.25, radius / 4));
+          const spine = simplified.length >= 2 ? simplified : pathPoints;
+          if (spine.length === 1) {
+            const point = spine[0];
+            return rectanglePolygon(
+              { x: point.x - radius, y: point.y - radius },
+              { x: point.x + radius, y: point.y + radius }
+            );
+          }
+          const extended = extendSpineEndpoints(spine, radius);
+          const ribbon = offsetRibbonFromSpine(extended, radius);
+          if (validateSimpleContour(ribbon, budget)) return ribbon;
+          return strokeEraseCorridorPolygon(spine, radius);
+        }
+        function commitStrokeEraseAsWholeStrokes(gesture) {
+          const selection = sceneStore.selectObjects([...gesture.erasedIds]);
+          if (selection.selection.length === 0) {
+            restoreErasedStrokeVisibility(gesture);
+            return { applied: false, reason: "stroke-erase-target-missing" };
+          }
+          const result = applyDrawingAction({
+            sessionId: currentSession.sessionId,
+            actionId: createId("stroke-erase"),
+            action: "delete-selection"
+          });
+          if (!result.applied) {
+            sceneStore.selectObjects([]);
+            restoreErasedStrokeVisibility(gesture);
+          }
+          return result;
+        }
         function finalizeStrokeEraseGesture() {
           const gesture = strokeEraseGesture;
           strokeEraseGesture = null;
@@ -18375,21 +19043,29 @@ void main() {
             restoreErasedStrokeVisibility(gesture);
             return { applied: false, reason: retargeted?.reason || "retarget-failed" };
           }
-          const selection = sceneStore.selectObjects([...gesture.erasedIds]);
-          if (selection.selection.length === 0) {
-            restoreErasedStrokeVisibility(gesture);
-            return { applied: false, reason: "stroke-erase-target-missing" };
+          if (gesture.mode !== "pixel") return commitStrokeEraseAsWholeStrokes(gesture);
+          restoreErasedStrokeVisibility(gesture);
+          const ribbon = strokeEraseRibbonPolygon(
+            gesture.pathPoints,
+            strokeEraseRadius(),
+            createGeometryBudget(maxSelectionGeometryOperations)
+          );
+          const staged = finalizePartialSelectionPolygon(ribbon, null);
+          if (staged?.pending === true) return commitPendingLassoDelete();
+          if (!staged?.reason && staged?.selectedObjectIds?.length > 0) {
+            return applyDrawingAction({
+              sessionId: currentSession.sessionId,
+              actionId: createId("pixel-erase"),
+              action: "delete-selection"
+            });
           }
-          const result = applyDrawingAction({
-            sessionId: currentSession.sessionId,
-            actionId: createId("stroke-erase"),
-            action: "delete-selection"
-          });
-          if (!result.applied) {
-            sceneStore.selectObjects([]);
-            restoreErasedStrokeVisibility(gesture);
-          }
-          return result;
+          sceneStore.selectObjects([]);
+          return {
+            applied: false,
+            reason: staged?.reason || "pixel-erase-unavailable",
+            deletedCount: 0,
+            deletedIds: []
+          };
         }
         function rollbackSelectTransform(event, shouldEndTransform) {
           const start = transformStart;
@@ -18502,15 +19178,22 @@ void main() {
             }
           }
           const tool = sceneStore.getDiagnostics().tool;
-          if (tool === "brush" && isCtrlActive(event)) {
-            if (activeStroke || selectGesture || strokeEraseGesture) return;
+          if (tool === "eraser" || (tool === "brush" || tool === "pen") && isCtrlActive(event)) {
+            if (activeStroke || selectGesture || strokeEraseGesture || shapeGesture) return;
             strokeEraseGesture = {
               pointerId: event.pointerId,
               sessionId: currentSession?.sessionId,
               inputRevision: tokenState.inputRevision,
               lastPoint: null,
               erasedIds: /* @__PURE__ */ new Set(),
-              hiddenObjects: []
+              hiddenObjects: [],
+              // 제스처 시작 시점의 모드를 고정한다. 드래그 도중 팔레트로 모드를 바꿔도
+              // 한 제스처 안에서 커밋 방식이 갈리지 않게 한다.
+              // Ctrl 임시 지우개는 항상 'stroke' 다 — 레거시 동작과 같고, modifier 제스처가
+              // 팔레트 상태에 따라 달라지면 사용자가 예측할 수 없다.
+              mode: tool === "eraser" ? eraserMode : "stroke",
+              // 픽셀 모드에서 리본 폴리곤을 만들기 위한 지나간 경로. stroke 모드에서는 쓰지 않는다.
+              pathPoints: []
             };
             try {
               event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -18522,17 +19205,37 @@ void main() {
             event.preventDefault?.();
             return;
           }
-          if (tool === "brush") {
+          if (tool === "brush" || tool === "pen") {
             if (activeStroke || selectGesture) return;
             activeStroke = {
               pointerId: event.pointerId,
               samples: [],
               preview: null,
-              style: { ...brushStyle }
+              style: { ...brushStyle },
+              tool
             };
             event.currentTarget?.setPointerCapture?.(event.pointerId);
             appendPointerSample(event);
             updateTransientPreview();
+            event.preventDefault?.();
+            return;
+          }
+          if (FABRIC_SHAPE_TOOLS.includes(tool)) {
+            if (activeStroke || selectGesture || shapeGesture) return;
+            const origin = strokeErasePoint(event);
+            if (!origin) return;
+            shapeGesture = {
+              pointerId: event.pointerId,
+              tool,
+              origin,
+              current: origin,
+              preview: null,
+              style: { ...brushStyle }
+            };
+            try {
+              event.currentTarget?.setPointerCapture?.(event.pointerId);
+            } catch (_error) {
+            }
             event.preventDefault?.();
             return;
           }
@@ -18689,11 +19392,11 @@ void main() {
             beginPointerDown(event, false);
             return;
           }
-          if (inputEnabled && isAltActive(event) && (event.button === 0 || event.button === 2) && !sizeAdjustGesture && !strokeEraseGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
+          if (inputEnabled && isAltActive(event) && (event.button === 0 || event.button === 2) && !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
             beginSizeAdjustGesture(event);
             return;
           }
-          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture) {
+          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
             return;
           }
           if (!requestPointerdownFrame) {
@@ -18818,6 +19521,16 @@ void main() {
             event.preventDefault?.();
             return;
           }
+          if (shapeGesture) {
+            if (event.pointerId !== shapeGesture.pointerId) return;
+            const point = strokeErasePoint(event);
+            if (point) {
+              shapeGesture.current = point;
+              updateShapePreview();
+            }
+            event.preventDefault?.();
+            return;
+          }
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             appendLassoPoint(event);
@@ -18846,6 +19559,15 @@ void main() {
             collectErasedStrokesAt(event, eraseContext);
             if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
             finalizeStrokeEraseGesture();
+            releasePointerCapture(event.currentTarget, event.pointerId);
+            event.preventDefault?.();
+            return;
+          }
+          if (shapeGesture) {
+            if (event.pointerId !== shapeGesture.pointerId) return;
+            const releasePoint = strokeErasePoint(event);
+            if (releasePoint) shapeGesture.current = releasePoint;
+            commitShapeGesture();
             releasePointerCapture(event.currentTarget, event.pointerId);
             event.preventDefault?.();
             return;
@@ -18884,6 +19606,10 @@ void main() {
           if (strokeEraseGesture) {
             if (event.pointerId !== void 0 && event.pointerId !== strokeEraseGesture.pointerId) return;
             cancelStrokeEraseGesture(event);
+            return;
+          }
+          if (shapeGesture && (event?.pointerId === void 0 || event.pointerId === shapeGesture.pointerId)) {
+            cancelShapeGesture();
             return;
           }
           if (pendingPointerdownFrame) {
@@ -18927,6 +19653,10 @@ void main() {
             onPointerUp(event);
             return;
           }
+          if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
+            onPointerUp(event);
+            return;
+          }
           if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
             consumePendingPointerEvent(event);
             return;
@@ -18944,6 +19674,10 @@ void main() {
             return;
           }
           if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
+          if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
             onPointerCancel(event);
             return;
           }
@@ -19260,6 +19994,7 @@ void main() {
         function releaseSurfaceResources() {
           endSizeAdjustGesture();
           cancelStrokeEraseGesture();
+          cancelShapeGesture();
           resetOverlayModifierState();
           cancelPendingPointerdownFrame();
           cancelSelectInteraction();
@@ -19306,9 +20041,14 @@ void main() {
           paletteShell = null;
           brushControls = null;
           selectionControls = null;
+          eraserModeControls = null;
+          shapeMenuControls = null;
+          brushStatusRow = null;
+          recentColorControls = null;
           badge = null;
           sizeAdjustHud = null;
           sizeAdjustHudLabel = null;
+          cancelSizeAdjustHudTimer();
           container = null;
           root = null;
           prepared = false;
@@ -19341,8 +20081,27 @@ void main() {
             canvasElement.className = "mpv-fabric-delta-canvas";
             toolbar = documentRef.createElement("div");
             toolbar.className = "mpv-fabric-pilot-toolbar";
-            const brushButton = labelToolbarButton(createButton("\uBE0C\uB7EC\uC2DC", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
-            const selectButton = labelToolbarButton(createButton("\uC120\uD0DD", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
+            const brushButton = iconToolbarButton(
+              createButton("", "brush"),
+              "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)",
+              TOOL_ICON_SVG.brush
+            );
+            const penButton = iconToolbarButton(
+              createButton("", "pen"),
+              "\uD39C \uB3C4\uAD6C",
+              TOOL_ICON_SVG.pen
+            );
+            const eraserButton = iconToolbarButton(
+              createButton("", "eraser"),
+              "\uC9C0\uC6B0\uAC1C \uB3C4\uAD6C",
+              TOOL_ICON_SVG.eraser
+            );
+            const selectButton = iconToolbarButton(
+              createButton("", "select"),
+              "\uC120\uD0DD \uB3C4\uAD6C (V)",
+              TOOL_ICON_SVG.select
+            );
+            shapeMenuControls = createShapeMenuControls();
             const undoButton = labelToolbarButton(createButton("\uC2E4\uD589 \uCDE8\uC18C", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
             const redoButton = labelToolbarButton(createButton("\uB2E4\uC2DC \uC2E4\uD589", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
             const deleteButton = labelToolbarButton(
@@ -19354,7 +20113,10 @@ void main() {
               "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C"
             );
             brushControls = createBrushSettingsControls();
+            brushStatusRow = createBrushStatusRow();
+            recentColorControls = brushControls.recentColors;
             selectionControls = createSelectionControls();
+            eraserModeControls = createEraserModeControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
             badge.setAttribute?.("role", "status");
@@ -19368,9 +20130,31 @@ void main() {
               element: toolbar,
               setStyles,
               addDomListener,
+              // 섹션을 펼치면 셸이 붙임 패널의 인라인 표시를 비운다. 그 직후 소유자가
+              // 자기 상태를 다시 써야 접혀 있는 동안 바뀐 값이 반영된다.
+              onSectionToggle: () => {
+                syncBrushControls();
+                applyShapeMenuVisibility();
+              },
               sections: [
-                { id: "tools", label: "\uB3C4\uAD6C", items: [brushButton, selectButton] },
+                {
+                  id: "tools",
+                  label: "\uB3C4\uAD6C",
+                  layout: "grid",
+                  columns: 5,
+                  gap: "3px",
+                  items: [
+                    brushButton,
+                    penButton,
+                    eraserButton,
+                    shapeMenuControls.button,
+                    selectButton
+                  ],
+                  appended: [shapeMenuControls.flyout]
+                },
+                { id: "brush-status", items: [brushStatusRow.row] },
                 { id: "selection", items: [selectionControls.group] },
+                { id: "eraser", label: "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD", items: [eraserModeControls.group] },
                 {
                   id: "brush",
                   label: "\uBE0C\uB7EC\uC2DC \uC124\uC815",
@@ -19403,8 +20187,31 @@ void main() {
               freeDrawingCursor: "crosshair"
             });
             configureCanvasEvents();
-            addDomListener(brushButton, "click", () => updateLocalDrawingTool("brush"));
-            addDomListener(selectButton, "click", () => updateLocalDrawingTool("select"));
+            for (const [toolButton, toolName] of [
+              [brushButton, "brush"],
+              [penButton, "pen"],
+              [eraserButton, "eraser"],
+              [selectButton, "select"]
+            ]) {
+              addDomListener(toolButton, "click", () => updateLocalDrawingTool(toolName));
+            }
+            addDomListener(shapeMenuControls.button, "click", () => {
+              const active = FABRIC_SHAPE_TOOLS.includes(sceneStore.getDiagnostics().tool);
+              if (active) {
+                setShapeMenuOpen(!shapeMenuOpen);
+                return;
+              }
+              updateLocalDrawingTool(lastShapeTool);
+              setShapeMenuOpen(true);
+            });
+            for (const [shapeTool, shapeButton] of shapeMenuControls.shapeButtons) {
+              addDomListener(shapeButton, "click", () => {
+                updateLocalDrawingTool(shapeTool);
+                setShapeMenuOpen(false);
+              });
+            }
+            addDomListener(eraserModeControls.pixelButton, "click", () => setEraserMode("pixel"));
+            addDomListener(eraserModeControls.strokeButton, "click", () => setEraserMode("stroke"));
             addDomListener(undoButton, "click", () => applyDrawingAction({
               sessionId: currentSession?.sessionId,
               actionId: createId("undo"),
@@ -19450,6 +20257,7 @@ void main() {
           }
           endSizeAdjustGesture();
           cancelStrokeEraseGesture();
+          cancelShapeGesture();
           resetOverlayModifierState();
           cancelPendingPointerdownFrame();
           abortPendingLassoSelection();
@@ -19461,7 +20269,7 @@ void main() {
             tokenState.hostGeneration = Number(request.hostGeneration);
             tokenState.videoGeneration = Number(request.videoGeneration);
             tokenState.inputRevision = Number(request.inputRevision);
-            const lastTool = currentSession?.tool === "select" ? "select" : "brush";
+            const lastTool = normalizeFabricDrawingTool(currentSession?.tool);
             disableInput({ preservePassiveDisplay: !ownerChanged });
             if (ownerChanged) {
               resetPassivePresentationState();
@@ -19480,7 +20288,7 @@ void main() {
             videoGeneration: Number(request.videoGeneration),
             viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
             viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
-            tool: request.session.tool === "select" ? "select" : "brush"
+            tool: normalizeFabricDrawingTool(request.session.tool)
           };
           const activation = typeof sceneStore.replaceActiveSession === "function" ? sceneStore.replaceActiveSession(session) : sceneStore.activateSession(session);
           if (!activation.accepted) {
@@ -19717,12 +20525,14 @@ void main() {
             return { accepted: true, deferred: true, revision };
           }
           cancelActiveStroke();
+          cancelShapeGesture();
+          cancelStrokeEraseGesture();
           applyViewportCommand(normalizedCommand);
           return { accepted: true, revision };
         }
         function updateDrawingTool(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
-          const normalized = { ...command, tool: command.tool === "select" || command.tool === "V" ? "select" : command.tool };
+          const normalized = { ...command, tool: command.tool === "V" ? "select" : command.tool };
           const result = sceneStore.updateTool(normalized);
           if (!result.accepted) {
             metrics.recordStaleMessageDrop();
@@ -19731,6 +20541,15 @@ void main() {
           currentSession.tool = result.tool;
           setToolMode(result.tool);
           return result;
+        }
+        function updateDrawingBrush(command = {}) {
+          if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
+          const step = Math.trunc(Number(command.step));
+          const size = setBrushSize(
+            Number.isInteger(step) && step !== 0 ? brushStyle.size + step : command.size
+          );
+          flashSizeAdjustHudAtViewportCenter(size);
+          return { accepted: true, size };
         }
         function updateLocalDrawingTool(tool) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
@@ -19856,6 +20675,10 @@ void main() {
             tool: scene.tool,
             selectionTarget,
             selectionShape,
+            eraserMode,
+            // 진행 중 지우기 제스처가 시작 시점에 래치한 모드. 드래그 도중 팔레트를 눌러도
+            // 이 값은 바뀌지 않는다.
+            activeEraseMode: strokeEraseGesture ? strokeEraseGesture.mode : null,
             selectionControlEventCount,
             lastSelectionControlAction: lastSelectionControlAction ? clonePlain(lastSelectionControlAction) : null,
             activeSelectionGesture: activeLasso ? {
@@ -19915,6 +20738,7 @@ void main() {
           confirmDrawingPointerdownFrame,
           exportDrawingVideo,
           updateDrawingTool,
+          updateDrawingBrush,
           updateViewport,
           applyDrawingAction,
           getDiagnostics,
@@ -19967,6 +20791,8 @@ void main() {
         createSessionSceneStore,
         normalizePressure,
         createStrokePathData,
+        shapeCenterlinePoints,
+        shapeCenterlineSamples,
         createActionDeduper,
         shouldAcceptInputRequest,
         resolveEffectiveCanvasRect,

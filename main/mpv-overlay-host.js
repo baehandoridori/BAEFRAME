@@ -28,6 +28,13 @@ const {
   FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE,
   FABRIC_DRAWING_MAX_STRING_LENGTH
 } = require('../shared/fabric-drawing-limits');
+const {
+  isFabricDrawingTool,
+  normalizeFabricDrawingTool
+} = require('../shared/fabric-drawing-tools.js');
+
+// [ / ] 한 번에 허용하는 최대 증감. 실제 상한·하한은 오버레이 런타임이 자른다.
+const FABRIC_DRAWING_MAX_BRUSH_STEP = 64;
 
 const log = createLogger('MPVOverlayHost');
 const DEFAULT_FABRIC_BUNDLE_PATH = path.join(
@@ -2777,6 +2784,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -3002,6 +3010,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = request.enabled;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     if (!request.enabled) {
       this.suppressedOverlayHistoryKeys.clear();
     }
@@ -3051,6 +3060,7 @@ class MPVOverlayHost {
     if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
       this.activeSessionId = request.session?.sessionId || null;
       this.currentToolRevision = 0;
+      this.currentBrushRevision = 0;
       this._setNativeDrawingInput(hostWindow, true);
     } else if (request.enabled && runtimeResult?.accepted === true && !stillCurrent) {
       await this._compensateStaleDrawingEnable(hostWindow, hostGeneration);
@@ -3062,7 +3072,7 @@ class MPVOverlayHost {
       enabled: request.enabled && runtimeResult?.accepted === true && stillCurrent,
       restored: runtimeResult?.restored === true
     };
-    if (runtimeResult?.tool === 'brush' || runtimeResult?.tool === 'select') {
+    if (isFabricDrawingTool(runtimeResult?.tool)) {
       response.tool = runtimeResult.tool;
     }
     return response;
@@ -3075,7 +3085,7 @@ class MPVOverlayHost {
       request.videoGeneration === this.currentVideoGeneration &&
       request.inputRevision === this.currentInputRevision &&
       request.sessionId === this.activeSessionId;
-    const validTool = request.tool === 'brush' || request.tool === 'select' || request.tool === 'V';
+    const validTool = isFabricDrawingTool(request.tool) || request.tool === 'V';
     if (!this.desiredInputEnabled ||
         this.fabricReadyGeneration !== this.hostGeneration ||
         !currentTokensMatch ||
@@ -3099,7 +3109,50 @@ class MPVOverlayHost {
       if (this.window === hostWindow && !hostWindow?.isDestroyed?.()) {
         hostWindow.focus?.();
       }
-      return { success: true, accepted: true, tool: result.tool === 'select' ? 'select' : 'brush' };
+      return { success: true, accepted: true, tool: normalizeFabricDrawingTool(result.tool) };
+    } catch (error) {
+      return { success: false, accepted: false, error: error.message };
+    }
+  }
+
+  async updateDrawingBrush(request = {}) {
+    const brushRevision = Number(request.brushRevision);
+    const currentTokensMatch = request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      request.sessionId === this.activeSessionId;
+    // 절대 크기와 상대 증감 둘 중 정확히 하나여야 한다. 상대 증감은 오버레이의
+    // 현재 굵기를 기준으로 적용되므로 컨트롤러가 낡은 값을 들고 있어도 안전하다.
+    // Number.isInteger 는 자르기 **전** 값에 걸어야 한다. 먼저 Math.trunc 하면
+    // 1.5 같은 값이 정수로 둔갑해 통과한다.
+    const hasStep = request.step !== undefined;
+    const step = Number(request.step);
+    const size = Number(request.size);
+    const validMagnitude = hasStep
+      ? (request.size === undefined &&
+         Number.isInteger(step) && step !== 0 &&
+         Math.abs(step) <= FABRIC_DRAWING_MAX_BRUSH_STEP)
+      : (Number.isInteger(size) && size >= 1 && size <= FABRIC_DRAWING_MAX_BRUSH_SIZE);
+    if (!this.desiredInputEnabled ||
+        this.fabricReadyGeneration !== this.hostGeneration ||
+        !currentTokensMatch ||
+        !Number.isInteger(brushRevision) || brushRevision <= this.currentBrushRevision ||
+        !validMagnitude) {
+      return { success: false, accepted: false, error: 'stale or invalid drawing brush request' };
+    }
+
+    try {
+      const result = await this._executeFabricMethod('updateDrawingBrush', request);
+      if (result?.accepted !== true) {
+        return { success: false, accepted: false, error: result?.reason || 'drawing brush update rejected' };
+      }
+      if (!this._drawingTokensMatch(request) || brushRevision <= this.currentBrushRevision) {
+        return { success: false, accepted: false, error: 'stale drawing brush response' };
+      }
+      this.currentBrushRevision = brushRevision;
+      // updateDrawingTool 과 달리 오버레이에 포커스를 주지 않는다. 크기 변경은
+      // [ / ] 연타로 오는데 매번 포커스를 옮기면 화면이 튄다.
+      return { success: true, accepted: true, size: Math.trunc(Number(result.size)) };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
@@ -3389,7 +3442,7 @@ class MPVOverlayHost {
         inputEnabled: result?.inputEnabled === true,
         activeSessionId: this.activeSessionId,
         targetFrame: Number.isInteger(Number(result?.targetFrame)) ? Number(result.targetFrame) : null,
-        tool: result?.tool === 'select' ? 'select' : 'brush',
+        tool: normalizeFabricDrawingTool(result?.tool),
         selectionTarget: result?.selectionTarget === 'partial' ? 'partial' : 'stroke',
         selectionShape: result?.selectionShape === 'lasso' ? 'lasso' : 'rectangle',
         selectionControlEventCount: Math.max(
@@ -4301,6 +4354,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -4369,6 +4423,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -4496,6 +4551,7 @@ class MPVOverlayHost {
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
       this.currentToolRevision = -1;
+      this.currentBrushRevision = -1;
       this.keyboardRelayCount = 0;
       this.lastKeyboardRelayCode = null;
       this.drawModeShortcutDescriptor = null;

@@ -19,6 +19,29 @@ const fabricPaletteSource = normalizeNewlines(fs.readFileSync(
   path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-toolbar.js'),
   'utf8'
 ));
+const overlayHostSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'main/mpv-overlay-host.js'),
+  'utf8'
+));
+const pilotControllerSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'),
+  'utf8'
+));
+const userSettingsSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/user-settings.js'),
+  'utf8'
+));
+const {
+  FABRIC_DRAWING_TOOLS
+} = require(path.join(rootDir, 'shared/fabric-drawing-tools.js'));
+const preloadSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'preload/preload.js'),
+  'utf8'
+));
+const ipcHandlersSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'main/ipc-handlers.js'),
+  'utf8'
+));
 
 test('Fabric pilot controller is initialized with live mpv video and canvas context', () => {
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
@@ -1506,11 +1529,13 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.match(fabricRuntimeSource, /toolbar\.className = 'mpv-fabric-pilot-toolbar';/);
   assert.match(
     fabricRuntimeSource,
-    /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n\s+sections: \[/
+    /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n[\s\S]{0,400}?\n\s+sections: \[/
   );
+  // 도구 줄은 아이콘 5개 한 줄이고 도형 4종은 드롭다운으로 접힌다(목업 확정).
+  // 섹션이 존재하고 도구 버튼을 담는다는 계약은 그대로다.
   assert.match(
     fabricRuntimeSource,
-    /\{ id: 'tools', label: '도구', items: \[brushButton, selectButton\] \}/
+    /id: 'tools',\n\s+label: '도구',\n\s+layout: 'grid',\n\s+columns: 5,\n\s+gap: '3px',\n\s+items: \[\n\s+brushButton, penButton, eraserButton, shapeMenuControls\.button, selectButton\n\s+\],\n\s+appended: \[shapeMenuControls\.flyout\]/
   );
   assert.match(
     fabricRuntimeSource,
@@ -1529,9 +1554,10 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.match(fabricRuntimeSource, /^\s+let paletteShell = null;$/m);
   assert.match(fabricRuntimeSource, /toolbar = null;\n\s+paletteShell = null;/);
 
-  // 도구 라벨은 한글이고 기존 접근성 라벨은 그대로 유지된다
-  assert.match(fabricRuntimeSource, /createButton\('브러시', 'brush'\), '브러시 도구 \(B\)'/);
-  assert.match(fabricRuntimeSource, /createButton\('선택', 'select'\), '선택 도구 \(V\)'/);
+  // 도구 버튼은 아이콘 전용이 됐지만(190px 팔레트에서 한글 라벨이 잘린다)
+  // 접근성 라벨은 한글 그대로 유지된다 — 이름이 title/aria-label 로 옮겨갔을 뿐이다.
+  assert.match(fabricRuntimeSource, /createButton\('', 'brush'\), '브러시 도구 \(B\)', TOOL_ICON_SVG\.brush/);
+  assert.match(fabricRuntimeSource, /createButton\('', 'select'\), '선택 도구 \(V\)', TOOL_ICON_SVG\.select/);
   assert.match(fabricRuntimeSource, /createButton\('실행 취소', 'undo'\), '실행 취소 \(Ctrl\+Z\)'/);
   assert.match(fabricRuntimeSource, /createButton\('다시 실행', 'redo'\), '다시 실행 \(Ctrl\+Y\)'/);
   assert.match(fabricRuntimeSource, /createButton\('선택 삭제', 'delete-selection'\)/);
@@ -1639,4 +1665,173 @@ test('키프레임 이동 단축키는 소유자에 맞는 데이터 출처를 �
     appSource,
     /matchShortcut\('nextKeyframe', e\)\) \{\n\s+e\.preventDefault\(\);\n\s+const nextKf = getAdjacentDrawingKeyframeFrame\('next'\);/
   );
+});
+
+test('drawing tool set lives in one shared module that both process layers require', () => {
+  assert.match(
+    fabricRuntimeSource,
+    /require\('\.\.\/\.\.\/\.\.\/shared\/fabric-drawing-tools\.js'\)/,
+    '런타임이 공용 도구 집합을 들여와야 한다'
+  );
+  assert.match(
+    overlayHostSource,
+    /require\('\.\.\/shared\/fabric-drawing-tools\.js'\)/,
+    '호스트가 공용 도구 집합을 들여와야 한다'
+  );
+  // 2종 가정 관용구가 한 곳이라도 남으면 새 도구가 그 지점에서 brush 로 접힌다.
+  for (const [label, source] of [
+    ['runtime', fabricRuntimeSource],
+    ['host', overlayHostSource],
+    ['controller', pilotControllerSource]
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /=== 'select' \? 'select' : 'brush'/,
+      `${label} 에 2종 가정 정규화가 남아 있다`
+    );
+    assert.doesNotMatch(
+      source,
+      /=== 'brush' \|\| [^\n]*=== 'select'/,
+      `${label} 에 2종 가정 화이트리스트가 남아 있다`
+    );
+  }
+});
+
+test('controller drawing tool literal matches the shared tool set', () => {
+  // 컨트롤러는 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다.
+  // 두 목록이 어긋나면 도구 복원이 조용히 실패하므로 여기서 대조한다.
+  const match = pilotControllerSource.match(
+    /const CONTROLLER_DRAWING_TOOLS = new Set\(\[([\s\S]*?)\]\);/
+  );
+  assert.ok(match, '컨트롤러에 CONTROLLER_DRAWING_TOOLS 리터럴이 있어야 한다');
+  const literalTools = match[1]
+    .split(',')
+    .map(entry => entry.trim().replace(/^'|'$/g, ''))
+    .filter(Boolean);
+  assert.deepEqual([...literalTools].sort(), [...FABRIC_DRAWING_TOOLS].sort());
+});
+
+test('shape and pen tools are registered as assignable shortcut actions without default keys', () => {
+  const toolActions = [
+    'drawingToolBrush',
+    'drawingToolPen',
+    'drawingToolEraser',
+    'drawingToolLine',
+    'drawingToolRect',
+    'drawingToolCircle',
+    'drawingToolArrow'
+  ];
+  for (const action of toolActions) {
+    // 결정 3 — 기본 키를 두지 않는다. 빈 문자열이면 합성 이벤트에 오작동한다.
+    assert.match(
+      userSettingsSource,
+      new RegExp(`${action}: \\{ key: null,`),
+      `${action} 의 기본 키가 null 이 아니다`
+    );
+    // 화이트리스트에 없으면 설정 UI 에 아예 나타나지 않아 배정이 불가능하다.
+    assert.match(
+      appSource,
+      new RegExp(`'그리기 보조': \\[[^\\]]*'${action}'`),
+      `${action} 이 SHORTCUT_CATEGORIES 에 등록되지 않았다`
+    );
+  }
+  // key 가 null 인 액션을 표시할 때 죽지 않아야 한다.
+  assert.equal(
+    (appSource.match(/if \(!(?:code|keyCode)\) return '미지정';/g) || []).length,
+    3,
+    '키 표시 함수 3곳 모두에 미지정 가드가 있어야 한다'
+  );
+});
+
+test('brush size shortcuts are routed by action id, not by a hard-coded key code', () => {
+  // app.js 가 액션 id 로 판정해야 사용자가 [ / ] 를 재지정해도 따라간다.
+  assert.match(appSource, /matchesBrushSizeShortcut: event => \{/);
+  assert.match(appSource, /if \(userSettings\.matchShortcut\('brushSizeUp', event\)\) return 1;/);
+  assert.match(appSource, /if \(userSettings\.matchShortcut\('brushSizeDown', event\)\) return -1;/);
+  // 배선은 방화벽 술어가 아니라 컨트롤러의 routeKeydown 이어야 한다.
+  // 술어에 넣으면 falsy 를 돌려줘 레거시 브러시 크기까지 함께 바뀐다.
+  assert.match(pilotControllerSource, /const brushSizeStep = matchBrushSizeShortcut\(event\);/);
+  assert.match(
+    pilotControllerSource,
+    /if \(brushSizeStep !== 0\) \{\n\s+if \(state !== 'active'\) return false;\n\s+consumeKeyEvent\(event\);/
+  );
+  // modifier 가드 허용 목록에 들어가야 chord 재지정이 먹는다 — 크기·도구 둘 다.
+  assert.match(
+    pilotControllerSource,
+    /if \(!isDrawingToggleShortcut && !isSelectionShortcut &&\n\s+brushSizeStep === 0 && shortcutTool === null && \(/
+  );
+  // 컨트롤러는 절대 크기가 아니라 상대 증감을 보낸다. 절대값을 보내면 팔레트
+  // 슬라이더·Alt 드래그로 바뀐 굵기를 모르는 채 낡은 값에서 계산하게 된다.
+  assert.match(pilotControllerSource, /async function sendBrushSizeStep\(step\) \{/);
+  assert.doesNotMatch(pilotControllerSource, /let desiredBrushSize/);
+  // 설정에서 배정한 도구 단축키가 실제 도구 전환으로 이어져야 한다.
+  assert.match(appSource, /matchesToolShortcut: event => \{/);
+  assert.match(appSource, /const DRAWING_TOOL_SHORTCUT_ACTIONS = \{/);
+  assert.match(pilotControllerSource, /if \(shortcutTool !== null && \(state === 'preparing' \|\| state === 'active'\)\) \{/);
+  // IPC 채널 4계층이 모두 이어져야 한다.
+  assert.match(
+    preloadSource,
+    /mpvUpdateOverlayDrawingBrush: \(request\) => ipcRenderer\.invoke\('mpv:update-overlay-drawing-brush', request\)/
+  );
+  assert.match(ipcHandlersSource, /ipcMain\.handle\('mpv:update-overlay-drawing-brush'/);
+  assert.match(overlayHostSource, /async updateDrawingBrush\(request = \{\}\) \{/);
+  assert.match(fabricRuntimeSource, /function updateDrawingBrush\(command = \{\}\) \{/);
+});
+
+test('drawing shortcuts bypass the remembered-editor relay while the overlay owns the keyboard', () => {
+  // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가
+  // 에디터면 릴레이된 키가 그쪽으로 가고 컨트롤러가 editable-target 으로 버린다.
+  // 도구·크기 단축키가 우회 목록에 없으면 그 상태에서 조용히 아무 일도 안 한다.
+  const block = appSource.match(
+    /const MPV_OVERLAY_RELAY_DRAWING_ACTIONS = Object\.freeze\(\[([\s\S]*?)\]\);/
+  );
+  assert.ok(block, '릴레이 우회 목록이 있어야 한다');
+  const listed = block[1].split(',').map(entry => entry.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.deepEqual(listed.sort(), [
+    'brushSizeDown', 'brushSizeUp',
+    'drawingToolArrow', 'drawingToolBrush', 'drawingToolCircle', 'drawingToolEraser',
+    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect'
+  ]);
+  assert.match(
+    appSource,
+    /for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) add\(describe\(actionId\)\);/
+  );
+  // 수식키가 붙은 배정도 그대로 넘긴다 — 릴레이가 chord 전체를 대조하므로
+  // Shift+E 를 우회 목록에 넣어도 평문 E 는 텍스트 입력에 남는다.
+  assert.match(appSource, /ctrl: shortcut\.ctrl === true,/);
+  assert.match(appSource, /shift: shortcut\.shift === true,/);
+  assert.match(appSource, /alt: shortcut\.alt === true/);
+  assert.doesNotMatch(appSource, /addUnmodified/);
+});
+
+test('palette height changes reclamp the position so revealed controls stay on screen', () => {
+  // 섹션을 여닫거나 도구에 따라 숨겼다 보이면 팔레트 높이가 달라진다.
+  // 위치를 다시 잡지 않으면 화면 아래쪽에 놓인 팔레트에서 새로 드러난 컨트롤이
+  // 화면 밖으로 밀린다. jsdom 에는 레이아웃이 없어 높이가 상수라 동작으로는
+  // 확인할 수 없으므로 배선 자체를 고정한다.
+  assert.match(fabricPaletteSource, /if \(!collapsed\) onSectionToggle\?\.\(sectionId, false\);/);
+  assert.match(
+    fabricPaletteSource,
+    /const toggleSection = \(\) => \{[\s\S]*?applyPosition\(state\);\n\s+\};/
+  );
+  assert.match(
+    fabricPaletteSource,
+    /function setSectionVisible\(id, visible\) \{[\s\S]*?if \(wasHidden !== !visible\) applyPosition\(state\);/
+  );
+});
+
+test('section labels do not advertise keyboard activation the overlay cannot deliver', () => {
+  // 그리기 입력이 켜져 있는 동안 오버레이 호스트가 모든 키를 메인 렌더러로 넘기며
+  // preventDefault() 한다. Enter·Space 가 오버레이 문서에 도달하지 못하고 Tab 으로
+  // 포커스를 옮길 수도 없으므로, 라벨에 role="button" 과 tabindex 를 달면
+  // 도달할 수 없는 컨트롤을 도달할 수 있는 것처럼 알리게 된다.
+  const labelBlock = fabricPaletteSource.match(
+    /label\.className = 'mpv-fabric-pilot-section-label';[\s\S]*?listen\(label, 'click', toggleSection\);/
+  );
+  assert.ok(labelBlock, '섹션 라벨 조립부가 있어야 한다');
+  assert.doesNotMatch(labelBlock[0], /setAttribute\?\.\('role', 'button'\)/);
+  assert.doesNotMatch(labelBlock[0], /setAttribute\?\.\('tabindex'/);
+  assert.doesNotMatch(labelBlock[0], /listen\(label, 'keydown'/);
+  // 마우스로 무엇을 하는지는 툴팁으로 알린다.
+  assert.match(fabricPaletteSource, /label\.setAttribute\?\.\('title', `\$\{section\.label\} 접기\/펴기`\);/);
 });
