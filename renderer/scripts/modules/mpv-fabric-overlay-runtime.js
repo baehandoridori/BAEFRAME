@@ -2767,6 +2767,11 @@ function createFabricOverlayRuntime(options = {}) {
   let selectionControlEventCount = 0;
   let lastSelectionControlAction = null;
   let selectionControls = null;
+  // 지우개 방식 — 레거시 eraserModeSection 동치. 'stroke'는 지나간 획 전체를,
+  // 'pixel'은 지나간 구간만 잘라낸다. 부분 삭제 엔진(stroke-splitter)은 이미 있으므로
+  // 여기서는 어느 경로로 커밋할지만 고른다.
+  let eraserMode = 'stroke';
+  let eraserModeControls = null;
   let transformStart = null;
   let selectGesture = null;
   const ignoredModifiedTargets = new WeakSet();
@@ -2843,6 +2848,45 @@ function createFabricOverlayRuntime(options = {}) {
     selectionControls.summary.textContent = selectionTarget === 'partial'
       ? `현재: 부분 자르기 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`
       : `현재: 획 전체 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`;
+  }
+
+  function createEraserModeControls() {
+    const group = documentRef.createElement('div');
+    group.className = 'mpv-fabric-pilot-eraser-mode';
+    group.setAttribute?.('role', 'group');
+    group.setAttribute?.('aria-label', '지우개 방식');
+    const pixelButton = labelToolbarButton(
+      createButton('픽셀', 'eraser-mode-pixel'),
+      '지우개 방식: 지나간 부분만 지움'
+    );
+    const strokeButton = labelToolbarButton(
+      createButton('획', 'eraser-mode-stroke'),
+      '지우개 방식: 지나간 획 전체를 지움'
+    );
+    group.appendChild(pixelButton);
+    group.appendChild(strokeButton);
+    return { group, pixelButton, strokeButton };
+  }
+
+  function setEraserMode(mode) {
+    eraserMode = mode === 'pixel' ? 'pixel' : 'stroke';
+    syncEraserModeControls();
+    return eraserMode;
+  }
+
+  function syncEraserModeControls(tool = currentSession?.tool) {
+    if (!eraserModeControls) return;
+    setStyles(eraserModeControls.group, {
+      display: tool === 'eraser' ? 'flex' : 'none'
+    });
+    for (const [modeName, button] of [
+      ['pixel', eraserModeControls.pixelButton],
+      ['stroke', eraserModeControls.strokeButton]
+    ]) {
+      const active = eraserMode === modeName;
+      button.dataset.active = String(active);
+      button.setAttribute?.('aria-pressed', String(active));
+    }
   }
 
   function usesNativeRectangleSelection(tool = currentSession?.tool) {
@@ -3788,6 +3832,7 @@ function createFabricOverlayRuntime(options = {}) {
       sceneStore.selectObjects([]);
     }
     syncSelectionControls(tool);
+    syncEraserModeControls(tool);
     refreshSelectionInteractionPolicy();
     fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
     fabricCanvas.requestRenderAll();
@@ -5943,6 +5988,9 @@ function createFabricOverlayRuntime(options = {}) {
     if (!point) return 0;
     const polygon = strokeEraseSweepPolygon(gesture.lastPoint, point, context.radius);
     gesture.lastPoint = point;
+    // 픽셀 모드 커밋에서 리본 폴리곤을 만들 원본 경로. 히트 여부와 무관하게 누적해야
+    // 획 사이 빈 구간을 지나간 뒤 다시 획을 만나도 리본이 끊기지 않는다.
+    gesture.pathPoints?.push(point);
     if (!polygonHasArea(polygon, 1)) return 0;
 
     const polygonBounds = boundsForPoints(polygon);
@@ -5993,6 +6041,58 @@ function createFabricOverlayRuntime(options = {}) {
     return true;
   }
 
+  // 지우개가 지나간 경로를 반경만큼 좌/우로 부풀린 닫힌 폴리곤.
+  // 폴리곤 불리언 유니온이 저장소에 없으므로, 스윕 quad 들을 합치는 대신
+  // 경로 자체를 리본으로 만들어 부분 선택 경로에 한 번에 넘긴다.
+  function strokeEraseRibbonPolygon(pathPoints, radius) {
+    if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
+    // 되짚기·정지 구간이 그대로 남으면 리본이 자기 자신과 교차해
+    // validateSimpleContour 를 통과하지 못한다. 라쏘와 같은 방식으로 먼저 줄인다.
+    const simplified = simplifyClosedPolygon(pathPoints, Math.max(0.25, radius / 4));
+    const spine = simplified.length >= 2 ? simplified : pathPoints;
+    if (spine.length === 1) {
+      const point = spine[0];
+      return rectanglePolygon(
+        { x: point.x - radius, y: point.y - radius },
+        { x: point.x + radius, y: point.y + radius }
+      );
+    }
+    const left = [];
+    const right = [];
+    for (let index = 0; index < spine.length; index += 1) {
+      const current = spine[index];
+      const previous = spine[Math.max(0, index - 1)];
+      const next = spine[Math.min(spine.length - 1, index + 1)];
+      const dx = next.x - previous.x;
+      const dy = next.y - previous.y;
+      const length = Math.hypot(dx, dy) || 1;
+      const nx = (-dy / length) * radius;
+      const ny = (dx / length) * radius;
+      left.push({ x: current.x + nx, y: current.y + ny });
+      right.push({ x: current.x - nx, y: current.y - ny });
+    }
+    return [...left, ...right.reverse()];
+  }
+
+  function commitStrokeEraseAsWholeStrokes(gesture) {
+    const selection = sceneStore.selectObjects([...gesture.erasedIds]);
+    if (selection.selection.length === 0) {
+      restoreErasedStrokeVisibility(gesture);
+      return { applied: false, reason: 'stroke-erase-target-missing' };
+    }
+    // 기존 삭제 액션 경로를 그대로 쓴다 — dedupe·프레임 재조준·undo 1건·영속화 관찰자까지 동일.
+    const result = applyDrawingAction({
+      sessionId: currentSession.sessionId,
+      actionId: createId('stroke-erase'),
+      action: 'delete-selection'
+    });
+    if (!result.applied) {
+      sceneStore.selectObjects([]);
+      restoreErasedStrokeVisibility(gesture);
+    }
+    return result;
+  }
+
   function finalizeStrokeEraseGesture() {
     const gesture = strokeEraseGesture;
     strokeEraseGesture = null;
@@ -6012,22 +6112,20 @@ function createFabricOverlayRuntime(options = {}) {
       restoreErasedStrokeVisibility(gesture);
       return { applied: false, reason: retargeted?.reason || 'retarget-failed' };
     }
-    const selection = sceneStore.selectObjects([...gesture.erasedIds]);
-    if (selection.selection.length === 0) {
-      restoreErasedStrokeVisibility(gesture);
-      return { applied: false, reason: 'stroke-erase-target-missing' };
-    }
-    // 기존 삭제 액션 경로를 그대로 쓴다 — dedupe·프레임 재조준·undo 1건·영속화 관찰자까지 동일.
-    const result = applyDrawingAction({
-      sessionId: currentSession.sessionId,
-      actionId: createId('stroke-erase'),
-      action: 'delete-selection'
-    });
-    if (!result.applied) {
-      sceneStore.selectObjects([]);
-      restoreErasedStrokeVisibility(gesture);
-    }
-    return result;
+    // stroke 모드: 지나간 획 전체를 지운다(기존 경로 그대로).
+    if (gesture.mode !== 'pixel') return commitStrokeEraseAsWholeStrokes(gesture);
+
+    // pixel 모드: 리본 폴리곤으로 부분 선택을 만든 뒤 1회 커밋으로 잘라낸다.
+    // 부분 분할은 캔버스 오브젝트를 실제로 읽으므로, 드래그 중 숨겨 둔 획을 먼저 되살린다.
+    restoreErasedStrokeVisibility(gesture);
+    const ribbon = strokeEraseRibbonPolygon(gesture.pathPoints, strokeEraseRadius());
+    const staged = finalizePartialSelectionPolygon(ribbon, null);
+    if (staged?.pending === true) return commitPendingLassoDelete();
+    // 리본이 획을 통째로 덮어 조각이 생기지 않거나 폴리곤이 너무 작은 경우가 있다.
+    // 그때는 획 단위 삭제로 떨어뜨려, 사용자가 "지우개를 그었는데 아무것도 안 지워졌다"를
+    // 겪지 않게 한다.
+    sceneStore.selectObjects([]);
+    return commitStrokeEraseAsWholeStrokes(gesture);
   }
 
   function rollbackSelectTransform(event, shouldEndTransform) {
@@ -6150,15 +6248,24 @@ function createFabricOverlayRuntime(options = {}) {
     const tool = sceneStore.getDiagnostics().tool;
     // 레거시 _resolveEffectiveTool 계승: Ctrl은 pointerdown 시점에 래치되고 pointerup에서 풀린다.
     // fabric에서는 새 획을 만들지 않고 포인터가 지나가는 기존 스트로크를 지운다.
-    if (tool === 'brush' && isCtrlActive(event)) {
-      if (activeStroke || selectGesture || strokeEraseGesture) return;
+    // 지우개 도구는 modifier 없이 같은 제스처를 연다. Ctrl 임시 지우개는 브러시·펜에서
+    // 그대로 유지된다(레거시 _resolveEffectiveTool 계승).
+    if (tool === 'eraser' || ((tool === 'brush' || tool === 'pen') && isCtrlActive(event))) {
+      if (activeStroke || selectGesture || strokeEraseGesture || shapeGesture) return;
       strokeEraseGesture = {
         pointerId: event.pointerId,
         sessionId: currentSession?.sessionId,
         inputRevision: tokenState.inputRevision,
         lastPoint: null,
         erasedIds: new Set(),
-        hiddenObjects: []
+        hiddenObjects: [],
+        // 제스처 시작 시점의 모드를 고정한다. 드래그 도중 팔레트로 모드를 바꿔도
+        // 한 제스처 안에서 커밋 방식이 갈리지 않게 한다.
+        // Ctrl 임시 지우개는 항상 'stroke' 다 — 레거시 동작과 같고, modifier 제스처가
+        // 팔레트 상태에 따라 달라지면 사용자가 예측할 수 없다.
+        mode: tool === 'eraser' ? eraserMode : 'stroke',
+        // 픽셀 모드에서 리본 폴리곤을 만들기 위한 지나간 경로. stroke 모드에서는 쓰지 않는다.
+        pathPoints: []
       };
       try {
         event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -7085,6 +7192,7 @@ function createFabricOverlayRuntime(options = {}) {
     paletteShell = null;
     brushControls = null;
     selectionControls = null;
+    eraserModeControls = null;
     badge = null;
     sizeAdjustHud = null;
     sizeAdjustHudLabel = null;
@@ -7144,6 +7252,7 @@ function createFabricOverlayRuntime(options = {}) {
       );
       brushControls = createBrushSettingsControls();
       selectionControls = createSelectionControls();
+      eraserModeControls = createEraserModeControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
       badge.setAttribute?.('role', 'status');
@@ -7169,6 +7278,7 @@ function createFabricOverlayRuntime(options = {}) {
             ]
           },
           { id: 'selection', items: [selectionControls.group] },
+          { id: 'eraser', label: '지우개 방식', items: [eraserModeControls.group] },
           {
             id: 'brush',
             label: '브러시 설정',
@@ -7214,6 +7324,8 @@ function createFabricOverlayRuntime(options = {}) {
       ]) {
         addDomListener(toolButton, 'click', () => updateLocalDrawingTool(toolName));
       }
+      addDomListener(eraserModeControls.pixelButton, 'click', () => setEraserMode('pixel'));
+      addDomListener(eraserModeControls.strokeButton, 'click', () => setEraserMode('stroke'));
       addDomListener(undoButton, 'click', () => applyDrawingAction({
         sessionId: currentSession?.sessionId,
         actionId: createId('undo'),
@@ -7734,6 +7846,10 @@ function createFabricOverlayRuntime(options = {}) {
       tool: scene.tool,
       selectionTarget,
       selectionShape,
+      eraserMode,
+      // 진행 중 지우기 제스처가 시작 시점에 래치한 모드. 드래그 도중 팔레트를 눌러도
+      // 이 값은 바뀌지 않는다.
+      activeEraseMode: strokeEraseGesture ? strokeEraseGesture.mode : null,
       selectionControlEventCount,
       lastSelectionControlAction: lastSelectionControlAction
         ? clonePlain(lastSelectionControlAction)

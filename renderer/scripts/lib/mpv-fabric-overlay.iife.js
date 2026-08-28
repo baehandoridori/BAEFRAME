@@ -15747,6 +15747,8 @@ void main() {
         let selectionControlEventCount = 0;
         let lastSelectionControlAction = null;
         let selectionControls = null;
+        let eraserMode = "stroke";
+        let eraserModeControls = null;
         let transformStart = null;
         let selectGesture = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
@@ -15813,6 +15815,42 @@ void main() {
             button.setAttribute?.("aria-pressed", String(active));
           }
           selectionControls.summary.textContent = selectionTarget === "partial" ? `\uD604\uC7AC: \uBD80\uBD84 \uC790\uB974\uAE30 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}` : `\uD604\uC7AC: \uD68D \uC804\uCCB4 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}`;
+        }
+        function createEraserModeControls() {
+          const group = documentRef.createElement("div");
+          group.className = "mpv-fabric-pilot-eraser-mode";
+          group.setAttribute?.("role", "group");
+          group.setAttribute?.("aria-label", "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD");
+          const pixelButton = labelToolbarButton(
+            createButton("\uD53D\uC140", "eraser-mode-pixel"),
+            "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD: \uC9C0\uB098\uAC04 \uBD80\uBD84\uB9CC \uC9C0\uC6C0"
+          );
+          const strokeButton = labelToolbarButton(
+            createButton("\uD68D", "eraser-mode-stroke"),
+            "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD: \uC9C0\uB098\uAC04 \uD68D \uC804\uCCB4\uB97C \uC9C0\uC6C0"
+          );
+          group.appendChild(pixelButton);
+          group.appendChild(strokeButton);
+          return { group, pixelButton, strokeButton };
+        }
+        function setEraserMode(mode) {
+          eraserMode = mode === "pixel" ? "pixel" : "stroke";
+          syncEraserModeControls();
+          return eraserMode;
+        }
+        function syncEraserModeControls(tool = currentSession?.tool) {
+          if (!eraserModeControls) return;
+          setStyles(eraserModeControls.group, {
+            display: tool === "eraser" ? "flex" : "none"
+          });
+          for (const [modeName, button] of [
+            ["pixel", eraserModeControls.pixelButton],
+            ["stroke", eraserModeControls.strokeButton]
+          ]) {
+            const active = eraserMode === modeName;
+            button.dataset.active = String(active);
+            button.setAttribute?.("aria-pressed", String(active));
+          }
         }
         function usesNativeRectangleSelection(tool = currentSession?.tool) {
           return tool === "select" && selectionTarget === "stroke" && selectionShape === "rectangle";
@@ -16657,6 +16695,7 @@ void main() {
             sceneStore.selectObjects([]);
           }
           syncSelectionControls(tool);
+          syncEraserModeControls(tool);
           refreshSelectionInteractionPolicy();
           fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
           fabricCanvas.requestRenderAll();
@@ -18532,6 +18571,7 @@ void main() {
           if (!point) return 0;
           const polygon = strokeEraseSweepPolygon(gesture.lastPoint, point, context.radius);
           gesture.lastPoint = point;
+          gesture.pathPoints?.push(point);
           if (!polygonHasArea(polygon, 1)) return 0;
           const polygonBounds = boundsForPoints(polygon);
           let hidden = 0;
@@ -18575,6 +18615,50 @@ void main() {
           );
           return true;
         }
+        function strokeEraseRibbonPolygon(pathPoints, radius) {
+          if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
+          const simplified = simplifyClosedPolygon(pathPoints, Math.max(0.25, radius / 4));
+          const spine = simplified.length >= 2 ? simplified : pathPoints;
+          if (spine.length === 1) {
+            const point = spine[0];
+            return rectanglePolygon(
+              { x: point.x - radius, y: point.y - radius },
+              { x: point.x + radius, y: point.y + radius }
+            );
+          }
+          const left = [];
+          const right = [];
+          for (let index = 0; index < spine.length; index += 1) {
+            const current = spine[index];
+            const previous = spine[Math.max(0, index - 1)];
+            const next = spine[Math.min(spine.length - 1, index + 1)];
+            const dx = next.x - previous.x;
+            const dy = next.y - previous.y;
+            const length = Math.hypot(dx, dy) || 1;
+            const nx = -dy / length * radius;
+            const ny = dx / length * radius;
+            left.push({ x: current.x + nx, y: current.y + ny });
+            right.push({ x: current.x - nx, y: current.y - ny });
+          }
+          return [...left, ...right.reverse()];
+        }
+        function commitStrokeEraseAsWholeStrokes(gesture) {
+          const selection = sceneStore.selectObjects([...gesture.erasedIds]);
+          if (selection.selection.length === 0) {
+            restoreErasedStrokeVisibility(gesture);
+            return { applied: false, reason: "stroke-erase-target-missing" };
+          }
+          const result = applyDrawingAction({
+            sessionId: currentSession.sessionId,
+            actionId: createId("stroke-erase"),
+            action: "delete-selection"
+          });
+          if (!result.applied) {
+            sceneStore.selectObjects([]);
+            restoreErasedStrokeVisibility(gesture);
+          }
+          return result;
+        }
         function finalizeStrokeEraseGesture() {
           const gesture = strokeEraseGesture;
           strokeEraseGesture = null;
@@ -18592,21 +18676,13 @@ void main() {
             restoreErasedStrokeVisibility(gesture);
             return { applied: false, reason: retargeted?.reason || "retarget-failed" };
           }
-          const selection = sceneStore.selectObjects([...gesture.erasedIds]);
-          if (selection.selection.length === 0) {
-            restoreErasedStrokeVisibility(gesture);
-            return { applied: false, reason: "stroke-erase-target-missing" };
-          }
-          const result = applyDrawingAction({
-            sessionId: currentSession.sessionId,
-            actionId: createId("stroke-erase"),
-            action: "delete-selection"
-          });
-          if (!result.applied) {
-            sceneStore.selectObjects([]);
-            restoreErasedStrokeVisibility(gesture);
-          }
-          return result;
+          if (gesture.mode !== "pixel") return commitStrokeEraseAsWholeStrokes(gesture);
+          restoreErasedStrokeVisibility(gesture);
+          const ribbon = strokeEraseRibbonPolygon(gesture.pathPoints, strokeEraseRadius());
+          const staged = finalizePartialSelectionPolygon(ribbon, null);
+          if (staged?.pending === true) return commitPendingLassoDelete();
+          sceneStore.selectObjects([]);
+          return commitStrokeEraseAsWholeStrokes(gesture);
         }
         function rollbackSelectTransform(event, shouldEndTransform) {
           const start = transformStart;
@@ -18719,15 +18795,22 @@ void main() {
             }
           }
           const tool = sceneStore.getDiagnostics().tool;
-          if (tool === "brush" && isCtrlActive(event)) {
-            if (activeStroke || selectGesture || strokeEraseGesture) return;
+          if (tool === "eraser" || (tool === "brush" || tool === "pen") && isCtrlActive(event)) {
+            if (activeStroke || selectGesture || strokeEraseGesture || shapeGesture) return;
             strokeEraseGesture = {
               pointerId: event.pointerId,
               sessionId: currentSession?.sessionId,
               inputRevision: tokenState.inputRevision,
               lastPoint: null,
               erasedIds: /* @__PURE__ */ new Set(),
-              hiddenObjects: []
+              hiddenObjects: [],
+              // 제스처 시작 시점의 모드를 고정한다. 드래그 도중 팔레트로 모드를 바꿔도
+              // 한 제스처 안에서 커밋 방식이 갈리지 않게 한다.
+              // Ctrl 임시 지우개는 항상 'stroke' 다 — 레거시 동작과 같고, modifier 제스처가
+              // 팔레트 상태에 따라 달라지면 사용자가 예측할 수 없다.
+              mode: tool === "eraser" ? eraserMode : "stroke",
+              // 픽셀 모드에서 리본 폴리곤을 만들기 위한 지나간 경로. stroke 모드에서는 쓰지 않는다.
+              pathPoints: []
             };
             try {
               event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -19573,6 +19656,7 @@ void main() {
           paletteShell = null;
           brushControls = null;
           selectionControls = null;
+          eraserModeControls = null;
           badge = null;
           sizeAdjustHud = null;
           sizeAdjustHudLabel = null;
@@ -19628,6 +19712,7 @@ void main() {
             );
             brushControls = createBrushSettingsControls();
             selectionControls = createSelectionControls();
+            eraserModeControls = createEraserModeControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
             badge.setAttribute?.("role", "status");
@@ -19657,6 +19742,7 @@ void main() {
                   ]
                 },
                 { id: "selection", items: [selectionControls.group] },
+                { id: "eraser", label: "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD", items: [eraserModeControls.group] },
                 {
                   id: "brush",
                   label: "\uBE0C\uB7EC\uC2DC \uC124\uC815",
@@ -19701,6 +19787,8 @@ void main() {
             ]) {
               addDomListener(toolButton, "click", () => updateLocalDrawingTool(toolName));
             }
+            addDomListener(eraserModeControls.pixelButton, "click", () => setEraserMode("pixel"));
+            addDomListener(eraserModeControls.strokeButton, "click", () => setEraserMode("stroke"));
             addDomListener(undoButton, "click", () => applyDrawingAction({
               sessionId: currentSession?.sessionId,
               actionId: createId("undo"),
@@ -20153,6 +20241,10 @@ void main() {
             tool: scene.tool,
             selectionTarget,
             selectionShape,
+            eraserMode,
+            // 진행 중 지우기 제스처가 시작 시점에 래치한 모드. 드래그 도중 팔레트를 눌러도
+            // 이 값은 바뀌지 않는다.
+            activeEraseMode: strokeEraseGesture ? strokeEraseGesture.mode : null,
             selectionControlEventCount,
             lastSelectionControlAction: lastSelectionControlAction ? clonePlain(lastSelectionControlAction) : null,
             activeSelectionGesture: activeLasso ? {

@@ -14937,3 +14937,163 @@ test('disabling drawing input preserves the active tool', async () => {
     await harness.destroy();
   }
 });
+
+// ---------------------------------------------------------------------------
+// 작업 4 — 지우개 도구와 지우개 방식(픽셀 / 획)
+// ---------------------------------------------------------------------------
+
+function clickEraserMode(root, mode) {
+  const button = root.querySelector(`[data-fabric-pilot-action="eraser-mode-${mode}"]`);
+  assert.ok(button, `지우개 방식 버튼 ${mode} 가 없다`);
+  button.dispatchEvent(new root.ownerDocument.defaultView.Event('click', { bubbles: true }));
+  return button;
+}
+
+test('eraser tool opens the erase gesture without modifiers', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 6201);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 6202;
+    // modifier 없이 그대로 지우기 제스처가 열려야 한다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('ctrl drag still erases while the brush or pen tool is active', async () => {
+  for (const tool of ['brush', 'pen']) {
+    const harness = createRealFabricHarness();
+    try {
+      harness.drawStrokeAt(60, 6210);
+      assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+      if (tool !== 'brush') enableRealFabricShapeTool(harness, tool);
+
+      const pointerId = 6211;
+      const ctrl = { ctrlKey: true };
+      harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1, ctrl);
+      harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1, ctrl);
+      harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+      assert.equal(
+        harness.sceneStore.getActiveSceneSnapshot().objects.length,
+        0,
+        `${tool} 에서 Ctrl 임시 지우개가 동작해야 한다`
+      );
+    } finally {
+      await harness.destroy();
+    }
+  }
+});
+
+test('ctrl temporary eraser is always stroke mode', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 6220);
+    // 팔레트를 픽셀 모드로 바꿔도 Ctrl 임시 지우개는 획 단위여야 한다.
+    clickEraserMode(harness.root, 'pixel');
+    assert.equal(harness.runtime.getDiagnostics().eraserMode, 'pixel');
+
+    const pointerId = 6221;
+    const ctrl = { ctrlKey: true };
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 60, pointerId, 1, ctrl);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 60, pointerId, 1, ctrl);
+    harness.dispatchCapturedPointerUp(40, 60, pointerId);
+
+    // 획 단위이므로 조각이 남지 않고 통째로 사라진다.
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('eraser mode is latched at gesture start', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 6230);
+    enableRealFabricShapeTool(harness, 'eraser');
+
+    const pointerId = 6231;
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 60, pointerId, 1);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+
+    // 드래그 도중 팔레트로 모드를 바꿔도 이 제스처의 커밋 방식은 바뀌지 않는다.
+    clickEraserMode(harness.root, 'pixel');
+    assert.equal(harness.runtime.getDiagnostics().eraserMode, 'pixel');
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'stroke');
+
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(40, 60, pointerId);
+    // 시작 시점 모드가 stroke 였으므로 획 전체가 사라진다.
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stroke-mode erase commits as a single undo entry', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(40, 6240);
+    harness.drawStrokeAt(60, 6241);
+    const before = harness.runtime.getDiagnostics().undoDepth;
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 6242;
+    // 두 획을 한 번에 가로지른다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 50, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 70, pointerId, 1);
+    harness.dispatchCapturedPointerUp(40, 70, pointerId);
+
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+    assert.equal(
+      harness.runtime.getDiagnostics().undoDepth,
+      before + 1,
+      '두 획을 지워도 실행취소는 1건이어야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('pixel-mode erase splits a stroke through the ribbon polygon', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    // 가로로 긴 획 하나를 그리고 가운데를 세로로 가로지른다.
+    harness.drawStroke([{ x: 10, y: 100 }, { x: 100, y: 100 }, { x: 190, y: 100 }], 6250);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    const before = harness.runtime.getDiagnostics().undoDepth;
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 6251;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    assert.equal(harness.runtime.getDiagnostics().activeEraseMode, 'pixel');
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 130, pointerId);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    // 가운데만 잘려 좌우 조각이 남아야 한다 — 폴백(획 전체 삭제)으로 떨어지면 0개다.
+    assert.equal(objects.length, 2, '픽셀 모드가 획을 조각으로 나눠야 한다');
+    assert.equal(objects.every(object => object.type === 'stroke'), true);
+    assert.equal(
+      harness.runtime.getDiagnostics().undoDepth,
+      before + 1,
+      '분할도 실행취소 1건이어야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
