@@ -1862,6 +1862,63 @@ test('drawing persistence IPC normalization resyncs malformed nested deltas with
   );
 });
 
+test('drawing actions that repaint force the transparent overlay to composite', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.applyDrawingAction(')) {
+        return { applied: true, repainted: true, deletedCount: 0 };
+      }
+      return undefined;
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-repaint-invalidate' });
+  harness.events.length = 0;
+
+  const result = await harness.host.applyDrawingAction({
+    hostGeneration: harness.host.hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-repaint-invalidate',
+    actionId: 'undo-repaint-1',
+    action: 'undo'
+  });
+  assert.equal(result.success, true);
+  // 투명 BrowserWindow 는 다시 그린 내용을 다음 입력까지 늦게 합성할 수 있다.
+  // 프레임 변경 경로와 같이 여기서도 합성을 강제해야 되돌린 획이 남아 보이지 않는다.
+  assert.ok(
+    harness.events.some(([name]) => name === 'webContents.invalidate'),
+    'a repainting drawing action must invalidate the overlay'
+  );
+});
+
+test('drawing actions that do not repaint leave the overlay alone', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.applyDrawingAction(')) {
+        return { applied: true, repainted: false, deletedCount: 0 };
+      }
+      return undefined;
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-no-repaint' });
+  harness.events.length = 0;
+
+  const result = await harness.host.applyDrawingAction({
+    hostGeneration: harness.host.hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-no-repaint',
+    actionId: 'undo-no-repaint-1',
+    action: 'undo'
+  });
+  assert.equal(result.success, true);
+  assert.equal(
+    harness.events.some(([name]) => name === 'webContents.invalidate'),
+    false,
+    '다른 키프레임만 바뀌었으면 합성을 강제할 이유가 없다'
+  );
+});
+
 test('drawing diagnostics relay global history depths', async () => {
   const harness = createDrawingHostHarness({
     executeDrawing(script) {

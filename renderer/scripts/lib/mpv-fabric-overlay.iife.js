@@ -19771,15 +19771,17 @@ void main() {
           const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? sceneStore.clearSession() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
           if (result.applied) {
             if (action === "undo" || action === "redo") {
+              let repainted = false;
               if (result.affectedActiveScene !== false) {
-                renderActiveScene();
+                renderActiveScene({ immediate: true });
                 fabricCanvas.discardActiveObject();
                 sceneStore.selectObjects([]);
                 setToolMode(currentSession?.tool || "brush");
+                repainted = true;
               }
               updateObjectMetric();
               settleArmedFramePreview();
-              return result;
+              return { ...result, repainted };
             }
             const deletedIds = new Set(result.deletedIds);
             for (const object of fabricCanvas.getObjects()) {
@@ -19787,8 +19789,14 @@ void main() {
             }
             fabricCanvas.discardActiveObject();
             refreshSelectionInteractionPolicy();
-            fabricCanvas.requestRenderAll();
+            if (typeof fabricCanvas.renderAll === "function") {
+              fabricCanvas.renderAll();
+            } else {
+              fabricCanvas.requestRenderAll();
+            }
             updateObjectMetric();
+            settleArmedFramePreview();
+            return { ...result, repainted: true };
           }
           settleArmedFramePreview();
           return result;

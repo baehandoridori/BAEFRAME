@@ -3319,6 +3319,12 @@ class MPVOverlayHost {
       if (!this._drawingActionExecutionIsCurrent(request, executionContext)) {
         return { success: false, applied: false, error: 'stale drawing action response' };
       }
+      // 투명 오버레이는 다시 그린 내용을 다음 입력까지 늦게 합성할 수 있다. 실행취소·
+      // 삭제로 화면이 바뀌었으면 프레임 변경 경로와 같이 합성을 강제한다. 이게 없으면
+      // 되돌린 획이 잠깐 남아 보인다.
+      if (result?.repainted === true) {
+        executionContext.hostWindow.webContents?.invalidate?.();
+      }
       return {
         success: result?.applied === true || result?.duplicate === true,
         applied: result?.applied === true,
