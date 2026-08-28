@@ -14442,6 +14442,10 @@ void main() {
             change.redoState,
             change.contentStableIds
           );
+          if (scene.provisional === true) {
+            command.materializesScene = true;
+            command.provisionalSourceFrame = scene.provisionalSourceFrame ?? null;
+          }
           const commandBytes = defaultEstimateObjectBytes(command);
           if (commandBytes > maxHistoryBytes) {
             return { applied: false, reason: "history-capacity-exceeded" };
@@ -14766,12 +14770,17 @@ void main() {
             sourceFrame: activeSession.sourceFrame
           };
         }
+        function provisionalSceneIsDisposable(scene) {
+          if (scene?.provisional !== true) return false;
+          const history = historyDiagnostics(scene);
+          return history.undoDepth === 0 && history.redoDepth === 0;
+        }
         function replaceActiveSession(session) {
           const previousScene = activeScene();
           const activation = activateSession(session);
           if (!activation.accepted) return activation;
           previousScene?.selectedObjectIds.clear();
-          if (previousScene?.provisional === true && previousScene.key !== activeSession.sceneKey) {
+          if (provisionalSceneIsDisposable(previousScene) && previousScene.key !== activeSession.sceneKey) {
             scenes.delete(previousScene.key);
             notifyScenesDropped([previousScene.sceneInstanceId]);
           }
@@ -14784,7 +14793,7 @@ void main() {
           }
           const scene = activeScene();
           scene?.selectedObjectIds.clear();
-          if (scene?.provisional === true) {
+          if (provisionalSceneIsDisposable(scene)) {
             scenes.delete(scene.key);
             notifyScenesDropped([scene.sceneInstanceId]);
           }
@@ -14792,7 +14801,7 @@ void main() {
           return { accepted: true, active: false };
         }
         function addStroke(stroke) {
-          const scene = activeScene();
+          const scene = syncProvisionalSceneForMutation(activeScene());
           if (!scene) return { applied: false, reason: "no-active-session" };
           if (!stroke || typeof stroke.id !== "string" || stroke.id.length === 0) {
             return { applied: false, reason: "invalid-stroke" };
@@ -14826,7 +14835,7 @@ void main() {
           return { changed, selection: [...next] };
         }
         function transformSelection(change = {}) {
-          const scene = activeScene();
+          const scene = syncProvisionalSceneForMutation(activeScene());
           if (!scene || scene.selectedObjectIds.size === 0) return { applied: false, objectIds: [] };
           const nextObjects = new Map(scene.objects);
           const changedIds = [];
@@ -14860,7 +14869,7 @@ void main() {
           return { applied: true, objectIds: changedIds };
         }
         function replaceObjects(change = {}) {
-          const scene = activeScene();
+          const scene = syncProvisionalSceneForMutation(activeScene());
           if (!scene) return { applied: false, reason: "no-active-session" };
           let replacements = Array.isArray(change.replacements) ? change.replacements.map((replacement) => ({
             removeId: replacement?.removeId,
@@ -15030,11 +15039,50 @@ void main() {
           touchVideo(scene.stableVideoIdentity);
           return { applied: true };
         }
+        function derivedProvisionalObjects(scene) {
+          const source = resolveCommittedSceneAtFrame(scene.stableVideoIdentity, scene.targetFrame);
+          return new Map(
+            [...(source?.objects || /* @__PURE__ */ new Map()).entries()].map(([id, object]) => [id, clonePlain(object)])
+          );
+        }
+        function sameObjectIds(left, right) {
+          if (left.size !== right.size) return false;
+          for (const id of left.keys()) {
+            if (!right.has(id)) return false;
+          }
+          return true;
+        }
+        function syncProvisionalSceneForMutation(scene) {
+          if (scene?.provisional !== true || provisionalSceneIsDisposable(scene)) return scene;
+          const derived = derivedProvisionalObjects(scene);
+          if (sameObjectIds(scene.objects, derived)) return scene;
+          let estimatedBytes;
+          try {
+            estimatedBytes = estimateObjectsBytes(derived);
+          } catch (_error) {
+            return scene;
+          }
+          const droppedIds = new Set(scene.history.clearRedo());
+          const order = globalOrderFor(scene.stableVideoIdentity);
+          if (order && droppedIds.size > 0) {
+            order.undo = order.undo.filter((entry) => !droppedIds.has(entry.commandId));
+            order.redo = order.redo.filter((entry) => !droppedIds.has(entry.commandId));
+          }
+          scene.historyEntries = { undo: [], redo: [] };
+          scene.objects = derived;
+          scene.selectedObjectIds = /* @__PURE__ */ new Set();
+          scene.estimatedBytes = estimatedBytes;
+          return scene;
+        }
         function applyHistoryEntry(scene, order, direction) {
           let transition = null;
           const result = scene.history[direction]((state, _historyDirection, entry) => {
             const applied = applyHistoryState(scene, state);
             if (applied.applied) {
+              if (entry.materializesScene === true) {
+                scene.provisional = direction === "undo";
+                scene.provisionalSourceFrame = direction === "undo" ? entry.provisionalSourceFrame ?? null : null;
+              }
               transition = {
                 origin: "history",
                 kind: entry.kind,
@@ -15063,8 +15111,9 @@ void main() {
             objectCount: scene.objects.size,
             selectedObjectIds: [],
             // 되돌린 씬이 지금 화면에 떠 있는 씬인지. 아니면 캔버스 재도색과 도구 모드
-            // 재설정을 건너뛴다.
-            affectedActiveScene: scene === activeScene(),
+            // 재설정을 건너뛴다. 다만 활성 씬이 임시 씬이면 그 화면은 커밋된 원본에서
+            // 파생되므로, 어느 씬이 바뀌었든 다시 그려야 한다.
+            affectedActiveScene: scene === activeScene() || activeScene()?.provisional === true,
             affectedTargetFrame: scene.targetFrame
           };
         }
@@ -15084,7 +15133,7 @@ void main() {
           return moveHistory("redo");
         }
         function deleteSelection() {
-          const scene = activeScene();
+          const scene = syncProvisionalSceneForMutation(activeScene());
           if (!scene || scene.selectedObjectIds.size === 0) {
             return { applied: false, deletedCount: 0, deletedIds: [] };
           }
@@ -15103,7 +15152,7 @@ void main() {
           return { applied: true, deletedCount: deletedIds.length, deletedIds };
         }
         function clearSession() {
-          const scene = activeScene();
+          const scene = syncProvisionalSceneForMutation(activeScene());
           const deletedCount = scene?.objects.size || 0;
           if (!scene || deletedCount === 0) return { applied: false, deletedCount: 0, deletedIds: [] };
           const deletedIds = [...scene.objects.keys()];
@@ -15227,7 +15276,11 @@ void main() {
           };
         }
         function getActiveSceneSnapshot() {
-          return snapshotScene(activeScene());
+          const scene = activeScene();
+          if (!scene || scene.provisional !== true || provisionalSceneIsDisposable(scene)) {
+            return snapshotScene(scene);
+          }
+          return snapshotScene({ ...scene, objects: derivedProvisionalObjects(scene) });
         }
         function hasScene(stableVideoIdentity, targetFrame) {
           return scenes.has(makeSceneKey(stableVideoIdentity, targetFrame));
