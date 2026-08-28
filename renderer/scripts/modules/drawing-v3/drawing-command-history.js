@@ -29,8 +29,14 @@ function createDrawingCommandHistory(options = {}) {
     knownIds.delete(entry.id);
   }
 
+  // 전역 실행취소 순서 인덱스가 같은 항목을 지울 수 있도록 버린 id를 돌려준다.
   function clearStack(stack) {
-    while (stack.length > 0) removeAt(stack, stack.length - 1);
+    const removedIds = [];
+    while (stack.length > 0) {
+      removedIds.push(stack[stack.length - 1].id);
+      removeAt(stack, stack.length - 1);
+    }
+    return removedIds;
   }
 
   function record(command) {
@@ -44,15 +50,32 @@ function createDrawingCommandHistory(options = {}) {
     const estimatedBytes = Math.max(1, Math.trunc(Number(estimateEntryBytes(stored)) || 1));
     if (estimatedBytes > maxBytes) return { recorded: false, reason: 'history-capacity-exceeded' };
 
-    clearStack(redoStack);
+    // redo 폐기는 기록 성공 여부와 무관하게 이미 일어난다. 따라서 실패 반환에도
+    // clearedRedoIds를 실어야 전역 인덱스가 없는 항목을 가리킨 채 남지 않는다.
+    const clearedRedoIds = clearStack(redoStack);
+    const evictedUndoIds = [];
     while (undoStack.length >= maxEntries || historyBytes + estimatedBytes > maxBytes) {
-      if (undoStack.length === 0) return { recorded: false, reason: 'history-capacity-exceeded' };
+      if (undoStack.length === 0) {
+        return {
+          recorded: false,
+          reason: 'history-capacity-exceeded',
+          evictedUndoIds,
+          clearedRedoIds
+        };
+      }
+      evictedUndoIds.push(undoStack[0].id);
       removeAt(undoStack, 0);
     }
     undoStack.push({ ...stored, estimatedBytes });
     knownIds.add(stored.id);
     historyBytes += estimatedBytes;
-    return { recorded: true, undoDepth: undoStack.length, redoDepth: 0 };
+    return {
+      recorded: true,
+      undoDepth: undoStack.length,
+      redoDepth: 0,
+      evictedUndoIds,
+      clearedRedoIds
+    };
   }
 
   function moveTop(from, to, stateKey, applyState, direction) {
@@ -90,6 +113,12 @@ function createDrawingCommandHistory(options = {}) {
     clearStack(redoStack);
   }
 
+  // 다른 씬에서 새 편집이 일어나면 이 씬의 redo도 전역적으로 무효가 된다.
+  // undo 스택은 건드리지 않고 redo만 비우고, 버린 id를 돌려준다.
+  function clearRedo() {
+    return clearStack(redoStack);
+  }
+
   function getDiagnostics() {
     const undoBytes = undoStack.reduce((total, entry) => total + entry.estimatedBytes, 0);
     const redoBytes = redoStack.reduce((total, entry) => total + entry.estimatedBytes, 0);
@@ -104,7 +133,7 @@ function createDrawingCommandHistory(options = {}) {
     };
   }
 
-  return { record, undo, redo, clear, getDiagnostics };
+  return { record, undo, redo, clear, clearRedo, getDiagnostics };
 }
 
 module.exports = { createDrawingCommandHistory };

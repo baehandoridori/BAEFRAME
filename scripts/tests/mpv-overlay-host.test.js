@@ -1862,6 +1862,32 @@ test('drawing persistence IPC normalization resyncs malformed nested deltas with
   );
 });
 
+test('drawing diagnostics relay global history depths', async () => {
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.getDiagnostics(')) return undefined;
+      return {
+        state: 'active',
+        prepared: true,
+        inputEnabled: true,
+        undoDepth: 2,
+        redoDepth: 1,
+        globalUndoDepth: 7.9,
+        globalRedoDepth: -3
+      };
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-global-history' });
+
+  const diagnostics = await harness.host.getDrawingDiagnostics();
+  assert.equal(diagnostics.success, true);
+  // 활성 씬 기준 깊이와 전역 순서 깊이는 의미가 다르다 — 둘 다 중계돼야 한다.
+  assert.equal(diagnostics.undoDepth, 2);
+  assert.equal(diagnostics.redoDepth, 1);
+  assert.equal(diagnostics.globalUndoDepth, 7);
+  assert.equal(diagnostics.globalRedoDepth, 0, '음수는 0으로 잘린다');
+});
+
 test('drawing diagnostics relay the bounded gesture probe', async () => {
   const harness = createDrawingHostHarness({
     executeDrawing(script) {

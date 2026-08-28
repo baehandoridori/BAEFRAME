@@ -9410,7 +9410,7 @@ test('two consecutive moves create two distinct undo redo commands', () => {
   assertHistoryDiagnostics(harness, { mutationCount: 7, undoDepth: 3, redoDepth: 0 });
 });
 
-test('video and frame scene histories remain independent across undo and redo', () => {
+test('undo and redo follow visual order within a video while videos stay independent', () => {
   const harness = createHistoryHarness();
   const { sceneStore } = harness;
   const activate = (sessionId, stableVideoIdentity, targetFrame) => sceneStore.activateSession({
@@ -9439,20 +9439,305 @@ test('video and frame scene histories remain independent across undo and redo', 
   assert.equal(sceneStore.undo().applied, true);
   assertHistoryDiagnostics(harness, { mutationCount: 2, undoDepth: 0, redoDepth: 1 });
 
+  // 영상 경계는 그대로다 — other-video 의 redo 는 runtime-video 와 섞이지 않는다.
   assert.equal(activate('video-session-2', 'other-video', 24).restored, true);
   assert.equal(sceneStore.redo().applied, true);
   assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-video']);
   assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
 
+  // 한 영상 안에서는 프레임과 무관하게 시각 순서의 역순으로 되돌아온다.
+  // 되돌린 순서가 frame(25) → base(24) 였으므로 redo 는 base(24) 부터다.
+  // 재생헤드를 25 에 둔 채 redo 해도 24 가 복원되며, 그때 화면(25)에는 변화가 없다.
   assert.equal(activate('frame-session-3', 'runtime-video', 25).restored, true);
-  assert.equal(sceneStore.redo().applied, true);
+  const redoBase = sceneStore.redo();
+  assert.equal(redoBase.applied, true);
+  assert.equal(redoBase.affectedActiveScene, false, '활성 씬이 아닌 키프레임을 복원했다');
+  assert.equal(redoBase.affectedTargetFrame, 24);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), [],
+    '재생헤드가 있는 25 는 아직 비어 있다');
+
+  const redoFrame = sceneStore.redo();
+  assert.equal(redoFrame.applied, true);
+  assert.equal(redoFrame.affectedActiveScene, true);
   assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-frame']);
   assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
 
   assert.equal(activate('base-session-3', 'runtime-video', 24).restored, true);
-  assert.equal(sceneStore.redo().applied, true);
-  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-base']);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-base'],
+    '24 는 앞선 redo 에서 이미 복원됐다');
   assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
+});
+
+test('전역 실행취소는 재생헤드와 무관하게 가장 최근 편집부터 되돌린다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+  const activate = targetFrame => sceneStore.activateSession({
+    sessionId: `global-undo-${targetFrame}`,
+    stableVideoIdentity: 'runtime-video',
+    targetFrame,
+    videoGeneration: 1,
+    tool: 'brush'
+  });
+  const objectIdsAt = targetFrame =>
+    sceneStore.getSceneSnapshot('runtime-video', targetFrame)?.objects.map(object => object.id) || [];
+
+  assert.equal(activate(10).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('stroke-f10')).applied, true);
+  assert.equal(activate(20).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('stroke-f20')).applied, true);
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 2);
+
+  // 재생헤드는 20 에 있다 — 가장 최근 편집(20)이 먼저 되돌아온다.
+  const first = sceneStore.undo();
+  assert.equal(first.applied, true);
+  assert.equal(first.affectedActiveScene, true);
+  assert.deepEqual(objectIdsAt(20), []);
+  assert.deepEqual(objectIdsAt(10), ['stroke-f10']);
+
+  // 한 번 더 — 재생헤드는 그대로 20 인데 10 의 획이 사라진다.
+  // 예전(씬별 히스토리)에는 여기서 아무 일도 일어나지 않았다.
+  const second = sceneStore.undo();
+  assert.equal(second.applied, true);
+  assert.equal(second.affectedActiveScene, false, '다른 키프레임을 되돌렸다');
+  assert.equal(second.affectedTargetFrame, 10);
+  assert.deepEqual(objectIdsAt(10), []);
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 0);
+  assert.equal(runtime.getDiagnostics().globalRedoDepth, 2);
+});
+
+test('재생헤드가 키프레임에 없어도 전역 실행취소가 동작한다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'off-keyframe-draw',
+    stableVideoIdentity: 'runtime-video',
+    targetFrame: 10,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('stroke-off-keyframe')).applied, true);
+
+  // 키프레임이 아닌 15 로 이동한다. 임시(provisional) 씬이 서므로 활성 씬에는
+  // 히스토리가 없다 — 예전에는 여기서 Ctrl+Z 가 history-empty 로 끝났다.
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'off-keyframe-idle',
+    stableVideoIdentity: 'runtime-video',
+    targetFrame: 15,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).accepted, true);
+  assert.equal(runtime.getDiagnostics().undoDepth, 0, '활성 씬에는 히스토리가 없다');
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 1);
+
+  const result = sceneStore.undo();
+  assert.equal(result.applied, true, '§6 요구의 핵심 — 여기서 반드시 되돌아와야 한다');
+  assert.equal(result.affectedActiveScene, false);
+  assert.equal(result.affectedTargetFrame, 10);
+  assert.deepEqual(
+    sceneStore.getSceneSnapshot('runtime-video', 10)?.objects.map(object => object.id),
+    []
+  );
+});
+
+test('새 편집은 전역 redo 를 전부 무효화하고 다른 씬의 redo 도 함께 비운다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+  const activate = targetFrame => sceneStore.activateSession({
+    sessionId: `redo-invalidate-${targetFrame}`,
+    stableVideoIdentity: 'runtime-video',
+    targetFrame,
+    videoGeneration: 1,
+    tool: 'brush'
+  });
+
+  assert.equal(activate(10).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('invalidate-f10')).applied, true);
+  assert.equal(activate(20).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('invalidate-f20')).applied, true);
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(runtime.getDiagnostics().globalRedoDepth, 2);
+
+  assert.equal(activate(30).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('invalidate-f30')).applied, true);
+
+  assert.equal(runtime.getDiagnostics().globalRedoDepth, 0, '전역 redo 가 무효화된다');
+  const redo = sceneStore.redo();
+  assert.equal(redo.applied, false);
+  assert.equal(redo.reason, 'history-empty');
+  // 다른 씬의 씬별 redo 도 함께 비워야 진단이 어긋나지 않는다.
+  for (const targetFrame of [10, 20]) {
+    assert.equal(activate(targetFrame).restored, true);
+    assert.equal(runtime.getDiagnostics().redoDepth, 0, `프레임 ${targetFrame} 의 redo 가 남아 있다`);
+  }
+});
+
+test('용량 초과로 축출된 항목은 전역 순서에서도 사라진다', () => {
+  const harness = createHistoryHarness({ maxHistory: 2 });
+  const { sceneStore, runtime } = harness;
+
+  for (let index = 0; index < 5; index += 1) {
+    assert.equal(sceneStore.addStroke(makeHistoryStroke(`evicted-${index}`)).applied, true);
+  }
+  // 씬 히스토리가 2건만 남기므로 전역 순서도 2건이어야 한다.
+  assert.equal(runtime.getDiagnostics().undoDepth, 2);
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 2);
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(sceneStore.undo().applied, true);
+  const exhausted = sceneStore.undo();
+  assert.equal(exhausted.applied, false);
+  assert.equal(exhausted.reason, 'history-empty', '축출된 항목을 가리키는 유령이 남지 않는다');
+});
+
+test('영상을 축출하면 그 영상의 전역 순서도 사라진다', () => {
+  const harness = createHistoryHarness({ maxVideos: 1 });
+  const { sceneStore, runtime } = harness;
+
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('evict-video-first')).applied, true);
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 1);
+
+  // maxVideos 1 이므로 다른 영상을 열면 앞 영상이 축출된다.
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'evict-video-second',
+    stableVideoIdentity: 'other-video',
+    targetFrame: 24,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('evict-video-second-stroke')).applied, true);
+
+  // 전역 깊이는 활성 영상 기준이다 — 앞 영상의 항목이 새 영상으로 새지 않는다.
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 1);
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(sceneStore.undo().applied, false, '축출된 영상의 항목은 되돌릴 수 없다');
+});
+
+test('영상을 재수화하면 그 영상의 전역 순서가 초기화된다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('hydrate-reset-stroke')).applied, true);
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 1);
+
+  // hydrateVideo 는 활성 영상을 거부한다(video-active). 다른 영상으로 옮겨 둔다.
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'hydrate-reset-other',
+    stableVideoIdentity: 'other-video',
+    targetFrame: 1,
+    videoGeneration: 1,
+    tool: 'brush'
+  }).accepted, true);
+
+  assert.equal(sceneStore.hydrateVideo({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'hydrate-reset-session',
+    stableVideoIdentity: 'runtime-video',
+    fps: 24,
+    totalFrames: 240,
+    keyframes: [{
+      id: 'keyframe-24',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('hydrated-stroke')]
+    }]
+  }).accepted, true);
+
+  // 재수화가 영상을 지속화 세대에 묶으므로 재활성도 같은 세대여야 한다
+  // (hostGeneration 3 / videoGeneration 7 — hydrate 요청과 동일).
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'hydrate-reset-back',
+    stableVideoIdentity: 'runtime-video',
+    targetFrame: 24,
+    hostGeneration: 3,
+    videoGeneration: 7,
+    tool: 'brush'
+  }).accepted, true);
+  assert.deepEqual(
+    sceneStore.getActiveSceneSnapshot().objects.map(object => object.id),
+    ['hydrated-stroke'],
+    '재수화된 내용으로 교체됐다'
+  );
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, 0, '교체된 씬의 항목은 무효다');
+  assert.equal(sceneStore.undo().applied, false);
+});
+
+test('활성 씬이 아닌 곳을 되돌려도 지속화 관찰자에게 전파된다', () => {
+  const transitions = [];
+  const harness = createHistoryHarness({
+    drawingEngineObserver: {
+      enqueueTransition(event) { transitions.push(event); }
+    }
+  });
+  const { sceneStore } = harness;
+  const activate = targetFrame => sceneStore.activateSession({
+    sessionId: `notify-${targetFrame}`,
+    stableVideoIdentity: 'runtime-video',
+    targetFrame,
+    videoGeneration: 1,
+    tool: 'brush'
+  });
+
+  assert.equal(activate(10).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('notify-f10')).applied, true);
+  assert.equal(activate(20).accepted, true);
+  transitions.length = 0;
+
+  // 활성 씬(20)에는 히스토리가 없다. 전역 실행취소가 10 을 되돌린다.
+  const result = sceneStore.undo();
+  assert.equal(result.applied, true);
+  assert.equal(result.affectedActiveScene, false);
+  assert.ok(transitions.length > 0, '화면에 안 보여도 저장 계층에는 전파돼야 한다');
+  assert.equal(transitions.at(-1).scene.targetFrame, 10, '되돌린 씬 기준으로 발화한다');
+});
+
+test('적용에 실패한 항목이 전역 스택을 막지 않는다', () => {
+  const blocked = new Set();
+  const harness = createHistoryHarness({
+    estimateObjectBytes(object) {
+      if (blocked.has(object.id)) throw new Error('validation-injected');
+      return JSON.stringify(object).length * 2;
+    }
+  });
+  const { sceneStore, runtime } = harness;
+  const activate = targetFrame => sceneStore.activateSession({
+    sessionId: `stall-${targetFrame}`,
+    stableVideoIdentity: 'runtime-video',
+    targetFrame,
+    videoGeneration: 1,
+    tool: 'brush'
+  });
+
+  assert.equal(activate(10).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('stall-f10')).applied, true);
+  assert.equal(activate(20).accepted, true);
+  const doomed = makeHistoryStroke('stall-f20');
+  assert.equal(sceneStore.addStroke(doomed).applied, true);
+  sceneStore.selectObjects([doomed.id]);
+  assert.equal(sceneStore.deleteSelection().applied, true);
+  const depthBefore = runtime.getDiagnostics().globalUndoDepth;
+
+  // 프레임 20 의 삭제를 되돌리려면 stall-f20 을 되살려야 하는데 그 추정이 던진다.
+  // 최상단에서 멈추면 그 항목이 영구히 남아 이후 모든 Ctrl+Z 가 같은 실패를 반복한다.
+  blocked.add('stall-f20');
+  const result = sceneStore.undo();
+  assert.equal(result.applied, true, '실패 항목을 건너뛰고 다음 후보를 적용해야 한다');
+  assert.equal(result.affectedTargetFrame, 10);
+  assert.deepEqual(
+    sceneStore.getSceneSnapshot('runtime-video', 10)?.objects.map(object => object.id),
+    []
+  );
+  // 실패 항목은 버리지 않는다 — 일시적 실패라면 다음에 다시 시도할 수 있어야 한다.
+  assert.equal(runtime.getDiagnostics().globalUndoDepth, depthBefore - 1);
+
+  blocked.clear();
+  const retried = sceneStore.undo();
+  assert.equal(retried.applied, true, '원인이 사라지면 그 항목이 다시 적용된다');
+  assert.equal(retried.affectedTargetFrame, 20);
 });
 
 test('redo history bytes remain in the store-wide maxBytes calculation across scenes', () => {
@@ -9549,7 +9834,14 @@ test('later commands on sibling frames cannot consume the capacity reserved for 
   assert.ok(sceneStore.getDiagnostics().estimatedBytes <= 30000);
 
   assert.equal(activate(0, 'return-frame-0').restored, true);
-  assert.equal(sceneStore.undo().applied, true);
+  // 전역 실행취소는 시각 순서의 역순이므로 형제 프레임의 최신 항목부터 걷힌다.
+  // 프레임 0 의 삭제에 닿을 때까지 되돌린다 — 형제들이 예약 용량을 먹지 않았다면
+  // 그 항목은 여기서 여전히 적용 가능해야 한다(이 테스트의 본래 의도).
+  let undoAttempts = 0;
+  while (sceneStore.getActiveSceneSnapshot().objects.length === 0 && undoAttempts < 16) {
+    assert.equal(sceneStore.undo().applied, true);
+    undoAttempts += 1;
+  }
   assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, [restorable]);
   assert.equal(sceneStore.redo().applied, true);
   assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects, []);
