@@ -15443,6 +15443,11 @@ void main() {
         let strokeEraseGesture = null;
         let sizeAdjustHud = null;
         const overlayModifierState = { alt: false, ctrl: false };
+        const gestureProbe = {
+          overlayAltKeyDownCount: 0,
+          overlayCtrlKeyDownCount: 0,
+          lastPointerdown: null
+        };
         let pendingPointerdownFrame = null;
         let lastSelectionGesture = null;
         let pendingLassoSelection = null;
@@ -17930,6 +17935,18 @@ void main() {
           if (event?.pointerType === "mouse") return false;
           return overlayModifierState.ctrl === true;
         }
+        function recordPointerdownProbe(event) {
+          gestureProbe.lastPointerdown = {
+            pointerType: typeof event?.pointerType === "string" ? event.pointerType : null,
+            button: Number.isFinite(event?.button) ? event.button : null,
+            altKey: event?.altKey === true,
+            ctrlKey: event?.ctrlKey === true,
+            latchAlt: overlayModifierState.alt === true,
+            latchCtrl: overlayModifierState.ctrl === true,
+            documentHasFocus: typeof documentRef?.hasFocus === "function" ? documentRef.hasFocus() === true : null,
+            replayed: event?.[REPLAYED_POINTERDOWN] === true
+          };
+        }
         function syncOverlayModifierStateFromPointer(event) {
           if (event?.pointerType !== "mouse") return;
           if (event.altKey !== true) overlayModifierState.alt = false;
@@ -17940,8 +17957,14 @@ void main() {
           overlayModifierState.ctrl = false;
         }
         function onOverlayKeyDown(event) {
-          if (event?.key === "Alt") overlayModifierState.alt = true;
-          if (event?.key === "Control") overlayModifierState.ctrl = true;
+          if (event?.key === "Alt") {
+            overlayModifierState.alt = true;
+            gestureProbe.overlayAltKeyDownCount += 1;
+          }
+          if (event?.key === "Control") {
+            overlayModifierState.ctrl = true;
+            gestureProbe.overlayCtrlKeyDownCount += 1;
+          }
         }
         function onOverlayKeyUp(event) {
           if (event?.key === "Alt") overlayModifierState.alt = false;
@@ -18457,6 +18480,7 @@ void main() {
           return false;
         }
         function onPointerDown(event) {
+          recordPointerdownProbe(event);
           syncOverlayModifierStateFromPointer(event);
           if (event?.[REPLAYED_POINTERDOWN] === true) {
             beginPointerDown(event, false);
@@ -19597,7 +19621,10 @@ void main() {
               ctrlStrokeEraseActive: !!strokeEraseGesture,
               strokeEraseCandidateCount: strokeEraseGesture ? strokeEraseGesture.erasedIds.size : 0,
               modifierAlt: overlayModifierState.alt,
-              modifierCtrl: overlayModifierState.ctrl
+              modifierCtrl: overlayModifierState.ctrl,
+              overlayAltKeyDownCount: gestureProbe.overlayAltKeyDownCount,
+              overlayCtrlKeyDownCount: gestureProbe.overlayCtrlKeyDownCount,
+              lastPointerdown: gestureProbe.lastPointerdown ? { ...gestureProbe.lastPointerdown } : null
             },
             presentationRevision: presentationState.presentationRevision,
             presentedStableVideoIdentity: currentSession?.stableVideoIdentity ?? presentationState.stableVideoIdentity,

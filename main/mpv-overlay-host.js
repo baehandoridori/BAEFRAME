@@ -1940,6 +1940,51 @@ function overlayHistoryActionFromInput(input = {}) {
   return null;
 }
 
+// 오버레이 제스처 진단 중계. 지금까지 이 블록은 화이트리스트에 없어 통째로 버려졌고,
+// 그 탓에 Alt 제스처 결함을 실기에서 관측할 방법이 없었다. 값 범위를 여기서 고정한다.
+function sanitizeFabricGestureDiagnostics(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const pointerdown = value.lastPointerdown &&
+    typeof value.lastPointerdown === 'object' &&
+    !Array.isArray(value.lastPointerdown)
+    ? value.lastPointerdown
+    : null;
+  return {
+    altSizeAdjustActive: value.altSizeAdjustActive === true,
+    ctrlStrokeEraseActive: value.ctrlStrokeEraseActive === true,
+    strokeEraseCandidateCount: Math.max(
+      0,
+      Math.trunc(finiteDiagnosticNumber(value.strokeEraseCandidateCount))
+    ),
+    modifierAlt: value.modifierAlt === true,
+    modifierCtrl: value.modifierCtrl === true,
+    overlayAltKeyDownCount: Math.max(
+      0,
+      Math.trunc(finiteDiagnosticNumber(value.overlayAltKeyDownCount))
+    ),
+    overlayCtrlKeyDownCount: Math.max(
+      0,
+      Math.trunc(finiteDiagnosticNumber(value.overlayCtrlKeyDownCount))
+    ),
+    lastPointerdown: pointerdown
+      ? {
+        pointerType: typeof pointerdown.pointerType === 'string'
+          ? pointerdown.pointerType.slice(0, 32)
+          : null,
+        button: Number.isInteger(pointerdown.button) ? pointerdown.button : null,
+        altKey: pointerdown.altKey === true,
+        ctrlKey: pointerdown.ctrlKey === true,
+        latchAlt: pointerdown.latchAlt === true,
+        latchCtrl: pointerdown.latchCtrl === true,
+        documentHasFocus: pointerdown.documentHasFocus === true
+          ? true
+          : (pointerdown.documentHasFocus === false ? false : null),
+        replayed: pointerdown.replayed === true
+      }
+      : null
+  };
+}
+
 function finiteDiagnosticNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : fallback;
@@ -3404,6 +3449,7 @@ class MPVOverlayHost {
         redoDepth: Math.trunc(finiteDiagnosticNumber(result?.redoDepth)),
         historyBytes: Math.trunc(finiteDiagnosticNumber(result?.historyBytes)),
         dirty: result?.dirty === true,
+        gestures: sanitizeFabricGestureDiagnostics(result?.gestures),
         cache: {
           videoCount: Math.trunc(finiteDiagnosticNumber(cache.videoCount)),
           sceneCount: Math.trunc(finiteDiagnosticNumber(cache.sceneCount)),
@@ -3879,6 +3925,12 @@ class MPVOverlayHost {
       // overlay 순서를 복원한 뒤 재합성을 한 번 더 강제한다.
       hostWindow.moveTop?.();
       hostWindow.webContents?.invalidate?.();
+      // Windows 마우스 메시지에는 Ctrl/Shift 플래그만 실리고 Alt 플래그가 없다.
+      // Chromium은 Alt를 그 창의 키보드 입력 큐에서 읽으므로, 포커스를 준 적이
+      // 없는 overlay에서는 Alt 드래그가 altKey:false로 도착해 제스처가 열리지
+      // 않는다(Ctrl 지우개만 되고 Alt 크기 조절은 안 되던 비대칭의 원인).
+      // 도구 변경 경로도 이미 같은 이유로 마지막에 focus를 되돌린다.
+      hostWindow.focus?.();
       return;
     }
 

@@ -13833,6 +13833,74 @@ test('window blur는 Alt/Ctrl 래치를 해제하고 진행 중인 제스처를 
   }
 });
 
+test('pointerdown 표본은 래치 자가복구보다 먼저 찍힌다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    // 펜 경로로 래치를 세운 뒤 마우스 pointerdown 을 보낸다. 마우스는 래치를 무시하고
+    // 자가복구까지 하므로, 표본을 나중에 찍으면 "래치가 있었다"는 정보가 사라진다.
+    const keydown = new harness.environment.window.Event('keydown', { bubbles: true });
+    Object.defineProperty(keydown, 'key', { value: 'Alt' });
+    harness.environment.document.dispatchEvent(keydown);
+    assert.equal(harness.runtime.getDiagnostics().gestures.modifierAlt, true);
+
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 30, 1940, 1, { altKey: false });
+    const gestures = harness.runtime.getDiagnostics().gestures;
+    assert.equal(gestures.lastPointerdown.latchAlt, true, '자가복구 이전 래치 값이 잡힌다');
+    assert.equal(gestures.lastPointerdown.altKey, false);
+    assert.equal(gestures.lastPointerdown.pointerType, 'mouse');
+    assert.equal(gestures.lastPointerdown.replayed, false);
+    assert.equal(gestures.modifierAlt, false, '표본을 찍은 뒤 자가복구가 실행된다');
+    assert.equal(gestures.altSizeAdjustActive, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('오버레이 Alt/Ctrl keydown 횟수가 포커스 손실과 메시지 계층 손실을 가른다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    assert.equal(harness.runtime.getDiagnostics().gestures.overlayAltKeyDownCount, 0);
+    for (const key of ['Alt', 'Alt', 'Control']) {
+      const keydown = new harness.environment.window.Event('keydown', { bubbles: true });
+      Object.defineProperty(keydown, 'key', { value: key });
+      harness.environment.document.dispatchEvent(keydown);
+    }
+    const gestures = harness.runtime.getDiagnostics().gestures;
+    assert.equal(gestures.overlayAltKeyDownCount, 2);
+    assert.equal(gestures.overlayCtrlKeyDownCount, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('재생된 pointerdown은 제스처 표본에 표시된다', () => {
+  const pointerdownRequests = [];
+  const harness = createPresentationHarness([{
+    id: 'keyframe-10', frame: 10, sourceWidth: 1920, sourceHeight: 1080,
+    mutationSequence: 2, objects: [makeHistoryStroke('probe-replay-source')]
+  }], {
+    runtimeOptions: {
+      requestPointerdownFrame(request) {
+        pointerdownRequests.push(request);
+        return true;
+      }
+    }
+  });
+  assert.equal(harness.enableHeldFrame(10, 10, 'brush', 1).accepted, true);
+  harness.canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 1941, pointerType: 'pen', button: 0, buttons: 1,
+    clientX: 10, clientY: 20, pressure: 0.3, timeStamp: 1
+  });
+  assert.equal(pointerdownRequests.length, 1);
+  assert.equal(harness.runtime.getDiagnostics().gestures.lastPointerdown.replayed, false,
+    '확정 전 원본 pointerdown 은 재생이 아니다');
+  assert.equal(harness.runtime.confirmDrawingPointerdownFrame({
+    ...pointerdownRequests[0], targetFrame: 10
+  }).accepted, true);
+  assert.equal(harness.runtime.getDiagnostics().gestures.lastPointerdown.replayed, true,
+    '확정 후 재생된 pointerdown 이 표본에 표시된다');
+});
+
 test('Ctrl 드래그는 지나간 획만 지우고 undo 1건으로 되돌아온다', async () => {
   const harness = createRealFabricHarness();
   try {
