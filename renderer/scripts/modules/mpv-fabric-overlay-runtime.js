@@ -7644,7 +7644,10 @@ function createFabricOverlayRuntime(options = {}) {
     }
     transformStart = {
       target,
-      transform: captureTransform(target)
+      transform: captureTransform(target),
+      // 외곽선은 선택 대상이 아니라 fabric 의 이동 타깃에 들어가지 않는다.
+      // 드래그 중에도 짝이 붙어 다니도록 출발 위치를 기억해 두고 같은 델타를 준다.
+      outlinePairs: collectDraggedOutlinePairs(target)
     };
     if (pendingLassoSelection) {
       pendingLassoSelection.activeTarget = target;
@@ -7652,7 +7655,45 @@ function createFabricOverlayRuntime(options = {}) {
     }
   }
 
+  // 이동 중인 타깃(단일 오브젝트 또는 ActiveSelection)에 딸린 외곽선들.
+  function collectDraggedOutlinePairs(target) {
+    if (!fabricCanvas || !target) return [];
+    const children = typeof target.getObjects === 'function' ? target.getObjects() : [target];
+    const canvasObjects = new Map(
+      fabricCanvas.getObjects()
+        .filter(object => object.__baeframeObjectId)
+        .map(object => [object.__baeframeObjectId, object])
+    );
+    const pairs = [];
+    for (const child of children) {
+      const outlineId = outlineIdFor(child?.__baeframeObjectId);
+      const outlineObject = outlineId ? canvasObjects.get(outlineId) : null;
+      if (!outlineObject) continue;
+      pairs.push({
+        object: outlineObject,
+        startLeft: finiteNumber(outlineObject.left),
+        startTop: finiteNumber(outlineObject.top)
+      });
+    }
+    return pairs;
+  }
+
+  // 드래그 중 본체만 포인터를 따라가고 외곽선이 제자리에 남으면, 손을 뗄 때까지
+  // 짝이 눈에 띄게 벌어진다. 커밋 전까지도 같은 델타로 따라가게 한다.
+  function syncDraggedOutlinePairs() {
+    const start = transformStart;
+    if (!start?.target || !start.outlinePairs?.length) return;
+    const dx = finiteNumber(start.target.left) - finiteNumber(start.transform.left);
+    const dy = finiteNumber(start.target.top) - finiteNumber(start.transform.top);
+    for (const pair of start.outlinePairs) {
+      pair.object.set?.({ left: pair.startLeft + dx, top: pair.startTop + dy });
+      pair.object.setCoords?.();
+    }
+    fabricCanvas?.requestRenderAll();
+  }
+
   function onObjectMoving(event) {
+    syncDraggedOutlinePairs();
     const target = event?.target;
     if (!pendingLassoSelection) return;
     if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {

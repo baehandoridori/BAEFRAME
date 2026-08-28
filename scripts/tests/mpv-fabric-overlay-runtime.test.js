@@ -16331,3 +16331,41 @@ test('a pixel eraser grazing only the outline changes nothing', async () => {
     await harness.destroy();
   }
 });
+
+test('an outline follows its body during the drag, not just at commit', async () => {
+  // 외곽선은 선택 대상이 아니라 fabric 의 이동 타깃에 안 들어간다. 커밋 때 다시
+  // 그려질 때까지 제자리에 남으면, 드래그하는 내내 짝이 눈에 띄게 벌어진다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 6 });
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 8601);
+    const outlineId = outlineObjects(harness)[0].id;
+    const bodyId = bodyObjects(harness)[0].id;
+
+    enableRealFabricShapeTool(harness, 'select', 7);
+    const outlinePath = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === outlineId);
+    const bodyPath = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === bodyId);
+    assert.ok(outlinePath && bodyPath);
+    const gapBefore = {
+      left: bodyPath.left - outlinePath.left,
+      top: bodyPath.top - outlinePath.top
+    };
+
+    // 드래그 시작 → 본체만 이동 → moving 이벤트. 커밋(mouse:up)은 하지 않는다.
+    harness.canvas.setActiveObject?.(bodyPath);
+    harness.canvas.fire?.('before:transform', { target: bodyPath });
+    bodyPath.set({ left: bodyPath.left + 25, top: bodyPath.top - 13 });
+    harness.canvas.fire?.('object:moving', { target: bodyPath });
+
+    assert.ok(
+      Math.abs((bodyPath.left - outlinePath.left) - gapBefore.left) < 1e-6 &&
+      Math.abs((bodyPath.top - outlinePath.top) - gapBefore.top) < 1e-6,
+      `드래그 중 짝이 벌어졌다 (전 ${JSON.stringify(gapBefore)} / 후 ` +
+      `${JSON.stringify({ left: bodyPath.left - outlinePath.left, top: bodyPath.top - outlinePath.top })})`
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
