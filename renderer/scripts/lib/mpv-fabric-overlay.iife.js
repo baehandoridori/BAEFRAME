@@ -18964,10 +18964,9 @@ void main() {
               { x: point.x + radius, y: point.y + radius }
             );
           }
-          const extended = extendSpineEndpoints(spine, radius);
-          const ribbon = offsetRibbonFromSpine(extended, radius);
+          const ribbon = offsetRibbonFromSpine(extendSpineEndpoints(spine, radius), radius);
           if (validateSimpleContour(ribbon, budget)) return ribbon;
-          return strokeEraseCorridorPolygon(extended, radius);
+          return strokeEraseCorridorPolygon(spine, radius);
         }
         function commitStrokeEraseAsWholeStrokes(gesture) {
           const selection = sceneStore.selectObjects([...gesture.erasedIds]);

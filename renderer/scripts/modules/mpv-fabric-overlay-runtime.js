@@ -6412,13 +6412,16 @@ function createFabricOverlayRuntime(options = {}) {
         { x: point.x + radius, y: point.y + radius }
       );
     }
-    const extended = extendSpineEndpoints(spine, radius);
-    const ribbon = offsetRibbonFromSpine(extended, radius);
+    const ribbon = offsetRibbonFromSpine(extendSpineEndpoints(spine, radius), radius);
     if (validateSimpleContour(ribbon, budget)) return ribbon;
     // 앞뒤로 문지르는(A→B→A) 동작은 좌/우 오프셋이 서로를 가로질러 단순 폴리곤이
     // 되지 않는다. 한 축을 따르는 스크럽이면 복도로 되살리고, 그 밖의 모양이면
     // 빈 폴리곤을 돌려 **아무것도 지우지 않는다.**
-    return strokeEraseCorridorPolygon(extended, radius);
+    //
+    // 복도는 **연장하지 않은** 척추에서 만든다. strokeEraseCorridorPolygon 이
+    // 자체적으로 양 끝에 반경을 더하므로, 이미 연장된 척추를 넘기면 실제 스윕보다
+    // 반경만큼 더 뻗어 지나가지도 않은 획을 삼킨다.
+    return strokeEraseCorridorPolygon(spine, radius);
   }
 
   function commitStrokeEraseAsWholeStrokes(gesture) {

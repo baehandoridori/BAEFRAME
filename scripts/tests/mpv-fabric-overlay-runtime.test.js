@@ -15654,3 +15654,45 @@ test('showing a section restores its stacked layout rather than forcing a row', 
     await harness.destroy();
   }
 });
+
+test('the retrace corridor never reaches further than the eraser actually swept', async () => {
+  // extendSpineEndpoints 로 이미 반경만큼 늘린 척추를 복도 생성기에 넘기면
+  // 복도가 반경을 한 번 더 더해 실제 스윕보다 두 배로 뻗는다. 그 여분 띠에
+  // 걸친 획은 지우개가 지나가지도 않았는데 사라진다.
+  // 하네스 기준 지우개 반경은 3px 이다.
+  const harness = createRealFabricHarness();
+  try {
+    // 스크럽 시작점(y=100)보다 5px 위 — 반경 1배(97) 밖, 2배(94) 안쪽이다.
+    // 가드는 굵기가 균일한 도형으로 그어 경계를 예측 가능하게 만든다
+    // (브러시 획은 압력에 따라 끝이 가늘어져 여백이 들쭉날쭉하다).
+    enableRealFabricShapeTool(harness, 'line');
+    harness.dispatchPointer(harness.element, 'pointerdown', 60, 95, 7501, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 140, 95, 7501, 1);
+    harness.dispatchCapturedPointerUp(140, 95, 7501);
+    const guardId = harness.sceneStore.getActiveSceneSnapshot().objects[0].id;
+    // 스크럽이 실제로 가로지르는 대상. 이게 없으면 지우개가 아무것도 건드리지
+    // 못해 조기 반환하고 복도 자체가 계산되지 않는다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 60, 120, 7503, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 140, 120, 7503, 1);
+    harness.dispatchCapturedPointerUp(140, 120, 7503);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+
+    enableRealFabricShapeTool(harness, 'eraser', 5);
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7502;
+    // 아래로 내려갔다 같은 길로 되짚어 올라온다 — 복도 폴백 경로.
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 140, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 100, pointerId);
+
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(
+      survivors.some(object => object.id === guardId),
+      true,
+      '스윕 밖의 획이 여분 띠에 걸려 사라지면 안 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
