@@ -8298,6 +8298,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'prepare',
     'presentDrawingFrame',
     'setDrawingInput',
+    'updateDrawingBrush',
     'updateDrawingFrame',
     'updateDrawingTool',
     'updateViewport'
@@ -15093,6 +15094,96 @@ test('pixel-mode erase splits a stroke through the ribbon polygon', async () => 
       before + 1,
       '분할도 실행취소 1건이어야 한다'
     );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 작업 5 — 런타임 브러시 크기 진입점과 화면 중앙 HUD
+// ---------------------------------------------------------------------------
+
+function sizeAdjustHudElement(root) {
+  return root.querySelector('[data-fabric-pilot-output="size-adjust"]');
+}
+
+test('updateDrawingBrush applies the size and flashes the HUD at the viewport center', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const result = harness.runtime.updateDrawingBrush({ size: 12 });
+    assert.equal(result.accepted, true);
+    assert.equal(result.size, 12);
+
+    const hud = sizeAdjustHudElement(harness.root);
+    assert.ok(hud, '크기 HUD 요소가 있어야 한다');
+    assert.equal(hud.style.display, 'block', '[ / ] 로 바꿨을 때도 굵기가 눈에 보여야 한다');
+    assert.match(hud.textContent, /12px/);
+    // 좌표 없는 경로이므로 레거시와 같이 화면 중앙에 뜬다.
+    const { innerWidth, innerHeight } = harness.environment.window;
+    assert.equal(hud.style.left, `${Math.round(innerWidth / 2)}px`);
+    assert.equal(hud.style.top, `${Math.round(innerHeight / 2)}px`);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('updateDrawingBrush clamps the size to the runtime brush range', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    assert.equal(harness.runtime.updateDrawingBrush({ size: 0 }).size, 1);
+    assert.equal(harness.runtime.updateDrawingBrush({ size: 999 }).size, 50);
+    // 잘린 값이 실제로 반영됐는지는 HUD 라벨로 확인한다.
+    assert.match(sizeAdjustHudElement(harness.root).textContent, /50px/);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('updateDrawingBrush is rejected while drawing input is disabled', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    assert.equal(harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    }).accepted, true);
+
+    const result = harness.runtime.updateDrawingBrush({ size: 20 });
+    assert.equal(result.accepted, false);
+    assert.equal(result.reason, 'input-disabled');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('an Alt size gesture takes the HUD away from the keyboard flash timer', async () => {
+  const timers = [];
+  const harness = createRealFabricHarness({
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    clearTimeout: handle => {
+      const entry = timers[handle - 1];
+      if (entry) entry.cancelled = true;
+    }
+  });
+  try {
+    harness.runtime.updateDrawingBrush({ size: 9 });
+    const flash = timers.at(-1);
+    assert.ok(flash, '자동 숨김 타이머가 걸려야 한다');
+    assert.equal(flash.delay, 700);
+
+    // Alt 제스처가 시작되면 그 타이머는 회수된다 — 아니면 제스처 중 HUD 가 사라진다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 40, 5301, 1, { altKey: true });
+    assert.equal(flash.cancelled, true);
+    assert.equal(sizeAdjustHudElement(harness.root).style.display, 'block');
+
+    // 취소된 타이머가 늦게 발화하더라도 제스처 HUD 를 지우지 않는다.
+    flash.callback();
+    assert.equal(sizeAdjustHudElement(harness.root).style.display, 'block');
+    harness.dispatchCapturedPointerUp(40, 40, 5301);
   } finally {
     await harness.destroy();
   }

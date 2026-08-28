@@ -34,6 +34,14 @@ const userSettingsSource = normalizeNewlines(fs.readFileSync(
 const {
   FABRIC_DRAWING_TOOLS
 } = require(path.join(rootDir, 'shared/fabric-drawing-tools.js'));
+const preloadSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'preload/preload.js'),
+  'utf8'
+));
+const ipcHandlersSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'main/ipc-handlers.js'),
+  'utf8'
+));
 
 test('Fabric pilot controller is initialized with live mpv video and canvas context', () => {
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
@@ -1732,4 +1740,31 @@ test('shape and pen tools are registered as assignable shortcut actions without 
     3,
     '키 표시 함수 3곳 모두에 미지정 가드가 있어야 한다'
   );
+});
+
+test('brush size shortcuts are routed by action id, not by a hard-coded key code', () => {
+  // app.js 가 액션 id 로 판정해야 사용자가 [ / ] 를 재지정해도 따라간다.
+  assert.match(appSource, /matchesBrushSizeShortcut: event => \{/);
+  assert.match(appSource, /if \(userSettings\.matchShortcut\('brushSizeUp', event\)\) return 1;/);
+  assert.match(appSource, /if \(userSettings\.matchShortcut\('brushSizeDown', event\)\) return -1;/);
+  // 배선은 방화벽 술어가 아니라 컨트롤러의 routeKeydown 이어야 한다.
+  // 술어에 넣으면 falsy 를 돌려줘 레거시 브러시 크기까지 함께 바뀐다.
+  assert.match(pilotControllerSource, /const brushSizeStep = matchBrushSizeShortcut\(event\);/);
+  assert.match(
+    pilotControllerSource,
+    /if \(brushSizeStep !== 0\) \{\n\s+if \(state !== 'active'\) return false;\n\s+consumeKeyEvent\(event\);/
+  );
+  // modifier 가드 허용 목록에 들어가야 chord 재지정이 먹는다.
+  assert.match(
+    pilotControllerSource,
+    /if \(!isDrawingToggleShortcut && !isSelectionShortcut && brushSizeStep === 0 && \(/
+  );
+  // IPC 채널 4계층이 모두 이어져야 한다.
+  assert.match(
+    preloadSource,
+    /mpvUpdateOverlayDrawingBrush: \(request\) => ipcRenderer\.invoke\('mpv:update-overlay-drawing-brush', request\)/
+  );
+  assert.match(ipcHandlersSource, /ipcMain\.handle\('mpv:update-overlay-drawing-brush'/);
+  assert.match(overlayHostSource, /async updateDrawingBrush\(request = \{\}\) \{/);
+  assert.match(fabricRuntimeSource, /function updateDrawingBrush\(command = \{\}\) \{/);
 });

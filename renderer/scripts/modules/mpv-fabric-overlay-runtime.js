@@ -94,6 +94,8 @@ const BRUSH_COLOR_LABELS = Object.freeze({
 const DEFAULT_BRUSH_STYLE = Object.freeze({ color: '#ff4757', size: 3, opacity: 1 });
 const MIN_BRUSH_SIZE = 1;
 const MAX_BRUSH_SIZE = 50;
+// [ / ] 로 띄운 크기 HUD 가 스스로 사라지기까지. 레거시 감각과 같다.
+const SIZE_ADJUST_HUD_FLASH_MS = 700;
 const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
 // 레거시 Canvas2D 엔진(drawing-canvas.js `_updateSizeAdjust`)의 delta/4 감도를 그대로 계승한다.
@@ -2746,6 +2748,9 @@ function createFabricOverlayRuntime(options = {}) {
   let shapeGesture = null;
   let sizeAdjustHud = null;
   let sizeAdjustHudLabel = null;
+  // [ / ] 로 띄운 HUD 를 되돌리는 타이머. Alt 제스처는 자기 수명 동안 HUD 를
+  // 계속 잡고 있어야 하므로 제스처가 시작되면 이 타이머를 취소한다.
+  let sizeAdjustHudTimer = null;
   const overlayModifierState = { alt: false, ctrl: false };
   // Alt 제스처 실기 미동작(v2.4.3-beta) 원인 확정용 관측값.
   // "오버레이 문서가 Alt keydown을 받기는 하는가"와 "마우스 pointerdown이 altKey를
@@ -5777,6 +5782,32 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(sizeAdjustHud, { display: 'none' });
   }
 
+  function cancelSizeAdjustHudTimer() {
+    if (sizeAdjustHudTimer === null) return;
+    clearTimeoutRef?.(sizeAdjustHudTimer);
+    sizeAdjustHudTimer = null;
+  }
+
+  // 좌표 없이 크기가 바뀌는 경로([ / ] 단축키)는 레거시와 같이 HUD 를 화면
+  // 중앙에 띄운다. 그러지 않으면 팔레트 숫자만 바뀌어 굵기 변화가 안 보인다.
+  function flashSizeAdjustHudAtViewportCenter(size) {
+    if (!sizeAdjustHud) return false;
+    cancelSizeAdjustHudTimer();
+    showSizeAdjustHud(
+      finiteNumber(windowRef?.innerWidth, 0) / 2,
+      finiteNumber(windowRef?.innerHeight, 0) / 2,
+      size
+    );
+    if (typeof setTimeoutRef !== 'function') return true;
+    sizeAdjustHudTimer = setTimeoutRef(() => {
+      sizeAdjustHudTimer = null;
+      // Alt 제스처가 그 사이에 시작됐다면 그쪽 HUD 를 지우면 안 된다.
+      if (sizeAdjustGesture) return;
+      hideSizeAdjustHud();
+    }, SIZE_ADJUST_HUD_FLASH_MS);
+    return true;
+  }
+
   function shapeGestureRecord(gesture, transient) {
     const samples = shapeCenterlineSamples(
       gesture.tool,
@@ -5877,6 +5908,9 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function beginSizeAdjustGesture(event) {
+    // 키보드 HUD 와 제스처 HUD 가 같은 요소를 공유한다. 남은 타이머가
+    // 제스처 도중 HUD 를 지우지 않게 먼저 회수한다.
+    cancelSizeAdjustHudTimer();
     sizeAdjustGesture = {
       pointerId: event.pointerId,
       startClientX: finiteNumber(event.clientX),
@@ -7196,6 +7230,7 @@ function createFabricOverlayRuntime(options = {}) {
     badge = null;
     sizeAdjustHud = null;
     sizeAdjustHudLabel = null;
+    cancelSizeAdjustHudTimer();
     container = null;
     root = null;
     prepared = false;
@@ -7696,6 +7731,15 @@ function createFabricOverlayRuntime(options = {}) {
     return result;
   }
 
+  // 브러시 크기 원격 변경. 도구 변경과 같은 토큰 규약을 쓰되 revision 은 별도로 센다.
+  // 크기는 씬 스키마와 무관한 입력 계층 상태이므로 히스토리에 남기지 않는다.
+  function updateDrawingBrush(command = {}) {
+    if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
+    const size = setBrushSize(command.size);
+    flashSizeAdjustHudAtViewportCenter(size);
+    return { accepted: true, size };
+  }
+
   function updateLocalDrawingTool(tool) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
     const result = sceneStore.setLocalTool({ sessionId: currentSession?.sessionId, tool });
@@ -7914,6 +7958,7 @@ function createFabricOverlayRuntime(options = {}) {
     confirmDrawingPointerdownFrame,
     exportDrawingVideo,
     updateDrawingTool,
+    updateDrawingBrush,
     updateViewport,
     applyDrawingAction,
     getDiagnostics,

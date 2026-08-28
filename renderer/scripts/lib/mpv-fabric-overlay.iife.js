@@ -13527,6 +13527,7 @@ void main() {
       var DEFAULT_BRUSH_STYLE = Object.freeze({ color: "#ff4757", size: 3, opacity: 1 });
       var MIN_BRUSH_SIZE = 1;
       var MAX_BRUSH_SIZE = 50;
+      var SIZE_ADJUST_HUD_FLASH_MS = 700;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
       var SIZE_ADJUST_PIXELS_PER_STEP = 4;
@@ -15729,6 +15730,7 @@ void main() {
         let shapeGesture = null;
         let sizeAdjustHud = null;
         let sizeAdjustHudLabel = null;
+        let sizeAdjustHudTimer = null;
         const overlayModifierState = { alt: false, ctrl: false };
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
@@ -18385,6 +18387,27 @@ void main() {
           if (!sizeAdjustHud) return;
           setStyles(sizeAdjustHud, { display: "none" });
         }
+        function cancelSizeAdjustHudTimer() {
+          if (sizeAdjustHudTimer === null) return;
+          clearTimeoutRef?.(sizeAdjustHudTimer);
+          sizeAdjustHudTimer = null;
+        }
+        function flashSizeAdjustHudAtViewportCenter(size) {
+          if (!sizeAdjustHud) return false;
+          cancelSizeAdjustHudTimer();
+          showSizeAdjustHud(
+            finiteNumber(windowRef?.innerWidth, 0) / 2,
+            finiteNumber(windowRef?.innerHeight, 0) / 2,
+            size
+          );
+          if (typeof setTimeoutRef !== "function") return true;
+          sizeAdjustHudTimer = setTimeoutRef(() => {
+            sizeAdjustHudTimer = null;
+            if (sizeAdjustGesture) return;
+            hideSizeAdjustHud();
+          }, SIZE_ADJUST_HUD_FLASH_MS);
+          return true;
+        }
         function shapeGestureRecord(gesture, transient) {
           const samples = shapeCenterlineSamples(
             gesture.tool,
@@ -18476,6 +18499,7 @@ void main() {
           return true;
         }
         function beginSizeAdjustGesture(event) {
+          cancelSizeAdjustHudTimer();
           sizeAdjustGesture = {
             pointerId: event.pointerId,
             startClientX: finiteNumber(event.clientX),
@@ -19660,6 +19684,7 @@ void main() {
           badge = null;
           sizeAdjustHud = null;
           sizeAdjustHudLabel = null;
+          cancelSizeAdjustHudTimer();
           container = null;
           root = null;
           prepared = false;
@@ -20117,6 +20142,12 @@ void main() {
           setToolMode(result.tool);
           return result;
         }
+        function updateDrawingBrush(command = {}) {
+          if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
+          const size = setBrushSize(command.size);
+          flashSizeAdjustHudAtViewportCenter(size);
+          return { accepted: true, size };
+        }
         function updateLocalDrawingTool(tool) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
           const result = sceneStore.setLocalTool({ sessionId: currentSession?.sessionId, tool });
@@ -20304,6 +20335,7 @@ void main() {
           confirmDrawingPointerdownFrame,
           exportDrawingVideo,
           updateDrawingTool,
+          updateDrawingBrush,
           updateViewport,
           applyDrawingAction,
           getDiagnostics,

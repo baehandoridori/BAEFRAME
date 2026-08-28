@@ -5826,3 +5826,99 @@ test('updateDrawingTool accepts every declared tool and rejects unknown ones', a
   assert.equal(rejected.success, false);
   assert.equal(rejected.accepted, false);
 });
+
+async function enableBrushSession(host, hostGeneration, sessionId, inputRevision) {
+  const session = {
+    sessionId,
+    stableVideoIdentity: 'video-brush',
+    targetFrame: 4,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    tool: 'brush'
+  };
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: inputRevision - 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision,
+    enabled: true,
+    session
+  }))).success, true);
+  return (brushRevision, size, overrides = {}) => host.updateDrawingBrush({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision,
+    sessionId,
+    brushRevision,
+    size,
+    ...overrides
+  });
+}
+
+function createBrushHost() {
+  return createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingBrush(')) return undefined;
+      const match = script.match(/"size":(\d+)/);
+      return { accepted: true, size: match ? Number(match[1]) : 0 };
+    }
+  });
+}
+
+test('updateDrawingBrush relays a valid request and advances the brush revision', async () => {
+  const { host } = createBrushHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableBrushSession(host, ensured.drawingCapability.hostGeneration, 'session-brush', 2);
+
+  const first = await send(1, 8);
+  assert.equal(first.success, true);
+  assert.equal(first.accepted, true);
+  assert.equal(first.size, 8);
+
+  const second = await send(2, 9);
+  assert.equal(second.success, true);
+  assert.equal(second.size, 9);
+});
+
+test('updateDrawingBrush rejects stale tokens, backward revisions and out-of-range sizes', async () => {
+  const { host } = createBrushHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const send = await enableBrushSession(host, hostGeneration, 'session-brush-stale', 2);
+
+  assert.equal((await send(1, 8)).success, true);
+  // 역행하거나 같은 revision 은 거부된다.
+  assert.equal((await send(1, 9)).success, false);
+  assert.equal((await send(0, 9)).success, false);
+  // 토큰 불일치.
+  assert.equal((await send(2, 9, { hostGeneration: hostGeneration - 1 })).success, false);
+  assert.equal((await send(2, 9, { videoGeneration: 7 })).success, false);
+  assert.equal((await send(2, 9, { inputRevision: 99 })).success, false);
+  assert.equal((await send(2, 9, { sessionId: 'session-other' })).success, false);
+  // 범위 밖 크기.
+  assert.equal((await send(2, 0)).success, false);
+  assert.equal((await send(2, 1.5)).success, false);
+});
+
+test('enabling drawing input resets the brush revision for the new session', async () => {
+  // 이 리셋이 없으면 첫 세션에서 [ / ] 를 여러 번 누른 뒤 새 세션이
+  // brushRevision 0 으로 시작해 앱 재시작까지 전부 stale 거부된다.
+  const { host } = createBrushHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+
+  const first = await enableBrushSession(host, hostGeneration, 'session-brush-a', 2);
+  for (let revision = 1; revision <= 12; revision += 1) {
+    assert.equal((await first(revision, 10)).success, true);
+  }
+
+  const second = await enableBrushSession(host, hostGeneration, 'session-brush-b', 6);
+  assert.equal(
+    (await second(1, 7)).success,
+    true,
+    '새 세션은 brushRevision 1 부터 다시 받아야 한다'
+  );
+});

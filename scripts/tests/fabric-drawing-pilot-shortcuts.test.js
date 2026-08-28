@@ -90,6 +90,7 @@ function createHarness(options = {}) {
     onStateChange: (state, snapshot) => states.push({ state, snapshot }),
     matchesDrawingToggleShortcut: options.matchesDrawingToggleShortcut,
     matchesSelectionShortcut: options.matchesSelectionShortcut,
+    matchesBrushSizeShortcut: options.matchesBrushSizeShortcut,
     persistenceStore: options.persistenceStore,
     persistenceSessionIdFactory: options.persistenceSessionIdFactory,
     getHistoryRevision: options.getHistoryRevision,
@@ -1824,4 +1825,119 @@ test('B cancellation during deferred hydration prevents a queued recovery from e
   assert.equal(await ready, false);
   assert.equal(harness.calls.input.filter(request => request.enabled).length, 0);
   assert.equal(harness.controller.getState(), 'passive');
+});
+
+// ---------------------------------------------------------------------------
+// 작업 5 — [ / ] 브러시 크기 단축키
+// ---------------------------------------------------------------------------
+
+function createBrushHarness(options = {}) {
+  const brushCalls = [];
+  const harness = createHarness({
+    ...options,
+    electronMethods: {
+      async mpvUpdateOverlayDrawingBrush(request) {
+        brushCalls.push(request);
+        if (options.onBrush) return options.onBrush(request, brushCalls.length - 1);
+        return { success: true, accepted: true, size: request.size };
+      },
+      ...(options.electronMethods || {})
+    }
+  });
+  harness.brushCalls = brushCalls;
+  return harness;
+}
+
+async function activateBrushHarness(harness) {
+  await preparePassive(harness);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'active');
+}
+
+test('routeKeydown consumes bracket keys and sends the new brush size', async () => {
+  const harness = createBrushHarness();
+  await activateBrushHarness(harness);
+
+  const up = createKeyEvent(']', { code: 'BracketRight' });
+  assert.equal(harness.controller.routeKeydown(up), true, '단축키를 소비해야 방화벽이 삼키지 않는다');
+  assert.deepEqual(up.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(harness.brushCalls.length, 1);
+  // 기본 크기 3 에서 한 단계 올라간다.
+  assert.equal(harness.brushCalls[0].size, 4);
+  assert.equal(harness.brushCalls[0].brushRevision, 1);
+  assertEnvelope(harness.brushCalls[0]);
+
+  const down = createKeyEvent('[', { code: 'BracketLeft' });
+  assert.equal(harness.controller.routeKeydown(down), true);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(harness.brushCalls.length, 2);
+  assert.equal(harness.brushCalls[1].size, 3);
+  assert.equal(harness.brushCalls[1].brushRevision, 2, 'brushRevision 은 단조 증가해야 한다');
+});
+
+test('brush size shortcuts clamp to the runtime range and stop sending at the edge', async () => {
+  const harness = createBrushHarness();
+  await activateBrushHarness(harness);
+
+  // 하한 1 까지 두 번 내려가면 더는 요청이 나가지 않는다.
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    harness.controller.routeKeydown(createKeyEvent('[', { code: 'BracketLeft' }));
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  assert.equal(harness.brushCalls.length, 2, '하한에 닿으면 중복 요청을 보내지 않는다');
+  assert.deepEqual(harness.brushCalls.map(call => call.size), [2, 1]);
+});
+
+test('brush size shortcuts follow the injected action-id matcher', async () => {
+  // 사용자가 [ / ] 를 다른 키로 재지정한 상황.
+  const harness = createBrushHarness({
+    matchesBrushSizeShortcut: event => {
+      if (event.code === 'Equal') return 1;
+      if (event.code === 'Minus') return -1;
+      return 0;
+    }
+  });
+  await activateBrushHarness(harness);
+
+  // 기본 키는 더 이상 먹지 않는다.
+  assert.equal(harness.controller.routeKeydown(createKeyEvent(']', { code: 'BracketRight' })), false);
+  await Promise.resolve();
+  assert.equal(harness.brushCalls.length, 0);
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('=', { code: 'Equal' })), true);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.equal(harness.brushCalls.length, 1);
+  assert.equal(harness.brushCalls[0].size, 4);
+});
+
+test('brush size shortcuts are ignored while the pilot session is not active', async () => {
+  const harness = createBrushHarness();
+  await preparePassive(harness);
+
+  assert.equal(harness.controller.getState(), 'passive');
+  assert.equal(harness.controller.routeKeydown(createKeyEvent(']', { code: 'BracketRight' })), false);
+  await Promise.resolve();
+  assert.equal(harness.brushCalls.length, 0);
+});
+
+test('the overlay clamped size wins over the optimistic local count', async () => {
+  // 런타임이 상한에서 값을 잘라 돌려주면 컨트롤러가 그 값으로 보정해야 한다.
+  const harness = createBrushHarness({
+    onBrush: request => ({ success: true, accepted: true, size: Math.min(4, request.size) })
+  });
+  await activateBrushHarness(harness);
+
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    harness.controller.routeKeydown(createKeyEvent(']', { code: 'BracketRight' }));
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+  }
+  // 3 → 4 로 오른 뒤 오버레이가 4 로 자르므로 이후 요청은 계속 5 를 시도한다.
+  assert.deepEqual(harness.brushCalls.map(call => call.size), [4, 5, 5]);
 });

@@ -8,6 +8,10 @@ const CONTROLLER_DRAWING_ACTIONS = new Set(['delete-selection', 'undo', 'redo'])
 const CONTROLLER_DRAWING_TOOLS = new Set([
   'brush', 'pen', 'eraser', 'line', 'rect', 'circle', 'arrow', 'select'
 ]);
+// 런타임 MIN_BRUSH_SIZE / MAX_BRUSH_SIZE 와 같아야 한다
+// (mpv-fabric-overlay-runtime.js). 컨트롤러가 낙관적으로 세는 값의 범위다.
+const CONTROLLER_MIN_BRUSH_SIZE = 1;
+const CONTROLLER_MAX_BRUSH_SIZE = 50;
 const ACTIVE_FRAME_MAX_IN_FLIGHT = 2;
 const ACTIVE_FRAME_OBSERVATION_LIMIT = 64;
 const POINTERDOWN_FRAME_REQUEST_KEYS = [
@@ -135,6 +139,11 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.matchesSelectionShortcut === 'function'
       ? options.matchesSelectionShortcut
       : null;
+  // app.js 가 주입하는 매처. 주입 전에는 기본 키([ / ])로 판정한다.
+  const configuredBrushSizeShortcutMatcher =
+    typeof options.matchesBrushSizeShortcut === 'function'
+      ? options.matchesBrushSizeShortcut
+      : null;
   const persistenceStore = options.persistenceStore || null;
   let fallbackId = 0;
   const uuid = typeof options.uuid === 'function'
@@ -173,6 +182,9 @@ export function createFabricDrawingPilotController(options = {}) {
   let inputRevision = 0;
   let desiredInputEnabled = false;
   let desiredTool = 'brush';
+  // 런타임 DEFAULT_BRUSH_STYLE.size 와 같은 값에서 시작한다.
+  let desiredBrushSize = 3;
+
   let currentSession = null;
   let videoReady = false;
   let videoChangePending = false;
@@ -843,6 +855,22 @@ export function createFabricDrawingPilotController(options = {}) {
       event.shiftKey !== true;
   }
 
+  // 반환값은 크기 증감 방향이다. 0 이면 브러시 크기 단축키가 아니다.
+  function matchBrushSizeShortcut(event = {}) {
+    if (configuredBrushSizeShortcutMatcher) {
+      try {
+        const step = Number(configuredBrushSizeShortcutMatcher(event));
+        return Number.isFinite(step) ? Math.sign(step) : 0;
+      } catch {
+        return 0;
+      }
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey || event.shiftKey) return 0;
+    if (event.code === 'BracketLeft') return -1;
+    if (event.code === 'BracketRight') return 1;
+    return 0;
+  }
+
   function matchesSelectionShortcut(event = {}) {
     if (configuredSelectionShortcutMatcher) {
       try {
@@ -1241,7 +1269,8 @@ export function createFabricDrawingPilotController(options = {}) {
       viewportRevision: Math.max(0, Math.trunc(Number(context.viewportRevision) || 0)),
       viewportTransform: copyViewportTransform(context.viewportTransform),
       tool: desiredTool,
-      toolRevision: 0
+      toolRevision: 0,
+      brushRevision: 0
     };
   }
 
@@ -1267,6 +1296,34 @@ export function createFabricDrawingPilotController(options = {}) {
       if (accepted && currentSession?.sessionId === request.sessionId) {
         currentSession.tool = tool;
       }
+      return accepted;
+    } catch {
+      return false;
+    }
+  }
+
+  // 오버레이 런타임이 브러시 크기의 진실의 원천이지만, [ / ] 연타 시 IPC 왕복을
+  // 기다리면 값이 밀린다. desiredBrushSize 로 낙관적으로 세고, 오버레이가 잘라 낸
+  // 실제 값이 응답으로 오면 그것으로 보정한다.
+  async function sendBrushSize(size) {
+    if (state !== 'active' || !currentSession) return false;
+    currentSession.brushRevision += 1;
+    const request = {
+      ...makeEnvelope('brush-update', { size }),
+      hostGeneration,
+      videoGeneration,
+      inputRevision,
+      sessionId: currentSession.sessionId,
+      brushRevision: currentSession.brushRevision,
+      size
+    };
+    try {
+      const response = await withPersistenceIpcDeadline(
+        electronAPI.mpvUpdateOverlayDrawingBrush(request),
+        { success: false, accepted: false, size, error: 'persistence-ipc-timeout' }
+      );
+      const accepted = response?.success === true && response.accepted === true;
+      if (accepted && Number.isInteger(response.size)) desiredBrushSize = response.size;
       return accepted;
     } catch {
       return false;
@@ -2670,12 +2727,27 @@ export function createFabricDrawingPilotController(options = {}) {
     }
     const isDrawingToggleShortcut = matchesDrawingToggleShortcut(event);
     const isSelectionShortcut = matchesSelectionShortcut(event);
-    if (!isDrawingToggleShortcut && !isSelectionShortcut && (
+    // 사용자가 chord 로 재지정했을 수 있으므로 modifier 가드의 허용 목록에 넣는다.
+    const brushSizeStep = matchBrushSizeShortcut(event);
+    if (!isDrawingToggleShortcut && !isSelectionShortcut && brushSizeStep === 0 && (
       event.ctrlKey === true ||
       event.metaKey === true ||
       event.altKey === true ||
       event.shiftKey === true)) {
       return false;
+    }
+    if (brushSizeStep !== 0) {
+      if (state !== 'active') return false;
+      consumeKeyEvent(event);
+      const next = Math.min(
+        CONTROLLER_MAX_BRUSH_SIZE,
+        Math.max(CONTROLLER_MIN_BRUSH_SIZE, desiredBrushSize + brushSizeStep)
+      );
+      if (next !== desiredBrushSize) {
+        desiredBrushSize = next;
+        runDetached(sendBrushSize(next));
+      }
+      return true;
     }
 
     const key = String(event.key || '').toLowerCase();

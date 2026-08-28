@@ -7741,6 +7741,12 @@ async function initApp() {
     getContext: getFabricDrawingPilotContext,
     matchesDrawingToggleShortcut: event => userSettings.matchShortcut('drawMode', event),
     matchesSelectionShortcut: event => userSettings.matchShortcut('drawingToolSelect', event),
+    // 액션 id 로 판정한다 — 사용자가 [ / ] 를 다른 키로 재지정해도 따라간다.
+    matchesBrushSizeShortcut: event => {
+      if (userSettings.matchShortcut('brushSizeUp', event)) return 1;
+      if (userSettings.matchShortcut('brushSizeDown', event)) return -1;
+      return 0;
+    },
     persistenceStore: fabricDrawingPersistenceStore,
     onStateChange: handleFabricDrawingPilotStateChange,
     getHistoryRevision: () => globalHistoryRevision,

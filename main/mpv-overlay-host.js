@@ -2781,6 +2781,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -3006,6 +3007,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = request.enabled;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     if (!request.enabled) {
       this.suppressedOverlayHistoryKeys.clear();
     }
@@ -3055,6 +3057,7 @@ class MPVOverlayHost {
     if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
       this.activeSessionId = request.session?.sessionId || null;
       this.currentToolRevision = 0;
+      this.currentBrushRevision = 0;
       this._setNativeDrawingInput(hostWindow, true);
     } else if (request.enabled && runtimeResult?.accepted === true && !stillCurrent) {
       await this._compensateStaleDrawingEnable(hostWindow, hostGeneration);
@@ -3104,6 +3107,38 @@ class MPVOverlayHost {
         hostWindow.focus?.();
       }
       return { success: true, accepted: true, tool: normalizeFabricDrawingTool(result.tool) };
+    } catch (error) {
+      return { success: false, accepted: false, error: error.message };
+    }
+  }
+
+  async updateDrawingBrush(request = {}) {
+    const brushRevision = Number(request.brushRevision);
+    const size = Number(request.size);
+    const currentTokensMatch = request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      request.sessionId === this.activeSessionId;
+    if (!this.desiredInputEnabled ||
+        this.fabricReadyGeneration !== this.hostGeneration ||
+        !currentTokensMatch ||
+        !Number.isInteger(brushRevision) || brushRevision <= this.currentBrushRevision ||
+        !Number.isInteger(size) || size < 1 || size > FABRIC_DRAWING_MAX_BRUSH_SIZE) {
+      return { success: false, accepted: false, error: 'stale or invalid drawing brush request' };
+    }
+
+    try {
+      const result = await this._executeFabricMethod('updateDrawingBrush', request);
+      if (result?.accepted !== true) {
+        return { success: false, accepted: false, error: result?.reason || 'drawing brush update rejected' };
+      }
+      if (!this._drawingTokensMatch(request) || brushRevision <= this.currentBrushRevision) {
+        return { success: false, accepted: false, error: 'stale drawing brush response' };
+      }
+      this.currentBrushRevision = brushRevision;
+      // updateDrawingTool 과 달리 오버레이에 포커스를 주지 않는다. 크기 변경은
+      // [ / ] 연타로 오는데 매번 포커스를 옮기면 화면이 튄다.
+      return { success: true, accepted: true, size: Math.trunc(Number(result.size)) };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
@@ -4305,6 +4340,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -4373,6 +4409,7 @@ class MPVOverlayHost {
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
     this.currentToolRevision = -1;
+    this.currentBrushRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -4500,6 +4537,7 @@ class MPVOverlayHost {
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
       this.currentToolRevision = -1;
+      this.currentBrushRevision = -1;
       this.keyboardRelayCount = 0;
       this.lastKeyboardRelayCode = null;
       this.drawModeShortcutDescriptor = null;
