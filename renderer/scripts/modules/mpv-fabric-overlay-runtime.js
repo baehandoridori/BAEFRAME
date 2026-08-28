@@ -3348,7 +3348,11 @@ function createFabricOverlayRuntime(options = {}) {
     if (!brushControls) return;
     const opacityPercent = Math.round(brushStyle.opacity * 100);
     brushControls.settingsButton.setAttribute?.('aria-expanded', String(brushPanelOpen));
-    brushControls.panel.style.display = brushPanelOpen ? 'flex' : 'none';
+    // 섹션이 접혀 있으면 패널도 접힌 상태다. 이 판정을 빼면 [ / ] 로 크기를
+    // 바꿀 때마다 syncBrushControls 가 패널을 도로 열어, 라벨과 버튼 줄은
+    // 접힌 채 설정 패널만 떠 있는 상태가 된다.
+    const sectionCollapsed = paletteShell?.isSectionCollapsed?.('brush') === true;
+    brushControls.panel.style.display = brushPanelOpen && !sectionCollapsed ? 'flex' : 'none';
     brushControls.sizeInput.value = String(brushStyle.size);
     brushControls.opacityInput.value = String(opacityPercent);
     brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
@@ -8077,10 +8081,13 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: true, deferred: true, revision };
     }
 
-    // 도형의 시작점은 이전 뷰포트로 매핑돼 있다. 그대로 두면 커밋 시 끝점만
-    // 새 뷰포트로 매핑돼 도형이 튀거나 찌그러진다. 자유 획과 같이 취소한다.
+    // 진행 중인 제스처의 좌표는 전부 이전 뷰포트로 매핑돼 있다. 그대로 두면
+    // 다음 표본이 새 뷰포트로 매핑돼 두 좌표계 사이에 있지도 않은 획이 생긴다.
+    // 도형은 끝점만 어긋나 찌그러지고, 지우개는 그 가짜 스윕이 지나가지도 않은
+    // 획을 지운다. 자유 획과 같이 전부 취소한다.
     cancelActiveStroke();
     cancelShapeGesture();
+    cancelStrokeEraseGesture();
     applyViewportCommand(normalizedCommand);
     return { accepted: true, revision };
   }

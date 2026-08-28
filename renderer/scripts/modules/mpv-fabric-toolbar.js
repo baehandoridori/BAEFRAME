@@ -160,6 +160,9 @@ function createFabricDrawingPalette(options = {}) {
 
   // 라벨이 있는 섹션의 래퍼. 도구에 따라 관련 섹션만 남기기 위해 id 로 찾는다.
   const sectionElements = new Map();
+  // 섹션별 접힘 상태. 붙임 패널을 스스로 갱신하는 쪽(브러시 설정)이 접힘을
+  // 무시하고 다시 열지 않도록 조회할 수 있어야 한다.
+  const collapsedSections = new Set();
 
   for (const section of sections) {
     const items = Array.isArray(section?.items) ? section.items : [];
@@ -204,9 +207,12 @@ function createFabricDrawingPalette(options = {}) {
     // 접기 직전의 붙임 패널 표시 상태. 다시 펼칠 때 '' 로 비우면 도형 플라이아웃과
     // 브러시 설정 패널이 닫혀 있었는데도 함께 열려 버린다.
     const appendedDisplay = new WeakMap();
+    const sectionId = String(section.id || section.label);
     const toggleSection = () => {
       const collapsed = label.dataset.collapsed !== 'true';
       label.dataset.collapsed = String(collapsed);
+      if (collapsed) collapsedSections.add(sectionId);
+      else collapsedSections.delete(sectionId);
       // grid 로 만든 섹션을 flex 로 되돌리면 도구 줄이 한 줄로 무너진다.
       applyStyles(row, {
         display: collapsed ? 'none' : (row.dataset.layout === 'grid' ? 'grid' : 'flex')
@@ -229,7 +235,7 @@ function createFabricDrawingPalette(options = {}) {
     sectionElement.appendChild(label);
     sectionElement.appendChild(row);
     for (const item of appended) sectionElement.appendChild(item);
-    sectionElements.set(String(section.id || section.label), sectionElement);
+    sectionElements.set(sectionId, sectionElement);
     content.appendChild(sectionElement);
   }
 
@@ -336,11 +342,16 @@ function createFabricDrawingPalette(options = {}) {
     return true;
   }
 
+  function isSectionCollapsed(id) {
+    return collapsedSections.has(String(id));
+  }
+
   return {
     element,
     header,
     content,
     collapseButton,
+    isSectionCollapsed,
     restore() {
       applyCollapsedState();
       return applyPosition(state);

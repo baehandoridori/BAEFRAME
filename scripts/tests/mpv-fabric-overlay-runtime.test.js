@@ -15696,3 +15696,69 @@ test('the retrace corridor never reaches further than the eraser actually swept'
     await harness.destroy();
   }
 });
+
+test('a viewport change during a pixel erase cancels the gesture instead of bridging coordinates', async () => {
+  // pathPoints 와 lastPoint 는 이전 뷰포트 좌표계다. 그대로 두면 다음 표본이
+  // 새 좌표계로 매핑돼 두 좌표계 사이를 잇는 가짜 스윕이 생기고, 포인터가
+  // 지나가지도 않은 획이 그 구간에서 지워진다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStroke([{ x: 20, y: 60 }, { x: 180, y: 60 }], 7601);
+    const survivorId = harness.sceneStore.getActiveSceneSnapshot().objects[0].id;
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 7602;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 150, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 150, pointerId, 1);
+
+    assert.equal(harness.runtime.updateViewport({
+      revision: 9,
+      canvasRect: { left: 0, top: 0, width: 200, height: 200 },
+      scale: 2,
+      panX: 30,
+      panY: 30
+    }).accepted, true);
+
+    harness.dispatchPointer(harness.element, 'pointermove', 180, 20, pointerId, 1);
+    harness.dispatchCapturedPointerUp(180, 20, pointerId);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.some(object => object.id === survivorId),
+      true,
+      '뷰포트가 바뀌면 지우기 제스처가 취소돼 가짜 스윕이 생기지 않아야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a collapsed section keeps its appended panel shut even when the panel resyncs', async () => {
+  // syncBrushControls 는 [ / ] 로 크기가 바뀔 때마다 불린다. 섹션 접힘을 무시하면
+  // 라벨과 버튼 줄은 접힌 채 설정 패널만 혼자 떠 있는 상태가 된다.
+  const harness = createRealFabricHarness();
+  try {
+    const brushSection = paletteSection(harness.root, 'brush');
+    const label = Array.from(brushSection.children).find(node =>
+      node.className === 'mpv-fabric-pilot-section-label');
+    const panel = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'brush-settings');
+    const click = target => target.dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    click(paletteButton(harness.root, 'brush-settings'));
+    assert.equal(panel.style.display, 'flex', '설정 패널이 열려 있어야 한다');
+
+    click(label);
+    assert.equal(panel.style.display, 'none');
+
+    // 접힌 상태에서 크기를 바꿔도 패널이 스스로 다시 열리면 안 된다.
+    harness.runtime.updateDrawingBrush({ step: 1 });
+    assert.equal(panel.style.display, 'none', '접힌 섹션의 패널이 되살아나면 안 된다');
+
+    // 다시 펼치면 원래 열려 있던 상태로 돌아온다.
+    click(label);
+    assert.equal(panel.style.display, 'flex');
+  } finally {
+    await harness.destroy();
+  }
+});

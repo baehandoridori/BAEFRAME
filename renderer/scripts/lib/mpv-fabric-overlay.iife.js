@@ -5883,6 +5883,7 @@
         const content = documentRef.createElement("div");
         content.className = "mpv-fabric-pilot-toolbar-content";
         const sectionElements = /* @__PURE__ */ new Map();
+        const collapsedSections = /* @__PURE__ */ new Set();
         for (const section of sections) {
           const items = Array.isArray(section?.items) ? section.items : [];
           const appended = Array.isArray(section?.appended) ? section.appended : [];
@@ -5917,9 +5918,12 @@
           label.setAttribute?.("tabindex", "0");
           label.dataset.collapsed = "false";
           const appendedDisplay = /* @__PURE__ */ new WeakMap();
+          const sectionId = String(section.id || section.label);
           const toggleSection = () => {
             const collapsed = label.dataset.collapsed !== "true";
             label.dataset.collapsed = String(collapsed);
+            if (collapsed) collapsedSections.add(sectionId);
+            else collapsedSections.delete(sectionId);
             applyStyles(row, {
               display: collapsed ? "none" : row.dataset.layout === "grid" ? "grid" : "flex"
             });
@@ -5941,7 +5945,7 @@
           sectionElement.appendChild(label);
           sectionElement.appendChild(row);
           for (const item of appended) sectionElement.appendChild(item);
-          sectionElements.set(String(section.id || section.label), sectionElement);
+          sectionElements.set(sectionId, sectionElement);
           content.appendChild(sectionElement);
         }
         element.appendChild(header);
@@ -6025,11 +6029,15 @@
           applyStyles(sectionElement, { display: visible ? "" : "none" });
           return true;
         }
+        function isSectionCollapsed(id) {
+          return collapsedSections.has(String(id));
+        }
         return {
           element,
           header,
           content,
           collapseButton,
+          isSectionCollapsed,
           restore() {
             applyCollapsedState();
             return applyPosition(state);
@@ -16294,7 +16302,8 @@ void main() {
           if (!brushControls) return;
           const opacityPercent = Math.round(brushStyle.opacity * 100);
           brushControls.settingsButton.setAttribute?.("aria-expanded", String(brushPanelOpen));
-          brushControls.panel.style.display = brushPanelOpen ? "flex" : "none";
+          const sectionCollapsed = paletteShell?.isSectionCollapsed?.("brush") === true;
+          brushControls.panel.style.display = brushPanelOpen && !sectionCollapsed ? "flex" : "none";
           brushControls.sizeInput.value = String(brushStyle.size);
           brushControls.opacityInput.value = String(opacityPercent);
           brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
@@ -20479,6 +20488,7 @@ void main() {
           }
           cancelActiveStroke();
           cancelShapeGesture();
+          cancelStrokeEraseGesture();
           applyViewportCommand(normalizedCommand);
           return { accepted: true, revision };
         }
