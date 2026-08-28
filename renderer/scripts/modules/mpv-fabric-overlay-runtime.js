@@ -7344,15 +7344,20 @@ function createFabricOverlayRuntime(options = {}) {
         // 그때까지 캔버스를 다시 그리고 도구 모드를 재설정하면 헛일이고, 사용자의
         // 활성 선택만 사라진다. 활성 씬이 실제로 바뀐 경우에만 손댄다.
         // !== false 로 쓰는 이유: 이 필드 없이 도달하는 경로는 안전한 쪽(재도색)이 기본이어야 한다.
+        let repainted = false;
         if (result.affectedActiveScene !== false) {
-          renderActiveScene();
+          // 오버레이는 투명 BrowserWindow 라 requestRenderAll 의 다음 프레임을 기다리면
+          // 지워진 획이 잠깐 남아 보인다. 여기서 동기로 그려 두고, 호스트가 응답을 받아
+          // invalidate() 로 합성을 강제한다(updateDrawingFrame 의 repainted 규약과 동일).
+          renderActiveScene({ immediate: true });
           fabricCanvas.discardActiveObject();
           sceneStore.selectObjects([]);
           setToolMode(currentSession?.tool || 'brush');
+          repainted = true;
         }
         updateObjectMetric();
         settleArmedFramePreview();
-        return result;
+        return { ...result, repainted };
       }
       const deletedIds = new Set(result.deletedIds);
       for (const object of fabricCanvas.getObjects()) {
@@ -7360,8 +7365,15 @@ function createFabricOverlayRuntime(options = {}) {
       }
       fabricCanvas.discardActiveObject();
       refreshSelectionInteractionPolicy();
-      fabricCanvas.requestRenderAll();
+      // 삭제·전체 지우기도 같은 이유로 동기 렌더 후 합성을 강제한다.
+      if (typeof fabricCanvas.renderAll === 'function') {
+        fabricCanvas.renderAll();
+      } else {
+        fabricCanvas.requestRenderAll();
+      }
       updateObjectMetric();
+      settleArmedFramePreview();
+      return { ...result, repainted: true };
     }
     settleArmedFramePreview();
     return result;
