@@ -18329,8 +18329,11 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
+          const selectedIdSet = /* @__PURE__ */ new Set();
           for (const record of snapshot?.objects || []) {
-            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id)) continue;
+            if (record.type !== "stroke") continue;
+            const targetId = sceneStore.isDerivedOutline(record.id) ? bodyIdFor(record.id) : record.id;
+            if (!targetId || selectedIdSet.has(targetId)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -18357,7 +18360,10 @@ void main() {
             if (touch.limitExceeded) {
               return fail("selection-complexity-limit-exceeded");
             }
-            if (touch.hit) selectedObjectIds.push(record.id);
+            if (touch.hit) {
+              selectedIdSet.add(targetId);
+              selectedObjectIds.push(targetId);
+            }
           }
           retireReplacedPendingSelection(failureSelectionContext);
           activateObjectIds(selectedObjectIds);

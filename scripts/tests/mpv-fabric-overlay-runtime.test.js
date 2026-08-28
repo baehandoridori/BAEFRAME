@@ -16242,3 +16242,32 @@ test('an eraser that only grazes the outline still erases the pair', async () =>
     await harness.destroy();
   }
 });
+
+test('a lasso that only touches the outline selects the paired body', async () => {
+  // 외곽선은 본체보다 최대 20px 더 뻗는다. 선택 후보에서 통째로 빼면 눈에 보이는
+  // 그 테두리를 집어도 아무것도 안 잡혀, 사용자가 획을 고를 수 없다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 10 });
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 8401);
+    const bodyId = bodyObjects(harness)[0].id;
+    const bodyHalf = bodyObjects(harness)[0].style.size / 2;
+
+    enableRealFabricWholeStrokeLasso(harness, 6);
+    // 본체 위쪽 가장자리 바깥, 외곽선 안쪽만 감싼다.
+    const top = 100 - bodyHalf - 9;
+    const bottom = 100 - bodyHalf - 2;
+    harness.dragLasso([
+      { x: 60, y: top }, { x: 140, y: top },
+      { x: 140, y: bottom }, { x: 60, y: bottom }
+    ], 8402);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [bodyId],
+      '외곽선만 감싸도 짝인 본체가 잡혀야 한다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});

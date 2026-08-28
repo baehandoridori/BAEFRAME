@@ -5717,11 +5717,16 @@ function createFabricOverlayRuntime(options = {}) {
         selectedObjectIds: restoredSelectionIds
       };
     };
+    const selectedIdSet = new Set();
     for (const record of snapshot?.objects || []) {
-      // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
-      // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
-      // 짝을 잃은 고아는 평범한 획이므로 그대로 잘릴 수 있어야 한다.
-      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id)) continue;
+      if (record.type !== 'stroke') continue;
+      // 외곽선은 본체보다 최대 20px 더 뻗는다. 후보에서 통째로 빼면 눈에 보이는
+      // 그 테두리를 집어도 아무것도 안 잡힌다. 판정은 하되 **결과를 짝인 본체로
+      // 돌린다.** 짝을 잃은 고아는 평범한 획이라 자기 자신이 대상이다.
+      const targetId = sceneStore.isDerivedOutline(record.id)
+        ? bodyIdFor(record.id)
+        : record.id;
+      if (!targetId || selectedIdSet.has(targetId)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -5748,7 +5753,10 @@ function createFabricOverlayRuntime(options = {}) {
       if (touch.limitExceeded) {
         return fail('selection-complexity-limit-exceeded');
       }
-      if (touch.hit) selectedObjectIds.push(record.id);
+      if (touch.hit) {
+        selectedIdSet.add(targetId);
+        selectedObjectIds.push(targetId);
+      }
     }
 
     retireReplacedPendingSelection(failureSelectionContext);
