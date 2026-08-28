@@ -14993,7 +14993,22 @@ void main() {
             const outlineId = outlineIdFor(id);
             const outlineObject = outlineId ? scene.objects.get(outlineId) : null;
             if (outlineObject) {
-              nextObjects.set(outlineId, { ...clonePlain(outlineObject), transform: next });
+              const outlineCurrent = {
+                left: 0,
+                top: 0,
+                scaleX: 1,
+                scaleY: 1,
+                angle: 0,
+                skewX: 0,
+                skewY: 0,
+                ...outlineObject.transform || {}
+              };
+              const outlineNext = {
+                ...outlineCurrent,
+                left: finiteNumber(outlineCurrent.left) + (finiteNumber(next.left) - finiteNumber(current.left)),
+                top: finiteNumber(outlineCurrent.top) + (finiteNumber(next.top) - finiteNumber(current.top))
+              };
+              nextObjects.set(outlineId, { ...clonePlain(outlineObject), transform: outlineNext });
               changedIds.push(outlineId);
             }
           }
@@ -19101,7 +19116,9 @@ void main() {
           let hidden = 0;
           for (const record of context.snapshot?.objects || []) {
             if (record.type !== "stroke") continue;
-            const targetId = sceneStore.isDerivedOutline(record.id) ? bodyIdFor(record.id) : record.id;
+            const derivedOutline = sceneStore.isDerivedOutline(record.id);
+            if (derivedOutline && gesture.mode === "pixel") continue;
+            const targetId = derivedOutline ? bodyIdFor(record.id) : record.id;
             if (!targetId || gesture.erasedIds.has(targetId)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = context.canvasObjects.get(record.id);

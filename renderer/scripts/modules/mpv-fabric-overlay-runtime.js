@@ -1803,11 +1803,23 @@ function createSessionSceneStore(options = {}) {
       if (!objectChanged) continue;
       nextObjects.set(id, { ...clonePlain(object), transform: next });
       changedIds.push(id);
-      // 외곽선은 본체와 같은 자리에 있어야 한다. 같은 transform 을 그대로 쓴다.
+      // 외곽선은 자기 자연 위치를 갖는다(pathOffset 이 본체와 다르다).
+      // 본체 transform 을 그대로 베끼면 그 간격이 무너져 첫 이동에서 어긋난다.
+      // **이동량만** 더한다. 오브젝트 변형은 이동 전용이라(applyMoveOnlyConstraints)
+      // 회전·크기조절을 따로 옮길 일이 없다.
       const outlineId = outlineIdFor(id);
       const outlineObject = outlineId ? scene.objects.get(outlineId) : null;
       if (outlineObject) {
-        nextObjects.set(outlineId, { ...clonePlain(outlineObject), transform: next });
+        const outlineCurrent = {
+          left: 0, top: 0, scaleX: 1, scaleY: 1, angle: 0, skewX: 0, skewY: 0,
+          ...(outlineObject.transform || {})
+        };
+        const outlineNext = {
+          ...outlineCurrent,
+          left: finiteNumber(outlineCurrent.left) + (finiteNumber(next.left) - finiteNumber(current.left)),
+          top: finiteNumber(outlineCurrent.top) + (finiteNumber(next.top) - finiteNumber(current.top))
+        };
+        nextObjects.set(outlineId, { ...clonePlain(outlineObject), transform: outlineNext });
         changedIds.push(outlineId);
       }
     }
@@ -6608,13 +6620,17 @@ function createFabricOverlayRuntime(options = {}) {
     for (const record of context.snapshot?.objects || []) {
       // 이미 지운 획은 판정 자체를 건너뛴다 — 같은 획 위를 여러 번 지나가도 1회만 처리된다.
       if (record.type !== 'stroke') continue;
-      // 외곽선은 본체보다 최대 20px 더 뻗는다. 후보에서 통째로 빼면 그 테두리만
-      // 스친 지우개가 칠해진 데를 분명히 지나갔는데도 아무 일도 하지 않는다.
-      // 그래서 판정은 하되 **결과를 짝인 본체로 돌린다** — 이후 짝 처리 로직이
-      // 삭제·분할을 함께 다룬다. 짝을 잃은 고아는 평범한 획이라 자기 자신이 대상이다.
-      const targetId = sceneStore.isDerivedOutline(record.id)
-        ? bodyIdFor(record.id)
-        : record.id;
+      // 외곽선은 본체보다 최대 20px 더 뻗는다. 획 단위 모드에서 그 테두리만 스친
+      // 지우개가 아무 일도 하지 않으면, 칠해진 데를 분명히 지나갔는데 반응이 없다.
+      // 그래서 판정은 하되 **결과를 짝인 본체로 돌린다** — 짝 처리 로직이 삭제를
+      // 함께 다룬다. 짝을 잃은 고아는 평범한 획이라 자기 자신이 대상이다.
+      //
+      // 픽셀 모드는 다르다. 커밋이 리본 폴리곤으로 본체를 다시 판정하는데 본체는
+      // 닿은 적이 없으므로 어차피 아무것도 잘리지 않는다. 외곽선은 잘라 낼 수도
+      // 없다(조각 수가 어긋난다). 그러니 대상으로 세우지 않고 조기 반환에 맡긴다.
+      const derivedOutline = sceneStore.isDerivedOutline(record.id);
+      if (derivedOutline && gesture.mode === 'pixel') continue;
+      const targetId = derivedOutline ? bodyIdFor(record.id) : record.id;
       if (!targetId || gesture.erasedIds.has(targetId)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = context.canvasObjects.get(record.id);

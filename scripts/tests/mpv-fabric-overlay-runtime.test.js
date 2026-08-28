@@ -16271,3 +16271,63 @@ test('a lasso that only touches the outline selects the paired body', async () =
     await harness.destroy();
   }
 });
+
+test('repeated moves never collapse the body-to-outline offset', async () => {
+  // 외곽선은 자기 자연 위치를 갖는다(pathOffset 이 본체와 다르다). 본체 transform 을
+  // 그대로 베끼면 첫 렌더는 맞아도 첫 이동에서 간격이 무너져 어긋난다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 6 });
+    // 압력이 실려 좌우가 비대칭인 획 — 본체와 외곽선의 자연 위치가 확실히 갈린다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 100, 8501, 1, { pressure: 0.1 });
+    harness.dispatchPointer(harness.element, 'pointermove', 90, 100, 8501, 1, { pressure: 0.9 });
+    harness.dispatchPointer(harness.element, 'pointermove', 150, 100, 8501, 1, { pressure: 0.2 });
+    harness.dispatchCapturedPointerUp(150, 100, 8501);
+
+    const bodyId = bodyObjects(harness)[0].id;
+    const offsetBefore = outlineOffset(harness.sceneStore.getActiveSceneSnapshot().objects);
+
+    // 여러 번 옮겨도 간격이 유지돼야 한다.
+    for (const [dx, dy] of [[11, -4], [-6, 9], [3, 3]]) {
+      harness.sceneStore.selectObjects([bodyId]);
+      assert.equal(harness.sceneStore.transformSelection({ dx, dy }).applied, true);
+      assertOutlineOffsetPreserved(
+        offsetBefore,
+        outlineOffset(harness.sceneStore.getActiveSceneSnapshot().objects),
+        `(${dx}, ${dy}) 이동 뒤 간격이 무너졌다`
+      );
+    }
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a pixel eraser grazing only the outline changes nothing', async () => {
+  // 픽셀 모드 커밋은 리본으로 본체를 다시 판정하는데 본체는 닿은 적이 없다.
+  // 외곽선은 잘라 낼 수도 없으므로(조각 수가 어긋난다) 아무 일도 일어나지 않는 게
+  // 맞다 — 획 단위 모드처럼 짝을 통째로 지우면 지나가지도 않은 본체가 사라진다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 10 });
+    harness.drawStroke([{ x: 40, y: 100 }, { x: 160, y: 100 }], 8511);
+    const bodyHalf = bodyObjects(harness)[0].style.size / 2;
+    const before = harness.runtime.getDiagnostics().undoDepth;
+
+    enableRealFabricShapeTool(harness, 'eraser', 4);
+    clickEraserMode(harness.root, 'pixel');
+    const grazeY = 100 - bodyHalf - 5;
+    const pointerId = 8512;
+    harness.dispatchPointer(harness.element, 'pointerdown', 60, grazeY, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, grazeY, pointerId, 1);
+    harness.dispatchCapturedPointerUp(120, grazeY, pointerId);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      2,
+      '픽셀 모드에서 테두리만 스치면 짝이 그대로 남아야 한다'
+    );
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, before, '실행취소도 늘지 않는다');
+  } finally {
+    await harness.destroy();
+  }
+});
