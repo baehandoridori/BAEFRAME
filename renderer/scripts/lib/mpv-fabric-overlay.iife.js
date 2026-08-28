@@ -385,36 +385,6 @@
         }
         return points.filter((_point, index) => keep[index]).map((point) => ({ ...point }));
       }
-      function convexHull(points = []) {
-        const unique = [];
-        const seen = /* @__PURE__ */ new Set();
-        for (const point of points) {
-          const x = finiteNumber(point?.x);
-          const y = finiteNumber(point?.y);
-          const key = `${x}\0${y}`;
-          if (seen.has(key)) continue;
-          seen.add(key);
-          unique.push({ x, y });
-        }
-        if (unique.length < 3) return unique;
-        unique.sort((left, right) => left.x - right.x || left.y - right.y);
-        const build = (source) => {
-          const chain = [];
-          for (const point of source) {
-            while (chain.length >= 2) {
-              const a = chain[chain.length - 2];
-              const b = chain[chain.length - 1];
-              if (cross(b.x - a.x, b.y - a.y, point.x - a.x, point.y - a.y) > EPSILON) break;
-              chain.pop();
-            }
-            chain.push(point);
-          }
-          chain.pop();
-          return chain;
-        };
-        const hull = [...build(unique), ...build([...unique].reverse())];
-        return hull.length >= 3 ? hull : unique;
-      }
       function simplifyClosedPolygon(points = [], tolerance = 1) {
         const deduplicated = [];
         for (const point of points) {
@@ -504,7 +474,6 @@
         createPolygonEdgeIndex,
         simplifyClosedPolygon,
         simplifyOpenPolyline,
-        convexHull,
         segmentEdgeIntersectionParameters,
         segmentPolygonIntersectionParameters
       };
@@ -6053,7 +6022,7 @@
         function setSectionVisible(id, visible) {
           const sectionElement = sectionElements.get(String(id));
           if (!sectionElement) return false;
-          applyStyles(sectionElement, { display: visible ? "flex" : "none" });
+          applyStyles(sectionElement, { display: visible ? "" : "none" });
           return true;
         }
         return {
@@ -13528,8 +13497,7 @@ void main() {
         createGeometryBudget,
         createPolygonEdgeIndex,
         simplifyClosedPolygon,
-        simplifyOpenPolyline,
-        convexHull
+        simplifyOpenPolyline
       } = require_lasso_geometry();
       var {
         clipSimplePathFillPair,
@@ -18932,6 +18900,59 @@ void main() {
           }
           return [...left, ...right.reverse()];
         }
+        function extendSpineEndpoints(spine, radius) {
+          const extend = (from, to) => {
+            const dx = to.x - from.x;
+            const dy = to.y - from.y;
+            const length = Math.hypot(dx, dy);
+            if (length < 1e-6) return { x: to.x, y: to.y };
+            return { x: to.x + dx / length * radius, y: to.y + dy / length * radius };
+          };
+          const extended = spine.map((point) => ({ x: point.x, y: point.y }));
+          extended[0] = extend(spine[1], spine[0]);
+          extended[extended.length - 1] = extend(spine[spine.length - 2], spine[spine.length - 1]);
+          return extended;
+        }
+        function strokeEraseCorridorPolygon(spine, radius) {
+          const first = spine[0];
+          let far = spine[0];
+          let farDistance = 0;
+          for (const point of spine) {
+            const distance = Math.hypot(point.x - first.x, point.y - first.y);
+            if (distance > farDistance) {
+              farDistance = distance;
+              far = point;
+            }
+          }
+          if (farDistance < 1e-6) return [];
+          const ux = (far.x - first.x) / farDistance;
+          const uy = (far.y - first.y) / farDistance;
+          let minAlong = 0;
+          let maxAlong = 0;
+          let maxPerpendicular = 0;
+          for (const point of spine) {
+            const dx = point.x - first.x;
+            const dy = point.y - first.y;
+            const along = dx * ux + dy * uy;
+            const perpendicular = Math.abs(dx * -uy + dy * ux);
+            if (along < minAlong) minAlong = along;
+            if (along > maxAlong) maxAlong = along;
+            if (perpendicular > maxPerpendicular) maxPerpendicular = perpendicular;
+          }
+          if (maxPerpendicular > radius) return [];
+          const startAlong = minAlong - radius;
+          const endAlong = maxAlong + radius;
+          const corner = (along, side) => ({
+            x: first.x + ux * along + -uy * radius * side,
+            y: first.y + uy * along + ux * radius * side
+          });
+          return [
+            corner(startAlong, 1),
+            corner(endAlong, 1),
+            corner(endAlong, -1),
+            corner(startAlong, -1)
+          ];
+        }
         function strokeEraseRibbonPolygon(pathPoints, radius, budget) {
           if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
           const simplified = simplifyOpenPolyline(pathPoints, Math.max(0.25, radius / 4));
@@ -18943,10 +18964,10 @@ void main() {
               { x: point.x + radius, y: point.y + radius }
             );
           }
-          const ribbon = offsetRibbonFromSpine(spine, radius);
+          const extended = extendSpineEndpoints(spine, radius);
+          const ribbon = offsetRibbonFromSpine(extended, radius);
           if (validateSimpleContour(ribbon, budget)) return ribbon;
-          const hull = convexHull(ribbon);
-          return hull.length >= 3 ? hull : ribbon;
+          return strokeEraseCorridorPolygon(extended, radius);
         }
         function commitStrokeEraseAsWholeStrokes(gesture) {
           const selection = sceneStore.selectObjects([...gesture.erasedIds]);
@@ -18991,6 +19012,13 @@ void main() {
           );
           const staged = finalizePartialSelectionPolygon(ribbon, null);
           if (staged?.pending === true) return commitPendingLassoDelete();
+          if (!staged?.reason && staged?.selectedObjectIds?.length > 0) {
+            return applyDrawingAction({
+              sessionId: currentSession.sessionId,
+              actionId: createId("pixel-erase"),
+              action: "delete-selection"
+            });
+          }
           sceneStore.selectObjects([]);
           return {
             applied: false,
@@ -20451,6 +20479,7 @@ void main() {
             return { accepted: true, deferred: true, revision };
           }
           cancelActiveStroke();
+          cancelShapeGesture();
           applyViewportCommand(normalizedCommand);
           return { accepted: true, revision };
         }

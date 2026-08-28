@@ -329,7 +329,10 @@ function createFabricDrawingPalette(options = {}) {
   function setSectionVisible(id, visible) {
     const sectionElement = sectionElements.get(String(id));
     if (!sectionElement) return false;
-    applyStyles(sectionElement, { display: visible ? 'flex' : 'none' });
+    // 보일 때는 인라인 값을 비워 CSS 가 정한 세로 배치를 그대로 쓴다.
+    // 'flex' 를 강제하면 flex-direction 이 없어 라벨·버튼 줄·설정 패널이
+    // 가로로 늘어서서 좁은 팔레트를 넘친다.
+    applyStyles(sectionElement, { display: visible ? '' : 'none' });
     return true;
   }
 

@@ -1777,3 +1777,28 @@ test('brush size shortcuts are routed by action id, not by a hard-coded key code
   assert.match(overlayHostSource, /async updateDrawingBrush\(request = \{\}\) \{/);
   assert.match(fabricRuntimeSource, /function updateDrawingBrush\(command = \{\}\) \{/);
 });
+
+test('drawing shortcuts bypass the remembered-editor relay while the overlay owns the keyboard', () => {
+  // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가
+  // 에디터면 릴레이된 키가 그쪽으로 가고 컨트롤러가 editable-target 으로 버린다.
+  // 도구·크기 단축키가 우회 목록에 없으면 그 상태에서 조용히 아무 일도 안 한다.
+  const block = appSource.match(
+    /const MPV_OVERLAY_RELAY_DRAWING_ACTIONS = Object\.freeze\(\[([\s\S]*?)\]\);/
+  );
+  assert.ok(block, '릴레이 우회 목록이 있어야 한다');
+  const listed = block[1].split(',').map(entry => entry.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  assert.deepEqual(listed.sort(), [
+    'brushSizeDown', 'brushSizeUp',
+    'drawingToolArrow', 'drawingToolBrush', 'drawingToolCircle', 'drawingToolEraser',
+    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect'
+  ]);
+  assert.match(
+    appSource,
+    /for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) addUnmodified\(actionId\);/
+  );
+  // 수식키가 붙은 배정은 평문 키를 텍스트 포커스에서 빼앗지 않도록 제외한다.
+  assert.match(
+    appSource,
+    /if \(shortcut\.ctrl === true \|\| shortcut\.shift === true \|\| shortcut\.alt === true\) return;/
+  );
+});

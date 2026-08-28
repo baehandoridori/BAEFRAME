@@ -548,9 +548,12 @@ test('app은 drawMode 단축키 코드를 릴레이 우회 목록으로 넘긴�
     appSource,
     /function getMpvOverlayDrawModeShortcutDescriptor\(\) \{[\s\S]*?userSettings\.getShortcut\('drawMode'\)[\s\S]*?key: shortcut\.key[\s\S]*?\}/
   );
+  // 우회 목록에는 drawMode 외에 그리기 도구·브러시 크기 단축키도 함께 들어간다.
+  // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가 에디터면
+  // 그 키들이 에디터로 새고 컨트롤러가 editable-target 으로 버리기 때문이다.
   assert.match(
     appSource,
-    /function getMpvOverlayRelayGlobalShortcutCodes\(\) \{[\s\S]*?drawModeShortcut\.ctrl \|\| drawModeShortcut\.shift \|\| drawModeShortcut\.alt[\s\S]*?return \[drawModeShortcut\.key\];[\s\S]*?\}/
+    /function getMpvOverlayRelayGlobalShortcutCodes\(\) \{[\s\S]*?drawModeShortcut\.ctrl && !drawModeShortcut\.shift && !drawModeShortcut\.alt[\s\S]*?codes\.add\(drawModeShortcut\.key\);[\s\S]*?return \[\.\.\.codes\];[\s\S]*?\}/
   );
   assert.match(appSource, /drawModeShortcut: getMpvOverlayDrawModeShortcutDescriptor\(\),/);
 });

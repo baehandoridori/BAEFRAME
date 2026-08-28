@@ -15,8 +15,7 @@ const {
   createGeometryBudget,
   createPolygonEdgeIndex,
   simplifyClosedPolygon,
-  simplifyOpenPolyline,
-  convexHull
+  simplifyOpenPolyline
 } = require('./drawing-v3/lasso-geometry.js');
 const {
   clipSimplePathFillPair,
@@ -6335,6 +6334,70 @@ function createFabricOverlayRuntime(options = {}) {
     return [...left, ...right.reverse()];
   }
 
+  // 스윕 사각형(strokeEraseSweepPolygon)은 시작·끝에서 진행 방향으로도 반경만큼
+  // 더 뻗는다. 리본이 척추 끝점에서 딱 끊기면 "지워진 것으로 표시됐는데 커밋
+  // 폴리곤에는 안 들어간" 획이 생겨 그 획만 되살아난다. 끝을 같은 만큼 연장한다.
+  function extendSpineEndpoints(spine, radius) {
+    const extend = (from, to) => {
+      const dx = to.x - from.x;
+      const dy = to.y - from.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 1e-6) return { x: to.x, y: to.y };
+      return { x: to.x + (dx / length) * radius, y: to.y + (dy / length) * radius };
+    };
+    const extended = spine.map(point => ({ x: point.x, y: point.y }));
+    extended[0] = extend(spine[1], spine[0]);
+    extended[extended.length - 1] = extend(spine[spine.length - 2], spine[spine.length - 1]);
+    return extended;
+  }
+
+  // 왕복 스크럽 전용 폴백. 척추가 한 축을 따라 좁게 오갈 때만 성립한다.
+  // 그 조건에서 지나간 영역은 정확히 하나의 복도이므로, 주축에 투영해 복도를
+  // 다시 만든다. 볼록 껍질을 쓰면 원을 그리듯 감싼 제스처가 안쪽의 건드리지도
+  // 않은 획까지 삼킨다 — 그래서 껍질은 쓰지 않는다.
+  function strokeEraseCorridorPolygon(spine, radius) {
+    const first = spine[0];
+    let far = spine[0];
+    let farDistance = 0;
+    for (const point of spine) {
+      const distance = Math.hypot(point.x - first.x, point.y - first.y);
+      if (distance > farDistance) {
+        farDistance = distance;
+        far = point;
+      }
+    }
+    if (farDistance < 1e-6) return [];
+    const ux = (far.x - first.x) / farDistance;
+    const uy = (far.y - first.y) / farDistance;
+    let minAlong = 0;
+    let maxAlong = 0;
+    let maxPerpendicular = 0;
+    for (const point of spine) {
+      const dx = point.x - first.x;
+      const dy = point.y - first.y;
+      const along = dx * ux + dy * uy;
+      const perpendicular = Math.abs(dx * -uy + dy * ux);
+      if (along < minAlong) minAlong = along;
+      if (along > maxAlong) maxAlong = along;
+      if (perpendicular > maxPerpendicular) maxPerpendicular = perpendicular;
+    }
+    // 주축에서 반경 이상 벗어났다면 복도가 아니다(원·지그재그·고리 모양).
+    // 그런 제스처는 어떤 단일 폴리곤으로도 안전하게 근사할 수 없다.
+    if (maxPerpendicular > radius) return [];
+    const startAlong = minAlong - radius;
+    const endAlong = maxAlong + radius;
+    const corner = (along, side) => ({
+      x: first.x + ux * along + -uy * radius * side,
+      y: first.y + uy * along + ux * radius * side
+    });
+    return [
+      corner(startAlong, 1),
+      corner(endAlong, 1),
+      corner(endAlong, -1),
+      corner(startAlong, -1)
+    ];
+  }
+
   function strokeEraseRibbonPolygon(pathPoints, radius, budget) {
     if (!Array.isArray(pathPoints) || pathPoints.length === 0) return [];
     // 지우개 경로는 닫힌 폴리곤이 아니라 열린 폴리라인이다.
@@ -6349,14 +6412,13 @@ function createFabricOverlayRuntime(options = {}) {
         { x: point.x + radius, y: point.y + radius }
       );
     }
-    const ribbon = offsetRibbonFromSpine(spine, radius);
+    const extended = extendSpineEndpoints(spine, radius);
+    const ribbon = offsetRibbonFromSpine(extended, radius);
     if (validateSimpleContour(ribbon, budget)) return ribbon;
-    // 앞뒤로 문지르는(A→B→A) 지우개 동작은 좌/우 오프셋이 서로를 가로질러
-    // 단순 폴리곤이 되지 않는다. 그때는 지나간 영역의 볼록 껍질을 쓴다 —
-    // 문지른 구간의 껍질은 사실상 지나간 복도와 같고, 획을 통째로 지우는
-    // 쪽으로 떨어지는 것보다 언제나 덜 파괴적이다.
-    const hull = convexHull(ribbon);
-    return hull.length >= 3 ? hull : ribbon;
+    // 앞뒤로 문지르는(A→B→A) 동작은 좌/우 오프셋이 서로를 가로질러 단순 폴리곤이
+    // 되지 않는다. 한 축을 따르는 스크럽이면 복도로 되살리고, 그 밖의 모양이면
+    // 빈 폴리곤을 돌려 **아무것도 지우지 않는다.**
+    return strokeEraseCorridorPolygon(extended, radius);
   }
 
   function commitStrokeEraseAsWholeStrokes(gesture) {
@@ -6410,10 +6472,18 @@ function createFabricOverlayRuntime(options = {}) {
     );
     const staged = finalizePartialSelectionPolygon(ribbon, null);
     if (staged?.pending === true) return commitPendingLassoDelete();
-    // 리본이 획을 통째로 덮은 경우는 finalizePartialSelectionPolygon 이 이미
-    // selectedPersistedIds 로 처리해 pending 으로 올린다. 여기까지 왔다는 것은
-    // 기하가 성립하지 않았다는 뜻이므로 **아무것도 지우지 않는다** — 픽셀 지우개가
-    // 지나가지도 않은 부분까지 통째로 날리는 쪽이 훨씬 나쁜 실패다.
+    // 조각이 하나도 안 생겼지만 리본이 획을 통째로 덮은 경우가 있다(점·짧은 획).
+    // 그때 finalizePartialSelectionPolygon 은 pending 없이 선택만 세워 돌려주므로,
+    // 여기서 삭제 경로로 넘겨야 한다. reason 이 있으면 기하 실패이지 덮음이 아니다.
+    if (!staged?.reason && staged?.selectedObjectIds?.length > 0) {
+      return applyDrawingAction({
+        sessionId: currentSession.sessionId,
+        actionId: createId('pixel-erase'),
+        action: 'delete-selection'
+      });
+    }
+    // 여기까지 왔다면 기하가 성립하지 않았다는 뜻이다. **아무것도 지우지 않는다** —
+    // 픽셀 지우개가 지나가지도 않은 부분까지 날리는 쪽이 훨씬 나쁜 실패다.
     sceneStore.selectObjects([]);
     return {
       applied: false,
@@ -8004,7 +8074,10 @@ function createFabricOverlayRuntime(options = {}) {
       return { accepted: true, deferred: true, revision };
     }
 
+    // 도형의 시작점은 이전 뷰포트로 매핑돼 있다. 그대로 두면 커밋 시 끝점만
+    // 새 뷰포트로 매핑돼 도형이 튀거나 찌그러진다. 자유 획과 같이 취소한다.
     cancelActiveStroke();
+    cancelShapeGesture();
     applyViewportCommand(normalizedCommand);
     return { accepted: true, revision };
   }

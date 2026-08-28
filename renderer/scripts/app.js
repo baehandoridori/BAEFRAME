@@ -8903,6 +8903,21 @@ async function initApp() {
 
   // 작업4: 오버레이 키 릴레이(메인 포커스 handoff 판정·IME 조합 통과)와
   // 릴레이 dispatch 대상 선택이 하드코딩 'KeyB' 대신 실제 사용자 단축키를 쓰게 한다.
+  // 그리기 모드에서만 의미가 있는 단축키들. 에디터 포커스가 남아 있어도
+  // 오버레이가 키보드를 소유한 동안에는 이 키들이 오버레이로 가야 한다.
+  const MPV_OVERLAY_RELAY_DRAWING_ACTIONS = Object.freeze([
+    'drawingToolSelect',
+    'drawingToolBrush',
+    'drawingToolPen',
+    'drawingToolEraser',
+    'drawingToolLine',
+    'drawingToolRect',
+    'drawingToolCircle',
+    'drawingToolArrow',
+    'brushSizeDown',
+    'brushSizeUp'
+  ]);
+
   function getMpvOverlayDrawModeShortcutDescriptor() {
     const shortcut = userSettings.getShortcut('drawMode');
     if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return null;
@@ -8915,14 +8930,25 @@ async function initApp() {
   }
 
   function getMpvOverlayRelayGlobalShortcutCodes() {
-    const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
     // 릴레이 우회는 code만 보고 판정하므로, 수식키가 붙은 단축키는 평문 키까지
     // 텍스트 포커스에서 빼앗는 과잉 우회가 된다 — 단독 키일 때만 등록한다.
-    if (!drawModeShortcut ||
-        drawModeShortcut.ctrl || drawModeShortcut.shift || drawModeShortcut.alt) {
-      return [];
+    const codes = new Set();
+    const addUnmodified = actionId => {
+      const shortcut = userSettings.getShortcut(actionId);
+      if (!shortcut || typeof shortcut.key !== 'string' || shortcut.key.length === 0) return;
+      if (shortcut.ctrl === true || shortcut.shift === true || shortcut.alt === true) return;
+      codes.add(shortcut.key);
+    };
+    const drawModeShortcut = getMpvOverlayDrawModeShortcutDescriptor();
+    if (drawModeShortcut &&
+        !drawModeShortcut.ctrl && !drawModeShortcut.shift && !drawModeShortcut.alt) {
+      codes.add(drawModeShortcut.key);
     }
-    return [drawModeShortcut.key];
+    // 오버레이가 키보드를 갖고 있어도 메인 렌더러의 기억된 activeElement 가
+    // 에디터면 릴레이된 키가 그쪽으로 가고 컨트롤러가 editable-target 으로 버린다.
+    // 그리기 중에만 쓰는 도구·크기 단축키를 함께 우회 목록에 넣는다.
+    for (const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS) addUnmodified(actionId);
+    return [...codes];
   }
 
   function getMpvOverlayState() {
