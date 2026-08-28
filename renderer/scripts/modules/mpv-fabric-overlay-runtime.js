@@ -93,8 +93,6 @@ const MIN_BRUSH_OPACITY_PERCENT = 10;
 const MAX_BRUSH_OPACITY_PERCENT = 100;
 // 레거시 Canvas2D 엔진(drawing-canvas.js `_updateSizeAdjust`)의 delta/4 감도를 그대로 계승한다.
 const SIZE_ADJUST_PIXELS_PER_STEP = 4;
-const SIZE_ADJUST_HUD_OFFSET_X = 16;
-const SIZE_ADJUST_HUD_OFFSET_Y = 28;
 const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 · 리뷰 자동 저장';
 const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
@@ -2402,6 +2400,7 @@ function createFabricOverlayRuntime(options = {}) {
   let sizeAdjustGesture = null;
   let strokeEraseGesture = null;
   let sizeAdjustHud = null;
+  let sizeAdjustHudLabel = null;
   const overlayModifierState = { alt: false, ctrl: false };
   // Alt 제스처 실기 미동작(v2.4.3-beta) 원인 확정용 관측값.
   // "오버레이 문서가 Alt keydown을 받기는 하는가"와 "마우스 pointerdown이 altKey를
@@ -5295,6 +5294,8 @@ function createFabricOverlayRuntime(options = {}) {
     event.preventDefault?.();
   }
 
+  // 레거시 .brush-size-hud 계승 — 숫자만 띄우면 제스처의 목적(굵기를 눈으로 보는 것)이
+  // 사라진다. 실제 브러시 굵기만 한 원을 브러시 색으로 그리고 라벨을 위에 붙인다.
   function createSizeAdjustHud() {
     const hud = documentRef.createElement('div');
     hud.className = 'mpv-fabric-pilot-size-hud';
@@ -5309,23 +5310,60 @@ function createFabricOverlayRuntime(options = {}) {
       top: '0px',
       zIndex: '3',
       pointerEvents: 'none',
-      padding: '4px 8px',
-      borderRadius: '6px',
-      font: '600 12px/1 sans-serif',
-      whiteSpace: 'nowrap',
-      background: 'rgba(24, 24, 28, 0.92)',
-      color: '#fff'
+      boxSizing: 'border-box',
+      borderRadius: '50%',
+      borderStyle: 'solid',
+      borderWidth: '2px',
+      borderColor: 'rgba(255, 255, 255, 0.9)',
+      // 앵커 좌표를 원의 중심으로 삼는다. 레거시와 같다.
+      transform: 'translate(-50%, -50%)',
+      boxShadow: '0 4px 16px rgba(0, 0, 0, 0.35)'
     });
+    const label = documentRef.createElement('span');
+    label.className = 'mpv-fabric-pilot-size-hud-label';
+    label.dataset.fabricPilotOutput = 'size-adjust-label';
+    setStyles(label, {
+      position: 'absolute',
+      left: '50%',
+      top: '-22px',
+      transform: 'translateX(-50%)',
+      padding: '3px 6px',
+      borderRadius: '6px',
+      background: 'rgba(9, 12, 18, 0.84)',
+      color: '#fff',
+      font: '700 11px/1 sans-serif',
+      whiteSpace: 'nowrap',
+      pointerEvents: 'none'
+    });
+    hud.appendChild(label);
+    sizeAdjustHudLabel = label;
     return hud;
+  }
+
+  // 브러시 크기는 소스 픽셀 단위다. 화면에 보이는 굵기와 맞추려면 표시 배율을 곱해야
+  // 한다(레거시 updateBrushSizeHud 의 rect.width / canvas.width 와 같은 계산이며,
+  // 여기서는 확대·이동이 반영된 유효 rect 를 쓴다).
+  function sourceToClientScale(session) {
+    const sourceWidth = Math.max(0, finiteNumber(session?.sourceWidth, 0));
+    if (sourceWidth <= 0) return 1;
+    const rect = resolveEffectiveCanvasRect(session.canvasRect, session.viewportTransform);
+    if (!(rect.width > 0)) return 1;
+    return rect.width / sourceWidth;
   }
 
   function showSizeAdjustHud(clientX, clientY, size) {
     if (!sizeAdjustHud) return;
-    sizeAdjustHud.textContent = `${size}px`;
+    const diameter = Math.max(2, Math.round(size * sourceToClientScale(currentSession)));
+    if (sizeAdjustHudLabel) sizeAdjustHudLabel.textContent = `${size}px`;
     setStyles(sizeAdjustHud, {
       display: 'block',
-      left: `${Math.round(finiteNumber(clientX) + SIZE_ADJUST_HUD_OFFSET_X)}px`,
-      top: `${Math.round(finiteNumber(clientY) - SIZE_ADJUST_HUD_OFFSET_Y)}px`
+      left: `${Math.round(finiteNumber(clientX))}px`,
+      top: `${Math.round(finiteNumber(clientY))}px`,
+      width: `${diameter}px`,
+      height: `${diameter}px`,
+      // 색은 8자리 hex 로 알파를 붙인다(스키마상 style.color 는 항상 #RRGGBB).
+      background: `${brushStyle.color}80`,
+      borderColor: brushStyle.color
     });
   }
 
@@ -6540,6 +6578,7 @@ function createFabricOverlayRuntime(options = {}) {
     selectionControls = null;
     badge = null;
     sizeAdjustHud = null;
+    sizeAdjustHudLabel = null;
     container = null;
     root = null;
     prepared = false;

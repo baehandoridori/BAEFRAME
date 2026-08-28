@@ -386,6 +386,8 @@ function getBrushControls(root) {
     toolbar,
     sizeHud: findOne(root.querySelectorAllByClass('mpv-fabric-overlay-surface')[0],
       node => node.dataset.fabricPilotOutput === 'size-adjust'),
+    sizeHudLabel: findOne(root.querySelectorAllByClass('mpv-fabric-overlay-surface')[0],
+      node => node.dataset.fabricPilotOutput === 'size-adjust-label'),
     undoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'undo'),
     redoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'redo'),
     settingsButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush-settings'),
@@ -13733,16 +13735,18 @@ test('Alt 드래그는 브러시 크기를 1~50으로 조절하고 팔레트·HU
   element.dispatch('pointerdown', { pointerId: 900, button: 0, altKey: true, clientX: 100, clientY: 100 });
   assert.equal(runtime.getDiagnostics().gestures.altSizeAdjustActive, true);
   assert.equal(controls.sizeHud.style.display, 'block');
-  assert.equal(controls.sizeHud.style.left, '116px');
-  assert.equal(controls.sizeHud.style.top, '72px');
-  assert.equal(controls.sizeHud.textContent, '3px');
+  // 앵커 좌표가 원의 중심이다(transform: translate(-50%, -50%)) — 오프셋을 더하지 않는다.
+  assert.equal(controls.sizeHud.style.left, '100px');
+  assert.equal(controls.sizeHud.style.top, '100px');
+  assert.equal(controls.sizeHudLabel.textContent, '3px');
+  assert.equal(controls.sizeHud.style.borderRadius, '50%');
   element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: 140, clientY: 130 });
   // delta 40 / 4 = 10 → 3 + 10 = 13
   assert.equal(controls.sizeInput.value, '13');
   assert.equal(controls.sizeOutput.textContent, '13px');
   assert.equal(controls.summary.textContent, '13px · 100%');
-  assert.equal(controls.sizeHud.textContent, '13px');
-  assert.equal(controls.sizeHud.style.left, '116px', 'HUD는 드래그 시작점에 고정된다');
+  assert.equal(controls.sizeHudLabel.textContent, '13px');
+  assert.equal(controls.sizeHud.style.left, '100px', 'HUD는 드래그 시작점에 고정된다');
   element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: 1000, clientY: 130 });
   assert.equal(controls.sizeInput.value, '50');
   element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: -1000, clientY: 130 });
@@ -13753,6 +13757,38 @@ test('Alt 드래그는 브러시 크기를 1~50으로 조절하고 팔레트·HU
   assert.equal(controls.sizeInput.value, '1', '종료 시 크기를 되돌리지 않는다');
   assert.equal(runtime.getDiagnostics().objectCount, 0);
   assert.equal(runtime.getDiagnostics().mutationCount, 0, '크기 조절은 씬을 변경하지 않는다');
+});
+
+test('Alt 크기조절 HUD는 실제 브러시 굵기만 한 원을 브러시 색으로 그린다', () => {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  // sourceWidth 1920 / canvasRect.width 960 → 표시 배율 0.5.
+  // 브러시 크기는 소스 픽셀이므로 화면 굵기는 그 절반이어야 한다.
+  runtime.setDrawingInput(makeInput());
+  const controls = getBrushControls(root);
+  const element = FakeCanvas.instances[0].upperCanvasEl;
+
+  element.dispatch('pointerdown', { pointerId: 940, button: 0, altKey: true, clientX: 200, clientY: 150 });
+  assert.equal(controls.sizeHud.style.width, '2px', '크기 3 × 0.5 = 1.5 → 최소 2px');
+  assert.equal(controls.sizeHud.style.height, '2px');
+  assert.equal(controls.sizeHud.style.background, '#ff475780', '브러시 색 + 50% 알파');
+  assert.equal(controls.sizeHud.style.borderColor, '#ff4757');
+  assert.equal(controls.sizeHudLabel.textContent, '3px');
+
+  // delta 40 / 4 = 10 → 3 + 10 = 13 → 13 × 0.5 = 6.5 → 7px
+  element.dispatch('pointermove', { pointerId: 940, altKey: true, clientX: 240, clientY: 150 });
+  assert.equal(controls.sizeHud.style.width, '7px');
+  assert.equal(controls.sizeHud.style.height, '7px');
+  assert.equal(controls.sizeHudLabel.textContent, '13px');
+
+  element.dispatch('pointerup', { pointerId: 940, altKey: true, clientX: 240, clientY: 150 });
+  assert.equal(controls.sizeHud.style.display, 'none');
 });
 
 test('Alt 드래그는 획을 만들지 않고 우클릭 시작과 컨텍스트 메뉴 차단을 지원한다', () => {
