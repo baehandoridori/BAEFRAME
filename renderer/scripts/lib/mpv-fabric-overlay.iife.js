@@ -3254,7 +3254,12 @@
           knownIds.delete(entry.id);
         }
         function clearStack(stack) {
-          while (stack.length > 0) removeAt(stack, stack.length - 1);
+          const removedIds = [];
+          while (stack.length > 0) {
+            removedIds.push(stack[stack.length - 1].id);
+            removeAt(stack, stack.length - 1);
+          }
+          return removedIds;
         }
         function record(command) {
           if (!command || typeof command.id !== "string" || !command.id || typeof command.kind !== "string" || !command.kind || command.undoState === void 0 || command.redoState === void 0) {
@@ -3264,15 +3269,30 @@
           const stored = clonePlain(command);
           const estimatedBytes = Math.max(1, Math.trunc(Number(estimateEntryBytes(stored)) || 1));
           if (estimatedBytes > maxBytes) return { recorded: false, reason: "history-capacity-exceeded" };
-          clearStack(redoStack);
+          const clearedRedoIds = clearStack(redoStack);
+          const evictedUndoIds = [];
           while (undoStack.length >= maxEntries || historyBytes + estimatedBytes > maxBytes) {
-            if (undoStack.length === 0) return { recorded: false, reason: "history-capacity-exceeded" };
+            if (undoStack.length === 0) {
+              return {
+                recorded: false,
+                reason: "history-capacity-exceeded",
+                evictedUndoIds,
+                clearedRedoIds
+              };
+            }
+            evictedUndoIds.push(undoStack[0].id);
             removeAt(undoStack, 0);
           }
           undoStack.push({ ...stored, estimatedBytes });
           knownIds.add(stored.id);
           historyBytes += estimatedBytes;
-          return { recorded: true, undoDepth: undoStack.length, redoDepth: 0 };
+          return {
+            recorded: true,
+            undoDepth: undoStack.length,
+            redoDepth: 0,
+            evictedUndoIds,
+            clearedRedoIds
+          };
         }
         function moveTop(from, to, stateKey, applyState, direction) {
           const entry = from.at(-1);
@@ -3305,6 +3325,9 @@
           clearStack(undoStack);
           clearStack(redoStack);
         }
+        function clearRedo() {
+          return clearStack(redoStack);
+        }
         function getDiagnostics() {
           const undoBytes = undoStack.reduce((total, entry) => total + entry.estimatedBytes, 0);
           const redoBytes = redoStack.reduce((total, entry) => total + entry.estimatedBytes, 0);
@@ -3318,7 +3341,7 @@
             maxBytes
           };
         }
-        return { record, undo, redo, clear, getDiagnostics };
+        return { record, undo, redo, clear, clearRedo, getDiagnostics };
       }
       module.exports = { createDrawingCommandHistory };
     }
@@ -14037,6 +14060,75 @@ void main() {
             observerLifecycleFailureCount += 1;
           }
         }
+        const globalHistoryOrder = /* @__PURE__ */ new Map();
+        const MAX_GLOBAL_HISTORY_ATTEMPTS = 8;
+        function globalOrderFor(stableVideoIdentity, create = false) {
+          if (typeof stableVideoIdentity !== "string" || stableVideoIdentity.length === 0) return null;
+          let order = globalHistoryOrder.get(stableVideoIdentity);
+          if (!order && create) {
+            order = { undo: [], redo: [] };
+            globalHistoryOrder.set(stableVideoIdentity, order);
+          }
+          return order || null;
+        }
+        function reconcileGlobalOrder(scene, recorded) {
+          const order = globalOrderFor(scene?.stableVideoIdentity);
+          if (!order) return;
+          const dropped = /* @__PURE__ */ new Set();
+          for (const id of recorded?.evictedUndoIds || []) dropped.add(id);
+          for (const id of recorded?.clearedRedoIds || []) dropped.add(id);
+          if (dropped.size === 0) return;
+          order.undo = order.undo.filter((entry) => !dropped.has(entry.commandId));
+          order.redo = order.redo.filter((entry) => !dropped.has(entry.commandId));
+        }
+        function appendGlobalOrder(scene, commandId) {
+          const order = globalOrderFor(scene?.stableVideoIdentity, true);
+          if (!order || !scene) return;
+          const clearedSceneKeys = /* @__PURE__ */ new Set([scene.key]);
+          for (const entry of order.redo) {
+            if (clearedSceneKeys.has(entry.sceneKey)) continue;
+            clearedSceneKeys.add(entry.sceneKey);
+            const other = scenes.get(entry.sceneKey);
+            if (!other) continue;
+            other.history.clearRedo();
+            other.historyEntries = { undo: other.historyEntries.undo, redo: [] };
+          }
+          order.redo = [];
+          order.undo.push({ sceneKey: scene.key, commandId });
+        }
+        function* globalHistoryCandidates(direction) {
+          const order = globalOrderFor(activeSession?.stableVideoIdentity);
+          if (!order) return;
+          const list = direction === "undo" ? order.undo : order.redo;
+          let index = list.length - 1;
+          let attempts = 0;
+          while (index >= 0 && attempts < MAX_GLOBAL_HISTORY_ATTEMPTS) {
+            const scene = scenes.get(list[index].sceneKey);
+            if (!scene) {
+              list.splice(index, 1);
+              index -= 1;
+              continue;
+            }
+            attempts += 1;
+            yield { scene, order };
+            index -= 1;
+          }
+        }
+        function moveGlobalOrderEntry(order, direction, commandId) {
+          const from = direction === "undo" ? order.undo : order.redo;
+          const to = direction === "undo" ? order.redo : order.undo;
+          const index = from.findLastIndex((entry2) => entry2.commandId === commandId);
+          if (index < 0) return;
+          const [entry] = from.splice(index, 1);
+          to.push(entry);
+        }
+        function globalHistoryDepths() {
+          const order = globalOrderFor(activeSession?.stableVideoIdentity);
+          return {
+            globalUndoDepth: order ? order.undo.length : 0,
+            globalRedoDepth: order ? order.redo.length : 0
+          };
+        }
         function activeScene() {
           return activeSession ? scenes.get(activeSession.sceneKey) || null : null;
         }
@@ -14083,6 +14175,7 @@ void main() {
           }
           videoAccess.delete(stableVideoIdentity);
           persistenceByVideo.delete(stableVideoIdentity);
+          globalHistoryOrder.delete(stableVideoIdentity);
           if (latestPersistenceVideoIdentity === stableVideoIdentity) {
             latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
           }
@@ -14369,9 +14462,11 @@ void main() {
             return { applied: false, reason: "scene-capacity-exceeded" };
           }
           const recorded = scene.history.record(command);
+          reconcileGlobalOrder(scene, recorded);
           if (!recorded.recorded) {
             return { applied: false, reason: recorded.reason || "history-record-failed" };
           }
+          appendGlobalOrder(scene, command.id);
           for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
           materializeProvisionalScene(scene);
           scene.historyEntries = { undo: projectedHistory.undo, redo: projectedHistory.redo };
@@ -14507,6 +14602,7 @@ void main() {
             droppedSceneInstanceIds.push(scene.sceneInstanceId);
             scenes.delete(key);
           }
+          globalHistoryOrder.delete(request.stableVideoIdentity);
           for (const scene of hydratedScenes) scenes.set(scene.key, scene);
           persistenceByVideo.set(request.stableVideoIdentity, {
             hostGeneration: request.hostGeneration,
@@ -14934,9 +15030,7 @@ void main() {
           touchVideo(scene.stableVideoIdentity);
           return { applied: true };
         }
-        function moveHistory(direction) {
-          const scene = activeScene();
-          if (!scene) return { applied: false, reason: "history-empty" };
+        function applyHistoryEntry(scene, order, direction) {
           let transition = null;
           const result = scene.history[direction]((state, _historyDirection, entry) => {
             const applied = applyHistoryState(scene, state);
@@ -14953,6 +15047,7 @@ void main() {
             return applied;
           });
           if (!result.applied) return result;
+          moveGlobalOrderEntry(order, direction, result.commandId);
           const from = direction === "undo" ? scene.historyEntries.undo : scene.historyEntries.redo;
           const to = direction === "undo" ? scene.historyEntries.redo : scene.historyEntries.undo;
           const entryIndex = from.findLastIndex((entry) => entry.id === result.commandId);
@@ -14966,8 +15061,21 @@ void main() {
           return {
             ...result,
             objectCount: scene.objects.size,
-            selectedObjectIds: []
+            selectedObjectIds: [],
+            // 되돌린 씬이 지금 화면에 떠 있는 씬인지. 아니면 캔버스 재도색과 도구 모드
+            // 재설정을 건너뛴다.
+            affectedActiveScene: scene === activeScene(),
+            affectedTargetFrame: scene.targetFrame
           };
+        }
+        function moveHistory(direction) {
+          let lastFailure = null;
+          for (const { scene, order } of globalHistoryCandidates(direction)) {
+            const attempt = applyHistoryEntry(scene, order, direction);
+            if (attempt.applied) return attempt;
+            lastFailure = attempt;
+          }
+          return lastFailure || { applied: false, reason: "history-empty" };
         }
         function undo() {
           return moveHistory("undo");
@@ -15157,6 +15265,9 @@ void main() {
             provisionalSourceFrame: scene?.provisionalSourceFrame ?? null,
             undoDepth: history.undoDepth,
             redoDepth: history.redoDepth,
+            // 활성 씬 기준 깊이(위)와 전역 순서 인덱스 깊이(아래)는 의미가 다르다.
+            // 기존 진단의 의미를 바꾸지 않으려고 새 필드로 낸다.
+            ...globalHistoryDepths(),
             undoBytes: history.undoBytes,
             historyBytes: history.historyBytes,
             sceneKeys: [...scenes.keys()]
@@ -15167,6 +15278,7 @@ void main() {
           destroyed = true;
           const droppedSceneInstanceIds = [...scenes.values()].map((scene) => scene.sceneInstanceId);
           scenes.clear();
+          globalHistoryOrder.clear();
           videoAccess.clear();
           persistenceByVideo.clear();
           latestPersistenceVideoIdentity = null;
@@ -19606,10 +19718,12 @@ void main() {
           const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? sceneStore.clearSession() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
           if (result.applied) {
             if (action === "undo" || action === "redo") {
-              renderActiveScene();
-              fabricCanvas.discardActiveObject();
-              sceneStore.selectObjects([]);
-              setToolMode(currentSession?.tool || "brush");
+              if (result.affectedActiveScene !== false) {
+                renderActiveScene();
+                fabricCanvas.discardActiveObject();
+                sceneStore.selectObjects([]);
+                setToolMode(currentSession?.tool || "brush");
+              }
               updateObjectMetric();
               settleArmedFramePreview();
               return result;
@@ -19689,6 +19803,8 @@ void main() {
             dirty: scene.dirty,
             undoDepth: scene.undoDepth,
             redoDepth: scene.redoDepth,
+            globalUndoDepth: scene.globalUndoDepth,
+            globalRedoDepth: scene.globalRedoDepth,
             undoBytes: scene.undoBytes,
             historyBytes: scene.historyBytes,
             cache: {

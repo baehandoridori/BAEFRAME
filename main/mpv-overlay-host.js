@@ -3447,6 +3447,8 @@ class MPVOverlayHost {
         mutationCount: Math.trunc(finiteDiagnosticNumber(result?.mutationCount)),
         undoDepth: Math.trunc(finiteDiagnosticNumber(result?.undoDepth)),
         redoDepth: Math.trunc(finiteDiagnosticNumber(result?.redoDepth)),
+        globalUndoDepth: Math.trunc(finiteDiagnosticNumber(result?.globalUndoDepth)),
+        globalRedoDepth: Math.trunc(finiteDiagnosticNumber(result?.globalRedoDepth)),
         historyBytes: Math.trunc(finiteDiagnosticNumber(result?.historyBytes)),
         dirty: result?.dirty === true,
         gestures: sanitizeFabricGestureDiagnostics(result?.gestures),

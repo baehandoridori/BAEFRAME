@@ -193,3 +193,49 @@ test('clear removes both stacks and bytes', () => {
     maxBytes: 4096
   });
 });
+
+test('record는 용량 초과로 축출한 undo id를 보고한다', () => {
+  const history = createDrawingCommandHistory({ maxEntries: 2, maxBytes: 65536 });
+  assert.deepEqual(history.record(command('evict-1', 0, 1)).evictedUndoIds, []);
+  assert.deepEqual(history.record(command('evict-2', 1, 2)).evictedUndoIds, []);
+  // 세 번째부터 가장 오래된 항목이 밀린다 — 전역 순서 인덱스가 같은 id를 지울 수 있어야 한다.
+  assert.deepEqual(history.record(command('evict-3', 2, 3)).evictedUndoIds, ['evict-1']);
+  assert.equal(history.getDiagnostics().undoDepth, 2);
+});
+
+test('record는 성공·실패 양쪽에서 폐기한 redo id를 보고한다', () => {
+  const history = createDrawingCommandHistory({ maxEntries: 2, maxBytes: 65536 });
+  assert.equal(history.record(command('redo-src-1', 0, 1)).recorded, true);
+  assert.equal(history.undo(() => ({ applied: true })).applied, true);
+  assert.equal(history.getDiagnostics().redoDepth, 1);
+
+  // 성공 경로 — 새 커맨드가 redo를 폐기하고 그 id를 돌려준다.
+  const success = history.record(command('redo-killer', 1, 2));
+  assert.equal(success.recorded, true);
+  assert.deepEqual(success.clearedRedoIds, ['redo-src-1']);
+
+  // 커맨드 하나가 통째로 용량을 넘는 경우는 clearStack 이전에 조기 반환한다.
+  // 즉 아무것도 폐기하지 않았으므로 redo가 살아 있어야 하고, 전역 인덱스도 그대로여야 한다.
+  const tiny = createDrawingCommandHistory({ maxEntries: 4, maxBytes: 400 });
+  assert.equal(tiny.record(command('tiny-1', 0, 1)).recorded, true);
+  assert.equal(tiny.undo(() => ({ applied: true })).applied, true);
+  assert.equal(tiny.getDiagnostics().redoDepth, 1);
+  const oversized = tiny.record(command('tiny-oversized', 'x'.repeat(4000), 2));
+  assert.equal(oversized.recorded, false);
+  assert.equal(oversized.reason, 'history-capacity-exceeded');
+  assert.equal(tiny.getDiagnostics().redoDepth, 1, '조기 반환은 redo를 폐기하지 않는다');
+});
+
+test('clearRedo는 redo 스택만 비우고 버린 id를 돌려준다', () => {
+  const history = createDrawingCommandHistory({ maxEntries: 4, maxBytes: 65536 });
+  assert.equal(history.record(command('keep-1', 0, 1)).recorded, true);
+  assert.equal(history.record(command('keep-2', 1, 2)).recorded, true);
+  assert.equal(history.undo(() => ({ applied: true })).applied, true);
+  assert.equal(history.getDiagnostics().undoDepth, 1);
+  assert.equal(history.getDiagnostics().redoDepth, 1);
+
+  assert.deepEqual(history.clearRedo(), ['keep-2']);
+  assert.equal(history.getDiagnostics().undoDepth, 1, 'undo 스택은 건드리지 않는다');
+  assert.equal(history.getDiagnostics().redoDepth, 0);
+  assert.deepEqual(history.clearRedo(), [], '이미 비었으면 빈 배열이다');
+});

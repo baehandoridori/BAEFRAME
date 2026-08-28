@@ -767,6 +767,112 @@ function createSessionSceneStore(options = {}) {
     }
   }
 
+  // ── 전역 실행취소 순서 인덱스 ────────────────────────────────────────────────
+  // 씬별 히스토리·씬별 예산 회계·undoDepth 진단의 의미는 그대로 두고, "어느 씬의
+  // 어떤 커맨드가 시각 순서 몇 번째였는가"만 따로 쌓는다. Ctrl+Z는 재생헤드 위치와
+  // 무관하게 이 스택의 마지막 항목을 되돌린다(애니메이트 동치).
+  //
+  // 영상별로 나누는 이유: 실행취소는 문서 단위여야 하고, 씬 축출(evictVideo)이
+  // 영상 단위라 인덱스 회수 경계가 자연히 일치해 유령 항목이 생기지 않는다.
+  //
+  // 정합성: 한 씬 안에서 커맨드는 scene.history의 undoStack과 order.undo에 같은
+  // 순서로 쌓이므로, order.undo의 마지막 항목은 언제나 그 씬 히스토리의 최상단이다.
+  const globalHistoryOrder = new Map();
+  // 적용에 실패한 항목을 건너뛰며 시도할 최대 횟수. 한 번의 Ctrl+Z가 스택 전체를
+  // 훑으며 시간을 쓰지 않도록 상한을 둔다.
+  const MAX_GLOBAL_HISTORY_ATTEMPTS = 8;
+
+  function globalOrderFor(stableVideoIdentity, create = false) {
+    if (typeof stableVideoIdentity !== 'string' || stableVideoIdentity.length === 0) return null;
+    let order = globalHistoryOrder.get(stableVideoIdentity);
+    if (!order && create) {
+      order = { undo: [], redo: [] };
+      globalHistoryOrder.set(stableVideoIdentity, order);
+    }
+    return order || null;
+  }
+
+  // 씬 히스토리가 버린 항목(용량 축출 + redo 폐기)을 전역 인덱스에서도 지운다.
+  function reconcileGlobalOrder(scene, recorded) {
+    const order = globalOrderFor(scene?.stableVideoIdentity);
+    if (!order) return;
+    const dropped = new Set();
+    for (const id of recorded?.evictedUndoIds || []) dropped.add(id);
+    for (const id of recorded?.clearedRedoIds || []) dropped.add(id);
+    if (dropped.size === 0) return;
+    order.undo = order.undo.filter(entry => !dropped.has(entry.commandId));
+    order.redo = order.redo.filter(entry => !dropped.has(entry.commandId));
+  }
+
+  // 새 편집이 들어오면 전역 redo는 전부 무효다(애니메이트 동일). 커맨드를 기록한
+  // 씬의 redo는 history.record()가 이미 비웠으므로 나머지 씬만 비운다. 이걸 빼면
+  // 전역 인덱스에서 사라진 항목이 씬 히스토리에 남아 redoDepth 진단이 어긋난다.
+  function appendGlobalOrder(scene, commandId) {
+    const order = globalOrderFor(scene?.stableVideoIdentity, true);
+    if (!order || !scene) return;
+    const clearedSceneKeys = new Set([scene.key]);
+    for (const entry of order.redo) {
+      if (clearedSceneKeys.has(entry.sceneKey)) continue;
+      clearedSceneKeys.add(entry.sceneKey);
+      const other = scenes.get(entry.sceneKey);
+      if (!other) continue;
+      other.history.clearRedo();
+      // 바이트 거울도 함께 비운다. 남겨 두면 estimateSceneBytes가 이미 사라진
+      // redo 상태를 계속 예약해 용량을 과대 계상한다.
+      other.historyEntries = { undo: other.historyEntries.undo, redo: [] };
+    }
+    order.redo = [];
+    order.undo.push({ sceneKey: scene.key, commandId });
+  }
+
+  // 전역 스택을 위에서부터 훑으며 적용 가능한 후보를 순서대로 내놓는다.
+  //
+  // 최상단 하나만 보면 안 되는 이유: applyHistoryState는 실패할 수 있고
+  // (scene-capacity-exceeded / mutation-sequence-overflow / invalid-history-state),
+  // 실패 시 씬 히스토리의 moveTop은 스택을 pop하지 않는다. 최상단에서 멈추면 그
+  // 항목이 영구히 남아 이후 모든 Ctrl+Z가 같은 실패를 반복한다. 씬별 히스토리에는
+  // 없던 고착이다 — 예전에는 다른 키프레임으로 옮기면 그 씬의 undo가 동작했다.
+  //
+  // 실패한 항목은 **버리지 않고 건너뛴다**. 일시적 실패(용량 압박)라면 다음에 다시
+  // 시도할 수 있어야 하기 때문이다. 건너뛰어도 불변식은 유지된다 — 각 항목은 여전히
+  // 자기 씬 히스토리의 최상단이고, 중간에서 하나가 빠져도 상대 순서는 그대로다.
+  function* globalHistoryCandidates(direction) {
+    const order = globalOrderFor(activeSession?.stableVideoIdentity);
+    if (!order) return;
+    const list = direction === 'undo' ? order.undo : order.redo;
+    let index = list.length - 1;
+    let attempts = 0;
+    while (index >= 0 && attempts < MAX_GLOBAL_HISTORY_ATTEMPTS) {
+      const scene = scenes.get(list[index].sceneKey);
+      if (!scene) {
+        // 정리 누락으로 남은 유령 항목만 실제로 걷어낸다.
+        list.splice(index, 1);
+        index -= 1;
+        continue;
+      }
+      attempts += 1;
+      yield { scene, order };
+      index -= 1;
+    }
+  }
+
+  function moveGlobalOrderEntry(order, direction, commandId) {
+    const from = direction === 'undo' ? order.undo : order.redo;
+    const to = direction === 'undo' ? order.redo : order.undo;
+    const index = from.findLastIndex(entry => entry.commandId === commandId);
+    if (index < 0) return;
+    const [entry] = from.splice(index, 1);
+    to.push(entry);
+  }
+
+  function globalHistoryDepths() {
+    const order = globalOrderFor(activeSession?.stableVideoIdentity);
+    return {
+      globalUndoDepth: order ? order.undo.length : 0,
+      globalRedoDepth: order ? order.redo.length : 0
+    };
+  }
+
   function activeScene() {
     return activeSession ? scenes.get(activeSession.sceneKey) || null : null;
   }
@@ -820,6 +926,8 @@ function createSessionSceneStore(options = {}) {
     }
     videoAccess.delete(stableVideoIdentity);
     persistenceByVideo.delete(stableVideoIdentity);
+    // 씬이 사라지면 그 영상의 전역 실행취소 순서도 함께 사라진다.
+    globalHistoryOrder.delete(stableVideoIdentity);
     if (latestPersistenceVideoIdentity === stableVideoIdentity) {
       latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
     }
@@ -1143,9 +1251,14 @@ function createSessionSceneStore(options = {}) {
       return { applied: false, reason: 'scene-capacity-exceeded' };
     }
     const recorded = scene.history.record(command);
+    // 씬 히스토리가 버린 항목을 전역 인덱스에서도 지운다. 기록 실패 경로에서도
+    // redo는 이미 폐기됐으므로 성공 여부와 무관하게 먼저 맞춘다.
+    reconcileGlobalOrder(scene, recorded);
     if (!recorded.recorded) {
       return { applied: false, reason: recorded.reason || 'history-record-failed' };
     }
+    // evictVideo가 globalHistoryOrder를 지우므로 방금 넣은 항목보다 먼저 둔다.
+    appendGlobalOrder(scene, command.id);
     for (const stableVideoIdentity of plannedEvictions) evictVideo(stableVideoIdentity);
 
     materializeProvisionalScene(scene);
@@ -1316,6 +1429,8 @@ function createSessionSceneStore(options = {}) {
       droppedSceneInstanceIds.push(scene.sceneInstanceId);
       scenes.delete(key);
     }
+    // 씬이 통째로 교체되므로 이 영상의 전역 실행취소 순서는 전부 무효다.
+    globalHistoryOrder.delete(request.stableVideoIdentity);
     for (const scene of hydratedScenes) scenes.set(scene.key, scene);
     persistenceByVideo.set(request.stableVideoIdentity, {
       hostGeneration: request.hostGeneration,
@@ -1792,9 +1907,7 @@ function createSessionSceneStore(options = {}) {
     return { applied: true };
   }
 
-  function moveHistory(direction) {
-    const scene = activeScene();
-    if (!scene) return { applied: false, reason: 'history-empty' };
+  function applyHistoryEntry(scene, order, direction) {
     let transition = null;
     const result = scene.history[direction]((state, _historyDirection, entry) => {
       const applied = applyHistoryState(scene, state);
@@ -1811,6 +1924,7 @@ function createSessionSceneStore(options = {}) {
       return applied;
     });
     if (!result.applied) return result;
+    moveGlobalOrderEntry(order, direction, result.commandId);
     const from = direction === 'undo' ? scene.historyEntries.undo : scene.historyEntries.redo;
     const to = direction === 'undo' ? scene.historyEntries.redo : scene.historyEntries.undo;
     const entryIndex = from.findLastIndex(entry => entry.id === result.commandId);
@@ -1824,8 +1938,26 @@ function createSessionSceneStore(options = {}) {
     return {
       ...result,
       objectCount: scene.objects.size,
-      selectedObjectIds: []
+      selectedObjectIds: [],
+      // 되돌린 씬이 지금 화면에 떠 있는 씬인지. 아니면 캔버스 재도색과 도구 모드
+      // 재설정을 건너뛴다.
+      affectedActiveScene: scene === activeScene(),
+      affectedTargetFrame: scene.targetFrame
     };
+  }
+
+  function moveHistory(direction) {
+    // 대상은 활성 씬이 아니라 전역 순서 인덱스의 최상단이다. 재생헤드가 키프레임에
+    // 정확히 있지 않아도, 다른 키프레임의 편집이어도 시각 순서의 역순으로 되돌린다.
+    // 되돌린 곳이 현재 보고 있는 키프레임이 아니면 화면에는 변화가 없다 — 의도된
+    // 동작이며, 사용자 결정에 따라 재생헤드를 옮기지 않는다.
+    let lastFailure = null;
+    for (const { scene, order } of globalHistoryCandidates(direction)) {
+      const attempt = applyHistoryEntry(scene, order, direction);
+      if (attempt.applied) return attempt;
+      lastFailure = attempt;
+    }
+    return lastFailure || { applied: false, reason: 'history-empty' };
   }
 
   function undo() {
@@ -2041,6 +2173,9 @@ function createSessionSceneStore(options = {}) {
       provisionalSourceFrame: scene?.provisionalSourceFrame ?? null,
       undoDepth: history.undoDepth,
       redoDepth: history.redoDepth,
+      // 활성 씬 기준 깊이(위)와 전역 순서 인덱스 깊이(아래)는 의미가 다르다.
+      // 기존 진단의 의미를 바꾸지 않으려고 새 필드로 낸다.
+      ...globalHistoryDepths(),
       undoBytes: history.undoBytes,
       historyBytes: history.historyBytes,
       sceneKeys: [...scenes.keys()]
@@ -2052,6 +2187,7 @@ function createSessionSceneStore(options = {}) {
     destroyed = true;
     const droppedSceneInstanceIds = [...scenes.values()].map(scene => scene.sceneInstanceId);
     scenes.clear();
+    globalHistoryOrder.clear();
     videoAccess.clear();
     persistenceByVideo.clear();
     latestPersistenceVideoIdentity = null;
@@ -7106,10 +7242,16 @@ function createFabricOverlayRuntime(options = {}) {
           : sceneStore.redo();
     if (result.applied) {
       if (action === 'undo' || action === 'redo') {
-        renderActiveScene();
-        fabricCanvas.discardActiveObject();
-        sceneStore.selectObjects([]);
-        setToolMode(currentSession?.tool || 'brush');
+        // 전역 실행취소가 다른 키프레임을 되돌린 경우 화면에는 아무 변화가 없다.
+        // 그때까지 캔버스를 다시 그리고 도구 모드를 재설정하면 헛일이고, 사용자의
+        // 활성 선택만 사라진다. 활성 씬이 실제로 바뀐 경우에만 손댄다.
+        // !== false 로 쓰는 이유: 이 필드 없이 도달하는 경로는 안전한 쪽(재도색)이 기본이어야 한다.
+        if (result.affectedActiveScene !== false) {
+          renderActiveScene();
+          fabricCanvas.discardActiveObject();
+          sceneStore.selectObjects([]);
+          setToolMode(currentSession?.tool || 'brush');
+        }
         updateObjectMetric();
         settleArmedFramePreview();
         return result;
@@ -7201,6 +7343,8 @@ function createFabricOverlayRuntime(options = {}) {
       dirty: scene.dirty,
       undoDepth: scene.undoDepth,
       redoDepth: scene.redoDepth,
+      globalUndoDepth: scene.globalUndoDepth,
+      globalRedoDepth: scene.globalRedoDepth,
       undoBytes: scene.undoBytes,
       historyBytes: scene.historyBytes,
       cache: {
