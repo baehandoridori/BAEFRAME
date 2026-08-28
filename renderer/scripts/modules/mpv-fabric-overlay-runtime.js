@@ -3897,12 +3897,15 @@ function createFabricOverlayRuntime(options = {}) {
       opacity: normalizePathOpacity(record.style?.opacity),
       stroke: null,
       strokeWidth: 0,
-      // 외곽선은 본체에서 파생된 짝이다. 따로 잡히면 사용자가 본체 대신 윤곽만
-      // 옮기게 되어 쌍이 어긋난다. 짝을 잃은 고아는 평범한 획으로 되돌아간다.
+      // 외곽선은 본체에서 파생된 짝이라 **선택 대상은 아니다** — 따로 잡히면
+      // 사용자가 본체 대신 윤곽만 옮기게 되어 쌍이 어긋난다.
+      // 다만 이벤트는 받아야 한다. 고리로 칠한 테두리는 본체 밖에 있어서,
+      // evented 까지 끄면 눈에 보이는 그 픽셀을 클릭해도 그냥 빠져 버린다.
+      // 클릭이 들어오면 onCanvasMouseDown 이 짝인 본체로 돌린다.
+      // 짝을 잃은 고아는 평범한 획으로 되돌아간다.
       selectable: !transient && !sceneStore.isDerivedOutline(record.id) &&
         sceneStore.getDiagnostics().tool === 'select',
-      evented: !transient && !sceneStore.isDerivedOutline(record.id) &&
-        sceneStore.getDiagnostics().tool === 'select',
+      evented: !transient && sceneStore.getDiagnostics().tool === 'select',
       objectCaching: !transient,
       perPixelTargetFind: !transient,
       padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
@@ -4292,9 +4295,12 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas.freeDrawingCursor = 'crosshair';
     for (const object of fabricCanvas.getObjects()) {
       if (object.__baeframeTransient) continue;
-      // 외곽선은 본체의 짝이라 어떤 도구에서도 따로 잡히지 않는다.
-      const pickable = nativeSelectMode && !sceneStore.isDerivedOutline(object.__baeframeObjectId);
-      object.set({ selectable: pickable, evented: pickable });
+      // 외곽선은 본체의 짝이라 어떤 도구에서도 따로 **선택**되지 않는다.
+      // 이벤트는 받아 그 위 클릭을 짝인 본체로 돌린다.
+      object.set({
+        selectable: nativeSelectMode && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
+        evented: nativeSelectMode
+      });
     }
     if (!selectMode) {
       fabricCanvas.discardActiveObject();
@@ -7729,6 +7735,25 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas?.requestRenderAll();
   }
 
+  // 네이티브 선택 모드에서는 fabric 이 직접 히트테스트를 한다. 고리로 칠한 외곽선
+  // 테두리는 본체 밖이라, 그 픽셀을 클릭하면 fabric 이 외곽선을 타깃으로 잡는다.
+  // 외곽선은 선택 대상이 아니므로 그대로 두면 아무것도 안 잡힌다 — 짝인 본체로 돌린다.
+  function onCanvasMouseDown(event) {
+    if (!fabricCanvas || !inputEnabled) return;
+    const target = event?.target;
+    const outlineId = target?.__baeframeObjectId;
+    if (!outlineId || !sceneStore.isDerivedOutline(outlineId)) return;
+    if (sceneStore.getDiagnostics().tool !== 'select') return;
+    const bodyId = bodyIdFor(outlineId);
+    const bodyPath = fabricCanvas.getObjects()
+      .find(object => object.__baeframeObjectId === bodyId);
+    if (!bodyPath?.selectable) return;
+    fabricCanvas.setActiveObject?.(bodyPath);
+    sceneStore.selectObjects([bodyId]);
+    refreshSelectionInteractionPolicy();
+    fabricCanvas.requestRenderAll();
+  }
+
   function onObjectMoving(event) {
     syncDraggedOutlinePairs();
     const target = event?.target;
@@ -7810,6 +7835,7 @@ function createFabricOverlayRuntime(options = {}) {
     addDomListener(documentRef, 'keydown', onOverlayKeyDown, true);
     addDomListener(documentRef, 'keyup', onOverlayKeyUp, true);
     addDomListener(windowRef, 'blur', onOverlayWindowBlur);
+    addFabricListener('mouse:down', onCanvasMouseDown);
     addFabricListener('selection:created', onSelectionChanged);
     addFabricListener('selection:updated', onSelectionChanged);
     addFabricListener('selection:cleared', onSelectionCleared);
@@ -7847,11 +7873,11 @@ function createFabricOverlayRuntime(options = {}) {
         !nativeSelection &&
         activeIds.has(object.__baeframeObjectId);
       // 외곽선은 본체의 짝이라 어떤 선택 방식에서도 따로 잡히지 않는다.
-      const pickable = (nativeSelection || activeInCustomSelection) &&
-        !sceneStore.isDerivedOutline(object.__baeframeObjectId);
+      const interactive = nativeSelection || activeInCustomSelection;
       object.set({
-        selectable: pickable,
-        evented: pickable
+        selectable: interactive && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
+        // 외곽선도 이벤트는 받는다 — 그 위 클릭을 짝인 본체로 돌리기 위해서다.
+        evented: interactive
       });
       object.setCoords?.();
     }

@@ -15998,12 +15998,23 @@ test('an outline is never selectable on its own', async () => {
     const outlinePath = harness.canvas.getObjects()
       .find(object => outlineObjects(harness).some(record => record.id === object.__baeframeObjectId));
     assert.ok(outlinePath, '외곽선 경로가 캔버스에 있어야 한다');
-    assert.equal(outlinePath.selectable, false);
-    assert.equal(outlinePath.evented, false);
+    assert.equal(outlinePath.selectable, false, '외곽선은 따로 선택되지 않는다');
+    // 다만 이벤트는 받는다 — evented 까지 끄면 고리로 칠한 테두리를 클릭해도
+    // 그냥 빠져 버려 획을 고를 수 없다. 클릭은 짝인 본체로 돌린다.
+    assert.equal(outlinePath.evented, true);
 
     // 스토어도 외곽선 id 를 선택 집합에 들이지 않는다.
     const outlineId = outlineObjects(harness)[0].id;
     assert.deepEqual(harness.sceneStore.selectObjects([outlineId]).selection, []);
+
+    // 외곽선을 클릭하면 짝인 본체가 잡힌다.
+    harness.sceneStore.selectObjects([]);
+    harness.canvas.fire?.('mouse:down', { target: outlinePath });
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [bodyObjects(harness)[0].id],
+      '외곽선 클릭이 짝인 본체 선택으로 이어져야 한다'
+    );
   } finally {
     await harness.destroy();
   }
