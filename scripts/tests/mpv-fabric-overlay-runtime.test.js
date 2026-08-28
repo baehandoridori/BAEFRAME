@@ -9449,23 +9449,25 @@ test('undo and redo follow visual order within a video while videos stay indepen
   // 되돌린 순서가 frame(25) → base(24) 였으므로 redo 는 base(24) 부터다.
   // 재생헤드를 25 에 둔 채 redo 해도 24 가 복원되며, 그때 화면(25)에는 변화가 없다.
   assert.equal(activate('frame-session-3', 'runtime-video', 25).restored, true);
+  // redo 는 되돌린 순서의 역순이다 — base(24) 가 먼저, frame(25) 가 나중.
+  // (affectedActiveScene 플래그 자체는 전용 테스트에서 검증한다. 여기서는 순서와
+  //  영상 격리가 관심사다.)
   const redoBase = sceneStore.redo();
   assert.equal(redoBase.applied, true);
-  assert.equal(redoBase.affectedActiveScene, false, '활성 씬이 아닌 키프레임을 복원했다');
-  assert.equal(redoBase.affectedTargetFrame, 24);
-  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), [],
-    '재생헤드가 있는 25 는 아직 비어 있다');
+  assert.equal(redoBase.affectedTargetFrame, 24, '활성 씬이 아닌 키프레임을 먼저 복원한다');
 
   const redoFrame = sceneStore.redo();
   assert.equal(redoFrame.applied, true);
-  assert.equal(redoFrame.affectedActiveScene, true);
-  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-frame']);
-  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
+  assert.equal(redoFrame.affectedTargetFrame, 25);
 
-  assert.equal(activate('base-session-3', 'runtime-video', 24).restored, true);
-  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), ['scene-base'],
-    '24 는 앞선 redo 에서 이미 복원됐다');
-  assertHistoryDiagnostics(harness, { mutationCount: 3, undoDepth: 1, redoDepth: 0 });
+  assert.deepEqual(
+    sceneStore.getSceneSnapshot('runtime-video', 24)?.objects.map(object => object.id) || [],
+    ['scene-base']
+  );
+  assert.deepEqual(
+    sceneStore.getSceneSnapshot('runtime-video', 25)?.objects.map(object => object.id) || [],
+    ['scene-frame']
+  );
 });
 
 test('전역 실행취소는 재생헤드와 무관하게 가장 최근 편집부터 되돌린다', () => {
@@ -9498,8 +9500,12 @@ test('전역 실행취소는 재생헤드와 무관하게 가장 최근 편집�
   // 예전(씬별 히스토리)에는 여기서 아무 일도 일어나지 않았다.
   const second = sceneStore.undo();
   assert.equal(second.applied, true);
-  assert.equal(second.affectedActiveScene, false, '다른 키프레임을 되돌렸다');
-  assert.equal(second.affectedTargetFrame, 10);
+  assert.equal(second.affectedTargetFrame, 10, '다른 키프레임을 되돌렸다');
+  // 20 은 앞선 undo 로 임시 씬이 됐다. 임시 씬의 화면은 커밋된 원본에서 파생하므로
+  // 10 이 바뀌면 다시 그려야 한다.
+  assert.equal(second.affectedActiveScene, true);
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().objects.map(object => object.id), [],
+    '되돌린 획이 화면에 남지 않는다');
   assert.deepEqual(objectIdsAt(10), []);
   assert.equal(runtime.getDiagnostics().globalUndoDepth, 0);
   assert.equal(runtime.getDiagnostics().globalRedoDepth, 2);
@@ -9532,8 +9538,9 @@ test('재생헤드가 키프레임에 없어도 전역 실행취소가 동작한
 
   const result = sceneStore.undo();
   assert.equal(result.applied, true, '§6 요구의 핵심 — 여기서 반드시 되돌아와야 한다');
-  assert.equal(result.affectedActiveScene, false);
   assert.equal(result.affectedTargetFrame, 10);
+  // 15 는 임시 씬이라 10 의 사본을 들고 있다. 되돌리면 사본도 갱신된다.
+  assert.equal(result.affectedActiveScene, true);
   assert.deepEqual(
     sceneStore.getSceneSnapshot('runtime-video', 10)?.objects.map(object => object.id),
     []
@@ -9690,8 +9697,8 @@ test('활성 씬이 아닌 곳을 되돌려도 지속화 관찰자에게 전파�
   // 활성 씬(20)에는 히스토리가 없다. 전역 실행취소가 10 을 되돌린다.
   const result = sceneStore.undo();
   assert.equal(result.applied, true);
-  assert.equal(result.affectedActiveScene, false);
-  assert.ok(transitions.length > 0, '화면에 안 보여도 저장 계층에는 전파돼야 한다');
+  assert.equal(result.affectedTargetFrame, 10);
+  assert.ok(transitions.length > 0, '되돌린 씬 기준으로 저장 계층에 전파돼야 한다');
   assert.equal(transitions.at(-1).scene.targetFrame, 10, '되돌린 씬 기준으로 발화한다');
 });
 
@@ -9738,6 +9745,132 @@ test('적용에 실패한 항목이 전역 스택을 막지 않는다', () => {
   const retried = sceneStore.undo();
   assert.equal(retried.applied, true, '원인이 사라지면 그 항목이 다시 적용된다');
   assert.equal(retried.affectedTargetFrame, 20);
+});
+
+test('프레임을 옮겨 그린 뒤 되돌리면 그때 만들어진 키프레임도 함께 사라진다', () => {
+  // 실기의 프레임 이동은 retargetActiveSession 경로다(활성 세션 유지). 이 경로에서만
+  // 임시 씬이 앞 키프레임 내용을 복사하므로, activateSession 으로 쓴 테스트는 이
+  // 회귀를 잡지 못했다.
+  const harness = createHistoryHarness();
+  const { sceneStore, runtime } = harness;
+  const exportRequest = {
+    hostGeneration: 1, videoGeneration: 1, persistenceSessionId: 'ps-hold',
+    stableVideoIdentity: 'hold-video', fps: 24, totalFrames: 240
+  };
+  assert.equal(sceneStore.hydrateVideo({ ...exportRequest, keyframes: [] }).accepted, true);
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'hold-session', stableVideoIdentity: 'hold-video', targetFrame: 10,
+    hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('hold-A')).applied, true);
+
+  assert.equal(sceneStore.retargetActiveSession({
+    sessionId: 'hold-session', stableVideoIdentity: 'hold-video', targetFrame: 20,
+    hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('hold-B')).applied, true);
+
+  const framesOf = () => (sceneStore.exportVideo(exportRequest).snapshot?.scenes || [])
+    .map(scene => ({ frame: scene.targetFrame, ids: scene.objects.map(object => object.id) }));
+  assert.deepEqual(framesOf(), [
+    { frame: 10, ids: ['hold-A'] },
+    { frame: 20, ids: ['hold-A', 'hold-B'] }
+  ], '20 은 10 의 사본 위에 만들어진다');
+
+  // 획 B 를 되돌리면 그 획이 만들어 낸 키프레임 20 도 사라져야 한다. 그러지 않으면
+  // 다음 되돌리기로 10 의 획을 지워도 20 이 사본을 들고 남아 화면이 바뀌지 않는다.
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(framesOf(), [{ frame: 10, ids: ['hold-A'] }], '키프레임 20 이 사라진다');
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(framesOf(), [], '10 의 획과 키프레임도 사라진다');
+  assert.equal(runtime.getDiagnostics().globalRedoDepth, 2);
+
+  assert.equal(sceneStore.redo().applied, true);
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(framesOf(), [
+    { frame: 10, ids: ['hold-A'] },
+    { frame: 20, ids: ['hold-A', 'hold-B'] }
+  ], 'redo 로 키프레임까지 완전 복원된다');
+});
+
+test('되돌려서 임시가 된 키프레임은 화면도 원본을 따라가고 새 편집이 지워진 내용을 되살리지 않는다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  const exportRequest = {
+    hostGeneration: 1, videoGeneration: 1, persistenceSessionId: 'ps-derive',
+    stableVideoIdentity: 'derive-video', fps: 24, totalFrames: 240
+  };
+  const setup = () => {
+    assert.equal(sceneStore.hydrateVideo({ ...exportRequest, keyframes: [] }).accepted, true);
+    assert.equal(sceneStore.activateSession({
+      sessionId: 'derive-session', stableVideoIdentity: 'derive-video', targetFrame: 10,
+      hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+    }).accepted, true);
+    assert.equal(sceneStore.addStroke(makeHistoryStroke('derive-A')).applied, true);
+    assert.equal(sceneStore.retargetActiveSession({
+      sessionId: 'derive-session', stableVideoIdentity: 'derive-video', targetFrame: 20,
+      hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+    }).accepted, true);
+    assert.equal(sceneStore.addStroke(makeHistoryStroke('derive-B')).applied, true);
+  };
+  const shown = () => (sceneStore.getActiveSceneSnapshot()?.objects || []).map(object => object.id);
+  const inFile = () => (sceneStore.exportVideo(exportRequest).snapshot?.scenes || [])
+    .map(scene => `${scene.targetFrame}:${scene.objects.map(object => object.id).join(',')}`);
+
+  setup();
+  assert.deepEqual(shown(), ['derive-A', 'derive-B']);
+
+  assert.equal(sceneStore.undo().applied, true);
+  assert.deepEqual(shown(), ['derive-A'], '20 이 임시가 되어 10 을 따라간다');
+  assert.deepEqual(inFile(), ['10:derive-A']);
+
+  assert.equal(sceneStore.undo().applied, true);
+  // 저장된 사본은 그대로 두고 화면만 파생하므로, 여기서 화면이 비어야 한다.
+  // 사본을 그 자리에서 갈아끼우면 이 씬의 redo 가 invalid-history-state 로 죽는다.
+  assert.deepEqual(shown(), [], '되돌린 획이 화면에 남지 않는다');
+  assert.deepEqual(inFile(), []);
+
+  assert.equal(sceneStore.redo().applied, true);
+  assert.equal(sceneStore.redo().applied, true);
+  assert.deepEqual(shown(), ['derive-A', 'derive-B'], 'redo 로 완전 복원된다');
+  assert.deepEqual(inFile(), ['10:derive-A', '20:derive-A,derive-B']);
+});
+
+test('되돌린 임시 씬에 새로 그리면 지워진 내용이 되살아나지 않는다', () => {
+  const harness = createHistoryHarness();
+  const { sceneStore } = harness;
+  const exportRequest = {
+    hostGeneration: 1, videoGeneration: 1, persistenceSessionId: 'ps-revive',
+    stableVideoIdentity: 'revive-video', fps: 24, totalFrames: 240
+  };
+  assert.equal(sceneStore.hydrateVideo({ ...exportRequest, keyframes: [] }).accepted, true);
+  assert.equal(sceneStore.activateSession({
+    sessionId: 'revive-session', stableVideoIdentity: 'revive-video', targetFrame: 10,
+    hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('revive-A')).applied, true);
+  assert.equal(sceneStore.retargetActiveSession({
+    sessionId: 'revive-session', stableVideoIdentity: 'revive-video', targetFrame: 20,
+    hostGeneration: 1, videoGeneration: 1, tool: 'brush'
+  }).accepted, true);
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('revive-B')).applied, true);
+  assert.equal(sceneStore.undo().applied, true);
+  assert.equal(sceneStore.undo().applied, true);
+
+  // 이 시점의 20 은 낡은 사본(revive-A)을 들고 있다. 그 위에 커밋하면 이미 지워진
+  // 획이 되살아나므로, 커밋 전에 원본에서 다시 파생해야 한다.
+  assert.equal(sceneStore.addStroke(makeHistoryStroke('revive-C')).applied, true);
+  assert.deepEqual(
+    (sceneStore.getActiveSceneSnapshot()?.objects || []).map(object => object.id),
+    ['revive-C']
+  );
+  assert.deepEqual(
+    (sceneStore.exportVideo(exportRequest).snapshot?.scenes || [])
+      .map(scene => `${scene.targetFrame}:${scene.objects.map(object => object.id).join(',')}`),
+    ['20:revive-C'],
+    '되돌린 10 의 획은 되살아나지 않는다'
+  );
 });
 
 test('redo history bytes remain in the store-wide maxBytes calculation across scenes', () => {
@@ -13106,9 +13239,22 @@ test('held frame first stroke materializes the target while preserving the sourc
   assert.equal(runtime.applyDrawingAction({
     sessionId: 'held-session-101-1', actionId: 'undo-held-stroke', action: 'undo'
   }).applied, true);
+  // 동작 변경(2026-08-28): 홀드 프레임의 첫 획을 되돌리면 그 획이 만들어 낸
+  // 키프레임 자체도 사라진다. 예전에는 키프레임이 held base 를 들고 남았는데,
+  // 키프레임 생성이 실행취소 대상이 아니라서 "앞 키프레임 편집을 되돌려도 뒤
+  // 키프레임이 복사본을 들고 남는" 모순이 생겼다. 애니메이트 동치로 맞췄다.
   const afterUndo = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
-  assert.deepEqual(afterUndo.scenes[0].objects, [source]);
-  assert.deepEqual(afterUndo.scenes[1].objects, [source], 'undo returns to the held base at target');
+  assert.deepEqual(afterUndo.scenes.map(scene => scene.targetFrame), [100],
+    'undo removes the keyframe the first stroke created');
+  assert.deepEqual(afterUndo.scenes[0].objects, [source], 'source keyframe stays immutable');
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'held-session-101-1', actionId: 'redo-held-stroke', action: 'redo'
+  }).applied, true);
+  const afterRedo = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(afterRedo.scenes.map(scene => scene.targetFrame), [100, 101],
+    'redo restores the keyframe');
+  assert.equal(afterRedo.scenes[1].objects.length, 2);
   runtime.destroy();
 });
 
@@ -13402,15 +13548,19 @@ test('toolbar clear undo and redo retarget the armed frame without changing the 
   assert.deepEqual(snapshot.scenes[0].objects, [source]);
   assert.deepEqual(snapshot.scenes[1].objects, []);
 
+  // 동작 변경(2026-08-28): clear 가 임시 씬을 정식화한 커맨드였으므로, 되돌리면
+  // 그 키프레임도 함께 사라진다(애니메이트 동치). redo 하면 다시 생긴다.
   assert.equal(runtime.applyDrawingAction({
     sessionId: 'held-session-10-1', actionId: 'undo-clear-armed-20', action: 'undo'
   }).applied, true);
   snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
-  assert.deepEqual(snapshot.scenes[1].objects, [source]);
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10],
+    'undo removes the keyframe the clear created');
   assert.equal(runtime.applyDrawingAction({
     sessionId: 'held-session-10-1', actionId: 'redo-clear-armed-20', action: 'redo'
   }).applied, true);
   snapshot = runtime.exportDrawingVideo(makePersistenceExport()).snapshot;
+  assert.deepEqual(snapshot.scenes.map(scene => scene.targetFrame), [10, 20]);
   assert.deepEqual(snapshot.scenes[1].objects, []);
   runtime.destroy();
 });

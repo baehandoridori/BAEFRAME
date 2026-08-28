@@ -1231,6 +1231,21 @@ function createSessionSceneStore(options = {}) {
       change.redoState,
       change.contentStableIds
     );
+    // 임시 씬을 정식 키프레임으로 승격시키는 커맨드인지 남겨 둔다.
+    //
+    // 키프레임은 직전 키프레임 내용을 복사해서 만들어진다(홀드 모델). 그 복사는
+    // 히스토리에 기록되지 않으므로, 이 커맨드를 되돌리면서 키프레임을 그대로 두면
+    // "원본 편집은 되돌렸는데 복사본은 남는" 모순이 생긴다 — 프레임 10의 획을
+    // 되돌려도 프레임 20이 들고 있는 복사본은 그대로라 화면이 바뀌지 않는다.
+    //
+    // 애니메이트처럼 키프레임 생성 자체를 되돌림 대상에 포함시킨다. 씬을 삭제하지
+    // 않고 provisional 로 되돌리는 이유는 redo 가 그 씬을 다시 찾아야 하기 때문이며,
+    // provisional 씬은 exportVideo 와 resolveCommittedSceneAtFrame 이 모두 건너뛰므로
+    // 파일과 이후 프레임 해석에서는 키프레임이 사라진 것과 같다.
+    if (scene.provisional === true) {
+      command.materializesScene = true;
+      command.provisionalSourceFrame = scene.provisionalSourceFrame ?? null;
+    }
     const commandBytes = defaultEstimateObjectBytes(command);
     if (commandBytes > maxHistoryBytes) {
       return { applied: false, reason: 'history-capacity-exceeded' };
@@ -1619,12 +1634,24 @@ function createSessionSceneStore(options = {}) {
     };
   }
 
+  // 임시 씬은 원래 "한 번도 편집되지 않은 스크래치"라 자리를 뜨면 버려도 됐다.
+  // 그런데 키프레임 생성을 되돌리면 정식 씬이 다시 임시가 되고, 그 씬은 redo 를
+  // 위한 히스토리를 들고 있다. 그것까지 버리면 되돌린 뒤 프레임을 옮기는 순간
+  // 다시 실행이 영영 불가능해진다. 히스토리가 있는 임시 씬은 남긴다
+  // (export 는 여전히 임시 씬을 걸러 내므로 파일에는 키프레임이 없다).
+  function provisionalSceneIsDisposable(scene) {
+    if (scene?.provisional !== true) return false;
+    const history = historyDiagnostics(scene);
+    return history.undoDepth === 0 && history.redoDepth === 0;
+  }
+
   function replaceActiveSession(session) {
     const previousScene = activeScene();
     const activation = activateSession(session);
     if (!activation.accepted) return activation;
     previousScene?.selectedObjectIds.clear();
-    if (previousScene?.provisional === true && previousScene.key !== activeSession.sceneKey) {
+    if (provisionalSceneIsDisposable(previousScene) &&
+        previousScene.key !== activeSession.sceneKey) {
       scenes.delete(previousScene.key);
       notifyScenesDropped([previousScene.sceneInstanceId]);
     }
@@ -1638,7 +1665,7 @@ function createSessionSceneStore(options = {}) {
     }
     const scene = activeScene();
     scene?.selectedObjectIds.clear();
-    if (scene?.provisional === true) {
+    if (provisionalSceneIsDisposable(scene)) {
       scenes.delete(scene.key);
       notifyScenesDropped([scene.sceneInstanceId]);
     }
@@ -1647,7 +1674,8 @@ function createSessionSceneStore(options = {}) {
   }
 
   function addStroke(stroke) {
-    const scene = activeScene();
+    // 낡은 사본 위에 커밋하면 이미 지워진 내용이 되살아난다.
+    const scene = syncProvisionalSceneForMutation(activeScene());
     if (!scene) return { applied: false, reason: 'no-active-session' };
     if (!stroke || typeof stroke.id !== 'string' || stroke.id.length === 0) {
       return { applied: false, reason: 'invalid-stroke' };
@@ -1685,7 +1713,8 @@ function createSessionSceneStore(options = {}) {
   }
 
   function transformSelection(change = {}) {
-    const scene = activeScene();
+    // 낡은 사본 위에 커밋하면 이미 지워진 내용이 되살아난다.
+    const scene = syncProvisionalSceneForMutation(activeScene());
     if (!scene || scene.selectedObjectIds.size === 0) return { applied: false, objectIds: [] };
     const nextObjects = new Map(scene.objects);
     const changedIds = [];
@@ -1722,7 +1751,8 @@ function createSessionSceneStore(options = {}) {
   }
 
   function replaceObjects(change = {}) {
-    const scene = activeScene();
+    // 낡은 사본 위에 커밋하면 이미 지워진 내용이 되살아난다.
+    const scene = syncProvisionalSceneForMutation(activeScene());
     if (!scene) return { applied: false, reason: 'no-active-session' };
     let replacements = Array.isArray(change.replacements)
       ? change.replacements.map(replacement => ({
@@ -1907,11 +1937,69 @@ function createSessionSceneStore(options = {}) {
     return { applied: true };
   }
 
+  // 임시 씬은 저장되지 않는 **파생 뷰**다 — exportVideo 도 resolveCommittedSceneAtFrame 도
+  // 임시 씬을 건너뛴다. 그런데 씬 객체 안에는 만들어질 당시의 사본이 그대로 들어 있어,
+  // 되돌림으로 원본이 바뀌면 그 사본이 낡는다. 사본을 그 자리에서 갈아끼우면 그 씬의
+  // 히스토리(절대 스냅샷)와 어긋나 redo 가 invalid-history-state 로 죽으므로,
+  // **저장된 사본은 건드리지 않고 화면에 보여 줄 때만 원본에서 다시 파생**한다.
+  function derivedProvisionalObjects(scene) {
+    const source = resolveCommittedSceneAtFrame(scene.stableVideoIdentity, scene.targetFrame);
+    return new Map(
+      [...(source?.objects || new Map()).entries()]
+        .map(([id, object]) => [id, clonePlain(object)])
+    );
+  }
+
+  function sameObjectIds(left, right) {
+    if (left.size !== right.size) return false;
+    for (const id of left.keys()) {
+      if (!right.has(id)) return false;
+    }
+    return true;
+  }
+
+  // 낡은 사본 위에 새로 그리면 이미 지워진 내용이 되살아난다. 새 편집은 어차피 이 씬의
+  // redo 를 무효화하므로(되돌린 뒤 새 동작을 하면 다시실행이 사라지는 일반 규칙),
+  // 여기서 히스토리를 비우고 원본에서 다시 파생해 둔다.
+  function syncProvisionalSceneForMutation(scene) {
+    // 히스토리가 없는 임시 씬은 "한 번도 편집되지 않은 스크래치"다. 그 내용은
+    // activateSession 이 정한 것이며 낡음 문제가 없다. 되돌려서 임시가 된 씬만 맞춘다.
+    if (scene?.provisional !== true || provisionalSceneIsDisposable(scene)) return scene;
+    const derived = derivedProvisionalObjects(scene);
+    if (sameObjectIds(scene.objects, derived)) return scene;
+    let estimatedBytes;
+    try {
+      estimatedBytes = estimateObjectsBytes(derived);
+    } catch (_error) {
+      return scene;
+    }
+    // 임시가 된 정식 씬은 자기 materialize 커맨드 하나만 redo 로 들고 있다.
+    const droppedIds = new Set(scene.history.clearRedo());
+    const order = globalOrderFor(scene.stableVideoIdentity);
+    if (order && droppedIds.size > 0) {
+      order.undo = order.undo.filter(entry => !droppedIds.has(entry.commandId));
+      order.redo = order.redo.filter(entry => !droppedIds.has(entry.commandId));
+    }
+    scene.historyEntries = { undo: [], redo: [] };
+    scene.objects = derived;
+    scene.selectedObjectIds = new Set();
+    scene.estimatedBytes = estimatedBytes;
+    return scene;
+  }
+
   function applyHistoryEntry(scene, order, direction) {
     let transition = null;
     const result = scene.history[direction]((state, _historyDirection, entry) => {
       const applied = applyHistoryState(scene, state);
       if (applied.applied) {
+        // 키프레임 생성(임시 씬 정식화)까지 함께 되돌린다. 되돌리면 그 프레임은
+        // 다시 "키프레임 아님"이 되어 이후 프레임이 앞 키프레임을 따라간다.
+        if (entry.materializesScene === true) {
+          scene.provisional = direction === 'undo';
+          scene.provisionalSourceFrame = direction === 'undo'
+            ? (entry.provisionalSourceFrame ?? null)
+            : null;
+        }
         transition = {
           origin: 'history',
           kind: entry.kind,
@@ -1940,8 +2028,9 @@ function createSessionSceneStore(options = {}) {
       objectCount: scene.objects.size,
       selectedObjectIds: [],
       // 되돌린 씬이 지금 화면에 떠 있는 씬인지. 아니면 캔버스 재도색과 도구 모드
-      // 재설정을 건너뛴다.
-      affectedActiveScene: scene === activeScene(),
+      // 재설정을 건너뛴다. 다만 활성 씬이 임시 씬이면 그 화면은 커밋된 원본에서
+      // 파생되므로, 어느 씬이 바뀌었든 다시 그려야 한다.
+      affectedActiveScene: scene === activeScene() || activeScene()?.provisional === true,
       affectedTargetFrame: scene.targetFrame
     };
   }
@@ -1969,7 +2058,8 @@ function createSessionSceneStore(options = {}) {
   }
 
   function deleteSelection() {
-    const scene = activeScene();
+    // 낡은 사본 위에 커밋하면 이미 지워진 내용이 되살아난다.
+    const scene = syncProvisionalSceneForMutation(activeScene());
     if (!scene || scene.selectedObjectIds.size === 0) {
       return { applied: false, deletedCount: 0, deletedIds: [] };
     }
@@ -1989,7 +2079,8 @@ function createSessionSceneStore(options = {}) {
   }
 
   function clearSession() {
-    const scene = activeScene();
+    // 낡은 사본 위에 커밋하면 이미 지워진 내용이 되살아난다.
+    const scene = syncProvisionalSceneForMutation(activeScene());
     const deletedCount = scene?.objects.size || 0;
     if (!scene || deletedCount === 0) return { applied: false, deletedCount: 0, deletedIds: [] };
     const deletedIds = [...scene.objects.keys()];
@@ -2133,7 +2224,14 @@ function createSessionSceneStore(options = {}) {
   }
 
   function getActiveSceneSnapshot() {
-    return snapshotScene(activeScene());
+    const scene = activeScene();
+    // 되돌려서 임시가 된 씬만 파생한다. 스크래치 임시 씬의 내용은 activateSession 이
+    // 정한 것이므로 그대로 보여 준다(원본이 없으면 빈 화면인 것이 기존 계약이다).
+    if (!scene || scene.provisional !== true || provisionalSceneIsDisposable(scene)) {
+      return snapshotScene(scene);
+    }
+    // 저장된 사본은 건드리지 않는다 — 그래야 그 씬의 redo 가 살아 있다.
+    return snapshotScene({ ...scene, objects: derivedProvisionalObjects(scene) });
   }
 
   function hasScene(stableVideoIdentity, targetFrame) {
