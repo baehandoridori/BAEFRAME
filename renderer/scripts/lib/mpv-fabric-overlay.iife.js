@@ -6046,6 +6046,40 @@
     }
   });
 
+  // shared/fabric-drawing-tools.js
+  var require_fabric_drawing_tools = __commonJS({
+    "shared/fabric-drawing-tools.js"(exports, module) {
+      "use strict";
+      var FABRIC_FREEHAND_TOOLS = Object.freeze(["brush", "pen"]);
+      var FABRIC_SHAPE_TOOLS = Object.freeze(["line", "rect", "circle", "arrow"]);
+      var FABRIC_ERASER_TOOL = "eraser";
+      var FABRIC_SELECT_TOOL = "select";
+      var FABRIC_DRAWING_TOOLS = Object.freeze([
+        ...FABRIC_FREEHAND_TOOLS,
+        FABRIC_ERASER_TOOL,
+        ...FABRIC_SHAPE_TOOLS,
+        FABRIC_SELECT_TOOL
+      ]);
+      var FABRIC_DEFAULT_DRAWING_TOOL = "brush";
+      function isFabricDrawingTool(value) {
+        return typeof value === "string" && FABRIC_DRAWING_TOOLS.includes(value);
+      }
+      function normalizeFabricDrawingTool(value) {
+        return isFabricDrawingTool(value) ? value : FABRIC_DEFAULT_DRAWING_TOOL;
+      }
+      module.exports = {
+        FABRIC_DEFAULT_DRAWING_TOOL,
+        FABRIC_DRAWING_TOOLS,
+        FABRIC_ERASER_TOOL,
+        FABRIC_FREEHAND_TOOLS,
+        FABRIC_SELECT_TOOL,
+        FABRIC_SHAPE_TOOLS,
+        isFabricDrawingTool,
+        normalizeFabricDrawingTool
+      };
+    }
+  });
+
   // node_modules/fabric/dist/index.min.js
   var require_index_min = __commonJS({
     "node_modules/fabric/dist/index.min.js"(exports, module) {
@@ -13451,6 +13485,11 @@ void main() {
         FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE: MAX_PERSISTED_TRANSFORM_MAGNITUDE,
         FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH
       } = require_fabric_drawing_limits();
+      var {
+        FABRIC_SHAPE_TOOLS,
+        isFabricDrawingTool,
+        normalizeFabricDrawingTool
+      } = require_fabric_drawing_tools();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -14754,7 +14793,7 @@ void main() {
             sourceFrame: restored ? sourceFrame : sourceScene ? sourceFrame : null,
             sceneKey,
             videoGeneration,
-            tool: session.tool === "select" ? "select" : "brush",
+            tool: normalizeFabricDrawingTool(session.tool),
             toolRevision: -1
           };
           const scene = activeScene();
@@ -15181,7 +15220,7 @@ void main() {
           if (!Number.isInteger(toolRevision) || toolRevision <= activeSession.toolRevision) {
             return { accepted: false, reason: "stale-tool-revision" };
           }
-          if (command.tool !== "brush" && command.tool !== "select") {
+          if (!isFabricDrawingTool(command.tool)) {
             return { accepted: false, reason: "invalid-tool" };
           }
           activeSession.toolRevision = toolRevision;
@@ -15192,7 +15231,7 @@ void main() {
           if (!activeSession || command.sessionId !== activeSession.sessionId) {
             return { accepted: false, reason: "stale-session" };
           }
-          if (command.tool !== "brush" && command.tool !== "select") {
+          if (!isFabricDrawingTool(command.tool)) {
             return { accepted: false, reason: "invalid-tool" };
           }
           activeSession.tool = command.tool;
@@ -15393,6 +15432,83 @@ void main() {
         commands.push("Z");
         return commands.join(" ");
       }
+      var SHAPE_EDGE_SEGMENTS = 24;
+      var SHAPE_ELLIPSE_SEGMENTS = 128;
+      var SHAPE_ARROW_HEAD_MIN = 15;
+      var SHAPE_ARROW_HEAD_SIZE_FACTOR = 4;
+      var SHAPE_ARROW_HEAD_ANGLE = Math.PI / 6;
+      var SHAPE_MIN_DRAG_DISTANCE = 2;
+      function interpolateShapeEdge(points, from, to, segments) {
+        for (let index = 1; index <= segments; index += 1) {
+          const amount = index / segments;
+          points.push({
+            x: from.x + (to.x - from.x) * amount,
+            y: from.y + (to.y - from.y) * amount
+          });
+        }
+      }
+      function shapeCenterlinePoints(tool, start, end, brushSize) {
+        const points = [{ x: start.x, y: start.y }];
+        if (tool === "line") {
+          interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+          return points;
+        }
+        if (tool === "rect") {
+          const topRight = { x: end.x, y: start.y };
+          const bottomRight = { x: end.x, y: end.y };
+          const bottomLeft = { x: start.x, y: end.y };
+          interpolateShapeEdge(points, start, topRight, SHAPE_EDGE_SEGMENTS);
+          interpolateShapeEdge(points, topRight, bottomRight, SHAPE_EDGE_SEGMENTS);
+          interpolateShapeEdge(points, bottomRight, bottomLeft, SHAPE_EDGE_SEGMENTS);
+          interpolateShapeEdge(points, bottomLeft, start, SHAPE_EDGE_SEGMENTS);
+          return points;
+        }
+        if (tool === "circle") {
+          const radiusX = Math.abs(end.x - start.x) / 2;
+          const radiusY = Math.abs(end.y - start.y) / 2;
+          const centerX = start.x + (end.x - start.x) / 2;
+          const centerY = start.y + (end.y - start.y) / 2;
+          points.length = 0;
+          for (let index = 0; index <= SHAPE_ELLIPSE_SEGMENTS; index += 1) {
+            const angle2 = index / SHAPE_ELLIPSE_SEGMENTS * Math.PI * 2;
+            points.push({
+              x: centerX + Math.cos(angle2) * radiusX,
+              y: centerY + Math.sin(angle2) * radiusY
+            });
+          }
+          return points;
+        }
+        const headLength = Math.max(SHAPE_ARROW_HEAD_MIN, brushSize * SHAPE_ARROW_HEAD_SIZE_FACTOR);
+        const angle = Math.atan2(end.y - start.y, end.x - start.x);
+        const barbA = {
+          x: end.x - headLength * Math.cos(angle - SHAPE_ARROW_HEAD_ANGLE),
+          y: end.y - headLength * Math.sin(angle - SHAPE_ARROW_HEAD_ANGLE)
+        };
+        const barbB = {
+          x: end.x - headLength * Math.cos(angle + SHAPE_ARROW_HEAD_ANGLE),
+          y: end.y - headLength * Math.sin(angle + SHAPE_ARROW_HEAD_ANGLE)
+        };
+        interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+        interpolateShapeEdge(points, end, barbA, SHAPE_EDGE_SEGMENTS);
+        interpolateShapeEdge(points, barbA, end, SHAPE_EDGE_SEGMENTS);
+        interpolateShapeEdge(points, end, barbB, SHAPE_EDGE_SEGMENTS);
+        return points;
+      }
+      function shapeCenterlineSamples(tool, start, end, brushSize) {
+        return shapeCenterlinePoints(tool, start, end, brushSize).map((point, index) => ({
+          x: point.x,
+          y: point.y,
+          pressure: 1,
+          time: index
+        }));
+      }
+      var SHAPE_STROKE_OPTIONS = Object.freeze({
+        thinning: 0,
+        smoothing: 0,
+        streamline: 0,
+        alreadyNormalizedPressure: true,
+        last: true
+      });
       function createStrokePathData(samples, options = {}) {
         if (!Array.isArray(samples) || samples.length === 0) {
           return { sourcePoints: [], outline: [], pathData: "" };
@@ -15610,6 +15726,7 @@ void main() {
         let activeLasso = null;
         let sizeAdjustGesture = null;
         let strokeEraseGesture = null;
+        let shapeGesture = null;
         let sizeAdjustHud = null;
         let sizeAdjustHudLabel = null;
         const overlayModifierState = { alt: false, ctrl: false };
@@ -15663,7 +15780,7 @@ void main() {
           button.type = "button";
           button.textContent = label;
           button.dataset.fabricPilotAction = action;
-          if (action === "brush" || action === "select") {
+          if (isFabricDrawingTool(action)) {
             button.dataset.active = "false";
             button.setAttribute?.("aria-pressed", "false");
             toolButtons.set(action, button);
@@ -16267,7 +16384,7 @@ void main() {
           activeFrameState.previewed = false;
         }
         function activeFrameInteractionInProgress() {
-          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture);
+          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
         }
         function renderedCandidateMatches(candidate) {
           return candidate.sourceFrame === activeFrameState.renderedSourceFrame && candidate.sceneInstanceId === activeFrameState.renderedSceneInstanceId && candidate.mutationSequence === activeFrameState.renderedMutationSequence;
@@ -16588,7 +16705,10 @@ void main() {
           const startedAt = now();
           removeTransientPreview();
           try {
-            const strokeData = strokePathFactory(activeStroke.samples, { size: activeStroke.style.size });
+            const strokeData = strokePathFactory(activeStroke.samples, {
+              size: activeStroke.style.size,
+              ...activeStroke.tool === "pen" ? { thinning: 0, smoothing: 0.4, streamline: 0.35 } : null
+            });
             if (!strokeData.pathData) return;
             activeStroke.preview = makeFabricPath({
               id: null,
@@ -18056,10 +18176,16 @@ void main() {
           }
           const samples = activeStroke.samples;
           const style = { ...activeStroke.style };
+          const activeStrokeTool = activeStroke.tool;
           removeTransientPreview();
           let strokeData;
           try {
-            strokeData = strokePathFactory(samples, { size: style.size, last: true });
+            strokeData = strokePathFactory(samples, {
+              size: style.size,
+              last: true,
+              // 펜은 압력에 따라 굵기가 변하지 않는다(레거시 pen 동치).
+              ...activeStrokeTool === "pen" ? { thinning: 0, smoothing: 0.4, streamline: 0.35 } : null
+            });
           } catch (error) {
             lastError = error.message;
             metrics.recordSurfaceError();
@@ -18144,6 +18270,7 @@ void main() {
           resetOverlayModifierState();
           endSizeAdjustGesture(event);
           cancelStrokeEraseGesture(event);
+          cancelShapeGesture();
           onPointerCancel(event);
         }
         function onCanvasContextMenu(event) {
@@ -18218,6 +18345,96 @@ void main() {
         function hideSizeAdjustHud() {
           if (!sizeAdjustHud) return;
           setStyles(sizeAdjustHud, { display: "none" });
+        }
+        function shapeGestureRecord(gesture, transient) {
+          const samples = shapeCenterlineSamples(
+            gesture.tool,
+            gesture.origin,
+            gesture.current,
+            gesture.style.size
+          );
+          if (samples.length < 2) return null;
+          let strokeData;
+          try {
+            strokeData = strokePathFactory(samples, {
+              ...SHAPE_STROKE_OPTIONS,
+              size: gesture.style.size
+            });
+          } catch (_error) {
+            return null;
+          }
+          if (!strokeData?.pathData) return null;
+          return {
+            // 미리보기는 오브젝트 id 를 갖지 않는다. 기존 미리보기 경로
+            // (updateTransientPreview / updateLassoPreview)와 같은 관례다 —
+            // makeFabricPath 가 path.__baeframeObjectId = record.id || null 로 넘긴다.
+            id: transient ? null : createId("shape"),
+            type: "stroke",
+            pathData: strokeData.pathData,
+            sourcePoints: strokeData.sourcePoints,
+            style: { ...gesture.style }
+          };
+        }
+        function clearShapePreviewFor(gesture) {
+          if (!gesture?.preview || !fabricCanvas) return;
+          fabricCanvas.remove(gesture.preview);
+          gesture.preview = null;
+          fabricCanvas.requestRenderAll();
+        }
+        function updateShapePreview() {
+          if (!shapeGesture || !fabricCanvas) return;
+          const record = shapeGestureRecord(shapeGesture, true);
+          clearShapePreviewFor(shapeGesture);
+          if (!record) {
+            fabricCanvas.requestRenderAll();
+            return;
+          }
+          const preview = makeFabricPath(record, true);
+          preview.__baeframeTransient = true;
+          shapeGesture.preview = preview;
+          fabricCanvas.add(preview);
+          fabricCanvas.requestRenderAll();
+        }
+        function shapeGestureDragDistance(gesture) {
+          return Math.hypot(
+            finiteNumber(gesture.current?.x) - finiteNumber(gesture.origin?.x),
+            finiteNumber(gesture.current?.y) - finiteNumber(gesture.origin?.y)
+          );
+        }
+        function commitShapeGesture() {
+          const gesture = shapeGesture;
+          shapeGesture = null;
+          if (!gesture) return { applied: false, reason: "no-shape-gesture" };
+          clearShapePreviewFor(gesture);
+          if (shapeGestureDragDistance(gesture) < SHAPE_MIN_DRAG_DISTANCE) {
+            settleArmedFramePreview();
+            return { applied: false, reason: "shape-too-small" };
+          }
+          const record = shapeGestureRecord(gesture, false);
+          if (!record) {
+            settleArmedFramePreview();
+            return { applied: false, reason: "shape-path-error" };
+          }
+          const path = makeFabricPath(record);
+          record.transform = captureTransform(path);
+          const result = sceneStore.addStroke(record);
+          if (!result.applied) {
+            settleArmedFramePreview();
+            return result;
+          }
+          fabricCanvas.add(path);
+          fabricCanvas.requestRenderAll();
+          updateObjectMetric();
+          settleArmedFramePreview();
+          return result;
+        }
+        function cancelShapeGesture() {
+          const gesture = shapeGesture;
+          shapeGesture = null;
+          if (!gesture) return false;
+          clearShapePreviewFor(gesture);
+          settleArmedFramePreview();
+          return true;
         }
         function beginSizeAdjustGesture(event) {
           sizeAdjustGesture = {
@@ -18522,17 +18739,37 @@ void main() {
             event.preventDefault?.();
             return;
           }
-          if (tool === "brush") {
+          if (tool === "brush" || tool === "pen") {
             if (activeStroke || selectGesture) return;
             activeStroke = {
               pointerId: event.pointerId,
               samples: [],
               preview: null,
-              style: { ...brushStyle }
+              style: { ...brushStyle },
+              tool
             };
             event.currentTarget?.setPointerCapture?.(event.pointerId);
             appendPointerSample(event);
             updateTransientPreview();
+            event.preventDefault?.();
+            return;
+          }
+          if (FABRIC_SHAPE_TOOLS.includes(tool)) {
+            if (activeStroke || selectGesture || shapeGesture) return;
+            const origin = strokeErasePoint(event);
+            if (!origin) return;
+            shapeGesture = {
+              pointerId: event.pointerId,
+              tool,
+              origin,
+              current: origin,
+              preview: null,
+              style: { ...brushStyle }
+            };
+            try {
+              event.currentTarget?.setPointerCapture?.(event.pointerId);
+            } catch (_error) {
+            }
             event.preventDefault?.();
             return;
           }
@@ -18689,11 +18926,11 @@ void main() {
             beginPointerDown(event, false);
             return;
           }
-          if (inputEnabled && isAltActive(event) && (event.button === 0 || event.button === 2) && !sizeAdjustGesture && !strokeEraseGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
+          if (inputEnabled && isAltActive(event) && (event.button === 0 || event.button === 2) && !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
             beginSizeAdjustGesture(event);
             return;
           }
-          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture) {
+          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
             return;
           }
           if (!requestPointerdownFrame) {
@@ -18818,6 +19055,16 @@ void main() {
             event.preventDefault?.();
             return;
           }
+          if (shapeGesture) {
+            if (event.pointerId !== shapeGesture.pointerId) return;
+            const point = strokeErasePoint(event);
+            if (point) {
+              shapeGesture.current = point;
+              updateShapePreview();
+            }
+            event.preventDefault?.();
+            return;
+          }
           if (activeLasso) {
             if (event.pointerId !== activeLasso.pointerId) return;
             appendLassoPoint(event);
@@ -18846,6 +19093,13 @@ void main() {
             collectErasedStrokesAt(event, eraseContext);
             if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
             finalizeStrokeEraseGesture();
+            releasePointerCapture(event.currentTarget, event.pointerId);
+            event.preventDefault?.();
+            return;
+          }
+          if (shapeGesture) {
+            if (event.pointerId !== shapeGesture.pointerId) return;
+            commitShapeGesture();
             releasePointerCapture(event.currentTarget, event.pointerId);
             event.preventDefault?.();
             return;
@@ -18884,6 +19138,10 @@ void main() {
           if (strokeEraseGesture) {
             if (event.pointerId !== void 0 && event.pointerId !== strokeEraseGesture.pointerId) return;
             cancelStrokeEraseGesture(event);
+            return;
+          }
+          if (shapeGesture && (event?.pointerId === void 0 || event.pointerId === shapeGesture.pointerId)) {
+            cancelShapeGesture();
             return;
           }
           if (pendingPointerdownFrame) {
@@ -18927,6 +19185,10 @@ void main() {
             onPointerUp(event);
             return;
           }
+          if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
+            onPointerUp(event);
+            return;
+          }
           if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
             consumePendingPointerEvent(event);
             return;
@@ -18944,6 +19206,10 @@ void main() {
             return;
           }
           if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
+          if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
             onPointerCancel(event);
             return;
           }
@@ -19260,6 +19526,7 @@ void main() {
         function releaseSurfaceResources() {
           endSizeAdjustGesture();
           cancelStrokeEraseGesture();
+          cancelShapeGesture();
           resetOverlayModifierState();
           cancelPendingPointerdownFrame();
           cancelSelectInteraction();
@@ -19342,6 +19609,12 @@ void main() {
             toolbar = documentRef.createElement("div");
             toolbar.className = "mpv-fabric-pilot-toolbar";
             const brushButton = labelToolbarButton(createButton("\uBE0C\uB7EC\uC2DC", "brush"), "\uBE0C\uB7EC\uC2DC \uB3C4\uAD6C (B)");
+            const penButton = labelToolbarButton(createButton("\uD39C", "pen"), "\uD39C \uB3C4\uAD6C");
+            const eraserButton = labelToolbarButton(createButton("\uC9C0\uC6B0\uAC1C", "eraser"), "\uC9C0\uC6B0\uAC1C \uB3C4\uAD6C");
+            const lineButton = labelToolbarButton(createButton("\uC9C1\uC120", "line"), "\uC9C1\uC120 \uB3C4\uAD6C");
+            const rectButton = labelToolbarButton(createButton("\uC0AC\uAC01\uD615", "rect"), "\uC0AC\uAC01\uD615 \uB3C4\uAD6C");
+            const circleButton = labelToolbarButton(createButton("\uC6D0", "circle"), "\uC6D0 \uB3C4\uAD6C");
+            const arrowButton = labelToolbarButton(createButton("\uD654\uC0B4\uD45C", "arrow"), "\uD654\uC0B4\uD45C \uB3C4\uAD6C");
             const selectButton = labelToolbarButton(createButton("\uC120\uD0DD", "select"), "\uC120\uD0DD \uB3C4\uAD6C (V)");
             const undoButton = labelToolbarButton(createButton("\uC2E4\uD589 \uCDE8\uC18C", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
             const redoButton = labelToolbarButton(createButton("\uB2E4\uC2DC \uC2E4\uD589", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
@@ -19369,7 +19642,20 @@ void main() {
               setStyles,
               addDomListener,
               sections: [
-                { id: "tools", label: "\uB3C4\uAD6C", items: [brushButton, selectButton] },
+                {
+                  id: "tools",
+                  label: "\uB3C4\uAD6C",
+                  items: [
+                    brushButton,
+                    penButton,
+                    eraserButton,
+                    lineButton,
+                    rectButton,
+                    circleButton,
+                    arrowButton,
+                    selectButton
+                  ]
+                },
                 { id: "selection", items: [selectionControls.group] },
                 {
                   id: "brush",
@@ -19403,8 +19689,18 @@ void main() {
               freeDrawingCursor: "crosshair"
             });
             configureCanvasEvents();
-            addDomListener(brushButton, "click", () => updateLocalDrawingTool("brush"));
-            addDomListener(selectButton, "click", () => updateLocalDrawingTool("select"));
+            for (const [toolButton, toolName] of [
+              [brushButton, "brush"],
+              [penButton, "pen"],
+              [eraserButton, "eraser"],
+              [lineButton, "line"],
+              [rectButton, "rect"],
+              [circleButton, "circle"],
+              [arrowButton, "arrow"],
+              [selectButton, "select"]
+            ]) {
+              addDomListener(toolButton, "click", () => updateLocalDrawingTool(toolName));
+            }
             addDomListener(undoButton, "click", () => applyDrawingAction({
               sessionId: currentSession?.sessionId,
               actionId: createId("undo"),
@@ -19450,6 +19746,7 @@ void main() {
           }
           endSizeAdjustGesture();
           cancelStrokeEraseGesture();
+          cancelShapeGesture();
           resetOverlayModifierState();
           cancelPendingPointerdownFrame();
           abortPendingLassoSelection();
@@ -19461,7 +19758,7 @@ void main() {
             tokenState.hostGeneration = Number(request.hostGeneration);
             tokenState.videoGeneration = Number(request.videoGeneration);
             tokenState.inputRevision = Number(request.inputRevision);
-            const lastTool = currentSession?.tool === "select" ? "select" : "brush";
+            const lastTool = normalizeFabricDrawingTool(currentSession?.tool);
             disableInput({ preservePassiveDisplay: !ownerChanged });
             if (ownerChanged) {
               resetPassivePresentationState();
@@ -19480,7 +19777,7 @@ void main() {
             videoGeneration: Number(request.videoGeneration),
             viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
             viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
-            tool: request.session.tool === "select" ? "select" : "brush"
+            tool: normalizeFabricDrawingTool(request.session.tool)
           };
           const activation = typeof sceneStore.replaceActiveSession === "function" ? sceneStore.replaceActiveSession(session) : sceneStore.activateSession(session);
           if (!activation.accepted) {
@@ -19722,7 +20019,7 @@ void main() {
         }
         function updateDrawingTool(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
-          const normalized = { ...command, tool: command.tool === "select" || command.tool === "V" ? "select" : command.tool };
+          const normalized = { ...command, tool: command.tool === "V" ? "select" : command.tool };
           const result = sceneStore.updateTool(normalized);
           if (!result.accepted) {
             metrics.recordStaleMessageDrop();
@@ -19967,6 +20264,8 @@ void main() {
         createSessionSceneStore,
         normalizePressure,
         createStrokePathData,
+        shapeCenterlinePoints,
+        shapeCenterlineSamples,
         createActionDeduper,
         shouldAcceptInputRequest,
         resolveEffectiveCanvasRect,

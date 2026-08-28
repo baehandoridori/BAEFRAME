@@ -9,6 +9,9 @@ const {
   normalizeMpvOverlayCollaborationAction,
   normalizeFabricDrawingPersistenceMessage
 } = require('../../main/mpv-overlay-host');
+const {
+  FABRIC_DRAWING_TOOLS
+} = require('../../shared/fabric-drawing-tools.js');
 
 function waitForAsyncReposition() {
   return new Promise((resolve) => setImmediate(resolve));
@@ -5762,4 +5765,64 @@ test('rejected export logs which record check failed and where', async () => {
 
   // 응답 자체에는 여전히 failedCheck 가 실리지 않는다
   assert.doesNotMatch(JSON.stringify(rejected), /failedCheck/);
+});
+
+test('updateDrawingTool accepts every declared tool and rejects unknown ones', async () => {
+  // 런타임이 실제로 받은 도구를 그대로 돌려주게 해, 호스트가 도구를 접지 않는지 본다.
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingTool(')) return undefined;
+      const match = script.match(/"tool":"([^"]+)"/);
+      return { accepted: true, tool: match ? match[1] : null };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const session = {
+    sessionId: 'session-tools',
+    stableVideoIdentity: 'video-tools',
+    targetFrame: 3,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    tool: 'brush'
+  };
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: true,
+    session
+  }))).success, true);
+
+  let toolRevision = 0;
+  for (const tool of FABRIC_DRAWING_TOOLS) {
+    toolRevision += 1;
+    const response = await host.updateDrawingTool({
+      hostGeneration,
+      videoGeneration: 1,
+      inputRevision: 2,
+      sessionId: 'session-tools',
+      toolRevision,
+      tool
+    });
+    assert.equal(response.success, true, `호스트가 도구 ${tool} 를 거부했다`);
+    assert.equal(response.tool, tool, `호스트가 도구 ${tool} 를 접어 버렸다`);
+  }
+
+  // 실재하지 않는 도구는 경계에서 막혀야 한다.
+  toolRevision += 1;
+  const rejected = await host.updateDrawingTool({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-tools',
+    toolRevision,
+    tool: 'lasso'
+  });
+  assert.equal(rejected.success, false);
+  assert.equal(rejected.accepted, false);
 });

@@ -51,6 +51,11 @@ const {
   FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE: MAX_PERSISTED_TRANSFORM_MAGNITUDE,
   FABRIC_DRAWING_MAX_STRING_LENGTH: MAX_PERSISTENCE_STRING_LENGTH
 } = require('../../../shared/fabric-drawing-limits.js');
+const {
+  FABRIC_SHAPE_TOOLS,
+  isFabricDrawingTool,
+  normalizeFabricDrawingTool
+} = require('../../../shared/fabric-drawing-tools.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -1617,7 +1622,7 @@ function createSessionSceneStore(options = {}) {
       sourceFrame: restored ? sourceFrame : (sourceScene ? sourceFrame : null),
       sceneKey,
       videoGeneration,
-      tool: session.tool === 'select' ? 'select' : 'brush',
+      tool: normalizeFabricDrawingTool(session.tool),
       toolRevision: -1
     };
     const scene = activeScene();
@@ -2110,7 +2115,7 @@ function createSessionSceneStore(options = {}) {
     if (!Number.isInteger(toolRevision) || toolRevision <= activeSession.toolRevision) {
       return { accepted: false, reason: 'stale-tool-revision' };
     }
-    if (command.tool !== 'brush' && command.tool !== 'select') {
+    if (!isFabricDrawingTool(command.tool)) {
       return { accepted: false, reason: 'invalid-tool' };
     }
     activeSession.toolRevision = toolRevision;
@@ -2122,7 +2127,7 @@ function createSessionSceneStore(options = {}) {
     if (!activeSession || command.sessionId !== activeSession.sessionId) {
       return { accepted: false, reason: 'stale-session' };
     }
-    if (command.tool !== 'brush' && command.tool !== 'select') {
+    if (!isFabricDrawingTool(command.tool)) {
       return { accepted: false, reason: 'invalid-tool' };
     }
     activeSession.tool = command.tool;
@@ -2351,6 +2356,103 @@ function outlineToPathData(outline) {
   commands.push('Z');
   return commands.join(' ');
 }
+
+// 도형 중심선 표본 생성기. 도형은 "미리 계산된 경로를 따라 그은 획"으로 저장하므로
+// (drawingsV3 스키마 무변경), 여기서 만든 표본을 브러시와 같은 createStrokePathData 에
+// 그대로 통과시킨다. 시간은 표본 순서대로 1씩 증가시켜 저장 스키마의
+// "한 획의 sourcePoints[].time 은 단조 증가" 불변식을 만족시킨다.
+const SHAPE_EDGE_SEGMENTS = 24;
+const SHAPE_ELLIPSE_SEGMENTS = 128;
+const SHAPE_ARROW_HEAD_MIN = 15;
+const SHAPE_ARROW_HEAD_SIZE_FACTOR = 4;
+const SHAPE_ARROW_HEAD_ANGLE = Math.PI / 6;
+// 클릭만 하고 드래그하지 않았을 때 점 하나짜리 도형이 씬에 들어가 undo 를 소모하는
+// 것을 막는다. 소스 좌표 기준이다.
+const SHAPE_MIN_DRAG_DISTANCE = 2;
+
+function interpolateShapeEdge(points, from, to, segments) {
+  for (let index = 1; index <= segments; index += 1) {
+    const amount = index / segments;
+    points.push({
+      x: from.x + (to.x - from.x) * amount,
+      y: from.y + (to.y - from.y) * amount
+    });
+  }
+}
+
+function shapeCenterlinePoints(tool, start, end, brushSize) {
+  const points = [{ x: start.x, y: start.y }];
+  if (tool === 'line') {
+    interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+    return points;
+  }
+  if (tool === 'rect') {
+    const topRight = { x: end.x, y: start.y };
+    const bottomRight = { x: end.x, y: end.y };
+    const bottomLeft = { x: start.x, y: end.y };
+    interpolateShapeEdge(points, start, topRight, SHAPE_EDGE_SEGMENTS);
+    interpolateShapeEdge(points, topRight, bottomRight, SHAPE_EDGE_SEGMENTS);
+    interpolateShapeEdge(points, bottomRight, bottomLeft, SHAPE_EDGE_SEGMENTS);
+    interpolateShapeEdge(points, bottomLeft, start, SHAPE_EDGE_SEGMENTS);
+    return points;
+  }
+  if (tool === 'circle') {
+    // 레거시 _traceShapePath 의 ctx.ellipse 와 같은 기하 — 드래그 사각형에 내접하는 타원.
+    const radiusX = Math.abs(end.x - start.x) / 2;
+    const radiusY = Math.abs(end.y - start.y) / 2;
+    const centerX = start.x + (end.x - start.x) / 2;
+    const centerY = start.y + (end.y - start.y) / 2;
+    // 시작점은 곡선 위에 있지 않다. 버리지 않으면 중심에서 뻗어 나온 꼬리가 생긴다.
+    points.length = 0;
+    for (let index = 0; index <= SHAPE_ELLIPSE_SEGMENTS; index += 1) {
+      const angle = (index / SHAPE_ELLIPSE_SEGMENTS) * Math.PI * 2;
+      points.push({
+        x: centerX + Math.cos(angle) * radiusX,
+        y: centerY + Math.sin(angle) * radiusY
+      });
+    }
+    return points;
+  }
+  // arrow — 레거시 _drawArrow 와 같은 화살촉 기하를 하나의 폴리라인으로 잇는다.
+  // 축(start→end) 뒤에 촉을 그리려면 end 를 다시 지나야 하는데, 되짚기 구간은
+  // getStroke 가 만든 윤곽이 자기 자신과 겹칠 뿐이고 makeFabricPath 의 기본
+  // fillRule('nonzero')에서 합집합으로 칠해지므로 시각적으로 정확한 화살표가 된다.
+  // 레코드를 둘로 쪼개면 undo·선택·이동이 축과 촉을 따로 다루게 되어 더 나쁘다.
+  const headLength = Math.max(SHAPE_ARROW_HEAD_MIN, brushSize * SHAPE_ARROW_HEAD_SIZE_FACTOR);
+  const angle = Math.atan2(end.y - start.y, end.x - start.x);
+  const barbA = {
+    x: end.x - headLength * Math.cos(angle - SHAPE_ARROW_HEAD_ANGLE),
+    y: end.y - headLength * Math.sin(angle - SHAPE_ARROW_HEAD_ANGLE)
+  };
+  const barbB = {
+    x: end.x - headLength * Math.cos(angle + SHAPE_ARROW_HEAD_ANGLE),
+    y: end.y - headLength * Math.sin(angle + SHAPE_ARROW_HEAD_ANGLE)
+  };
+  interpolateShapeEdge(points, start, end, SHAPE_EDGE_SEGMENTS);
+  interpolateShapeEdge(points, end, barbA, SHAPE_EDGE_SEGMENTS);
+  interpolateShapeEdge(points, barbA, end, SHAPE_EDGE_SEGMENTS);
+  interpolateShapeEdge(points, end, barbB, SHAPE_EDGE_SEGMENTS);
+  return points;
+}
+
+// 도형 표본은 압력 1 상수·시간 단조 증가로 만든다. pointerType 을 넣지 않는 이유는
+// 저장 스키마에서 선택 키이고, 도형은 어떤 포인터로 그렸든 결과가 같아야 하기 때문이다.
+function shapeCenterlineSamples(tool, start, end, brushSize) {
+  return shapeCenterlinePoints(tool, start, end, brushSize).map((point, index) => ({
+    x: point.x,
+    y: point.y,
+    pressure: 1,
+    time: index
+  }));
+}
+
+const SHAPE_STROKE_OPTIONS = Object.freeze({
+  thinning: 0,
+  smoothing: 0,
+  streamline: 0,
+  alreadyNormalizedPressure: true,
+  last: true
+});
 
 function createStrokePathData(samples, options = {}) {
   if (!Array.isArray(samples) || samples.length === 0) {
@@ -2639,6 +2741,9 @@ function createFabricOverlayRuntime(options = {}) {
   // Alt 드래그 크기 조절 / Ctrl 임시 획 지우개 — 씬 스키마와 무관한 순수 입력 계층 상태
   let sizeAdjustGesture = null;
   let strokeEraseGesture = null;
+  // 도형 도구(line/rect/circle/arrow)의 시작점→끝점 드래그 상태.
+  // 커밋 전까지는 미리보기 경로만 캔버스에 올리고 씬에는 아무것도 넣지 않는다.
+  let shapeGesture = null;
   let sizeAdjustHud = null;
   let sizeAdjustHudLabel = null;
   const overlayModifierState = { alt: false, ctrl: false };
@@ -2700,7 +2805,7 @@ function createFabricOverlayRuntime(options = {}) {
     button.type = 'button';
     button.textContent = label;
     button.dataset.fabricPilotAction = action;
-    if (action === 'brush' || action === 'select') {
+    if (isFabricDrawingTool(action)) {
       button.dataset.active = 'false';
       button.setAttribute?.('aria-pressed', 'false');
       toolButtons.set(action, button);
@@ -3378,7 +3483,7 @@ function createFabricOverlayRuntime(options = {}) {
   function activeFrameInteractionInProgress() {
     // 제스처 중 renderArmedFramePreview()가 캔버스를 재구성하면 Ctrl 지우개의 은닉 표시가 사라진다.
     return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture ||
-      transformStart || sizeAdjustGesture || strokeEraseGesture);
+      transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
   }
 
   function renderedCandidateMatches(candidate) {
@@ -3740,7 +3845,12 @@ function createFabricOverlayRuntime(options = {}) {
     const startedAt = now();
     removeTransientPreview();
     try {
-      const strokeData = strokePathFactory(activeStroke.samples, { size: activeStroke.style.size });
+      const strokeData = strokePathFactory(activeStroke.samples, {
+        size: activeStroke.style.size,
+        ...(activeStroke.tool === 'pen'
+          ? { thinning: 0, smoothing: 0.4, streamline: 0.35 }
+          : null)
+      });
       if (!strokeData.pathData) return;
       activeStroke.preview = makeFabricPath({
         id: null,
@@ -5419,10 +5529,19 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const samples = activeStroke.samples;
     const style = { ...activeStroke.style };
+    // activeStroke 는 커밋 도중 null 이 되므로 도구를 먼저 지역 변수로 뽑는다.
+    const activeStrokeTool = activeStroke.tool;
     removeTransientPreview();
     let strokeData;
     try {
-      strokeData = strokePathFactory(samples, { size: style.size, last: true });
+      strokeData = strokePathFactory(samples, {
+        size: style.size,
+        last: true,
+        // 펜은 압력에 따라 굵기가 변하지 않는다(레거시 pen 동치).
+        ...(activeStrokeTool === 'pen'
+          ? { thinning: 0, smoothing: 0.4, streamline: 0.35 }
+          : null)
+      });
     } catch (error) {
       lastError = error.message;
       metrics.recordSurfaceError();
@@ -5525,6 +5644,7 @@ function createFabricOverlayRuntime(options = {}) {
     resetOverlayModifierState();
     endSizeAdjustGesture(event);
     cancelStrokeEraseGesture(event);
+    cancelShapeGesture();
     onPointerCancel(event);
   }
 
@@ -5610,6 +5730,105 @@ function createFabricOverlayRuntime(options = {}) {
   function hideSizeAdjustHud() {
     if (!sizeAdjustHud) return;
     setStyles(sizeAdjustHud, { display: 'none' });
+  }
+
+  function shapeGestureRecord(gesture, transient) {
+    const samples = shapeCenterlineSamples(
+      gesture.tool,
+      gesture.origin,
+      gesture.current,
+      gesture.style.size
+    );
+    if (samples.length < 2) return null;
+    let strokeData;
+    try {
+      strokeData = strokePathFactory(samples, {
+        ...SHAPE_STROKE_OPTIONS,
+        size: gesture.style.size
+      });
+    } catch (_error) {
+      return null;
+    }
+    if (!strokeData?.pathData) return null;
+    return {
+      // 미리보기는 오브젝트 id 를 갖지 않는다. 기존 미리보기 경로
+      // (updateTransientPreview / updateLassoPreview)와 같은 관례다 —
+      // makeFabricPath 가 path.__baeframeObjectId = record.id || null 로 넘긴다.
+      id: transient ? null : createId('shape'),
+      type: 'stroke',
+      pathData: strokeData.pathData,
+      sourcePoints: strokeData.sourcePoints,
+      style: { ...gesture.style }
+    };
+  }
+
+  function clearShapePreviewFor(gesture) {
+    if (!gesture?.preview || !fabricCanvas) return;
+    fabricCanvas.remove(gesture.preview);
+    gesture.preview = null;
+    fabricCanvas.requestRenderAll();
+  }
+
+  function updateShapePreview() {
+    if (!shapeGesture || !fabricCanvas) return;
+    const record = shapeGestureRecord(shapeGesture, true);
+    clearShapePreviewFor(shapeGesture);
+    if (!record) {
+      fabricCanvas.requestRenderAll();
+      return;
+    }
+    const preview = makeFabricPath(record, true);
+    preview.__baeframeTransient = true;
+    shapeGesture.preview = preview;
+    fabricCanvas.add(preview);
+    fabricCanvas.requestRenderAll();
+  }
+
+  function shapeGestureDragDistance(gesture) {
+    return Math.hypot(
+      finiteNumber(gesture.current?.x) - finiteNumber(gesture.origin?.x),
+      finiteNumber(gesture.current?.y) - finiteNumber(gesture.origin?.y)
+    );
+  }
+
+  function commitShapeGesture() {
+    // 제스처를 먼저 비운 뒤 정리·커밋한다. 이렇게 해야 동기 lostpointercapture 가
+    // 취소로 해석되지 않는다(기존 finalizeStrokeEraseGesture 와 같은 이유).
+    const gesture = shapeGesture;
+    shapeGesture = null;
+    if (!gesture) return { applied: false, reason: 'no-shape-gesture' };
+    clearShapePreviewFor(gesture);
+    // 클릭만 하고 드래그하지 않은 경우 아무것도 만들지 않는다.
+    if (shapeGestureDragDistance(gesture) < SHAPE_MIN_DRAG_DISTANCE) {
+      settleArmedFramePreview();
+      return { applied: false, reason: 'shape-too-small' };
+    }
+    const record = shapeGestureRecord(gesture, false);
+    if (!record) {
+      settleArmedFramePreview();
+      return { applied: false, reason: 'shape-path-error' };
+    }
+    const path = makeFabricPath(record);
+    record.transform = captureTransform(path);
+    const result = sceneStore.addStroke(record);
+    if (!result.applied) {
+      settleArmedFramePreview();
+      return result;
+    }
+    fabricCanvas.add(path);
+    fabricCanvas.requestRenderAll();
+    updateObjectMetric();
+    settleArmedFramePreview();
+    return result;
+  }
+
+  function cancelShapeGesture() {
+    const gesture = shapeGesture;
+    shapeGesture = null;
+    if (!gesture) return false;
+    clearShapePreviewFor(gesture);
+    settleArmedFramePreview();
+    return true;
   }
 
   function beginSizeAdjustGesture(event) {
@@ -5950,17 +6169,36 @@ function createFabricOverlayRuntime(options = {}) {
       event.preventDefault?.();
       return;
     }
-    if (tool === 'brush') {
+    if (tool === 'brush' || tool === 'pen') {
       if (activeStroke || selectGesture) return;
       activeStroke = {
         pointerId: event.pointerId,
         samples: [],
         preview: null,
-        style: { ...brushStyle }
+        style: { ...brushStyle },
+        tool
       };
       event.currentTarget?.setPointerCapture?.(event.pointerId);
       appendPointerSample(event);
       updateTransientPreview();
+      event.preventDefault?.();
+      return;
+    }
+    if (FABRIC_SHAPE_TOOLS.includes(tool)) {
+      if (activeStroke || selectGesture || shapeGesture) return;
+      const origin = strokeErasePoint(event);
+      if (!origin) return;
+      shapeGesture = {
+        pointerId: event.pointerId,
+        tool,
+        origin,
+        current: origin,
+        preview: null,
+        style: { ...brushStyle }
+      };
+      try {
+        event.currentTarget?.setPointerCapture?.(event.pointerId);
+      } catch (_error) { /* pointer capture is best-effort */ }
       event.preventDefault?.();
       return;
     }
@@ -6137,13 +6375,13 @@ function createFabricOverlayRuntime(options = {}) {
     // 레거시와 같이 좌/우 버튼 모두 허용한다.
     if (inputEnabled && isAltActive(event) &&
         (event.button === 0 || event.button === 2) &&
-        !sizeAdjustGesture && !strokeEraseGesture && !pendingPointerdownFrame &&
+        !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture && !pendingPointerdownFrame &&
         !activeStroke && !activeLasso && !selectGesture) {
       beginSizeAdjustGesture(event);
       return;
     }
     if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame ||
-        activeStroke || activeLasso || selectGesture || strokeEraseGesture) {
+        activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
       return;
     }
     if (!requestPointerdownFrame) {
@@ -6276,6 +6514,16 @@ function createFabricOverlayRuntime(options = {}) {
       event.preventDefault?.();
       return;
     }
+    if (shapeGesture) {
+      if (event.pointerId !== shapeGesture.pointerId) return;
+      const point = strokeErasePoint(event);
+      if (point) {
+        shapeGesture.current = point;
+        updateShapePreview();
+      }
+      event.preventDefault?.();
+      return;
+    }
     if (activeLasso) {
       if (event.pointerId !== activeLasso.pointerId) return;
       appendLassoPoint(event);
@@ -6306,6 +6554,14 @@ function createFabricOverlayRuntime(options = {}) {
       if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
       // 제스처를 먼저 비운 뒤 캡처를 놓아, 동기 lostpointercapture가 취소로 해석되지 않게 한다.
       finalizeStrokeEraseGesture();
+      releasePointerCapture(event.currentTarget, event.pointerId);
+      event.preventDefault?.();
+      return;
+    }
+    if (shapeGesture) {
+      if (event.pointerId !== shapeGesture.pointerId) return;
+      // 커밋이 shapeGesture 를 먼저 비우므로, 그 뒤에 캡처를 놓는다.
+      commitShapeGesture();
       releasePointerCapture(event.currentTarget, event.pointerId);
       event.preventDefault?.();
       return;
@@ -6345,6 +6601,10 @@ function createFabricOverlayRuntime(options = {}) {
     if (strokeEraseGesture) {
       if (event.pointerId !== undefined && event.pointerId !== strokeEraseGesture.pointerId) return;
       cancelStrokeEraseGesture(event);
+      return;
+    }
+    if (shapeGesture && (event?.pointerId === undefined || event.pointerId === shapeGesture.pointerId)) {
+      cancelShapeGesture();
       return;
     }
     if (pendingPointerdownFrame) {
@@ -6394,6 +6654,10 @@ function createFabricOverlayRuntime(options = {}) {
       onPointerUp(event);
       return;
     }
+    if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
+      onPointerUp(event);
+      return;
+    }
     if (pendingPointerdownFrame && event.pointerId === pendingPointerdownFrame.pointerId) {
       consumePendingPointerEvent(event);
       return;
@@ -6412,6 +6676,10 @@ function createFabricOverlayRuntime(options = {}) {
       return;
     }
     if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
+      onPointerCancel(event);
+      return;
+    }
+    if (shapeGesture && event.pointerId === shapeGesture.pointerId) {
       onPointerCancel(event);
       return;
     }
@@ -6775,6 +7043,7 @@ function createFabricOverlayRuntime(options = {}) {
   function releaseSurfaceResources() {
     endSizeAdjustGesture();
     cancelStrokeEraseGesture();
+    cancelShapeGesture();
     resetOverlayModifierState();
     cancelPendingPointerdownFrame();
     cancelSelectInteraction();
@@ -6856,6 +7125,12 @@ function createFabricOverlayRuntime(options = {}) {
       toolbar = documentRef.createElement('div');
       toolbar.className = 'mpv-fabric-pilot-toolbar';
       const brushButton = labelToolbarButton(createButton('브러시', 'brush'), '브러시 도구 (B)');
+      const penButton = labelToolbarButton(createButton('펜', 'pen'), '펜 도구');
+      const eraserButton = labelToolbarButton(createButton('지우개', 'eraser'), '지우개 도구');
+      const lineButton = labelToolbarButton(createButton('직선', 'line'), '직선 도구');
+      const rectButton = labelToolbarButton(createButton('사각형', 'rect'), '사각형 도구');
+      const circleButton = labelToolbarButton(createButton('원', 'circle'), '원 도구');
+      const arrowButton = labelToolbarButton(createButton('화살표', 'arrow'), '화살표 도구');
       const selectButton = labelToolbarButton(createButton('선택', 'select'), '선택 도구 (V)');
       const undoButton = labelToolbarButton(createButton('실행 취소', 'undo'), '실행 취소 (Ctrl+Z)');
       const redoButton = labelToolbarButton(createButton('다시 실행', 'redo'), '다시 실행 (Ctrl+Y)');
@@ -6885,7 +7160,14 @@ function createFabricOverlayRuntime(options = {}) {
         setStyles,
         addDomListener,
         sections: [
-          { id: 'tools', label: '도구', items: [brushButton, selectButton] },
+          {
+            id: 'tools',
+            label: '도구',
+            items: [
+              brushButton, penButton, eraserButton, lineButton,
+              rectButton, circleButton, arrowButton, selectButton
+            ]
+          },
           { id: 'selection', items: [selectionControls.group] },
           {
             id: 'brush',
@@ -6920,8 +7202,18 @@ function createFabricOverlayRuntime(options = {}) {
         freeDrawingCursor: 'crosshair'
       });
       configureCanvasEvents();
-      addDomListener(brushButton, 'click', () => updateLocalDrawingTool('brush'));
-      addDomListener(selectButton, 'click', () => updateLocalDrawingTool('select'));
+      for (const [toolButton, toolName] of [
+        [brushButton, 'brush'],
+        [penButton, 'pen'],
+        [eraserButton, 'eraser'],
+        [lineButton, 'line'],
+        [rectButton, 'rect'],
+        [circleButton, 'circle'],
+        [arrowButton, 'arrow'],
+        [selectButton, 'select']
+      ]) {
+        addDomListener(toolButton, 'click', () => updateLocalDrawingTool(toolName));
+      }
       addDomListener(undoButton, 'click', () => applyDrawingAction({
         sessionId: currentSession?.sessionId,
         actionId: createId('undo'),
@@ -6969,6 +7261,7 @@ function createFabricOverlayRuntime(options = {}) {
 
     endSizeAdjustGesture();
     cancelStrokeEraseGesture();
+    cancelShapeGesture();
     resetOverlayModifierState();
     cancelPendingPointerdownFrame();
     abortPendingLassoSelection();
@@ -6982,7 +7275,7 @@ function createFabricOverlayRuntime(options = {}) {
       tokenState.hostGeneration = Number(request.hostGeneration);
       tokenState.videoGeneration = Number(request.videoGeneration);
       tokenState.inputRevision = Number(request.inputRevision);
-      const lastTool = currentSession?.tool === 'select' ? 'select' : 'brush';
+      const lastTool = normalizeFabricDrawingTool(currentSession?.tool);
       disableInput({ preservePassiveDisplay: !ownerChanged });
       if (ownerChanged) {
         resetPassivePresentationState();
@@ -7004,7 +7297,7 @@ function createFabricOverlayRuntime(options = {}) {
       videoGeneration: Number(request.videoGeneration),
       viewportRevision: Math.max(-1, Math.trunc(Number(request.session.viewportRevision) || 0)),
       viewportTransform: normalizeViewportTransform(request.session.viewportTransform),
-      tool: request.session.tool === 'select' ? 'select' : 'brush'
+      tool: normalizeFabricDrawingTool(request.session.tool)
     };
     const activation = typeof sceneStore.replaceActiveSession === 'function'
       ? sceneStore.replaceActiveSession(session)
@@ -7280,7 +7573,7 @@ function createFabricOverlayRuntime(options = {}) {
 
   function updateDrawingTool(command = {}) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
-    const normalized = { ...command, tool: command.tool === 'select' || command.tool === 'V' ? 'select' : command.tool };
+    const normalized = { ...command, tool: command.tool === 'V' ? 'select' : command.tool };
     const result = sceneStore.updateTool(normalized);
     if (!result.accepted) {
       metrics.recordStaleMessageDrop();
@@ -7574,6 +7867,8 @@ module.exports = {
   createSessionSceneStore,
   normalizePressure,
   createStrokePathData,
+  shapeCenterlinePoints,
+  shapeCenterlineSamples,
   createActionDeduper,
   shouldAcceptInputRequest,
   resolveEffectiveCanvasRect,

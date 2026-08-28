@@ -28,6 +28,10 @@ const {
   FABRIC_DRAWING_MAX_TRANSFORM_MAGNITUDE,
   FABRIC_DRAWING_MAX_STRING_LENGTH
 } = require('../shared/fabric-drawing-limits');
+const {
+  isFabricDrawingTool,
+  normalizeFabricDrawingTool
+} = require('../shared/fabric-drawing-tools.js');
 
 const log = createLogger('MPVOverlayHost');
 const DEFAULT_FABRIC_BUNDLE_PATH = path.join(
@@ -3062,7 +3066,7 @@ class MPVOverlayHost {
       enabled: request.enabled && runtimeResult?.accepted === true && stillCurrent,
       restored: runtimeResult?.restored === true
     };
-    if (runtimeResult?.tool === 'brush' || runtimeResult?.tool === 'select') {
+    if (isFabricDrawingTool(runtimeResult?.tool)) {
       response.tool = runtimeResult.tool;
     }
     return response;
@@ -3075,7 +3079,7 @@ class MPVOverlayHost {
       request.videoGeneration === this.currentVideoGeneration &&
       request.inputRevision === this.currentInputRevision &&
       request.sessionId === this.activeSessionId;
-    const validTool = request.tool === 'brush' || request.tool === 'select' || request.tool === 'V';
+    const validTool = isFabricDrawingTool(request.tool) || request.tool === 'V';
     if (!this.desiredInputEnabled ||
         this.fabricReadyGeneration !== this.hostGeneration ||
         !currentTokensMatch ||
@@ -3099,7 +3103,7 @@ class MPVOverlayHost {
       if (this.window === hostWindow && !hostWindow?.isDestroyed?.()) {
         hostWindow.focus?.();
       }
-      return { success: true, accepted: true, tool: result.tool === 'select' ? 'select' : 'brush' };
+      return { success: true, accepted: true, tool: normalizeFabricDrawingTool(result.tool) };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
@@ -3389,7 +3393,7 @@ class MPVOverlayHost {
         inputEnabled: result?.inputEnabled === true,
         activeSessionId: this.activeSessionId,
         targetFrame: Number.isInteger(Number(result?.targetFrame)) ? Number(result.targetFrame) : null,
-        tool: result?.tool === 'select' ? 'select' : 'brush',
+        tool: normalizeFabricDrawingTool(result?.tool),
         selectionTarget: result?.selectionTarget === 'partial' ? 'partial' : 'stroke',
         selectionShape: result?.selectionShape === 'lasso' ? 'lasso' : 'rectangle',
         selectionControlEventCount: Math.max(

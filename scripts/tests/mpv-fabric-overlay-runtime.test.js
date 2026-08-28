@@ -14,11 +14,16 @@ const {
   createFabricOverlayRuntime,
   createSessionSceneStore,
   createStrokePathData,
+  shapeCenterlinePoints,
+  shapeCenterlineSamples,
   resolveEffectiveCanvasRect,
   resolveSelectionHitTolerance,
   mapClientPointToSource,
   splitStrokePointsByPolygon
 } = require(runtimePath);
+const {
+  FABRIC_DRAWING_TOOLS
+} = require(path.join(rootDir, 'shared/fabric-drawing-tools.js'));
 const {
   createGeometryBudget,
   createPolygonEdgeIndex,
@@ -14682,4 +14687,253 @@ test('재생된 pointerdown은 재생 시각이 아니라 원본 timeStamp를 �
   const replayed = dispatched.find(entry => entry.type === 'pointerdown');
   assert.ok(replayed, '확정 뒤 pointerdown이 재생되어야 한다');
   assert.equal(replayed.timeStamp, 4242, '재생 이벤트가 원본 timeStamp를 유지해야 한다');
+});
+
+// ---------------------------------------------------------------------------
+// 작업 3 — 드로잉 도구 6종 (도형은 "미리 계산된 경로를 따라 그은 획")
+// ---------------------------------------------------------------------------
+
+function enableRealFabricShapeTool(harness, tool, toolRevision = 1) {
+  const result = harness.runtime.updateDrawingTool({
+    sessionId: 'real-fabric-session',
+    toolRevision,
+    tool
+  });
+  assert.equal(result.accepted, true, `도구 ${tool} 가 거부됐다`);
+  assert.equal(result.tool, tool);
+  return result;
+}
+
+function transientPreviews(canvas) {
+  return canvas.getObjects().filter(object => object.__baeframeTransient === true);
+}
+
+test('shape centerline for line is a dense two-point interpolation', () => {
+  const start = { x: 10, y: 20 };
+  const end = { x: 110, y: 70 };
+  const points = shapeCenterlinePoints('line', start, end, 8);
+
+  // SHAPE_EDGE_SEGMENTS(24) + 시작점 1개.
+  assert.equal(points.length, 25);
+  assert.deepEqual(points[0], start);
+  assert.deepEqual(points.at(-1), end);
+  // 중점이 정확히 중간에 놓여야 등간격 보간이다.
+  assert.deepEqual(points[12], { x: 60, y: 45 });
+});
+
+test('rect centerline closes back on the origin', () => {
+  const start = { x: 10, y: 20 };
+  const end = { x: 110, y: 90 };
+  const points = shapeCenterlinePoints('rect', start, end, 8);
+
+  // 네 변 × 24분할 + 시작점 1개.
+  assert.equal(points.length, 24 * 4 + 1);
+  assert.deepEqual(points[0], start);
+  assert.deepEqual(points.at(-1), start, '닫힌 사각형이라 마지막 점이 시작점으로 돌아와야 한다');
+  // 각 꼭짓점을 실제로 지나는지.
+  for (const corner of [{ x: 110, y: 20 }, { x: 110, y: 90 }, { x: 10, y: 90 }]) {
+    assert.ok(
+      points.some(point => point.x === corner.x && point.y === corner.y),
+      `꼭짓점 ${corner.x},${corner.y} 를 지나지 않는다`
+    );
+  }
+});
+
+test('circle centerline inscribes the drag rectangle', () => {
+  const points = shapeCenterlinePoints('circle', { x: 20, y: 40 }, { x: 120, y: 100 }, 8);
+
+  // SHAPE_ELLIPSE_SEGMENTS(128) + 마지막 닫힘점.
+  assert.equal(points.length, 129);
+  const xs = points.map(point => point.x);
+  const ys = points.map(point => point.y);
+  for (const [actual, expected, label] of [
+    [Math.min(...xs), 20, 'left'],
+    [Math.max(...xs), 120, 'right'],
+    [Math.min(...ys), 40, 'top'],
+    [Math.max(...ys), 100, 'bottom']
+  ]) {
+    assert.ok(Math.abs(actual - expected) < 1e-9, `${label} 극점이 드래그 사각형 경계와 다르다`);
+  }
+  // 시작점(20,40)은 곡선 위가 아니다 — 버려져야 중심에서 뻗은 꼬리가 생기지 않는다.
+  assert.equal(points.some(point => point.x === 20 && point.y === 40), false);
+});
+
+test('arrow centerline passes through the tip twice', () => {
+  const start = { x: 10, y: 10 };
+  const end = { x: 110, y: 60 };
+  const points = shapeCenterlinePoints('arrow', start, end, 8);
+
+  // 축 끝에서 한 번, 촉 A 를 찍고 돌아와 한 번. interpolateShapeEdge 가 구간 시작점을
+  // 다시 push 하지 않으므로 정확히 2회다.
+  const tipCount = points.filter(point =>
+    Math.abs(point.x - end.x) < 1e-9 && Math.abs(point.y - end.y) < 1e-9).length;
+  assert.equal(tipCount, 2);
+  assert.equal(points.length, 24 * 4 + 1);
+  assert.deepEqual(points[0], start);
+});
+
+test('shape samples have monotonically increasing time', () => {
+  for (const tool of ['line', 'rect', 'circle', 'arrow']) {
+    const samples = shapeCenterlineSamples(tool, { x: 10, y: 10 }, { x: 90, y: 70 }, 8);
+    assert.ok(samples.length >= 2, `${tool} 표본이 너무 적다`);
+    for (let index = 1; index < samples.length; index += 1) {
+      assert.ok(
+        samples[index].time > samples[index - 1].time,
+        `${tool} 의 time 이 ${index} 에서 증가하지 않는다 — 저장 스키마 불변식 위반`
+      );
+    }
+    assert.equal(samples.every(sample => sample.pressure === 1), true, `${tool} 압력이 상수가 아니다`);
+    assert.equal(samples.every(sample => sample.pointerType === undefined), true);
+  }
+});
+
+test('shape commit stores a stroke record with the unchanged drawingsV3 schema', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'rect');
+    const pointerId = 5101;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 90, pointerId, 1);
+    harness.dispatchCapturedPointerUp(120, 90, pointerId);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 1);
+    const record = objects[0];
+    assert.equal(record.type, 'stroke', '도형도 저장 타입은 stroke 하나뿐이다');
+    // 결정 1(스키마 무변경)을 고정하는 핵심 단언 — 새 필드가 생기면 여기서 깨진다.
+    assert.deepEqual(
+      Object.keys(record).sort(),
+      ['id', 'pathData', 'sourcePoints', 'style', 'transform', 'type']
+    );
+    assert.ok(record.pathData.length > 0);
+    assert.equal(record.sourcePoints.length, 24 * 4 + 1);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('shape preview is transient and never enters the scene', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'circle');
+    const pointerId = 5102;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 80, pointerId, 1);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      0,
+      '커밋 전에는 씬에 아무것도 들어가지 않는다'
+    );
+    const previews = transientPreviews(harness.canvas);
+    assert.equal(previews.length, 1);
+    assert.equal(previews[0].__baeframeObjectId, null, '미리보기는 오브젝트 id 를 갖지 않는다');
+
+    harness.dispatchCapturedPointerUp(100, 80, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    assert.equal(transientPreviews(harness.canvas).length, 0, '커밋 후 미리보기가 남으면 안 된다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('cancelled shape gesture leaves no object and no preview', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'arrow');
+    const pointerId = 5103;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 90, pointerId, 1);
+    assert.equal(transientPreviews(harness.canvas).length, 1);
+
+    harness.dispatchPointer(harness.element, 'pointercancel', 120, 90, pointerId, 0);
+    assert.equal(harness.canvas.getObjects().length, 0);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a click without drag creates no shape', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'line');
+    const pointerId = 5104;
+    // SHAPE_MIN_DRAG_DISTANCE(2) 미만 — 클릭 오차로 점 하나짜리 도형이 undo 를 소모하면 안 된다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 40, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 41, 40, pointerId, 1);
+    harness.dispatchCapturedPointerUp(41, 40, pointerId);
+
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+    assert.equal(harness.canvas.getObjects().length, 0);
+    assert.equal(harness.runtime.getDiagnostics().undoDepth, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('document pointerup commits a shape when capture was lost', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'rect');
+    const pointerId = 5105;
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 130, 100, pointerId, 1);
+
+    // 포인터 캡처가 듣지 않는 환경에서는 pointerup 이 문서로만 온다.
+    // onDocumentPointerUp 은 취소가 아니라 onPointerUp 위임(= 커밋) 경로여야 한다.
+    harness.dispatchPointer(harness.environment.document, 'pointerup', 130, 100, pointerId, 0);
+
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      1,
+      '문서 경로에서 도형이 조용히 사라지면 안 된다'
+    );
+    assert.equal(transientPreviews(harness.canvas).length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('every declared drawing tool is accepted by setLocalTool', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    for (const tool of FABRIC_DRAWING_TOOLS) {
+      const result = harness.sceneStore.setLocalTool({
+        sessionId: 'real-fabric-session',
+        tool
+      });
+      assert.equal(result.accepted, true, `도구 ${tool} 가 거부됐다`);
+      assert.equal(result.tool, tool);
+    }
+    // 실재하지 않는 값은 여전히 거부돼야 한다.
+    const rejected = harness.sceneStore.setLocalTool({
+      sessionId: 'real-fabric-session',
+      tool: 'lasso'
+    });
+    assert.equal(rejected.accepted, false);
+    assert.equal(rejected.reason, 'invalid-tool');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('disabling drawing input preserves the active tool', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableRealFabricShapeTool(harness, 'pen');
+    const result = harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    });
+    assert.equal(result.accepted, true);
+    // §3.5 #5 회귀 — 예전에는 여기서 도구가 brush 로 접혔다.
+    assert.equal(result.tool, 'pen');
+  } finally {
+    await harness.destroy();
+  }
 });

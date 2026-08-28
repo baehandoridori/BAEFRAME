@@ -1563,6 +1563,8 @@ async function initApp() {
    * 키 코드를 표시 문자열로 변환
    */
   function keyCodeToDisplay(keyCode) {
+    // 기본 단축키가 없는 액션(도형 도구 등)은 key 가 null 이다.
+    if (!keyCode) return '미지정';
     const keyMap = {
       'Space': 'Space',
       'ArrowLeft': '←',
@@ -15079,12 +15081,14 @@ async function initApp() {
     '키프레임': ['keyframeAddWithCopy', 'keyframeAddBlank', 'keyframeAddBlank2', 'keyframeConvertToFrame', 'keyframeConvertToKeyframe', 'keyframeDelete', 'prevKeyframe', 'nextKeyframe'],
     '프레임 편집': ['insertFrame', 'deleteFrame', 'frameCopy', 'framePaste'],
     '드로잉 레이어': ['drawingLayerAdd', 'drawingLayerDelete', 'drawingLayerVisibilityToggle', 'drawingLayerLockToggle', 'drawingLayerSelectUp', 'drawingLayerSelectDown', 'drawingLayerMoveUp', 'drawingLayerMoveDown', 'timelineCenterOnPlayhead'],
-    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp', 'drawingToolSelect']
+    '그리기 보조': ['onionSkinToggle', 'prevFrameDraw', 'nextFrameDraw', 'brushSizeDown', 'brushSizeUp', 'drawingToolSelect', 'drawingToolBrush', 'drawingToolPen', 'drawingToolEraser', 'drawingToolLine', 'drawingToolRect', 'drawingToolCircle', 'drawingToolArrow']
   };
 
   let capturingShortcutAction = null;
 
   function keyCodeToDisplay(code) {
+    // 기본 단축키가 없는 액션(도형 도구 등)은 key 가 null 이다.
+    if (!code) return '미지정';
     const map = {
       'Space': 'Space', 'ArrowLeft': '←', 'ArrowRight': '→', 'ArrowUp': '↑', 'ArrowDown': '↓',
       'Home': 'Home', 'End': 'End', 'Delete': 'Del', 'Backspace': 'Back', 'Backquote': '`',
@@ -16417,6 +16421,8 @@ async function initApp() {
 
   // 키 코드를 표시용 문자열로 변환
   function formatKeyCode(code) {
+    // 기본 단축키가 없는 액션(도형 도구 등)은 key 가 null 이다.
+    if (!code) return '미지정';
     const keyMap = {
       'Space': 'Space',
       'ArrowLeft': '←',

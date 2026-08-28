@@ -19,6 +19,21 @@ const fabricPaletteSource = normalizeNewlines(fs.readFileSync(
   path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-toolbar.js'),
   'utf8'
 ));
+const overlayHostSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'main/mpv-overlay-host.js'),
+  'utf8'
+));
+const pilotControllerSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'),
+  'utf8'
+));
+const userSettingsSource = normalizeNewlines(fs.readFileSync(
+  path.join(rootDir, 'renderer/scripts/modules/user-settings.js'),
+  'utf8'
+));
+const {
+  FABRIC_DRAWING_TOOLS
+} = require(path.join(rootDir, 'shared/fabric-drawing-tools.js'));
 
 test('Fabric pilot controller is initialized with live mpv video and canvas context', () => {
   assert.match(appSource, /import \{ createFabricDrawingPilotController \} from '\.\/modules\/fabric-drawing-pilot-controller\.js';/);
@@ -1508,9 +1523,11 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
     fabricRuntimeSource,
     /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n\s+sections: \[/
   );
+  // 도구가 8종으로 늘어 한 줄 리터럴이 아니게 됐다. 섹션이 존재하고 도구 버튼을
+  // 모두 담는다는 계약은 그대로다.
   assert.match(
     fabricRuntimeSource,
-    /\{ id: 'tools', label: '도구', items: \[brushButton, selectButton\] \}/
+    /id: 'tools',\n\s+label: '도구',\n\s+items: \[\n\s+brushButton, penButton, eraserButton, lineButton,\n\s+rectButton, circleButton, arrowButton, selectButton\n\s+\]/
   );
   assert.match(
     fabricRuntimeSource,
@@ -1638,5 +1655,81 @@ test('키프레임 이동 단축키는 소유자에 맞는 데이터 출처를 �
   assert.match(
     appSource,
     /matchShortcut\('nextKeyframe', e\)\) \{\n\s+e\.preventDefault\(\);\n\s+const nextKf = getAdjacentDrawingKeyframeFrame\('next'\);/
+  );
+});
+
+test('drawing tool set lives in one shared module that both process layers require', () => {
+  assert.match(
+    fabricRuntimeSource,
+    /require\('\.\.\/\.\.\/\.\.\/shared\/fabric-drawing-tools\.js'\)/,
+    '런타임이 공용 도구 집합을 들여와야 한다'
+  );
+  assert.match(
+    overlayHostSource,
+    /require\('\.\.\/shared\/fabric-drawing-tools\.js'\)/,
+    '호스트가 공용 도구 집합을 들여와야 한다'
+  );
+  // 2종 가정 관용구가 한 곳이라도 남으면 새 도구가 그 지점에서 brush 로 접힌다.
+  for (const [label, source] of [
+    ['runtime', fabricRuntimeSource],
+    ['host', overlayHostSource],
+    ['controller', pilotControllerSource]
+  ]) {
+    assert.doesNotMatch(
+      source,
+      /=== 'select' \? 'select' : 'brush'/,
+      `${label} 에 2종 가정 정규화가 남아 있다`
+    );
+    assert.doesNotMatch(
+      source,
+      /=== 'brush' \|\| [^\n]*=== 'select'/,
+      `${label} 에 2종 가정 화이트리스트가 남아 있다`
+    );
+  }
+});
+
+test('controller drawing tool literal matches the shared tool set', () => {
+  // 컨트롤러는 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다.
+  // 두 목록이 어긋나면 도구 복원이 조용히 실패하므로 여기서 대조한다.
+  const match = pilotControllerSource.match(
+    /const CONTROLLER_DRAWING_TOOLS = new Set\(\[([\s\S]*?)\]\);/
+  );
+  assert.ok(match, '컨트롤러에 CONTROLLER_DRAWING_TOOLS 리터럴이 있어야 한다');
+  const literalTools = match[1]
+    .split(',')
+    .map(entry => entry.trim().replace(/^'|'$/g, ''))
+    .filter(Boolean);
+  assert.deepEqual([...literalTools].sort(), [...FABRIC_DRAWING_TOOLS].sort());
+});
+
+test('shape and pen tools are registered as assignable shortcut actions without default keys', () => {
+  const toolActions = [
+    'drawingToolBrush',
+    'drawingToolPen',
+    'drawingToolEraser',
+    'drawingToolLine',
+    'drawingToolRect',
+    'drawingToolCircle',
+    'drawingToolArrow'
+  ];
+  for (const action of toolActions) {
+    // 결정 3 — 기본 키를 두지 않는다. 빈 문자열이면 합성 이벤트에 오작동한다.
+    assert.match(
+      userSettingsSource,
+      new RegExp(`${action}: \\{ key: null,`),
+      `${action} 의 기본 키가 null 이 아니다`
+    );
+    // 화이트리스트에 없으면 설정 UI 에 아예 나타나지 않아 배정이 불가능하다.
+    assert.match(
+      appSource,
+      new RegExp(`'그리기 보조': \\[[^\\]]*'${action}'`),
+      `${action} 이 SHORTCUT_CATEGORIES 에 등록되지 않았다`
+    );
+  }
+  // key 가 null 인 액션을 표시할 때 죽지 않아야 한다.
+  assert.equal(
+    (appSource.match(/if \(!(?:code|keyCode)\) return '미지정';/g) || []).length,
+    3,
+    '키 표시 함수 3곳 모두에 미지정 가드가 있어야 한다'
   );
 });
