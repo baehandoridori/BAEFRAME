@@ -15799,3 +15799,38 @@ test('a panel closed while its section was collapsed stays closed when the secti
     await harness.destroy();
   }
 });
+
+test('a sharp eraser turn commits the corner it actually swept', async () => {
+  // 꼭짓점을 평균 법선 하나로만 밀면 90도 꺾임에서 모서리가 (0.707r, 0.707r)
+  // 까지만 덮여, 스윕 사각형들이 실제로 지나간 (r, r) 모서리 삼각형이 커밋에서
+  // 빠진다. 그 안에서만 닿은 획은 드래그 중 숨었다가 되살아난다.
+  // 하네스 기준 지우개 반경은 3px 이다.
+  const harness = createRealFabricHarness();
+  try {
+    // 평균 법선은 V 에서 대각선 2.12px 까지만 덮고, 마이터는 4.24px(=(103,103))
+    // 까지 덮는다. 그 사이 띠에만 들어가려면 획이 아주 가늘어야 한다.
+    harness.runtime.updateDrawingBrush({ size: 1 });
+    harness.drawStroke([{ x: 101.9, y: 102.6 }, { x: 102.6, y: 101.9 }], 7801);
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 1, '모서리 획이 하나 있어야 한다');
+    const cornerId = objects[0].id;
+
+    enableRealFabricShapeTool(harness, 'eraser', 6);
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 7802;
+    // 오른쪽으로 갔다가 위로 꺾는다 — 바깥 모서리가 (100,100) 남동쪽이다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 40, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 40, pointerId);
+
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(
+      survivors.some(object => object.id === cornerId),
+      false,
+      '모서리에서 닿은 획이 커밋에서 빠져 되살아나면 안 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});

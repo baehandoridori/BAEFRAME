@@ -18902,17 +18902,47 @@ void main() {
         function offsetRibbonFromSpine(spine, radius) {
           const left = [];
           const right = [];
+          const unitNormal = (dx, dy) => {
+            const length = Math.hypot(dx, dy) || 1;
+            return { x: -dy / length, y: dx / length };
+          };
+          const at = (point, normal, sign) => ({
+            x: point.x + normal.x * radius * sign,
+            y: point.y + normal.y * radius * sign
+          });
           for (let index = 0; index < spine.length; index += 1) {
             const current = spine[index];
-            const previous = spine[Math.max(0, index - 1)];
-            const next = spine[Math.min(spine.length - 1, index + 1)];
-            const dx = next.x - previous.x;
-            const dy = next.y - previous.y;
-            const length = Math.hypot(dx, dy) || 1;
-            const nx = -dy / length * radius;
-            const ny = dx / length * radius;
-            left.push({ x: current.x + nx, y: current.y + ny });
-            right.push({ x: current.x - nx, y: current.y - ny });
+            const previous = spine[index - 1];
+            const next = spine[index + 1];
+            if (!previous || !next) {
+              const from = previous || current;
+              const to = next || current;
+              const normal = unitNormal(to.x - from.x, to.y - from.y);
+              left.push(at(current, normal, 1));
+              right.push(at(current, normal, -1));
+              continue;
+            }
+            const inNormal = unitNormal(current.x - previous.x, current.y - previous.y);
+            const outNormal = unitNormal(next.x - current.x, next.y - current.y);
+            const averageNormal = unitNormal(next.x - previous.x, next.y - previous.y);
+            const miterX = inNormal.x + outNormal.x;
+            const miterY = inNormal.y + outNormal.y;
+            const miterLength = Math.hypot(miterX, miterY);
+            let miterNormal = null;
+            if (miterLength > 1e-6) {
+              const mx = miterX / miterLength;
+              const my = miterY / miterLength;
+              const projection = mx * inNormal.x + my * inNormal.y;
+              if (projection > 0.5) miterNormal = { x: mx / projection, y: my / projection };
+            }
+            const turn = (current.x - previous.x) * (next.y - current.y) - (current.y - previous.y) * (next.x - current.x);
+            const outer = turn < 0 ? left : right;
+            const inner = turn < 0 ? right : left;
+            const outerSign = turn < 0 ? 1 : -1;
+            outer.push(at(current, inNormal, outerSign));
+            if (miterNormal) outer.push(at(current, miterNormal, outerSign));
+            outer.push(at(current, outNormal, outerSign));
+            inner.push(at(current, averageNormal, -outerSign));
           }
           return [...left, ...right.reverse()];
         }
@@ -18980,7 +19010,8 @@ void main() {
               { x: point.x + radius, y: point.y + radius }
             );
           }
-          const ribbon = offsetRibbonFromSpine(extendSpineEndpoints(spine, radius), radius);
+          const extended = extendSpineEndpoints(spine, radius);
+          const ribbon = offsetRibbonFromSpine(extended, radius);
           if (validateSimpleContour(ribbon, budget)) return ribbon;
           return strokeEraseCorridorPolygon(spine, radius);
         }

@@ -6331,20 +6331,61 @@ function createFabricOverlayRuntime(options = {}) {
   // 지우개가 지나간 경로를 반경만큼 좌/우로 부풀린 닫힌 폴리곤.
   // 폴리곤 불리언 유니온이 저장소에 없으므로, 스윕 quad 들을 합치는 대신
   // 경로 자체를 리본으로 만들어 부분 선택 경로에 한 번에 넘긴다.
+  // 스윕 사각형은 각 변을 반경만큼 부풀린 직사각형이고, 꺾임에서 두 사각형의
+  // 합집합은 **바깥** 모서리를 마이터 지점까지 채운다(90도면 V 에서 1.414r).
+  // 꼭짓점을 평균 법선 하나로만 밀면 그 삼각형이 커밋 폴리곤에서 빠져, 그 안에서만
+  // 닿은 획이 드래그 중 숨었다가 되살아난다.
+  //
+  // 마이터는 **바깥쪽에만** 넣는다. 양쪽에 넣으면 안쪽 오프셋이 서로를 가로질러
+  // 단순 폴리곤이 못 되고, 그러면 커밋 자체가 무산된다(실측 확인).
   function offsetRibbonFromSpine(spine, radius) {
     const left = [];
     const right = [];
+    const unitNormal = (dx, dy) => {
+      const length = Math.hypot(dx, dy) || 1;
+      return { x: -dy / length, y: dx / length };
+    };
+    const at = (point, normal, sign) => ({
+      x: point.x + normal.x * radius * sign,
+      y: point.y + normal.y * radius * sign
+    });
     for (let index = 0; index < spine.length; index += 1) {
       const current = spine[index];
-      const previous = spine[Math.max(0, index - 1)];
-      const next = spine[Math.min(spine.length - 1, index + 1)];
-      const dx = next.x - previous.x;
-      const dy = next.y - previous.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const nx = (-dy / length) * radius;
-      const ny = (dx / length) * radius;
-      left.push({ x: current.x + nx, y: current.y + ny });
-      right.push({ x: current.x - nx, y: current.y - ny });
+      const previous = spine[index - 1];
+      const next = spine[index + 1];
+      if (!previous || !next) {
+        const from = previous || current;
+        const to = next || current;
+        const normal = unitNormal(to.x - from.x, to.y - from.y);
+        left.push(at(current, normal, 1));
+        right.push(at(current, normal, -1));
+        continue;
+      }
+      const inNormal = unitNormal(current.x - previous.x, current.y - previous.y);
+      const outNormal = unitNormal(next.x - current.x, next.y - current.y);
+      const averageNormal = unitNormal(next.x - previous.x, next.y - previous.y);
+      const miterX = inNormal.x + outNormal.x;
+      const miterY = inNormal.y + outNormal.y;
+      const miterLength = Math.hypot(miterX, miterY);
+      let miterNormal = null;
+      if (miterLength > 1e-6) {
+        const mx = miterX / miterLength;
+        const my = miterY / miterLength;
+        const projection = mx * inNormal.x + my * inNormal.y;
+        // 아주 급한 꺾임에서는 마이터가 무한히 뻗는다. 스윕이 실제로 덮는 범위를
+        // 넘지 않도록 2r 에서 자르고, 넘으면 마이터 없이 두 법선만 남긴다.
+        if (projection > 0.5) miterNormal = { x: mx / projection, y: my / projection };
+      }
+      // 진행 방향의 외적 부호가 어느 쪽이 바깥인지를 알려 준다.
+      const turn = (current.x - previous.x) * (next.y - current.y) -
+        (current.y - previous.y) * (next.x - current.x);
+      const outer = turn < 0 ? left : right;
+      const inner = turn < 0 ? right : left;
+      const outerSign = turn < 0 ? 1 : -1;
+      outer.push(at(current, inNormal, outerSign));
+      if (miterNormal) outer.push(at(current, miterNormal, outerSign));
+      outer.push(at(current, outNormal, outerSign));
+      inner.push(at(current, averageNormal, -outerSign));
     }
     return [...left, ...right.reverse()];
   }
@@ -6366,10 +6407,6 @@ function createFabricOverlayRuntime(options = {}) {
     return extended;
   }
 
-  // 왕복 스크럽 전용 폴백. 척추가 한 축을 따라 좁게 오갈 때만 성립한다.
-  // 그 조건에서 지나간 영역은 정확히 하나의 복도이므로, 주축에 투영해 복도를
-  // 다시 만든다. 볼록 껍질을 쓰면 원을 그리듯 감싼 제스처가 안쪽의 건드리지도
-  // 않은 획까지 삼킨다 — 그래서 껍질은 쓰지 않는다.
   function strokeEraseCorridorPolygon(spine, radius) {
     const first = spine[0];
     let far = spine[0];
@@ -6427,7 +6464,8 @@ function createFabricOverlayRuntime(options = {}) {
         { x: point.x + radius, y: point.y + radius }
       );
     }
-    const ribbon = offsetRibbonFromSpine(extendSpineEndpoints(spine, radius), radius);
+    const extended = extendSpineEndpoints(spine, radius);
+    const ribbon = offsetRibbonFromSpine(extended, radius);
     if (validateSimpleContour(ribbon, budget)) return ribbon;
     // 앞뒤로 문지르는(A→B→A) 동작은 좌/우 오프셋이 서로를 가로질러 단순 폴리곤이
     // 되지 않는다. 한 축을 따르는 스크럽이면 복도로 되살리고, 그 밖의 모양이면
