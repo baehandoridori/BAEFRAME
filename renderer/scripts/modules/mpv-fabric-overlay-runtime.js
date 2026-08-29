@@ -4373,10 +4373,9 @@ function createFabricOverlayRuntime(options = {}) {
   // 손을 떼는 순간 자국이 확 커져, 기존 그림이나 화면 가장자리 옆에 정확히
   // 놓으려는 사용자가 결과를 예측할 수 없다.
   //
-  // 커밋본과 **같은 고리**로 만든다. 채워진 판으로 두면 불투명도 1 미만에서
-  // 미리보기 중심만 두 번 합성돼(50% 두 겹 = 75%) 손을 떼는 순간 색이 변한다 —
-  // 미리보기의 목적이 바로 그 변화를 없애는 것이다.
-  function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData, outline) {
+  // 커밋본과 같은 표현으로 만든다 — 채워진 굵은 획을 본체 뒤에 깐다.
+  // 커밋본이 고리가 아니므로 미리보기도 고리가 아니어야 손을 떼는 순간 달라 보이지 않는다.
+  function makeOutlinePreviewPath(samples, style, geometryOptions, outline) {
     if (outline?.enabled !== true) return null;
     const width = boundedInteger(
       outline.width,
@@ -4395,16 +4394,6 @@ function createFabricOverlayRuntime(options = {}) {
         pathData: strokeData.pathData,
         style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
       };
-      const ringPathData = bodyPathData
-        ? `${outlineToPathData([...strokeData.outline].reverse())} ${bodyPathData}`
-        : null;
-      if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
-        record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: 'nonzero' };
-      } else if (finiteNumber(style.opacity, 1) < 1) {
-        // 고리를 못 만드는데 반투명이면, 채워진 판은 중심 색을 바꿔 놓는다.
-        // 미리보기를 생략해 커밋 결과와 어긋나지 않게 한다.
-        return null;
-      }
       return makeFabricPath(record, true);
     } catch (_error) {
       return null;
@@ -4426,7 +4415,6 @@ function createFabricOverlayRuntime(options = {}) {
         activeStroke.samples,
         activeStroke.style,
         geometryOptions,
-        strokeData.pathData,
         activeStroke.outline
       );
       activeStroke.preview = makeFabricPath({
@@ -5287,22 +5275,23 @@ function createFabricOverlayRuntime(options = {}) {
       });
       const side = plan.selected ? clipped.intersection : clipped.difference;
       if (!side || side.reason || side.components.length === 0) return null;
-      // 감기 방향을 뒤집어 본체 자리만 상쇄되게 한다(evenodd 는 외곽선 자기 겹침까지 지운다).
-      outlineContour = contourPathData(
-        side.components.flatMap(component =>
-          component.contours.map(contour => [...contour].reverse()))
-      );
+      outlineContour = contourPathData(side.components.flatMap(component => component.contours));
     } catch (_error) {
       return null;
     }
     if (!outlineContour) return null;
 
-    const ringPathData = `${outlineContour} ${plan.renderGeometry.pathData}`;
-    if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
-    return {
-      pathData: strokeData.pathData,
-      renderGeometry: { version: 1, pathData: ringPathData, fillRule: 'nonzero' }
-    };
+    // 본체 윤곽을 합쳐 고리로 만들지 않는다 — 최상위 외곽선과 같은 이유로
+    // renderGeometry 형식이 그 합성을 담지 못한다. 잘라 낸 굵은 모양만 싣는다.
+    const renderGeometry = { version: 1, pathData: outlineContour, fillRule: 'evenodd' };
+    // **씬에 넣기 전에 지속화 스키마로 검증한다.** 여기서 새는 값 하나가
+    // 이후 드로잉 저장 전체를 막는다.
+    if (!validateDrawingRenderGeometry(renderGeometry, {
+      maxPathLength: MAX_PERSISTENCE_STRING_LENGTH
+    })) {
+      return null;
+    }
+    return { pathData: strokeData.pathData, renderGeometry };
   }
 
   // 조각 본체에서 외곽선 짝 레코드를 만든다. 기하는 이미 잘라 둔 것을 쓴다.
@@ -5358,17 +5347,6 @@ function createFabricOverlayRuntime(options = {}) {
       return null;
     }
     if (!strokeData?.pathData) return null;
-    // 외곽선은 본체를 통째로 덮는 **채워진** 경로다. 그대로 두면 불투명도가 1 미만일 때
-    // 두 층이 따로 합성돼 중심이 두 번 칠해지고(50% 두 층 = 75%) 외곽선 색이 본체
-    // 색으로 번진다. 본체 윤곽을 같은 경로에 합쳐 **고리**로 만들어 그 겹침을 없앤다.
-    // renderGeometry 는 이미 허용된 선택 키라 저장 스키마는 그대로다.
-    //
-    // evenodd 로 칠하면 안 된다. 획이 되짚어 본체 두 구간은 떨어져 있는데 굵은
-    // 외곽선끼리만 겹치는 자리에서, evenodd 는 그 **외곽선 자기 겹침까지 상쇄해**
-    // 구멍을 낸다(기하 프로브로 실측). 본체 위에 덮이지도 않는 자리라 그대로 뚫린다.
-    // 대신 외곽선 윤곽을 뒤집어 감기 방향을 반대로 두고 nonzero 로 칠한다 —
-    // 본체 자리만 상쇄되고 외곽선 자기 겹침은 그대로 채워진다.
-    const ringPathData = `${outlineToPathData([...strokeData.outline].reverse())} ${record.pathData}`;
     const derived = {
       id,
       type: 'stroke',
@@ -5379,15 +5357,14 @@ function createFabricOverlayRuntime(options = {}) {
       style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
     };
     if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
-    // 합친 경로가 저장 한도를 넘으면 고리를 만들 수 없다. 그때 채워진 판으로
-    // 두면 불투명도 1 미만에서 중심이 두 번 칠해지고 색이 번진다 — 그 상태를
-    // 남기느니 **외곽선을 붙이지 않는다.** 덜 그리는 쪽이 틀리게 그리는 쪽보다 낫다.
-    if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
-    derived.renderGeometry = {
-      version: 1,
-      pathData: ringPathData,
-      fillRule: 'nonzero'
-    };
+    // 외곽선을 본체 모양만큼 뚫린 **고리**로 만들 수는 없다. renderGeometry 는
+    // fillRule 'evenodd' 고정 + M/L/Z 다각형만 + 자기교차 불가인 좁은 형식이라
+    // 합성 경로(곡선 윤곽 두 벌)를 담지 못한다. 어기면 라이브 커밋은 통과해도
+    // 내보낸 스냅샷이 invalid-overlay-snapshot 으로 거부돼 **이후 저장이 통째로 막힌다.**
+    //
+    // 그래서 외곽선은 채워진 굵은 획 그대로 둔다. 불투명도가 1 미만이면 본체 아래
+    // 외곽선이 비쳐 중심이 조금 진해지고 색이 살짝 섞인다 — 형식이 표현할 수 없는
+    // 한계이며, 저장이 막히는 것보다는 낫다.
     // 본체 transform 을 그대로 베끼면 안 된다. 외곽선은 더 굵어 pathData 의
     // pathOffset·바운딩 박스 중심이 본체와 다르고, 같은 transform 을 주면 두
     // **오브젝트 중심**이 맞춰질 뿐 소스 좌표가 어긋난다. 압력이 실린 획이나
@@ -6681,7 +6658,6 @@ function createFabricOverlayRuntime(options = {}) {
       record.sourcePoints,
       record.style,
       SHAPE_STROKE_GEOMETRY,
-      record.pathData,
       shapeGesture.outline
     );
     if (outlinePreview) {

@@ -17176,7 +17176,7 @@ void main() {
           fabricCanvas.remove(activeStroke.preview);
           activeStroke.preview = null;
         }
-        function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData, outline) {
+        function makeOutlinePreviewPath(samples, style, geometryOptions, outline) {
           if (outline?.enabled !== true) return null;
           const width = boundedInteger(
             outline.width,
@@ -17195,12 +17195,6 @@ void main() {
               pathData: strokeData.pathData,
               style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
             };
-            const ringPathData = bodyPathData ? `${outlineToPathData([...strokeData.outline].reverse())} ${bodyPathData}` : null;
-            if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
-              record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: "nonzero" };
-            } else if (finiteNumber(style.opacity, 1) < 1) {
-              return null;
-            }
             return makeFabricPath(record, true);
           } catch (_error) {
             return null;
@@ -17221,7 +17215,6 @@ void main() {
               activeStroke.samples,
               activeStroke.style,
               geometryOptions,
-              strokeData.pathData,
               activeStroke.outline
             );
             activeStroke.preview = makeFabricPath({
@@ -17950,19 +17943,18 @@ void main() {
             });
             const side = plan.selected ? clipped.intersection : clipped.difference;
             if (!side || side.reason || side.components.length === 0) return null;
-            outlineContour = contourPathData(
-              side.components.flatMap((component) => component.contours.map((contour) => [...contour].reverse()))
-            );
+            outlineContour = contourPathData(side.components.flatMap((component) => component.contours));
           } catch (_error) {
             return null;
           }
           if (!outlineContour) return null;
-          const ringPathData = `${outlineContour} ${plan.renderGeometry.pathData}`;
-          if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
-          return {
-            pathData: strokeData.pathData,
-            renderGeometry: { version: 1, pathData: ringPathData, fillRule: "nonzero" }
-          };
+          const renderGeometry = { version: 1, pathData: outlineContour, fillRule: "evenodd" };
+          if (!validateDrawingRenderGeometry(renderGeometry, {
+            maxPathLength: MAX_PERSISTENCE_STRING_LENGTH
+          })) {
+            return null;
+          }
+          return { pathData: strokeData.pathData, renderGeometry };
         }
         function makeOutlineFragmentRecord(fragment, spec, outlineGeometry, sourceOutlineObject) {
           const id = outlineIdFor(fragment?.id);
@@ -18011,7 +18003,6 @@ void main() {
             return null;
           }
           if (!strokeData?.pathData) return null;
-          const ringPathData = `${outlineToPathData([...strokeData.outline].reverse())} ${record.pathData}`;
           const derived = {
             id,
             type: "stroke",
@@ -18022,12 +18013,6 @@ void main() {
             style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
           };
           if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
-          if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
-          derived.renderGeometry = {
-            version: 1,
-            pathData: ringPathData,
-            fillRule: "nonzero"
-          };
           derived.transform = captureTransform(makeFabricPath(derived));
           return derived;
         }
@@ -19145,7 +19130,6 @@ void main() {
             record.sourcePoints,
             record.style,
             SHAPE_STROKE_GEOMETRY,
-            record.pathData,
             shapeGesture.outline
           );
           if (outlinePreview) {
