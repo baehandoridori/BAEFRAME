@@ -13605,6 +13605,10 @@ void main() {
       var RECENT_COLOR_LIMIT = 4;
       var MIN_BRUSH_SIZE = 1;
       var MAX_BRUSH_SIZE = 50;
+      var MIN_OUTLINE_WIDTH = 1;
+      var MAX_OUTLINE_WIDTH = 20;
+      var DEFAULT_OUTLINE_WIDTH = 2;
+      var DEFAULT_OUTLINE_COLOR = "#000000";
       var SIZE_ADJUST_HUD_FLASH_MS = 700;
       var MIN_BRUSH_OPACITY_PERCENT = 10;
       var MAX_BRUSH_OPACITY_PERCENT = 100;
@@ -14918,36 +14922,48 @@ void main() {
           activeSession = null;
           return { accepted: true, active: false };
         }
-        function addStroke(stroke) {
+        function addStroke(stroke, outlineRecord = null) {
           const scene = syncProvisionalSceneForMutation(activeScene());
           if (!scene) return { applied: false, reason: "no-active-session" };
           if (!stroke || typeof stroke.id !== "string" || stroke.id.length === 0) {
             return { applied: false, reason: "invalid-stroke" };
           }
           if (scene.objects.has(stroke.id)) return { applied: false, reason: "duplicate-object-id" };
-          if (scene.objects.size >= maxObjects) return { applied: false, reason: "scene-object-limit-exceeded" };
+          const pending = outlineRecord ? 2 : 1;
+          if (scene.objects.size + pending > maxObjects) {
+            return { applied: false, reason: "scene-object-limit-exceeded" };
+          }
           if (!Array.isArray(stroke.sourcePoints) || stroke.sourcePoints.length > MAX_STROKE_POINTS) {
             return { applied: false, reason: "invalid-stroke-points" };
           }
           const record = clonePlain(stroke);
+          const outline = outlineRecord && !scene.objects.has(outlineRecord.id) ? clonePlain(outlineRecord) : null;
           const nextObjects = new Map(scene.objects);
+          if (outline) nextObjects.set(outline.id, outline);
           nextObjects.set(record.id, record);
-          const touchedIds = [record.id];
+          const touchedIds = outline ? [outline.id, record.id] : [record.id];
+          const baseTransforms = /* @__PURE__ */ new Map([[record.id, clonePlain(record.transform || {})]]);
+          if (outline) baseTransforms.set(outline.id, clonePlain(outline.transform || {}));
           const result = commitStagedMutation(scene, {
             kind: "add-objects",
             nextObjects,
             nextSelection: scene.selectedObjectIds,
             undoState: makeObjectsState(scene.objects, touchedIds, scene.objects.keys()),
             redoState: makeObjectsState(nextObjects, touchedIds, nextObjects.keys()),
-            baseTransforms: /* @__PURE__ */ new Map([[record.id, clonePlain(record.transform || {})]])
+            baseTransforms
           });
           if (!result.applied) return result;
-          return { applied: true, objectId: record.id };
+          return { applied: true, objectId: record.id, outlineId: outline?.id || null };
+        }
+        function isDerivedOutline(id, objects = activeScene()?.objects) {
+          if (!objects || !isOutlineId(id)) return false;
+          const bodyId = bodyIdFor(id);
+          return bodyId !== null && objects.has(bodyId);
         }
         function selectObjects(objectIds = []) {
           const scene = activeScene();
           if (!scene) return { changed: false, selection: [] };
-          const next = new Set(objectIds.filter((id) => scene.objects.has(id)));
+          const next = new Set(objectIds.filter((id) => scene.objects.has(id) && !isDerivedOutline(id, scene.objects)));
           const changed = next.size !== scene.selectedObjectIds.size || [...next].some((id) => !scene.selectedObjectIds.has(id));
           scene.selectedObjectIds = next;
           return { changed, selection: [...next] };
@@ -14974,6 +14990,27 @@ void main() {
             if (!objectChanged) continue;
             nextObjects.set(id, { ...clonePlain(object), transform: next });
             changedIds.push(id);
+            const outlineId = outlineIdFor(id);
+            const outlineObject = outlineId ? scene.objects.get(outlineId) : null;
+            if (outlineObject) {
+              const outlineCurrent = {
+                left: 0,
+                top: 0,
+                scaleX: 1,
+                scaleY: 1,
+                angle: 0,
+                skewX: 0,
+                skewY: 0,
+                ...outlineObject.transform || {}
+              };
+              const outlineNext = {
+                ...outlineCurrent,
+                left: finiteNumber(outlineCurrent.left) + (finiteNumber(next.left) - finiteNumber(current.left)),
+                top: finiteNumber(outlineCurrent.top) + (finiteNumber(next.top) - finiteNumber(current.top))
+              };
+              nextObjects.set(outlineId, { ...clonePlain(outlineObject), transform: outlineNext });
+              changedIds.push(outlineId);
+            }
           }
           if (changedIds.length === 0) return { applied: false, objectIds: [] };
           const result = commitStagedMutation(scene, {
@@ -15046,7 +15083,11 @@ void main() {
           const dy = finiteNumber(change.dy, 0);
           const transformTargetIds = new Set(transformById.keys());
           if (dx !== 0 || dy !== 0) {
-            for (const id of nextSelection) transformTargetIds.add(id);
+            for (const id of nextSelection) {
+              transformTargetIds.add(id);
+              const outlineId = outlineIdFor(id);
+              if (outlineId && nextObjects.has(outlineId)) transformTargetIds.add(outlineId);
+            }
           }
           const changedTransformIds = [];
           for (const id of transformTargetIds) {
@@ -15261,7 +15302,13 @@ void main() {
           if (!scene || scene.selectedObjectIds.size === 0) {
             return { applied: false, deletedCount: 0, deletedIds: [] };
           }
-          const deletedIds = [...scene.selectedObjectIds].filter((id) => scene.objects.has(id));
+          const selectedIds = [...scene.selectedObjectIds].filter((id) => scene.objects.has(id));
+          const deletedIds = [];
+          for (const id of selectedIds) {
+            deletedIds.push(id);
+            const outlineId = outlineIdFor(id);
+            if (outlineId && scene.objects.has(outlineId)) deletedIds.push(outlineId);
+          }
           if (deletedIds.length === 0) return { applied: false, deletedCount: 0, deletedIds };
           const nextObjects = new Map(scene.objects);
           for (const id of deletedIds) nextObjects.delete(id);
@@ -15470,6 +15517,7 @@ void main() {
           exportVideo,
           addStroke,
           selectObjects,
+          isDerivedOutline,
           transformSelection,
           replaceObjects,
           undo,
@@ -15588,6 +15636,34 @@ void main() {
         SHAPE_STROKE_GEOMETRY,
         PEN_STROKE_GEOMETRY
       ]);
+      var OUTLINE_ID_SUFFIX = "~outline";
+      var MAX_OUTLINE_BODY_ID_LENGTH = 512 - OUTLINE_ID_SUFFIX.length;
+      function isOutlineId(id) {
+        return typeof id === "string" && id.endsWith(OUTLINE_ID_SUFFIX);
+      }
+      function outlineIdFor(bodyId) {
+        if (typeof bodyId !== "string" || bodyId.length === 0) return null;
+        if (bodyId.length > MAX_OUTLINE_BODY_ID_LENGTH) return null;
+        if (isOutlineId(bodyId)) return null;
+        return bodyId + OUTLINE_ID_SUFFIX;
+      }
+      function bodyIdFor(outlineId) {
+        return isOutlineId(outlineId) ? outlineId.slice(0, -OUTLINE_ID_SUFFIX.length) : null;
+      }
+      function outlineSpecFromPair(bodyRecord, outlineRecord) {
+        if (!bodyRecord || !outlineRecord) return null;
+        const bodySize = finiteNumber(bodyRecord.style?.size, 0);
+        const outlineSize = finiteNumber(outlineRecord.style?.size, 0);
+        const width = Math.round((outlineSize - bodySize) / 2);
+        if (!Number.isInteger(width) || width < MIN_OUTLINE_WIDTH || width > MAX_OUTLINE_WIDTH) {
+          return null;
+        }
+        return {
+          enabled: true,
+          width,
+          color: outlineRecord.style?.color || DEFAULT_OUTLINE_COLOR
+        };
+      }
       var SHAPE_STROKE_OPTIONS = Object.freeze({
         ...SHAPE_STROKE_GEOMETRY,
         alreadyNormalizedPressure: true,
@@ -15825,6 +15901,12 @@ void main() {
         let pendingLassoSelection = null;
         let preservingPendingLassoSelectionEvent = false;
         let brushStyle = { ...DEFAULT_BRUSH_STYLE };
+        let outlineStyle = {
+          enabled: false,
+          color: DEFAULT_OUTLINE_COLOR,
+          width: DEFAULT_OUTLINE_WIDTH
+        };
+        let outlineControls = null;
         let brushControls = null;
         let brushPanelOpen = false;
         let selectionTarget = "stroke";
@@ -15938,7 +16020,8 @@ void main() {
             opacity: String(brushStyle.opacity)
           });
           const toolName = TOOL_STATUS_LABELS[tool] || "";
-          brushStatusRow.text.textContent = toolName ? `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}% \xB7 ${toolName}` : `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}%`;
+          const outlineSuffix = outlineStyle.enabled ? ` \xB7 \uC678\uACFD\uC120 ${outlineStyle.width}px` : "";
+          brushStatusRow.text.textContent = toolName ? `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}% \xB7 ${toolName}${outlineSuffix}` : `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}%${outlineSuffix}`;
         }
         function createRecentColorControls() {
           const row = documentRef.createElement("div");
@@ -16271,6 +16354,25 @@ void main() {
             summary
           };
         }
+        function setOutlineEnabled(enabled) {
+          outlineStyle = { ...outlineStyle, enabled: enabled === true };
+          syncBrushControls();
+          return outlineStyle.enabled;
+        }
+        function setOutlineColor(color) {
+          if (!BRUSH_COLORS.includes(color)) return outlineStyle.color;
+          outlineStyle = { ...outlineStyle, color };
+          syncBrushControls();
+          return outlineStyle.color;
+        }
+        function setOutlineWidth(value) {
+          outlineStyle = {
+            ...outlineStyle,
+            width: boundedInteger(value, MIN_OUTLINE_WIDTH, MAX_OUTLINE_WIDTH, outlineStyle.width)
+          };
+          syncBrushControls();
+          return outlineStyle.width;
+        }
         function setBrushColor(color) {
           if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
           brushStyle = { ...brushStyle, color };
@@ -16315,6 +16417,20 @@ void main() {
           brushControls.sizePreview.style.height = brushControls.sizePreview.style.width;
           brushControls.sizePreview.style.background = brushStyle.color;
           brushControls.sizePreview.style.opacity = String(brushStyle.opacity);
+          if (outlineControls) {
+            outlineControls.toggle.dataset.active = String(outlineStyle.enabled);
+            outlineControls.toggle.setAttribute?.("aria-pressed", String(outlineStyle.enabled));
+            const detailDisplay = outlineStyle.enabled ? "flex" : "none";
+            setStyles(outlineControls.palette, { display: detailDisplay });
+            setStyles(outlineControls.widthRow.row, { display: detailDisplay });
+            outlineControls.widthRow.input.value = String(outlineStyle.width);
+            outlineControls.widthRow.output.textContent = `${outlineStyle.width}px`;
+            for (const button of outlineControls.colorButtons) {
+              const active = button.dataset.fabricPilotOutlineColor === outlineStyle.color;
+              button.setAttribute?.("aria-pressed", String(active));
+              button.style.boxShadow = active ? "0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)" : "none";
+            }
+          }
           for (const button of brushControls.colorButtons) {
             const active = button.dataset.fabricPilotColor === brushStyle.color;
             button.setAttribute?.("aria-pressed", String(active));
@@ -16481,10 +16597,55 @@ void main() {
             increaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uB298\uB9AC\uAE30",
             output: "opacity"
           });
+          const outlineGroup = documentRef.createElement("div");
+          outlineGroup.className = "mpv-fabric-pilot-outline";
+          outlineGroup.setAttribute?.("role", "group");
+          outlineGroup.setAttribute?.("aria-label", "\uC678\uACFD\uC120");
+          setStyles(outlineGroup, { display: "flex", flexFlow: "row wrap", gap: "6px" });
+          const outlineToggle = labelToolbarButton(
+            createButton("\uC678\uACFD\uC120", "outline-toggle"),
+            "\uC678\uACFD\uC120 \uCF1C\uAE30/\uB044\uAE30"
+          );
+          outlineToggle.dataset.active = "false";
+          outlineToggle.setAttribute?.("aria-pressed", "false");
+          setStyles(outlineToggle, { flex: "1 1 100%" });
+          outlineGroup.appendChild(outlineToggle);
+          const outlinePalette = documentRef.createElement("div");
+          setStyles(outlinePalette, { display: "flex", flexFlow: "row wrap", gap: "4px", flex: "1 1 100%" });
+          const outlineColorButtons = BRUSH_COLORS.map((color) => {
+            const button = createButton("", `outline-color-${color.replace("#", "")}`);
+            button.dataset.fabricPilotOutlineColor = color;
+            button.setAttribute?.("aria-label", `\uC678\uACFD\uC120 \uC0C9 ${color}`);
+            button.setAttribute?.("title", `\uC678\uACFD\uC120 \uC0C9 ${color}`);
+            setStyles(button, {
+              minWidth: "20px",
+              minHeight: "20px",
+              padding: "0",
+              background: color,
+              border: color === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
+            });
+            outlinePalette.appendChild(button);
+            return button;
+          });
+          outlineGroup.appendChild(outlinePalette);
+          const outlineWidthRow = createRangeRow({
+            label: "\uC678\uACFD\uC120 \uAD75\uAE30",
+            setting: "outline-width",
+            min: MIN_OUTLINE_WIDTH,
+            max: MAX_OUTLINE_WIDTH,
+            decreaseAction: "outline-width-decrease",
+            decreaseLabel: "\uC678\uACFD\uC120 \uAD75\uAE30 1px \uC904\uC774\uAE30",
+            increaseAction: "outline-width-increase",
+            increaseLabel: "\uC678\uACFD\uC120 \uAD75\uAE30 1px \uB298\uB9AC\uAE30",
+            output: "outline-width"
+          });
+          setStyles(outlineWidthRow.row, { flex: "1 1 100%" });
+          outlineGroup.appendChild(outlineWidthRow.row);
           const recentColors2 = createRecentColorControls();
           panel.appendChild(previewRow);
           panel.appendChild(palette);
           panel.appendChild(recentColors2.row);
+          panel.appendChild(outlineGroup);
           panel.appendChild(sizeRow.row);
           panel.appendChild(opacityRow.row);
           addDomListener(settingsButton, "click", () => {
@@ -16504,6 +16665,13 @@ void main() {
           for (const button of colorButtons) {
             addDomListener(button, "click", () => setBrushColor(button.dataset.fabricPilotColor));
           }
+          addDomListener(outlineToggle, "click", () => setOutlineEnabled(!outlineStyle.enabled));
+          for (const button of outlineColorButtons) {
+            addDomListener(button, "click", () => setOutlineColor(button.dataset.fabricPilotOutlineColor));
+          }
+          addDomListener(outlineWidthRow.input, "input", () => setOutlineWidth(outlineWidthRow.input.value));
+          addDomListener(outlineWidthRow.decrease, "click", () => setOutlineWidth(outlineStyle.width - 1));
+          addDomListener(outlineWidthRow.increase, "click", () => setOutlineWidth(outlineStyle.width + 1));
           return {
             settingsButton,
             panel,
@@ -16515,7 +16683,14 @@ void main() {
             summary,
             colorPreview,
             sizePreview,
-            recentColors: recentColors2
+            recentColors: recentColors2,
+            outline: {
+              group: outlineGroup,
+              toggle: outlineToggle,
+              palette: outlinePalette,
+              colorButtons: outlineColorButtons,
+              widthRow: outlineWidthRow
+            }
           };
         }
         function createId(prefix) {
@@ -16595,7 +16770,13 @@ void main() {
             opacity: normalizePathOpacity(record.style?.opacity),
             stroke: null,
             strokeWidth: 0,
-            selectable: !transient && sceneStore.getDiagnostics().tool === "select",
+            // 외곽선은 본체에서 파생된 짝이라 **선택 대상은 아니다** — 따로 잡히면
+            // 사용자가 본체 대신 윤곽만 옮기게 되어 쌍이 어긋난다.
+            // 다만 이벤트는 받아야 한다. 외곽선의 테두리는 본체 밖으로 삐져나오므로,
+            // evented 까지 끄면 눈에 보이는 그 픽셀을 클릭해도 그냥 빠져 버린다.
+            // 클릭이 들어오면 onCanvasMouseDown 이 짝인 본체로 돌린다.
+            // 짝을 잃은 고아는 평범한 획으로 되돌아간다.
+            selectable: !transient && !sceneStore.isDerivedOutline(record.id) && sceneStore.getDiagnostics().tool === "select",
             evented: !transient && sceneStore.getDiagnostics().tool === "select",
             objectCaching: !transient,
             perPixelTargetFind: !transient,
@@ -16933,7 +17114,10 @@ void main() {
           fabricCanvas.freeDrawingCursor = "crosshair";
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
-            object.set({ selectable: nativeSelectMode, evented: nativeSelectMode });
+            object.set({
+              selectable: nativeSelectMode && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
+              evented: nativeSelectMode
+            });
           }
           if (!selectMode) {
             fabricCanvas.discardActiveObject();
@@ -16983,9 +17167,38 @@ void main() {
           metrics.recordPointerSample(sample.pressure);
         }
         function removeTransientPreview() {
-          if (!activeStroke?.preview || !fabricCanvas) return;
+          if (!fabricCanvas) return;
+          if (activeStroke?.outlinePreview) {
+            fabricCanvas.remove(activeStroke.outlinePreview);
+            activeStroke.outlinePreview = null;
+          }
+          if (!activeStroke?.preview) return;
           fabricCanvas.remove(activeStroke.preview);
           activeStroke.preview = null;
+        }
+        function makeOutlinePreviewPath(samples, style, geometryOptions, outline) {
+          if (outline?.enabled !== true) return null;
+          const width = boundedInteger(
+            outline.width,
+            MIN_OUTLINE_WIDTH,
+            MAX_OUTLINE_WIDTH,
+            DEFAULT_OUTLINE_WIDTH
+          );
+          try {
+            const strokeData = strokePathFactory(samples, {
+              size: finiteNumber(style.size, DEFAULT_BRUSH_STYLE.size) + 2 * width,
+              ...geometryOptions || null
+            });
+            if (!strokeData?.pathData) return null;
+            const record = {
+              id: null,
+              pathData: strokeData.pathData,
+              style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
+            };
+            return makeFabricPath(record, true);
+          } catch (_error) {
+            return null;
+          }
         }
         function updateTransientPreview() {
           if (!activeStroke || activeStroke.samples.length === 0) return;
@@ -16997,11 +17210,19 @@ void main() {
               ...activeStroke.tool === "pen" ? PEN_STROKE_GEOMETRY : null
             });
             if (!strokeData.pathData) return;
+            const geometryOptions = activeStroke.tool === "pen" ? PEN_STROKE_GEOMETRY : null;
+            activeStroke.outlinePreview = makeOutlinePreviewPath(
+              activeStroke.samples,
+              activeStroke.style,
+              geometryOptions,
+              activeStroke.outline
+            );
             activeStroke.preview = makeFabricPath({
               id: null,
               pathData: strokeData.pathData,
               style: { ...activeStroke.style }
             }, true);
+            if (activeStroke.outlinePreview) fabricCanvas.add(activeStroke.outlinePreview);
             fabricCanvas.add(activeStroke.preview);
             fabricCanvas.requestRenderAll();
             metrics.recordPointerPreviewLatency(now() - startedAt);
@@ -17680,6 +17901,121 @@ void main() {
           }
           return { plans, reason: null };
         }
+        function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions, budget) {
+          if (!plan?.renderGeometry?.pathData || !Array.isArray(plan.points) || plan.points.length < 2) {
+            return null;
+          }
+          if (!budget || budget.limitExceeded) return null;
+          const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
+          let strokeData;
+          try {
+            strokeData = strokePathFactory(plan.points, {
+              size,
+              last: true,
+              alreadyNormalizedPressure: true,
+              start: { cap: plan.caps?.start !== false },
+              end: { cap: plan.caps?.end !== false },
+              ...geometryOptions || null
+            });
+          } catch (_error) {
+            return null;
+          }
+          if (!strokeData?.pathData) return null;
+          let outlineContour = null;
+          try {
+            const probe = makeFabricPath({
+              id: null,
+              pathData: strokeData.pathData,
+              style: { ...record.style, size }
+            }, true);
+            const maximumScale = Math.max(1e-9, finiteNumber(sourceSelection?.maximumScale, 1));
+            const flattened = flattenFabricPath(probe.path, {
+              tolerance: Math.max(Number.EPSILON, Math.min(0.25, 0.25 / maximumScale)),
+              fillRule: probe.fillRule,
+              budget
+            });
+            if (!flattened.geometry) return null;
+            const query = createPathFillQuery(flattened.geometry, budget);
+            if (!query) return null;
+            const clipped = clipSimplePathFillPair(query, sourceSelection.query, {
+              budget,
+              polygonValidated: true
+            });
+            const side = plan.selected ? clipped.intersection : clipped.difference;
+            if (!side || side.reason || side.components.length === 0) return null;
+            outlineContour = contourPathData(side.components.flatMap((component) => component.contours));
+          } catch (_error) {
+            return null;
+          }
+          if (!outlineContour) return null;
+          const renderGeometry = { version: 1, pathData: outlineContour, fillRule: "evenodd" };
+          if (!validateDrawingRenderGeometry(renderGeometry, {
+            maxPathLength: MAX_PERSISTENCE_STRING_LENGTH
+          })) {
+            return null;
+          }
+          return { pathData: strokeData.pathData, renderGeometry };
+        }
+        function makeOutlineFragmentRecord(fragment, spec, outlineGeometry, sourceOutlineObject) {
+          const id = outlineIdFor(fragment?.id);
+          if (!id || !outlineGeometry?.renderGeometry || !outlineGeometry.pathData) return null;
+          const size = finiteNumber(fragment.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
+          const derived = {
+            id,
+            type: "stroke",
+            pathData: outlineGeometry.pathData,
+            sourcePoints: clonePlain(fragment.sourcePoints),
+            style: { ...fragment.style, color: spec.color, size },
+            renderGeometry: clonePlain(outlineGeometry.renderGeometry)
+          };
+          if (fragment.strokeCaps) derived.strokeCaps = clonePlain(fragment.strokeCaps);
+          try {
+            const path = makeFabricPath(derived);
+            if (!applySourceTransformToFragment(path, sourceOutlineObject)) return null;
+            derived.transform = captureTransform(path);
+          } catch (_error) {
+            return null;
+          }
+          return derived;
+        }
+        function deriveOutlineRecord(record, outline, geometryOptions = null) {
+          if (outline?.enabled !== true) return null;
+          const id = outlineIdFor(record?.id);
+          if (!id || !Array.isArray(record.sourcePoints) || record.sourcePoints.length === 0) return null;
+          const width = boundedInteger(
+            outline.width,
+            MIN_OUTLINE_WIDTH,
+            MAX_OUTLINE_WIDTH,
+            DEFAULT_OUTLINE_WIDTH
+          );
+          const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * width;
+          let strokeData;
+          try {
+            strokeData = strokePathFactory(record.sourcePoints, {
+              size,
+              last: true,
+              alreadyNormalizedPressure: true,
+              start: { cap: record.strokeCaps?.start !== false },
+              end: { cap: record.strokeCaps?.end !== false },
+              ...geometryOptions || null
+            });
+          } catch (_error) {
+            return null;
+          }
+          if (!strokeData?.pathData) return null;
+          const derived = {
+            id,
+            type: "stroke",
+            pathData: strokeData.pathData,
+            // strokeData.sourcePoints 가 아니라 본체 것을 복사한다 — 재생성이 멱등해야
+            // 조각을 다시 자를 때도 같은 외곽선이 나온다.
+            sourcePoints: clonePlain(record.sourcePoints),
+            style: { ...record.style, color: outline.color || DEFAULT_OUTLINE_COLOR, size }
+          };
+          if (record.strokeCaps) derived.strokeCaps = clonePlain(record.strokeCaps);
+          derived.transform = captureTransform(makeFabricPath(derived));
+          return derived;
+        }
         function createStrokeFragment(record, points, selected, caps = {}, sourceObject = null, renderGeometry = null, geometryOptions = null) {
           if (!Array.isArray(points) || points.length < 2) return null;
           let strokeData;
@@ -17984,13 +18320,25 @@ void main() {
             abortPendingLassoSelection({ authoritative: true });
             return { applied: false, reason: "stale-pending-lasso" };
           }
+          const dropsFragment = (object) => pending.selectedFragmentIds.has(object.id) || pending.selectedFragmentIds.has(bodyIdFor(object.id));
           const replacements = pending.replacements.map((replacement) => ({
             removeId: replacement.removeId,
-            addObjects: replacement.addObjects.filter((object) => !pending.selectedFragmentIds.has(object.id))
+            addObjects: replacement.addObjects.filter((object) => !dropsFragment(object))
           }));
           const replacementSourceIds = new Set(replacements.map((replacement) => replacement.removeId));
+          const snapshotIds = new Set(
+            (sceneStore.getActiveSceneSnapshot()?.objects || []).map((object) => object.id)
+          );
           for (const id of pending.selectedPersistedIds) {
-            if (!replacementSourceIds.has(id)) replacements.push({ removeId: id, addObjects: [] });
+            if (!replacementSourceIds.has(id)) {
+              replacements.push({ removeId: id, addObjects: [] });
+              replacementSourceIds.add(id);
+            }
+            const outlineId = outlineIdFor(id);
+            if (outlineId && snapshotIds.has(outlineId) && !replacementSourceIds.has(outlineId)) {
+              replacements.push({ removeId: outlineId, addObjects: [] });
+              replacementSourceIds.add(outlineId);
+            }
           }
           const deletedIds = [...pending.selectedFragmentIds, ...pending.selectedPersistedIds];
           const result = sceneStore.replaceObjects({
@@ -18021,7 +18369,7 @@ void main() {
           const objects = objectIds.map((id) => objectsById.get(id)).filter(Boolean);
           for (const object of fabricCanvas.getObjects()) {
             if (object.__baeframeTransient) continue;
-            const selected = ids.has(object.__baeframeObjectId);
+            const selected = ids.has(object.__baeframeObjectId) && !sceneStore.isDerivedOutline(object.__baeframeObjectId);
             object.set({ selectable: selected, evented: selected });
           }
           if (objects.length === 1) {
@@ -18097,8 +18445,11 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
+          const selectedIdSet = /* @__PURE__ */ new Set();
           for (const record of snapshot?.objects || []) {
             if (record.type !== "stroke") continue;
+            const targetId = sceneStore.isDerivedOutline(record.id) ? bodyIdFor(record.id) : record.id;
+            if (!targetId || selectedIdSet.has(targetId)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -18125,7 +18476,10 @@ void main() {
             if (touch.limitExceeded) {
               return fail("selection-complexity-limit-exceeded");
             }
-            if (touch.hit) selectedObjectIds.push(record.id);
+            if (touch.hit) {
+              selectedIdSet.add(targetId);
+              selectedObjectIds.push(targetId);
+            }
           }
           retireReplacedPendingSelection(failureSelectionContext);
           activateObjectIds(selectedObjectIds);
@@ -18144,12 +18498,16 @@ void main() {
           const canvasObjects = new Map(
             fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
           );
+          const recordsById = new Map((snapshot?.objects || []).map((object) => [object.id, object]));
           const replacementPlans = [];
           const selectedPersistedIds = /* @__PURE__ */ new Set();
           const polygonBounds = boundsForPoints(polygon);
           const sceneLimits = sceneStore.getDiagnostics();
           const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
+          const outlineGeometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
           let accumulatedFragments = 0;
+          let accumulatedOutlineFragments = 0;
+          let accumulatedRemovedPairs = 0;
           const fail = (reason) => {
             const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
             return {
@@ -18158,20 +18516,31 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
-          const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
+          const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null, outlineObject = null) => {
             accumulatedFragments += componentPlans.length;
-            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
+            const outlineFragments = outlineSpec ? componentPlans.filter((plan) => plan.outlineRenderGeometry).length : 0;
+            const removedPairs = outlineSpec ? 1 : 0;
+            accumulatedOutlineFragments += outlineFragments;
+            accumulatedRemovedPairs += removedPairs;
+            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) - accumulatedRemovedPairs + accumulatedFragments + accumulatedOutlineFragments;
             if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
               return false;
             }
-            replacementPlans.push({ record, object, componentPlans, geometryOptions });
+            replacementPlans.push({
+              record,
+              object,
+              componentPlans,
+              geometryOptions,
+              outlineSpec,
+              outlineObject
+            });
             return true;
           };
           if (!validateSimpleContour(polygon, geometryBudget)) {
             return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
           }
           for (const record of snapshot?.objects || []) {
-            if (record.type !== "stroke") continue;
+            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -18201,6 +18570,29 @@ void main() {
             if (!geometryOptions) {
               return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
             }
+            const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
+            const queueWithOutlines = (plans) => {
+              if (outlineSpec && record.renderGeometry === void 0) {
+                for (const plan of plans) {
+                  plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
+                    plan,
+                    record,
+                    outlineSpec,
+                    sourceSelection,
+                    geometryOptions,
+                    outlineGeometryBudget
+                  );
+                }
+              }
+              return queueReplacementPlan(
+                record,
+                object,
+                plans,
+                geometryOptions,
+                outlineSpec,
+                canvasObjects.get(outlineIdFor(record.id)) || null
+              );
+            };
             if (!strokeHasSplittableLength(record.sourcePoints)) {
               selectedPersistedIds.add(record.id);
               continue;
@@ -18232,7 +18624,7 @@ void main() {
               if (!compact.plans || compact.reason) {
                 return fail(compact.reason || "selection-geometry-unavailable");
               }
-              if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
+              if (!queueWithOutlines(compact.plans)) {
                 return fail("lasso-fragment-limit-exceeded");
               }
               continue;
@@ -18279,7 +18671,7 @@ void main() {
                 if (!compact.plans || compact.reason) {
                   return fail(compact.reason || "selection-geometry-unavailable");
                 }
-                if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
+                if (!queueWithOutlines(compact.plans)) {
                   return fail("lasso-fragment-limit-exceeded");
                 }
                 continue;
@@ -18353,7 +18745,7 @@ void main() {
               );
             }
             componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
-            if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
+            if (!queueWithOutlines(componentPlans)) {
               return fail("lasso-fragment-limit-exceeded");
             }
           }
@@ -18361,6 +18753,7 @@ void main() {
           const selectedFragmentIds = /* @__PURE__ */ new Set();
           for (const replacementPlan of replacementPlans) {
             const addObjects = [];
+            const outlineAddObjects = [];
             let fragmentBuildFailed = false;
             for (const plan of replacementPlan.componentPlans) {
               const fragment = createStrokeFragment(
@@ -18378,9 +18771,22 @@ void main() {
               }
               addObjects.push(fragment);
               if (plan.selected) selectedFragmentIds.add(fragment.id);
+              if (replacementPlan.outlineSpec && plan.outlineRenderGeometry) {
+                const outlineFragment = makeOutlineFragmentRecord(
+                  fragment,
+                  replacementPlan.outlineSpec,
+                  plan.outlineRenderGeometry,
+                  replacementPlan.outlineObject
+                );
+                if (outlineFragment) outlineAddObjects.push(outlineFragment);
+              }
             }
             if (fragmentBuildFailed) {
               return fail("fragment-build-failed");
+            }
+            const outlineId = outlineIdFor(replacementPlan.record.id);
+            if (replacementPlan.outlineSpec && outlineId) {
+              replacements.push({ removeId: outlineId, addObjects: outlineAddObjects });
             }
             replacements.push({
               removeId: replacementPlan.record.id,
@@ -18391,6 +18797,7 @@ void main() {
           let result = { applied: false, selectedObjectIds };
           if (replacements.length > 0 && selectedFragmentIds.size > 0) {
             const staged = stagePendingLassoSelection({
+              // 외곽선 교체는 조각 루프에서 이미 만들어 넣었다(잘라 낸 기하 포함).
               replacements,
               selectedPersistedIds,
               selectedFragmentIds,
@@ -18472,6 +18879,7 @@ void main() {
           const samples = activeStroke.samples;
           const style = { ...activeStroke.style };
           const activeStrokeTool = activeStroke.tool;
+          const activeStrokeOutline = activeStroke.outline;
           removeTransientPreview();
           let strokeData;
           try {
@@ -18497,12 +18905,18 @@ void main() {
           };
           const path = makeFabricPath(record);
           record.transform = captureTransform(path);
-          const result = sceneStore.addStroke(record);
+          const outlineRecord = deriveOutlineRecord(
+            record,
+            activeStrokeOutline,
+            activeStrokeTool === "pen" ? PEN_STROKE_GEOMETRY : null
+          );
+          const result = sceneStore.addStroke(record, outlineRecord);
           activeStroke = null;
           if (!result.applied) {
             settleArmedFramePreview();
             return result;
           }
+          if (result.outlineId && outlineRecord) fabricCanvas.add(makeFabricPath(outlineRecord));
           fabricCanvas.add(path);
           fabricCanvas.requestRenderAll();
           updateObjectMetric();
@@ -18692,7 +19106,12 @@ void main() {
           };
         }
         function clearShapePreviewFor(gesture) {
-          if (!gesture?.preview || !fabricCanvas) return;
+          if (!fabricCanvas) return;
+          if (gesture?.outlinePreview) {
+            fabricCanvas.remove(gesture.outlinePreview);
+            gesture.outlinePreview = null;
+          }
+          if (!gesture?.preview) return;
           fabricCanvas.remove(gesture.preview);
           gesture.preview = null;
           fabricCanvas.requestRenderAll();
@@ -18707,6 +19126,17 @@ void main() {
           }
           const preview = makeFabricPath(record, true);
           preview.__baeframeTransient = true;
+          const outlinePreview = makeOutlinePreviewPath(
+            record.sourcePoints,
+            record.style,
+            SHAPE_STROKE_GEOMETRY,
+            shapeGesture.outline
+          );
+          if (outlinePreview) {
+            outlinePreview.__baeframeTransient = true;
+            shapeGesture.outlinePreview = outlinePreview;
+            fabricCanvas.add(outlinePreview);
+          }
           shapeGesture.preview = preview;
           fabricCanvas.add(preview);
           fabricCanvas.requestRenderAll();
@@ -18733,11 +19163,13 @@ void main() {
           }
           const path = makeFabricPath(record);
           record.transform = captureTransform(path);
-          const result = sceneStore.addStroke(record);
+          const outlineRecord = deriveOutlineRecord(record, gesture.outline, SHAPE_STROKE_GEOMETRY);
+          const result = sceneStore.addStroke(record, outlineRecord);
           if (!result.applied) {
             settleArmedFramePreview();
             return result;
           }
+          if (result.outlineId && outlineRecord) fabricCanvas.add(makeFabricPath(outlineRecord));
           fabricCanvas.add(path);
           fabricCanvas.requestRenderAll();
           updateObjectMetric();
@@ -18854,7 +19286,11 @@ void main() {
           const polygonBounds = boundsForPoints(polygon);
           let hidden = 0;
           for (const record of context.snapshot?.objects || []) {
-            if (record.type !== "stroke" || gesture.erasedIds.has(record.id)) continue;
+            if (record.type !== "stroke") continue;
+            const derivedOutline = sceneStore.isDerivedOutline(record.id);
+            if (derivedOutline && gesture.mode === "pixel") continue;
+            const targetId = derivedOutline ? bodyIdFor(record.id) : record.id;
+            if (!targetId || gesture.erasedIds.has(targetId)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = context.canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -18866,11 +19302,16 @@ void main() {
             if (!fillSelection.query || fillSelection.reason) continue;
             const touch = pathFillOverlapsPolygon(fillSelection.query, sourceSelection.query, context.budget);
             if (touch.limitExceeded || !touch.hit) continue;
-            gesture.erasedIds.add(record.id);
-            if (object && gesture.mode !== "pixel") {
-              gesture.hiddenObjects.push(object);
-              object.set?.({ visible: false });
-              hidden += 1;
+            gesture.erasedIds.add(targetId);
+            if (gesture.mode !== "pixel") {
+              const outlineId = outlineIdFor(targetId);
+              for (const hideId of outlineId ? [targetId, outlineId] : [targetId]) {
+                const hideObject = context.canvasObjects.get(hideId);
+                if (!hideObject || hideObject.visible === false) continue;
+                gesture.hiddenObjects.push(hideObject);
+                hideObject.set?.({ visible: false });
+                hidden += 1;
+              }
             }
           }
           context.hidden += hidden;
@@ -19077,6 +19518,10 @@ void main() {
             start.target.set?.(start.transform);
             applyMoveOnlyConstraints(start.target);
             start.target.setCoords?.();
+            for (const pair of start.outlinePairs || []) {
+              pair.object.set?.({ left: pair.startLeft, top: pair.startTop });
+              pair.object.setCoords?.();
+            }
             if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
           } catch (error) {
             lastError = error.message;
@@ -19212,6 +19657,9 @@ void main() {
               samples: [],
               preview: null,
               style: { ...brushStyle },
+              // 다른 손가락이 그리는 도중 팔레트를 만져도 이 획의 외곽선은 바뀌지 않는다.
+              // 굵기·색·불투명도를 pointerdown 에 굳히는 것과 같은 규칙이다.
+              outline: { ...outlineStyle },
               tool
             };
             event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -19230,7 +19678,8 @@ void main() {
               origin,
               current: origin,
               preview: null,
-              style: { ...brushStyle }
+              style: { ...brushStyle },
+              outline: { ...outlineStyle }
             };
             try {
               event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -19741,22 +20190,86 @@ void main() {
           }
           transformStart = {
             target,
-            transform: captureTransform(target)
+            transform: captureTransform(target),
+            // 외곽선은 선택 대상이 아니라 fabric 의 이동 타깃에 들어가지 않는다.
+            // 드래그 중에도 짝이 붙어 다니도록 출발 위치를 기억해 두고 같은 델타를 준다.
+            outlinePairs: collectDraggedOutlinePairs(target)
           };
           if (pendingLassoSelection) {
             pendingLassoSelection.activeTarget = target;
             pendingLassoSelection.startTargetTransform = clonePlain(transformStart.transform);
           }
         }
+        function collectDraggedOutlinePairs(target) {
+          if (!fabricCanvas || !target) return [];
+          const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
+          const canvasObjects = new Map(
+            fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
+          );
+          const pairs = [];
+          for (const child of children) {
+            const outlineId = outlineIdFor(child?.__baeframeObjectId);
+            const outlineObject = outlineId ? canvasObjects.get(outlineId) : null;
+            if (!outlineObject) continue;
+            pairs.push({
+              object: outlineObject,
+              startLeft: finiteNumber(outlineObject.left),
+              startTop: finiteNumber(outlineObject.top)
+            });
+          }
+          return pairs;
+        }
+        function syncDraggedOutlinePairs() {
+          const start = transformStart;
+          if (!start?.outlinePairs?.length) return;
+          const target = start.outlineBaseTarget || start.target;
+          const base = start.outlineBaseTransform || start.transform;
+          if (!target || !base) return;
+          const dx = finiteNumber(target.left) - finiteNumber(base.left);
+          const dy = finiteNumber(target.top) - finiteNumber(base.top);
+          for (const pair of start.outlinePairs) {
+            pair.object.set?.({ left: pair.startLeft + dx, top: pair.startTop + dy });
+            pair.object.setCoords?.();
+          }
+          fabricCanvas?.requestRenderAll();
+        }
+        function onCanvasMouseDown(event) {
+          if (!fabricCanvas || !inputEnabled) return;
+          const target = event?.target;
+          const outlineId = target?.__baeframeObjectId;
+          if (!outlineId || !sceneStore.isDerivedOutline(outlineId)) return;
+          if (sceneStore.getDiagnostics().tool !== "select") return;
+          const bodyId = bodyIdFor(outlineId);
+          const bodyPath = fabricCanvas.getObjects().find((object) => object.__baeframeObjectId === bodyId);
+          if (!bodyPath?.selectable) return;
+          fabricCanvas.setActiveObject?.(bodyPath);
+          sceneStore.selectObjects([bodyId]);
+          refreshSelectionInteractionPolicy();
+          fabricCanvas.requestRenderAll();
+        }
         function onObjectMoving(event) {
           const target = event?.target;
-          if (!pendingLassoSelection) return;
+          if (!pendingLassoSelection) {
+            syncDraggedOutlinePairs();
+            return;
+          }
           if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
             transformStart = null;
             abortPendingLassoSelection();
             return;
           }
-          if (!materializePendingLassoSelection(target)) transformStart = null;
+          const wasMoving = pendingLassoSelection.phase === "moving";
+          if (!materializePendingLassoSelection(target)) {
+            transformStart = null;
+            return;
+          }
+          if (!wasMoving && transformStart) {
+            const activeTarget = pendingLassoSelection.activeTarget || transformStart.target;
+            transformStart.outlineBaseTarget = activeTarget;
+            transformStart.outlineBaseTransform = captureTransform(activeTarget);
+            transformStart.outlinePairs = collectDraggedOutlinePairs(activeTarget);
+          }
+          syncDraggedOutlinePairs();
         }
         function onObjectModified(event) {
           const target = event?.target;
@@ -19825,6 +20338,7 @@ void main() {
           addDomListener(documentRef, "keydown", onOverlayKeyDown, true);
           addDomListener(documentRef, "keyup", onOverlayKeyUp, true);
           addDomListener(windowRef, "blur", onOverlayWindowBlur);
+          addFabricListener("mouse:down", onCanvasMouseDown);
           addFabricListener("selection:created", onSelectionChanged);
           addFabricListener("selection:updated", onSelectionChanged);
           addFabricListener("selection:cleared", onSelectionCleared);
@@ -19857,9 +20371,11 @@ void main() {
             applyMoveOnlyConstraints(object);
             applyUnselectedPermanentPathPolicy(object, tolerance);
             const activeInCustomSelection = selectTool && !nativeSelection && activeIds.has(object.__baeframeObjectId);
+            const interactive = nativeSelection || activeInCustomSelection;
             object.set({
-              selectable: nativeSelection || activeInCustomSelection,
-              evented: nativeSelection || activeInCustomSelection
+              selectable: interactive && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
+              // 외곽선도 이벤트는 받는다 — 그 위 클릭을 짝인 본체로 돌리기 위해서다.
+              evented: interactive
             });
             object.setCoords?.();
           }
@@ -20045,6 +20561,7 @@ void main() {
           shapeMenuControls = null;
           brushStatusRow = null;
           recentColorControls = null;
+          outlineControls = null;
           badge = null;
           sizeAdjustHud = null;
           sizeAdjustHudLabel = null;
@@ -20115,6 +20632,7 @@ void main() {
             brushControls = createBrushSettingsControls();
             brushStatusRow = createBrushStatusRow();
             recentColorControls = brushControls.recentColors;
+            outlineControls = brushControls.outline;
             selectionControls = createSelectionControls();
             eraserModeControls = createEraserModeControls();
             badge = documentRef.createElement("span");
