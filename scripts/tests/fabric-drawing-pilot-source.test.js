@@ -1580,6 +1580,34 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.doesNotMatch(fabricRuntimeSource, /maxHeight: '210px'/);
 });
 
+test('오버레이 스크롤바는 본체 테마와 같은 값을 쓴다', () => {
+  // 오버레이는 별도 BrowserWindow 라 renderer/styles/main.css 를 불러오지 않는다.
+  // 스크롤바를 안 적으면 윈도우 기본 막대(밝은 회색 + 화살표 버튼)가 그려져
+  // 어두운 팔레트 위에 홀로 튄다.
+  //
+  // 값을 손으로 베껴 둔 것이므로 본체 테마가 바뀌면 소리 없이 어긋난다.
+  // 그래서 main.css 에서 **실제 값을 뽑아** 대조한다.
+  // 선택자를 **줄 처음**에 앵커한다. 그러지 않으면 `.playback-controls-scroll::`
+  // 같은 한정 규칙이 먼저 잡혀 엉뚱한 값과 대조하게 된다.
+  const thumb = /^[ \t]*::-webkit-scrollbar-thumb \{\s*background: (rgba\([^)]+\));\s*border-radius: (\d+px);/m;
+  const mainThumb = mainCss.match(thumb);
+  assert.ok(mainThumb, 'main.css 에서 스크롤바 thumb 규칙을 찾지 못했다');
+  const overlayThumb = overlayHostSource.match(thumb);
+  assert.ok(overlayThumb, '오버레이에 스크롤바 thumb 규칙이 없다 — 윈도우 기본 막대가 나온다');
+  assert.equal(overlayThumb[1], mainThumb[1], '스크롤바 thumb 색이 본체와 다르다');
+  assert.equal(overlayThumb[2], mainThumb[2], '스크롤바 thumb 모서리가 본체와 다르다');
+
+  const width = /^[ \t]*::-webkit-scrollbar \{\s*width: (\d+px);\s*height: (\d+px);/m;
+  const mainWidth = mainCss.match(width);
+  const overlayWidth = overlayHostSource.match(width);
+  assert.ok(overlayWidth, '오버레이에 스크롤바 폭 규칙이 없다');
+  assert.equal(overlayWidth[1], mainWidth[1], '스크롤바 폭이 본체와 다르다');
+  assert.equal(overlayWidth[2], mainWidth[2], '스크롤바 높이가 본체와 다르다');
+
+  // 트랙은 비워 둬야 팔레트 배경이 그대로 비친다.
+  assert.match(overlayHostSource, /^[ \t]*::-webkit-scrollbar-track \{\s*background: transparent;/m);
+});
+
 test('팔레트가 붙이는 모든 클래스는 스타일 출처를 갖는다', () => {
   // 이 라운드에서 UI 가 깨진 근본 원인이다. `mpv-fabric-pilot-brush-status` 와
   // `-eraser-mode` 는 JS 가 클래스를 붙이지만 **어디에도 CSS 규칙이 없었다.**
