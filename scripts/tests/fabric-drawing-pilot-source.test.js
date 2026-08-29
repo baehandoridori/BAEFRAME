@@ -1850,8 +1850,11 @@ test('the outline section sits under the colour palette in the brush panel', () 
   // 분할에서 외곽선은 **같은 폴리곤으로 잘라** 조각마다 다시 만든다.
   assert.match(
     fabricRuntimeSource,
-    /function buildClippedOutlineRenderGeometry\(plan, record, spec, sourceSelection, geometryOptions\) \{/
+    /function buildClippedOutlineRenderGeometry\(plan, record, spec, sourceSelection, geometryOptions, budget\) \{/
   );
+  // 조각마다 새 예산을 주면 512조각에서 설정 한도의 수백 배를 동기로 돌아 멈춘다.
+  assert.match(fabricRuntimeSource, /const outlineGeometryBudget = createGeometryBudget\(maxSelectionGeometryOperations\);/);
+
   assert.match(fabricRuntimeSource, /function makeOutlineFragmentRecord\(fragment, spec, renderGeometry\) \{/);
   // style 에 필드를 늘리면 구버전 앱이 문서를 통째로 거부한다.
   assert.doesNotMatch(fabricRuntimeSource, /outlineWidth:/);

@@ -17176,7 +17176,7 @@ void main() {
           fabricCanvas.remove(activeStroke.preview);
           activeStroke.preview = null;
         }
-        function makeOutlinePreviewPath(samples, style, geometryOptions) {
+        function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData) {
           if (outlineStyle.enabled !== true) return null;
           const width = boundedInteger(
             outlineStyle.width,
@@ -17190,11 +17190,18 @@ void main() {
               ...geometryOptions || null
             });
             if (!strokeData?.pathData) return null;
-            return makeFabricPath({
+            const record = {
               id: null,
               pathData: strokeData.pathData,
               style: { ...style, color: outlineStyle.color || DEFAULT_OUTLINE_COLOR }
-            }, true);
+            };
+            const ringPathData = bodyPathData ? `${strokeData.pathData} ${bodyPathData}` : null;
+            if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
+              record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: "evenodd" };
+            } else if (finiteNumber(style.opacity, 1) < 1) {
+              return null;
+            }
+            return makeFabricPath(record, true);
           } catch (_error) {
             return null;
           }
@@ -17213,7 +17220,8 @@ void main() {
             activeStroke.outlinePreview = makeOutlinePreviewPath(
               activeStroke.samples,
               activeStroke.style,
-              geometryOptions
+              geometryOptions,
+              strokeData.pathData
             );
             activeStroke.preview = makeFabricPath({
               id: null,
@@ -17899,11 +17907,11 @@ void main() {
           }
           return { plans, reason: null };
         }
-        function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions) {
+        function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions, budget) {
           if (!plan?.renderGeometry?.pathData || !Array.isArray(plan.points) || plan.points.length < 2) {
             return null;
           }
-          const budget = createGeometryBudget(maxSelectionGeometryOperations);
+          if (!budget || budget.limitExceeded) return null;
           const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
           let strokeData;
           try {
@@ -18499,7 +18507,10 @@ void main() {
           const polygonBounds = boundsForPoints(polygon);
           const sceneLimits = sceneStore.getDiagnostics();
           const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
+          const outlineGeometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
           let accumulatedFragments = 0;
+          let accumulatedOutlineFragments = 0;
+          let accumulatedRemovedPairs = 0;
           const fail = (reason) => {
             const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
             return {
@@ -18510,7 +18521,11 @@ void main() {
           };
           const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null) => {
             accumulatedFragments += componentPlans.length;
-            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
+            const outlineFragments = outlineSpec ? componentPlans.filter((plan) => plan.outlineRenderGeometry).length : 0;
+            const removedPairs = outlineSpec ? 1 : 0;
+            accumulatedOutlineFragments += outlineFragments;
+            accumulatedRemovedPairs += removedPairs;
+            const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) - accumulatedRemovedPairs + accumulatedFragments + accumulatedOutlineFragments;
             if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
               return false;
             }
@@ -18560,7 +18575,8 @@ void main() {
                     record,
                     outlineSpec,
                     sourceSelection,
-                    geometryOptions
+                    geometryOptions,
+                    outlineGeometryBudget
                   );
                 }
               }
@@ -19100,7 +19116,8 @@ void main() {
           const outlinePreview = makeOutlinePreviewPath(
             record.sourcePoints,
             record.style,
-            SHAPE_STROKE_GEOMETRY
+            SHAPE_STROKE_GEOMETRY,
+            record.pathData
           );
           if (outlinePreview) {
             outlinePreview.__baeframeTransient = true;

@@ -16610,3 +16610,27 @@ test('splitting an already-split outlined stroke leaves no orphan outline', asyn
     await harness.destroy();
   }
 });
+
+test('the gesture preview uses the same ring as the committed outline', async () => {
+  // 미리보기를 채워진 판으로 두면 불투명도 1 미만에서 중심만 두 번 합성돼
+  // 손을 떼는 순간 색이 변한다 — 미리보기의 목적이 바로 그 변화를 없애는 것이다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { color: '#ffffff', width: 6 });
+    const pointerId = 9401;
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 100, pointerId, 1);
+
+    const previews = harness.canvas.getObjects()
+      .filter(object => object.__baeframeObjectId === null);
+    assert.equal(previews.length, 2);
+    // 아래에 깔린 것이 외곽선이고, 커밋본과 같은 evenodd 고리여야 한다.
+    assert.equal(previews[0].fillRule, 'evenodd', '미리보기 외곽선도 고리여야 한다');
+
+    harness.dispatchCapturedPointerUp(120, 100, pointerId);
+    const outline = outlineObjects(harness)[0];
+    assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+  } finally {
+    await harness.destroy();
+  }
+});

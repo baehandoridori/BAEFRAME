@@ -4373,11 +4373,10 @@ function createFabricOverlayRuntime(options = {}) {
   // 손을 떼는 순간 자국이 확 커져, 기존 그림이나 화면 가장자리 옆에 정확히
   // 놓으려는 사용자가 결과를 예측할 수 없다.
   //
-  // 미리보기 레코드는 id 가 없어 짝 규약을 쓸 수 없으므로, 굵은 판을 **먼저**
-  // 올리고 본체를 나중에 올려 z-order 만 맞춘다. 고리로 깎지 않는 이유는
-  // 미리보기가 캔버스에만 살고 저장되지 않기 때문이다 — 불투명도가 1 미만이면
-  // 중심이 조금 진해 보이지만, 손을 떼면 곧바로 고리로 정리된다.
-  function makeOutlinePreviewPath(samples, style, geometryOptions) {
+  // 커밋본과 **같은 고리**로 만든다. 채워진 판으로 두면 불투명도 1 미만에서
+  // 미리보기 중심만 두 번 합성돼(50% 두 겹 = 75%) 손을 떼는 순간 색이 변한다 —
+  // 미리보기의 목적이 바로 그 변화를 없애는 것이다.
+  function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData) {
     if (outlineStyle.enabled !== true) return null;
     const width = boundedInteger(
       outlineStyle.width,
@@ -4391,11 +4390,20 @@ function createFabricOverlayRuntime(options = {}) {
         ...(geometryOptions || null)
       });
       if (!strokeData?.pathData) return null;
-      return makeFabricPath({
+      const record = {
         id: null,
         pathData: strokeData.pathData,
         style: { ...style, color: outlineStyle.color || DEFAULT_OUTLINE_COLOR }
-      }, true);
+      };
+      const ringPathData = bodyPathData ? `${strokeData.pathData} ${bodyPathData}` : null;
+      if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
+        record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: 'evenodd' };
+      } else if (finiteNumber(style.opacity, 1) < 1) {
+        // 고리를 못 만드는데 반투명이면, 채워진 판은 중심 색을 바꿔 놓는다.
+        // 미리보기를 생략해 커밋 결과와 어긋나지 않게 한다.
+        return null;
+      }
+      return makeFabricPath(record, true);
     } catch (_error) {
       return null;
     }
@@ -4415,7 +4423,8 @@ function createFabricOverlayRuntime(options = {}) {
       activeStroke.outlinePreview = makeOutlinePreviewPath(
         activeStroke.samples,
         activeStroke.style,
-        geometryOptions
+        geometryOptions,
+        strokeData.pathData
       );
       activeStroke.preview = makeFabricPath({
         id: null,
@@ -5228,13 +5237,15 @@ function createFabricOverlayRuntime(options = {}) {
   // 잘라, 조각이 실제로 남은 자리에만 테두리가 남게 한다. 마지막에 본체 조각 윤곽을
   // 합쳐 evenodd 로 칠하면 겹침이 상쇄돼 고리가 된다(불투명도 이중 합성 방지).
   //
-  // 여기서 실패해도 본체 분할은 그대로 성공해야 한다. 예산을 따로 쓰고, 어느 단계든
-  // 어긋나면 null 을 돌려 그 조각만 외곽선 없이 남긴다 — 분할 자체를 실패시키는 것보다 낫다.
-  function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions) {
+  // 여기서 실패해도 본체 분할은 그대로 성공해야 한다. 예산은 본체와 **따로** 두되
+  // 조각들이 **함께** 쓴다 — 조각마다 새 예산을 주면 512조각에서 설정 한도의
+  // 수백 배를 동기로 돌아 손을 떼는 순간 오버레이가 멈춘다.
+  // 어느 단계든 어긋나면 null 을 돌려 그 조각만 외곽선 없이 남긴다.
+  function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions, budget) {
     if (!plan?.renderGeometry?.pathData || !Array.isArray(plan.points) || plan.points.length < 2) {
       return null;
     }
-    const budget = createGeometryBudget(maxSelectionGeometryOperations);
+    if (!budget || budget.limitExceeded) return null;
     const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
     let strokeData;
     try {
@@ -5919,7 +5930,12 @@ function createFabricOverlayRuntime(options = {}) {
     const polygonBounds = boundsForPoints(polygon);
     const sceneLimits = sceneStore.getDiagnostics();
     const geometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
+    // 외곽선 재생성 전용 예산. 본체와 분리해 외곽선이 실패해도 분할은 성공하게 하되,
+    // 조각 전체가 하나를 나눠 써 총 작업량이 설정 한도를 넘지 않게 한다.
+    const outlineGeometryBudget = createGeometryBudget(maxSelectionGeometryOperations);
     let accumulatedFragments = 0;
+    let accumulatedOutlineFragments = 0;
+    let accumulatedRemovedPairs = 0;
     const fail = reason => {
       const restoredSelectionIds = restoreSelectionContext(failureSelectionContext);
       return {
@@ -5930,9 +5946,18 @@ function createFabricOverlayRuntime(options = {}) {
     };
     const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null) => {
       accumulatedFragments += componentPlans.length;
+      // 외곽선 조각도 씬에 들어가는 오브젝트다. 세지 않으면 상한 근처에서 스테이징은
+      // 통과하고 replaceObjects 가 scene-object-limit-exceeded 로 되돌린다.
+      const outlineFragments = outlineSpec
+        ? componentPlans.filter(plan => plan.outlineRenderGeometry).length
+        : 0;
+      // 짝인 낡은 외곽선도 함께 제거되므로 그만큼 자리가 빈다.
+      const removedPairs = outlineSpec ? 1 : 0;
+      accumulatedOutlineFragments += outlineFragments;
+      accumulatedRemovedPairs += removedPairs;
       const projectedObjectCount = snapshot.objects.length -
-        (replacementPlans.length + 1) +
-        accumulatedFragments;
+        (replacementPlans.length + 1) - accumulatedRemovedPairs +
+        accumulatedFragments + accumulatedOutlineFragments;
       if (accumulatedFragments > maxLassoFragments ||
           projectedObjectCount > sceneLimits.maxObjects) {
         return false;
@@ -5996,7 +6021,8 @@ function createFabricOverlayRuntime(options = {}) {
               record,
               outlineSpec,
               sourceSelection,
-              geometryOptions
+              geometryOptions,
+              outlineGeometryBudget
             );
           }
         }
@@ -6606,7 +6632,8 @@ function createFabricOverlayRuntime(options = {}) {
     const outlinePreview = makeOutlinePreviewPath(
       record.sourcePoints,
       record.style,
-      SHAPE_STROKE_GEOMETRY
+      SHAPE_STROKE_GEOMETRY,
+      record.pathData
     );
     if (outlinePreview) {
       outlinePreview.__baeframeTransient = true;
