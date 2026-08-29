@@ -4376,10 +4376,10 @@ function createFabricOverlayRuntime(options = {}) {
   // 커밋본과 **같은 고리**로 만든다. 채워진 판으로 두면 불투명도 1 미만에서
   // 미리보기 중심만 두 번 합성돼(50% 두 겹 = 75%) 손을 떼는 순간 색이 변한다 —
   // 미리보기의 목적이 바로 그 변화를 없애는 것이다.
-  function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData) {
-    if (outlineStyle.enabled !== true) return null;
+  function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData, outline) {
+    if (outline?.enabled !== true) return null;
     const width = boundedInteger(
-      outlineStyle.width,
+      outline.width,
       MIN_OUTLINE_WIDTH,
       MAX_OUTLINE_WIDTH,
       DEFAULT_OUTLINE_WIDTH
@@ -4393,7 +4393,7 @@ function createFabricOverlayRuntime(options = {}) {
       const record = {
         id: null,
         pathData: strokeData.pathData,
-        style: { ...style, color: outlineStyle.color || DEFAULT_OUTLINE_COLOR }
+        style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
       };
       const ringPathData = bodyPathData ? `${strokeData.pathData} ${bodyPathData}` : null;
       if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
@@ -4424,7 +4424,8 @@ function createFabricOverlayRuntime(options = {}) {
         activeStroke.samples,
         activeStroke.style,
         geometryOptions,
-        strokeData.pathData
+        strokeData.pathData,
+        activeStroke.outline
       );
       activeStroke.preview = makeFabricPath({
         id: null,
@@ -6378,8 +6379,9 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const samples = activeStroke.samples;
     const style = { ...activeStroke.style };
-    // activeStroke 는 커밋 도중 null 이 되므로 도구를 먼저 지역 변수로 뽑는다.
+    // activeStroke 는 커밋 도중 null 이 되므로 도구와 외곽선 설정을 먼저 뽑는다.
     const activeStrokeTool = activeStroke.tool;
+    const activeStrokeOutline = activeStroke.outline;
     removeTransientPreview();
     let strokeData;
     try {
@@ -6407,7 +6409,7 @@ function createFabricOverlayRuntime(options = {}) {
     record.transform = captureTransform(path);
     const outlineRecord = deriveOutlineRecord(
       record,
-      outlineStyle,
+      activeStrokeOutline,
       activeStrokeTool === 'pen' ? PEN_STROKE_GEOMETRY : null
     );
     const result = sceneStore.addStroke(record, outlineRecord);
@@ -6668,7 +6670,8 @@ function createFabricOverlayRuntime(options = {}) {
       record.sourcePoints,
       record.style,
       SHAPE_STROKE_GEOMETRY,
-      record.pathData
+      record.pathData,
+      shapeGesture.outline
     );
     if (outlinePreview) {
       outlinePreview.__baeframeTransient = true;
@@ -6707,7 +6710,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const path = makeFabricPath(record);
     record.transform = captureTransform(path);
-    const outlineRecord = deriveOutlineRecord(record, outlineStyle, SHAPE_STROKE_GEOMETRY);
+    const outlineRecord = deriveOutlineRecord(record, gesture.outline, SHAPE_STROKE_GEOMETRY);
     const result = sceneStore.addStroke(record, outlineRecord);
     if (!result.applied) {
       settleArmedFramePreview();
@@ -7308,6 +7311,9 @@ function createFabricOverlayRuntime(options = {}) {
         samples: [],
         preview: null,
         style: { ...brushStyle },
+        // 다른 손가락이 그리는 도중 팔레트를 만져도 이 획의 외곽선은 바뀌지 않는다.
+        // 굵기·색·불투명도를 pointerdown 에 굳히는 것과 같은 규칙이다.
+        outline: { ...outlineStyle },
         tool
       };
       event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -7326,7 +7332,8 @@ function createFabricOverlayRuntime(options = {}) {
         origin,
         current: origin,
         preview: null,
-        style: { ...brushStyle }
+        style: { ...brushStyle },
+        outline: { ...outlineStyle }
       };
       try {
         event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -7924,9 +7931,13 @@ function createFabricOverlayRuntime(options = {}) {
   // 짝이 눈에 띄게 벌어진다. 커밋 전까지도 같은 델타로 따라가게 한다.
   function syncDraggedOutlinePairs() {
     const start = transformStart;
-    if (!start?.target || !start.outlinePairs?.length) return;
-    const dx = finiteNumber(start.target.left) - finiteNumber(start.transform.left);
-    const dy = finiteNumber(start.target.top) - finiteNumber(start.transform.top);
+    if (!start?.outlinePairs?.length) return;
+    // 라쏘 조각은 materialize 이후 타깃이 바뀌므로 그때 잡아 둔 기준을 우선한다.
+    const target = start.outlineBaseTarget || start.target;
+    const base = start.outlineBaseTransform || start.transform;
+    if (!target || !base) return;
+    const dx = finiteNumber(target.left) - finiteNumber(base.left);
+    const dy = finiteNumber(target.top) - finiteNumber(base.top);
     for (const pair of start.outlinePairs) {
       pair.object.set?.({ left: pair.startLeft + dx, top: pair.startTop + dy });
       pair.object.setCoords?.();
@@ -7961,15 +7972,34 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onObjectMoving(event) {
-    syncDraggedOutlinePairs();
     const target = event?.target;
-    if (!pendingLassoSelection) return;
+    if (!pendingLassoSelection) {
+      syncDraggedOutlinePairs();
+      return;
+    }
     if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
       transformStart = null;
       abortPendingLassoSelection();
       return;
     }
-    if (!materializePendingLassoSelection(target)) transformStart = null;
+    const wasMoving = pendingLassoSelection.phase === 'moving';
+    if (!materializePendingLassoSelection(target)) {
+      transformStart = null;
+      return;
+    }
+    // 조각 외곽선 프록시는 이 순간 처음 캔버스에 올라온다. before:transform 때 뜬
+    // 짝 목록에는 없으므로 여기서 다시 뜬다 — 안 그러면 본체 조각만 포인터를 따라가고
+    // 외곽선은 커밋 재렌더 때까지 제자리에 남는다.
+    //
+    // 기준 변형은 transformStart.transform 을 건드리지 않고 따로 잡는다.
+    // 그 값은 rollbackSelectTransform 이 원래 자리로 되돌릴 때 쓰는 진짜 출발점이다.
+    if (!wasMoving && transformStart) {
+      const activeTarget = pendingLassoSelection.activeTarget || transformStart.target;
+      transformStart.outlineBaseTarget = activeTarget;
+      transformStart.outlineBaseTransform = captureTransform(activeTarget);
+      transformStart.outlinePairs = collectDraggedOutlinePairs(activeTarget);
+    }
+    syncDraggedOutlinePairs();
   }
 
   function onObjectModified(event) {

@@ -16675,3 +16675,37 @@ test('a regenerated fragment outline gets its own natural transform', async () =
     await harness.destroy();
   }
 });
+
+test('outline settings are frozen when the gesture starts', async () => {
+  // 굵기·색·불투명도는 pointerdown 에 굳는데 외곽선만 커밋 시점의 전역 값을 읽으면,
+  // 다른 손가락이 그리는 도중 팔레트를 만졌을 때 이 획의 외곽선이 바뀐다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { color: '#ffffff', width: 4 });
+    const pointerId = 9601;
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 100, pointerId, 1);
+
+    // 그리는 도중 팔레트에서 외곽선을 끈다.
+    paletteButton(harness.root, 'outline-toggle').dispatchEvent(
+      new harness.environment.window.Event('click', { bubbles: true })
+    );
+
+    harness.dispatchCapturedPointerUp(120, 100, pointerId);
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(objects.length, 2, '시작 시점 설정대로 외곽선이 붙어야 한다');
+    const outline = objects.find(object => object.id.endsWith('~outline'));
+    assert.ok(outline);
+    assert.equal(outline.style.color, '#ffffff');
+
+    // 다음 획은 꺼진 설정을 따른다.
+    harness.drawStroke([{ x: 40, y: 160 }, { x: 120, y: 160 }], 9602);
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      3,
+      '끈 뒤에 그은 획에는 외곽선이 붙지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});

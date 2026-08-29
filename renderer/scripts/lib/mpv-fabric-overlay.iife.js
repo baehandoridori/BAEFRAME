@@ -17176,10 +17176,10 @@ void main() {
           fabricCanvas.remove(activeStroke.preview);
           activeStroke.preview = null;
         }
-        function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData) {
-          if (outlineStyle.enabled !== true) return null;
+        function makeOutlinePreviewPath(samples, style, geometryOptions, bodyPathData, outline) {
+          if (outline?.enabled !== true) return null;
           const width = boundedInteger(
-            outlineStyle.width,
+            outline.width,
             MIN_OUTLINE_WIDTH,
             MAX_OUTLINE_WIDTH,
             DEFAULT_OUTLINE_WIDTH
@@ -17193,7 +17193,7 @@ void main() {
             const record = {
               id: null,
               pathData: strokeData.pathData,
-              style: { ...style, color: outlineStyle.color || DEFAULT_OUTLINE_COLOR }
+              style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
             };
             const ringPathData = bodyPathData ? `${strokeData.pathData} ${bodyPathData}` : null;
             if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
@@ -17221,7 +17221,8 @@ void main() {
               activeStroke.samples,
               activeStroke.style,
               geometryOptions,
-              strokeData.pathData
+              strokeData.pathData,
+              activeStroke.outline
             );
             activeStroke.preview = makeFabricPath({
               id: null,
@@ -18891,6 +18892,7 @@ void main() {
           const samples = activeStroke.samples;
           const style = { ...activeStroke.style };
           const activeStrokeTool = activeStroke.tool;
+          const activeStrokeOutline = activeStroke.outline;
           removeTransientPreview();
           let strokeData;
           try {
@@ -18918,7 +18920,7 @@ void main() {
           record.transform = captureTransform(path);
           const outlineRecord = deriveOutlineRecord(
             record,
-            outlineStyle,
+            activeStrokeOutline,
             activeStrokeTool === "pen" ? PEN_STROKE_GEOMETRY : null
           );
           const result = sceneStore.addStroke(record, outlineRecord);
@@ -19141,7 +19143,8 @@ void main() {
             record.sourcePoints,
             record.style,
             SHAPE_STROKE_GEOMETRY,
-            record.pathData
+            record.pathData,
+            shapeGesture.outline
           );
           if (outlinePreview) {
             outlinePreview.__baeframeTransient = true;
@@ -19174,7 +19177,7 @@ void main() {
           }
           const path = makeFabricPath(record);
           record.transform = captureTransform(path);
-          const outlineRecord = deriveOutlineRecord(record, outlineStyle, SHAPE_STROKE_GEOMETRY);
+          const outlineRecord = deriveOutlineRecord(record, gesture.outline, SHAPE_STROKE_GEOMETRY);
           const result = sceneStore.addStroke(record, outlineRecord);
           if (!result.applied) {
             settleArmedFramePreview();
@@ -19668,6 +19671,9 @@ void main() {
               samples: [],
               preview: null,
               style: { ...brushStyle },
+              // 다른 손가락이 그리는 도중 팔레트를 만져도 이 획의 외곽선은 바뀌지 않는다.
+              // 굵기·색·불투명도를 pointerdown 에 굳히는 것과 같은 규칙이다.
+              outline: { ...outlineStyle },
               tool
             };
             event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -19686,7 +19692,8 @@ void main() {
               origin,
               current: origin,
               preview: null,
-              style: { ...brushStyle }
+              style: { ...brushStyle },
+              outline: { ...outlineStyle }
             };
             try {
               event.currentTarget?.setPointerCapture?.(event.pointerId);
@@ -20228,9 +20235,12 @@ void main() {
         }
         function syncDraggedOutlinePairs() {
           const start = transformStart;
-          if (!start?.target || !start.outlinePairs?.length) return;
-          const dx = finiteNumber(start.target.left) - finiteNumber(start.transform.left);
-          const dy = finiteNumber(start.target.top) - finiteNumber(start.transform.top);
+          if (!start?.outlinePairs?.length) return;
+          const target = start.outlineBaseTarget || start.target;
+          const base = start.outlineBaseTransform || start.transform;
+          if (!target || !base) return;
+          const dx = finiteNumber(target.left) - finiteNumber(base.left);
+          const dy = finiteNumber(target.top) - finiteNumber(base.top);
           for (const pair of start.outlinePairs) {
             pair.object.set?.({ left: pair.startLeft + dx, top: pair.startTop + dy });
             pair.object.setCoords?.();
@@ -20252,15 +20262,28 @@ void main() {
           fabricCanvas.requestRenderAll();
         }
         function onObjectMoving(event) {
-          syncDraggedOutlinePairs();
           const target = event?.target;
-          if (!pendingLassoSelection) return;
+          if (!pendingLassoSelection) {
+            syncDraggedOutlinePairs();
+            return;
+          }
           if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
             transformStart = null;
             abortPendingLassoSelection();
             return;
           }
-          if (!materializePendingLassoSelection(target)) transformStart = null;
+          const wasMoving = pendingLassoSelection.phase === "moving";
+          if (!materializePendingLassoSelection(target)) {
+            transformStart = null;
+            return;
+          }
+          if (!wasMoving && transformStart) {
+            const activeTarget = pendingLassoSelection.activeTarget || transformStart.target;
+            transformStart.outlineBaseTarget = activeTarget;
+            transformStart.outlineBaseTransform = captureTransform(activeTarget);
+            transformStart.outlinePairs = collectDraggedOutlinePairs(activeTarget);
+          }
+          syncDraggedOutlinePairs();
         }
         function onObjectModified(event) {
           const target = event?.target;
