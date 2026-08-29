@@ -3613,25 +3613,22 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(palette, {
       display: 'flex',
       flexWrap: 'wrap',
-      gap: '6px'
+      // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
+      gap: 'var(--fabric-palette-gap)'
     });
     const colorButtons = BRUSH_COLORS.map(color => {
       const button = createButton('', 'brush-color');
       button.dataset.fabricPilotColor = color;
       button.setAttribute?.('aria-label', `브러시 색상 ${BRUSH_COLOR_LABELS[color]}`);
       button.setAttribute?.('aria-pressed', 'false');
-      // 기본 버튼 CSS 의 `padding: 0 12px` 가 22px 점에 더해져 46px 이 되면
-      // 폭 166px 짜리 패널에 한 줄 둘밖에 못 들어가 색 8개가 네 줄을 잡아먹는다.
-      // 패딩을 지우고 36px 정사각으로 고정하면 네 개씩 두 줄에 들어간다.
+      // 치수는 **인라인으로 주지 않는다.** 기본 버튼 CSS 의 `padding: 0 12px` 가
+      // 22px 점에 더해져 46px 이 되면 한 줄에 둘밖에 못 들어가지만, 인라인으로
+      // 36px 을 박으면 이번엔 좁은 화면(≤800px, 팔레트 190px)에서 미디어 쿼리가
+      // 이길 수 없어 3/3/2 로 흘러넘친다. 호스트 CSS 가 두 폭 모두 책임진다.
       setStyles(button, {
         display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        width: '36px',
-        height: '36px',
-        minWidth: '36px',
-        minHeight: '36px',
-        padding: '0'
+        justifyContent: 'center'
       });
       const dot = documentRef.createElement('span');
       setStyles(dot, {

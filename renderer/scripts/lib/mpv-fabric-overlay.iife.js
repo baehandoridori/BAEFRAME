@@ -16499,7 +16499,8 @@ void main() {
           setStyles(palette, {
             display: "flex",
             flexWrap: "wrap",
-            gap: "6px"
+            // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
+            gap: "var(--fabric-palette-gap)"
           });
           const colorButtons = BRUSH_COLORS.map((color) => {
             const button = createButton("", "brush-color");
@@ -16509,12 +16510,7 @@ void main() {
             setStyles(button, {
               display: "inline-flex",
               alignItems: "center",
-              justifyContent: "center",
-              width: "36px",
-              height: "36px",
-              minWidth: "36px",
-              minHeight: "36px",
-              padding: "0"
+              justifyContent: "center"
             });
             const dot = documentRef.createElement("span");
             setStyles(dot, {

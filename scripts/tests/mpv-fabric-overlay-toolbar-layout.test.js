@@ -288,14 +288,30 @@ async function runElectronProbe() {
     // 브러시 설정 패널은 팔레트 스크롤 **안에 또** 스크롤을 만들면 안 되고,
     // 슬라이더 줄은 한 줄에 앉아야 한다. 둘 다 눈으로만 보이던 결함이라
     // 실제 렌더에서 재어야 잡힌다.
-    const panel = await host.window.webContents.executeJavaScript(`
+    // 좁은 폭(≤800px, 팔레트 190px)과 넓은 폭(팔레트 220px)을 **둘 다** 잰다.
+    // 801px 에서만 재면 미디어 쿼리가 바꾸는 치수를 통째로 놓친다.
+    const panels = {};
+    for (const [key, width] of [['narrow', 800], ['wide', 801]]) {
+      host.updateBounds({ x: 0, y: 0, width, height: 720 });
+      await host.window.webContents.executeJavaScript(`
+        new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      `, true);
+      panels[key] = await measurePanel();
+    }
+
+    async function measurePanel() {
+      return host.window.webContents.executeJavaScript(`
       (async () => {
         const settle = () => new Promise(resolve =>
           requestAnimationFrame(() => requestAnimationFrame(resolve)));
         document.querySelector('[data-fabric-pilot-action="brush"]').click();
         await settle();
-        document.querySelector('[data-fabric-pilot-action="brush-settings"]').click();
-        await settle();
+        const settingsButton = document.querySelector('[data-fabric-pilot-action="brush-settings"]');
+        // 두 폭을 연달아 재므로 이미 열려 있으면 다시 누르지 않는다.
+        if (settingsButton.getAttribute('aria-expanded') !== 'true') {
+          settingsButton.click();
+          await settle();
+        }
         const node = document.querySelector('[data-fabric-pilot-panel="brush-settings"]');
         const style = getComputedStyle(node);
         const colors = [...document.querySelectorAll('[data-fabric-pilot-color]')];
@@ -324,11 +340,12 @@ async function runElectronProbe() {
         };
       })();
     `, true);
+    }
 
     process.stdout.write(`${PROBE_PREFIX}${JSON.stringify({
       measurements,
       interaction,
-      panel
+      panels
     })}\n`);
   } finally {
     try {
@@ -478,33 +495,36 @@ if (process.versions.electron) {
     );
 
     // 브러시 설정 패널 — 눈으로만 보이던 깨짐을 실제 렌더 치수로 못박는다.
-    const panel = probe.panel;
-    assert.equal(panel.display, 'flex', '브러시 설정 패널이 열린다');
-    // 패널이 스스로 잘리면 팔레트 스크롤 안에 스크롤이 또 생기고, 맨 아래
-    // 외곽선 설정은 안쪽 막대를 따로 내려야만 닿는다.
-    assert.equal(panel.maxHeight, 'none', '패널은 높이를 자르지 않는다');
-    assert.ok(
-      panel.overflowY !== 'auto' && panel.overflowY !== 'scroll',
-      `패널이 스스로 스크롤한다: overflowY=${panel.overflowY}`
-    );
-    assert.ok(
-      panel.scrollHeight <= panel.clientHeight + 1,
-      `패널 안에 스크롤이 생겼다: ${panel.scrollHeight} > ${panel.clientHeight}`
-    );
-    // 색 버튼이 패딩 때문에 46px 이 되면 한 줄에 둘밖에 못 들어가 네 줄을 잡아먹는다.
-    assert.ok(
-      panel.colorsPerRow >= 4,
-      `색 견본이 한 줄에 ${panel.colorsPerRow}개뿐이다`
-    );
-    // −·슬라이더·+·수치는 한 줄이다. range 입력의 기본 폭을 basis 로 두면 세 줄로 쪼개진다.
-    assert.equal(
-      panel.controlsOnInputLine,
-      panel.controlCount,
-      `크기 조절 줄이 ${panel.controlCount}개 중 ${panel.controlsOnInputLine}개만 같은 줄에 있다`
-    );
-    // 상태 줄에 CSS 규칙이 없으면 display:block·16px 로 떨어져 팔레트에서 가장 큰 글자가 된다.
-    assert.equal(panel.statusDisplay, 'flex', '상태 줄은 가로 배치다');
-    assert.equal(panel.statusFontSize, '11px', '상태 줄은 보조 글자 크기다');
+    // 좁은 폭(≤800px)과 넓은 폭을 둘 다 본다. 미디어 쿼리가 팔레트를 190px 로
+    // 줄이면 패널 안쪽도 함께 좁아져, 한쪽만 재면 다른 쪽 깨짐을 놓친다.
+    for (const [key, panel] of Object.entries(probe.panels)) {
+      assert.equal(panel.display, 'flex', `${key}: 브러시 설정 패널이 열린다`);
+      // 패널이 스스로 잘리면 팔레트 스크롤 안에 스크롤이 또 생기고, 맨 아래
+      // 외곽선 설정은 안쪽 막대를 따로 내려야만 닿는다.
+      assert.equal(panel.maxHeight, 'none', `${key}: 패널은 높이를 자르지 않는다`);
+      assert.ok(
+        panel.overflowY !== 'auto' && panel.overflowY !== 'scroll',
+        `${key}: 패널이 스스로 스크롤한다 overflowY=${panel.overflowY}`
+      );
+      assert.ok(
+        panel.scrollHeight <= panel.clientHeight + 1,
+        `${key}: 패널 안에 스크롤이 생겼다 ${panel.scrollHeight} > ${panel.clientHeight}`
+      );
+      // 색 버튼이 패딩 때문에 46px 이 되면 한 줄에 둘밖에 못 들어가 네 줄을 잡아먹는다.
+      assert.ok(
+        panel.colorsPerRow >= 4,
+        `${key}: 색 견본이 한 줄에 ${panel.colorsPerRow}개뿐이다`
+      );
+      // −·슬라이더·+·수치는 한 줄이다. range 입력의 기본 폭을 basis 로 두면 세 줄로 쪼개진다.
+      assert.equal(
+        panel.controlsOnInputLine,
+        panel.controlCount,
+        `${key}: 크기 조절 줄이 ${panel.controlCount}개 중 ${panel.controlsOnInputLine}개만 같은 줄에 있다`
+      );
+      // 상태 줄에 CSS 규칙이 없으면 display:block·16px 로 떨어져 팔레트에서 가장 큰 글자가 된다.
+      assert.equal(panel.statusDisplay, 'flex', `${key}: 상태 줄은 가로 배치다`);
+      assert.equal(panel.statusFontSize, '11px', `${key}: 상태 줄은 보조 글자 크기다`);
+    }
   });
 
   test('hidden Chromium layout probe exits non-zero when its setup fails', {
