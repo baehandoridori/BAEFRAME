@@ -4395,9 +4395,11 @@ function createFabricOverlayRuntime(options = {}) {
         pathData: strokeData.pathData,
         style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
       };
-      const ringPathData = bodyPathData ? `${strokeData.pathData} ${bodyPathData}` : null;
+      const ringPathData = bodyPathData
+        ? `${outlineToPathData([...strokeData.outline].reverse())} ${bodyPathData}`
+        : null;
       if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
-        record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: 'evenodd' };
+        record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: 'nonzero' };
       } else if (finiteNumber(style.opacity, 1) < 1) {
         // 고리를 못 만드는데 반투명이면, 채워진 판은 중심 색을 바꿔 놓는다.
         // 미리보기를 생략해 커밋 결과와 어긋나지 않게 한다.
@@ -5285,7 +5287,11 @@ function createFabricOverlayRuntime(options = {}) {
       });
       const side = plan.selected ? clipped.intersection : clipped.difference;
       if (!side || side.reason || side.components.length === 0) return null;
-      outlineContour = contourPathData(side.components.flatMap(component => component.contours));
+      // 감기 방향을 뒤집어 본체 자리만 상쇄되게 한다(evenodd 는 외곽선 자기 겹침까지 지운다).
+      outlineContour = contourPathData(
+        side.components.flatMap(component =>
+          component.contours.map(contour => [...contour].reverse()))
+      );
     } catch (_error) {
       return null;
     }
@@ -5295,7 +5301,7 @@ function createFabricOverlayRuntime(options = {}) {
     if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
     return {
       pathData: strokeData.pathData,
-      renderGeometry: { version: 1, pathData: ringPathData, fillRule: 'evenodd' }
+      renderGeometry: { version: 1, pathData: ringPathData, fillRule: 'nonzero' }
     };
   }
 
@@ -5354,10 +5360,15 @@ function createFabricOverlayRuntime(options = {}) {
     if (!strokeData?.pathData) return null;
     // 외곽선은 본체를 통째로 덮는 **채워진** 경로다. 그대로 두면 불투명도가 1 미만일 때
     // 두 층이 따로 합성돼 중심이 두 번 칠해지고(50% 두 층 = 75%) 외곽선 색이 본체
-    // 색으로 번진다. 본체 윤곽을 같은 경로에 합쳐 evenodd 로 칠하면 겹치는 부분이
-    // 상쇄돼 **고리**가 된다 — 눈에 보이는 외곽선만 남는다.
+    // 색으로 번진다. 본체 윤곽을 같은 경로에 합쳐 **고리**로 만들어 그 겹침을 없앤다.
     // renderGeometry 는 이미 허용된 선택 키라 저장 스키마는 그대로다.
-    const ringPathData = `${strokeData.pathData} ${record.pathData}`;
+    //
+    // evenodd 로 칠하면 안 된다. 획이 되짚어 본체 두 구간은 떨어져 있는데 굵은
+    // 외곽선끼리만 겹치는 자리에서, evenodd 는 그 **외곽선 자기 겹침까지 상쇄해**
+    // 구멍을 낸다(기하 프로브로 실측). 본체 위에 덮이지도 않는 자리라 그대로 뚫린다.
+    // 대신 외곽선 윤곽을 뒤집어 감기 방향을 반대로 두고 nonzero 로 칠한다 —
+    // 본체 자리만 상쇄되고 외곽선 자기 겹침은 그대로 채워진다.
+    const ringPathData = `${outlineToPathData([...strokeData.outline].reverse())} ${record.pathData}`;
     const derived = {
       id,
       type: 'stroke',
@@ -5375,7 +5386,7 @@ function createFabricOverlayRuntime(options = {}) {
     derived.renderGeometry = {
       version: 1,
       pathData: ringPathData,
-      fillRule: 'evenodd'
+      fillRule: 'nonzero'
     };
     // 본체 transform 을 그대로 베끼면 안 된다. 외곽선은 더 굵어 pathData 의
     // pathOffset·바운딩 박스 중심이 본체와 다르고, 같은 transform 을 주면 두

@@ -17195,9 +17195,9 @@ void main() {
               pathData: strokeData.pathData,
               style: { ...style, color: outline.color || DEFAULT_OUTLINE_COLOR }
             };
-            const ringPathData = bodyPathData ? `${strokeData.pathData} ${bodyPathData}` : null;
+            const ringPathData = bodyPathData ? `${outlineToPathData([...strokeData.outline].reverse())} ${bodyPathData}` : null;
             if (ringPathData && ringPathData.length <= MAX_PERSISTENCE_STRING_LENGTH) {
-              record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: "evenodd" };
+              record.renderGeometry = { version: 1, pathData: ringPathData, fillRule: "nonzero" };
             } else if (finiteNumber(style.opacity, 1) < 1) {
               return null;
             }
@@ -17950,7 +17950,9 @@ void main() {
             });
             const side = plan.selected ? clipped.intersection : clipped.difference;
             if (!side || side.reason || side.components.length === 0) return null;
-            outlineContour = contourPathData(side.components.flatMap((component) => component.contours));
+            outlineContour = contourPathData(
+              side.components.flatMap((component) => component.contours.map((contour) => [...contour].reverse()))
+            );
           } catch (_error) {
             return null;
           }
@@ -17959,7 +17961,7 @@ void main() {
           if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
           return {
             pathData: strokeData.pathData,
-            renderGeometry: { version: 1, pathData: ringPathData, fillRule: "evenodd" }
+            renderGeometry: { version: 1, pathData: ringPathData, fillRule: "nonzero" }
           };
         }
         function makeOutlineFragmentRecord(fragment, spec, outlineGeometry, sourceOutlineObject) {
@@ -18009,7 +18011,7 @@ void main() {
             return null;
           }
           if (!strokeData?.pathData) return null;
-          const ringPathData = `${strokeData.pathData} ${record.pathData}`;
+          const ringPathData = `${outlineToPathData([...strokeData.outline].reverse())} ${record.pathData}`;
           const derived = {
             id,
             type: "stroke",
@@ -18024,7 +18026,7 @@ void main() {
           derived.renderGeometry = {
             version: 1,
             pathData: ringPathData,
-            fillRule: "evenodd"
+            fillRule: "nonzero"
           };
           derived.transform = captureTransform(makeFabricPath(derived));
           return derived;

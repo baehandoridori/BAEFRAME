@@ -15981,7 +15981,7 @@ test('an outline record keeps the drawingsV3 schema unchanged', async () => {
       Object.keys(outline.renderGeometry).sort(),
       ['fillRule', 'pathData', 'version']
     );
-    assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+    assert.equal(outline.renderGeometry.fillRule, 'nonzero');
     assert.deepEqual(Object.keys(outline.style).sort(), ['color', 'opacity', 'size']);
   } finally {
     await harness.destroy();
@@ -16099,7 +16099,7 @@ test('a pixel erase rebuilds a clipped outline for each body fragment', async ()
       assert.ok(outline, `조각 ${body.id} 의 외곽선이 없다`);
       // 잘라 낸 기하를 쥐고 있고, 고리라 불투명도가 두 번 합성되지 않는다.
       assert.ok(outline.renderGeometry);
-      assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+      assert.equal(outline.renderGeometry.fillRule, 'nonzero');
     }
     // z-order — 각 외곽선이 자기 본체보다 앞(뒤에 깔림)이어야 한다.
     const order = harness.sceneStore.getActiveSceneSnapshot().objects.map(object => object.id);
@@ -16409,15 +16409,20 @@ test('a translucent outlined stroke does not double-composite its centre', async
     const [outline, body] = harness.sceneStore.getActiveSceneSnapshot().objects;
     assert.ok(outline.id.endsWith('~outline'));
     assert.ok(outline.renderGeometry, '고리로 칠하려면 renderGeometry 가 있어야 한다');
-    assert.equal(outline.renderGeometry.fillRule, 'evenodd');
-    // 고리 경로는 외곽선 윤곽과 본체 윤곽을 함께 담는다 — 겹치는 부분이 상쇄된다.
+    assert.equal(outline.renderGeometry.fillRule, 'nonzero');
+    // 고리 경로는 **뒤집은** 외곽선 윤곽과 본체 윤곽을 함께 담는다.
+    // 감기 방향이 반대라야 본체 자리만 상쇄되고 외곽선 자기 겹침은 그대로 채워진다.
     assert.ok(outline.renderGeometry.pathData.includes(body.pathData), '본체 윤곽이 합쳐져야 한다');
-    assert.ok(outline.renderGeometry.pathData.includes(outline.pathData));
+    assert.equal(
+      outline.renderGeometry.pathData.includes(outline.pathData),
+      false,
+      '외곽선 윤곽은 뒤집힌 채로 들어가야 한다'
+    );
 
     // 캔버스도 고리 경로로 그린다.
     const outlinePath = harness.canvas.getObjects()
       .find(object => object.__baeframeObjectId === outline.id);
-    assert.equal(outlinePath.fillRule, 'evenodd');
+    assert.equal(outlinePath.fillRule, 'nonzero');
   } finally {
     await harness.destroy();
   }
@@ -16513,7 +16518,7 @@ test('an outline is skipped when the ring path would exceed the persistence limi
     const outlines = objects.filter(object => object.id.endsWith('~outline'));
     for (const outline of outlines) {
       assert.ok(outline.renderGeometry, '외곽선이 남았다면 반드시 고리여야 한다');
-      assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+      assert.equal(outline.renderGeometry.fillRule, 'nonzero');
     }
   } finally {
     await harness.destroy();
@@ -16625,11 +16630,11 @@ test('the gesture preview uses the same ring as the committed outline', async ()
       .filter(object => object.__baeframeObjectId === null);
     assert.equal(previews.length, 2);
     // 아래에 깔린 것이 외곽선이고, 커밋본과 같은 evenodd 고리여야 한다.
-    assert.equal(previews[0].fillRule, 'evenodd', '미리보기 외곽선도 고리여야 한다');
+    assert.equal(previews[0].fillRule, 'nonzero', '미리보기 외곽선도 고리여야 한다');
 
     harness.dispatchCapturedPointerUp(120, 100, pointerId);
     const outline = outlineObjects(harness)[0];
-    assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+    assert.equal(outline.renderGeometry.fillRule, 'nonzero');
   } finally {
     await harness.destroy();
   }
@@ -16705,6 +16710,34 @@ test('outline settings are frozen when the gesture starts', async () => {
       3,
       '끈 뒤에 그은 획에는 외곽선이 붙지 않는다'
     );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a doubled-back stroke keeps its outline solid where the outlines overlap', async () => {
+  // 본체 두 구간은 떨어져 있는데 굵은 외곽선끼리만 겹치는 자리가 있다.
+  // evenodd 로 칠하면 그 **외곽선 자기 겹침까지 상쇄돼** 구멍이 난다 —
+  // 본체 위에 덮이지도 않는 자리라 그대로 뚫린다(기하 프로브로 실측).
+  // 외곽선 윤곽을 뒤집어 nonzero 로 칠하면 본체 자리만 상쇄된다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 10 });
+    // 오른쪽으로 갔다가 20px 아래로 되짚어 온다.
+    const points = [];
+    for (let index = 0; index <= 30; index += 1) points.push({ x: 40 + index * 3, y: 50 });
+    for (let index = 0; index <= 30; index += 1) points.push({ x: 130 - index * 3, y: 70 });
+    harness.drawStroke(points, 9701);
+
+    const outline = outlineObjects(harness)[0];
+    assert.ok(outline?.renderGeometry);
+    assert.equal(
+      outline.renderGeometry.fillRule,
+      'nonzero',
+      'evenodd 는 외곽선 자기 겹침까지 지운다'
+    );
+    // 뒤집힌 윤곽이 들어가야 감기 방향이 반대가 된다.
+    assert.equal(outline.renderGeometry.pathData.includes(outline.pathData), false);
   } finally {
     await harness.destroy();
   }
