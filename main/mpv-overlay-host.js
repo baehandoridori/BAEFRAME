@@ -383,6 +383,27 @@ const OVERLAY_HTML = String.raw`
       overflow: hidden;
       pointer-events: none;
     }
+    /* 오버레이는 별도 BrowserWindow 라 renderer/styles/main.css 를 불러오지 않는다.
+       그대로 두면 윈도우 기본 스크롤바(밝은 회색 화살표 막대)가 그려져 어두운
+       팔레트 위에 홀로 튄다. 본체와 **같은 값**으로 다시 적어 테마를 맞춘다
+       (main.css 의 Scrollbar 절과 대조). */
+    ::-webkit-scrollbar {
+      width: 8px;
+      height: 8px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: rgba(255, 255, 255, 0.1);
+      border-radius: 4px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: rgba(255, 255, 255, 0.18);
+    }
+    ::-webkit-scrollbar-corner {
+      background: transparent;
+    }
     .mpv-fabric-pilot-toolbar {
       display: block;
       --fabric-palette-gap: 6px;
