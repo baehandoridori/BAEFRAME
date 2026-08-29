@@ -5179,46 +5179,82 @@ function createFabricOverlayRuntime(options = {}) {
 
   // 본체 레코드에서 외곽선 레코드를 만든다. 굵기만 키우고 색을 바꾼 같은 획이다.
   // geometryOptions 는 본체를 만든 생성 규약이어야 한다 — 도형·펜은 브러시와 다르다.
-  // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 **조각 수가 달라질 수 있다.**
-  // 조각끼리 짝을 지을 방법이 없으므로 자르지 않고 본체 조각에서 **다시 만든다.**
+  // 조각의 외곽선 기하. 본체와 같은 중심선으로 굵은 획을 만든 뒤 **같은 폴리곤으로**
+  // 잘라, 조각이 실제로 남은 자리에만 테두리가 남게 한다. 마지막에 본체 조각 윤곽을
+  // 합쳐 evenodd 로 칠하면 겹침이 상쇄돼 고리가 된다(불투명도 이중 합성 방지).
   //
-  // 씬 Map 에서 외곽선은 언제나 본체보다 앞에 있고, replaceObjects 는 제거되는 id 의
-  // 자리에 그 조각들을 끼워 넣는다. 그래서 z-order 가 자동으로 유지된다.
-  function expandOutlineReplacements(replacements) {
-    const snapshot = sceneStore.getActiveSceneSnapshot();
-    const objectsById = new Map((snapshot?.objects || []).map(object => [object.id, object]));
-    const expanded = [];
-    for (const replacement of replacements) {
-      const bodyId = replacement?.removeId;
-      const outlineId = outlineIdFor(bodyId);
-      const outlineObject = outlineId ? objectsById.get(outlineId) : null;
-      if (!outlineObject) {
-        expanded.push(replacement);
-        continue;
-      }
-      const spec = outlineSpecFromPair(objectsById.get(bodyId), outlineObject);
-      const addObjects = [];
-      if (spec) {
-        const budget = createGeometryBudget(maxSelectionGeometryOperations);
-        for (const fragment of replacement.addObjects || []) {
-          // 두께 방향으로 잘린 조각은 renderGeometry 가 실제로 칠할 영역을 쥐고 있고,
-          // sourcePoints 는 그보다 넓은 중심선을 그대로 담고 있다. 그 상태에서
-          // sourcePoints 만으로 외곽선을 다시 만들면 마스크를 무시해 **지운 자리를
-          // 되칠한다.** 마스크를 반영해 외곽선을 깎는 기계가 아직 없으므로,
-          // 그런 조각에는 외곽선을 붙이지 않는다(덜 그리는 쪽이 안전하다).
-          if (fragment.renderGeometry !== undefined) continue;
-          const derived = deriveOutlineRecord(
-            fragment,
-            spec,
-            resolveStrokeGeometryOptions(fragment, budget)
-          );
-          if (derived) addObjects.push(derived);
-        }
-      }
-      expanded.push({ removeId: outlineId, addObjects });
-      expanded.push(replacement);
+  // 여기서 실패해도 본체 분할은 그대로 성공해야 한다. 예산을 따로 쓰고, 어느 단계든
+  // 어긋나면 null 을 돌려 그 조각만 외곽선 없이 남긴다 — 분할 자체를 실패시키는 것보다 낫다.
+  function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions) {
+    if (!plan?.renderGeometry?.pathData || !Array.isArray(plan.points) || plan.points.length < 2) {
+      return null;
     }
-    return expanded;
+    const budget = createGeometryBudget(maxSelectionGeometryOperations);
+    const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
+    let strokeData;
+    try {
+      strokeData = strokePathFactory(plan.points, {
+        size,
+        last: true,
+        alreadyNormalizedPressure: true,
+        start: { cap: plan.caps?.start !== false },
+        end: { cap: plan.caps?.end !== false },
+        ...(geometryOptions || null)
+      });
+    } catch (_error) {
+      return null;
+    }
+    if (!strokeData?.pathData) return null;
+
+    let outlineContour = null;
+    try {
+      const probe = makeFabricPath({
+        id: null,
+        pathData: strokeData.pathData,
+        style: { ...record.style, size }
+      }, true);
+      const maximumScale = Math.max(1e-9, finiteNumber(sourceSelection?.maximumScale, 1));
+      const flattened = flattenFabricPath(probe.path, {
+        tolerance: Math.max(Number.EPSILON, Math.min(0.25, 0.25 / maximumScale)),
+        fillRule: probe.fillRule,
+        budget
+      });
+      if (!flattened.geometry) return null;
+      const query = createPathFillQuery(flattened.geometry, budget);
+      if (!query) return null;
+      const clipped = clipSimplePathFillPair(query, sourceSelection.query, {
+        budget,
+        polygonValidated: true
+      });
+      const side = plan.selected ? clipped.intersection : clipped.difference;
+      if (!side || side.reason || side.components.length === 0) return null;
+      outlineContour = contourPathData(side.components.flatMap(component => component.contours));
+    } catch (_error) {
+      return null;
+    }
+    if (!outlineContour) return null;
+
+    const ringPathData = `${outlineContour} ${plan.renderGeometry.pathData}`;
+    if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
+    return { version: 1, pathData: ringPathData, fillRule: 'evenodd' };
+  }
+
+  // 조각 본체에서 외곽선 짝 레코드를 만든다. 기하는 이미 잘라 둔 것을 쓴다.
+  function makeOutlineFragmentRecord(fragment, spec, renderGeometry) {
+    const id = outlineIdFor(fragment?.id);
+    if (!id || !renderGeometry) return null;
+    const size = finiteNumber(fragment.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
+    const derived = {
+      id,
+      type: 'stroke',
+      pathData: fragment.pathData,
+      sourcePoints: clonePlain(fragment.sourcePoints),
+      style: { ...fragment.style, color: spec.color, size },
+      transform: clonePlain(fragment.transform || {}),
+      renderGeometry: clonePlain(renderGeometry)
+    };
+    if (fragment.strokeCaps) derived.strokeCaps = clonePlain(fragment.strokeCaps);
+    return derived;
   }
 
   function deriveOutlineRecord(record, outline, geometryOptions = null) {
@@ -5616,9 +5652,13 @@ function createFabricOverlayRuntime(options = {}) {
       abortPendingLassoSelection({ authoritative: true });
       return { applied: false, reason: 'stale-pending-lasso' };
     }
+    // 선택된 조각을 버릴 때 그 조각의 외곽선도 함께 버려야 한다. 외곽선 id 는
+    // 선택 집합에 없으므로(외곽선은 선택 대상이 아니다) 짝을 보고 걸러야 한다.
+    const dropsFragment = object => pending.selectedFragmentIds.has(object.id) ||
+      pending.selectedFragmentIds.has(bodyIdFor(object.id));
     const replacements = pending.replacements.map(replacement => ({
       removeId: replacement.removeId,
-      addObjects: replacement.addObjects.filter(object => !pending.selectedFragmentIds.has(object.id))
+      addObjects: replacement.addObjects.filter(object => !dropsFragment(object))
     }));
     const replacementSourceIds = new Set(replacements.map(replacement => replacement.removeId));
     const snapshotIds = new Set(
@@ -5827,6 +5867,8 @@ function createFabricOverlayRuntime(options = {}) {
         .filter(object => object.__baeframeObjectId)
         .map(object => [object.__baeframeObjectId, object])
     );
+    // 짝인 외곽선 레코드를 찾기 위한 조회표.
+    const recordsById = new Map((snapshot?.objects || []).map(object => [object.id, object]));
     const replacementPlans = [];
     const selectedPersistedIds = new Set();
     const polygonBounds = boundsForPoints(polygon);
@@ -5841,7 +5883,7 @@ function createFabricOverlayRuntime(options = {}) {
         selectedObjectIds: restoredSelectionIds
       };
     };
-    const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
+    const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null) => {
       accumulatedFragments += componentPlans.length;
       const projectedObjectCount = snapshot.objects.length -
         (replacementPlans.length + 1) +
@@ -5850,7 +5892,7 @@ function createFabricOverlayRuntime(options = {}) {
           projectedObjectCount > sceneLimits.maxObjects) {
         return false;
       }
-      replacementPlans.push({ record, object, componentPlans, geometryOptions });
+      replacementPlans.push({ record, object, componentPlans, geometryOptions, outlineSpec });
       return true;
     };
     if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -6061,7 +6103,20 @@ function createFabricOverlayRuntime(options = {}) {
         Number(left.selected) - Number(right.selected) ||
         left.interval[1] - right.interval[1]
       ));
-      if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
+      // 이 획에 살아 있는 외곽선이 있으면 조각마다 잘라 낸 기하를 미리 만들어 둔다.
+      const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
+      if (outlineSpec) {
+        for (const plan of componentPlans) {
+          plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
+            plan,
+            record,
+            outlineSpec,
+            sourceSelection,
+            geometryOptions
+          );
+        }
+      }
+      if (!queueReplacementPlan(record, object, componentPlans, geometryOptions, outlineSpec)) {
         return fail('lasso-fragment-limit-exceeded');
       }
     }
@@ -6070,6 +6125,7 @@ function createFabricOverlayRuntime(options = {}) {
     const selectedFragmentIds = new Set();
     for (const replacementPlan of replacementPlans) {
       const addObjects = [];
+      const outlineAddObjects = [];
       let fragmentBuildFailed = false;
       for (const plan of replacementPlan.componentPlans) {
         const fragment = createStrokeFragment(
@@ -6087,9 +6143,23 @@ function createFabricOverlayRuntime(options = {}) {
         }
         addObjects.push(fragment);
         if (plan.selected) selectedFragmentIds.add(fragment.id);
+        if (replacementPlan.outlineSpec && plan.outlineRenderGeometry) {
+          const outlineFragment = makeOutlineFragmentRecord(
+            fragment,
+            replacementPlan.outlineSpec,
+            plan.outlineRenderGeometry
+          );
+          if (outlineFragment) outlineAddObjects.push(outlineFragment);
+        }
       }
       if (fragmentBuildFailed) {
         return fail('fragment-build-failed');
+      }
+      // 외곽선 교체를 본체보다 **먼저** 넣는다. 씬 Map 에서 외곽선이 본체 앞이므로
+      // 그 자리에 조각들이 들어가 z-order 가 유지된다.
+      const outlineId = outlineIdFor(replacementPlan.record.id);
+      if (replacementPlan.outlineSpec && outlineId) {
+        replacements.push({ removeId: outlineId, addObjects: outlineAddObjects });
       }
       replacements.push({
         removeId: replacementPlan.record.id,
@@ -6101,9 +6171,8 @@ function createFabricOverlayRuntime(options = {}) {
     let result = { applied: false, selectedObjectIds };
     if (replacements.length > 0 && selectedFragmentIds.size > 0) {
       const staged = stagePendingLassoSelection({
-        // 외곽선 제거를 **스테이징 시점에** 반영한다. 커밋 때만 확장하면 드래그하는
-        // 내내 쪼개지지 않은 원본 외곽선이 캔버스에 그대로 남아 있다.
-        replacements: expandOutlineReplacements(replacements),
+        // 외곽선 교체는 조각 루프에서 이미 만들어 넣었다(잘라 낸 기하 포함).
+        replacements,
         selectedPersistedIds,
         selectedFragmentIds,
         snapshot,

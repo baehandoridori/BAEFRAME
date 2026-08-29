@@ -1847,8 +1847,12 @@ test('the outline section sits under the colour palette in the brush panel', () 
   assert.match(fabricRuntimeSource, /function deriveOutlineRecord\(record, outline, geometryOptions = null\) \{/);
   // 짝은 한 커맨드로 들어가야 실행취소가 1건이다.
   assert.match(fabricRuntimeSource, /function addStroke\(stroke, outlineRecord = null\) \{/);
-  // 분할에서 외곽선은 자르지 않고 다시 만든다.
-  assert.match(fabricRuntimeSource, /function expandOutlineReplacements\(replacements\) \{/);
+  // 분할에서 외곽선은 **같은 폴리곤으로 잘라** 조각마다 다시 만든다.
+  assert.match(
+    fabricRuntimeSource,
+    /function buildClippedOutlineRenderGeometry\(plan, record, spec, sourceSelection, geometryOptions\) \{/
+  );
+  assert.match(fabricRuntimeSource, /function makeOutlineFragmentRecord\(fragment, spec, renderGeometry\) \{/);
   // style 에 필드를 늘리면 구버전 앱이 문서를 통째로 거부한다.
   assert.doesNotMatch(fabricRuntimeSource, /outlineWidth:/);
 });

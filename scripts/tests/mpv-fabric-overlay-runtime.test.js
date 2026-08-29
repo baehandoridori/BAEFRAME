@@ -16072,7 +16072,7 @@ test('deleting a body deletes its outline too', async () => {
   }
 });
 
-test('a pixel erase drops outlines rather than repainting erased areas', async () => {
+test('a pixel erase rebuilds a clipped outline for each body fragment', async () => {
   const harness = createRealFabricHarness();
   try {
     enableOutline(harness, { width: 2 });
@@ -16091,17 +16091,26 @@ test('a pixel erase drops outlines rather than repainting erased areas', async (
     const bodies = bodyObjects(harness);
     const outlines = outlineObjects(harness);
     assert.equal(bodies.length, 2, '본체가 조각으로 나뉘어야 한다');
-    // 분할 조각은 renderGeometry 로 **실제 칠할 영역**을 따로 쥔다. sourcePoints 는
-    // 두께 방향으로 잘린 경우에도 원래 중심선을 그대로 담고 있어서, 그걸로 외곽선을
-    // 다시 만들면 지운 자리를 되칠한다. 마스크를 반영해 외곽선을 깎는 기계가 아직
-    // 없으므로 **덜 그리는 쪽**을 택했다 — 조각에는 외곽선이 붙지 않는다.
-    assert.equal(outlines.length, 0, '지운 자리를 되칠하느니 외곽선을 붙이지 않는다');
-    // 낡은 외곽선이 고아로 남아서도 안 된다.
-    assert.equal(
-      harness.sceneStore.getActiveSceneSnapshot().objects.length,
-      2,
-      '본체 조각 2개만 남아야 한다'
-    );
+    // 외곽선은 본체와 같은 중심선으로 굵은 획을 만든 뒤 **같은 폴리곤으로 잘라**
+    // 조각이 실제로 남은 자리에만 테두리가 남게 한다.
+    assert.equal(outlines.length, 2, '조각마다 잘라 낸 외곽선이 있어야 한다');
+    for (const body of bodies) {
+      const outline = outlines.find(candidate => candidate.id === `${body.id}~outline`);
+      assert.ok(outline, `조각 ${body.id} 의 외곽선이 없다`);
+      // 잘라 낸 기하를 쥐고 있고, 고리라 불투명도가 두 번 합성되지 않는다.
+      assert.ok(outline.renderGeometry);
+      assert.equal(outline.renderGeometry.fillRule, 'evenodd');
+    }
+    // z-order — 각 외곽선이 자기 본체보다 앞(뒤에 깔림)이어야 한다.
+    const order = harness.sceneStore.getActiveSceneSnapshot().objects.map(object => object.id);
+    for (const body of bodies) {
+      assert.ok(
+        order.indexOf(`${body.id}~outline`) < order.indexOf(body.id),
+        `조각 ${body.id} 의 외곽선이 뒤에 깔리지 않았다`
+      );
+    }
+    // 낡은 원본 외곽선이 고아로 남아서도 안 된다.
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 4);
     assert.equal(harness.runtime.getDiagnostics().undoDepth, before + 1, '분할도 실행취소 1건');
   } finally {
     await harness.destroy();

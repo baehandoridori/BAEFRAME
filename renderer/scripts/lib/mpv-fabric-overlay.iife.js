@@ -17864,36 +17864,72 @@ void main() {
           }
           return { plans, reason: null };
         }
-        function expandOutlineReplacements(replacements) {
-          const snapshot = sceneStore.getActiveSceneSnapshot();
-          const objectsById = new Map((snapshot?.objects || []).map((object) => [object.id, object]));
-          const expanded = [];
-          for (const replacement of replacements) {
-            const bodyId = replacement?.removeId;
-            const outlineId = outlineIdFor(bodyId);
-            const outlineObject = outlineId ? objectsById.get(outlineId) : null;
-            if (!outlineObject) {
-              expanded.push(replacement);
-              continue;
-            }
-            const spec = outlineSpecFromPair(objectsById.get(bodyId), outlineObject);
-            const addObjects = [];
-            if (spec) {
-              const budget = createGeometryBudget(maxSelectionGeometryOperations);
-              for (const fragment of replacement.addObjects || []) {
-                if (fragment.renderGeometry !== void 0) continue;
-                const derived = deriveOutlineRecord(
-                  fragment,
-                  spec,
-                  resolveStrokeGeometryOptions(fragment, budget)
-                );
-                if (derived) addObjects.push(derived);
-              }
-            }
-            expanded.push({ removeId: outlineId, addObjects });
-            expanded.push(replacement);
+        function buildClippedOutlineRenderGeometry(plan, record, spec, sourceSelection, geometryOptions) {
+          if (!plan?.renderGeometry?.pathData || !Array.isArray(plan.points) || plan.points.length < 2) {
+            return null;
           }
-          return expanded;
+          const budget = createGeometryBudget(maxSelectionGeometryOperations);
+          const size = finiteNumber(record.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
+          let strokeData;
+          try {
+            strokeData = strokePathFactory(plan.points, {
+              size,
+              last: true,
+              alreadyNormalizedPressure: true,
+              start: { cap: plan.caps?.start !== false },
+              end: { cap: plan.caps?.end !== false },
+              ...geometryOptions || null
+            });
+          } catch (_error) {
+            return null;
+          }
+          if (!strokeData?.pathData) return null;
+          let outlineContour = null;
+          try {
+            const probe = makeFabricPath({
+              id: null,
+              pathData: strokeData.pathData,
+              style: { ...record.style, size }
+            }, true);
+            const maximumScale = Math.max(1e-9, finiteNumber(sourceSelection?.maximumScale, 1));
+            const flattened = flattenFabricPath(probe.path, {
+              tolerance: Math.max(Number.EPSILON, Math.min(0.25, 0.25 / maximumScale)),
+              fillRule: probe.fillRule,
+              budget
+            });
+            if (!flattened.geometry) return null;
+            const query = createPathFillQuery(flattened.geometry, budget);
+            if (!query) return null;
+            const clipped = clipSimplePathFillPair(query, sourceSelection.query, {
+              budget,
+              polygonValidated: true
+            });
+            const side = plan.selected ? clipped.intersection : clipped.difference;
+            if (!side || side.reason || side.components.length === 0) return null;
+            outlineContour = contourPathData(side.components.flatMap((component) => component.contours));
+          } catch (_error) {
+            return null;
+          }
+          if (!outlineContour) return null;
+          const ringPathData = `${outlineContour} ${plan.renderGeometry.pathData}`;
+          if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
+          return { version: 1, pathData: ringPathData, fillRule: "evenodd" };
+        }
+        function makeOutlineFragmentRecord(fragment, spec, renderGeometry) {
+          const id = outlineIdFor(fragment?.id);
+          if (!id || !renderGeometry) return null;
+          const size = finiteNumber(fragment.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
+          const derived = {
+            id,
+            type: "stroke",
+            pathData: fragment.pathData,
+            sourcePoints: clonePlain(fragment.sourcePoints),
+            style: { ...fragment.style, color: spec.color, size },
+            transform: clonePlain(fragment.transform || {}),
+            renderGeometry: clonePlain(renderGeometry)
+          };
+          if (fragment.strokeCaps) derived.strokeCaps = clonePlain(fragment.strokeCaps);
+          return derived;
         }
         function deriveOutlineRecord(record, outline, geometryOptions = null) {
           if (outline?.enabled !== true) return null;
@@ -18244,9 +18280,10 @@ void main() {
             abortPendingLassoSelection({ authoritative: true });
             return { applied: false, reason: "stale-pending-lasso" };
           }
+          const dropsFragment = (object) => pending.selectedFragmentIds.has(object.id) || pending.selectedFragmentIds.has(bodyIdFor(object.id));
           const replacements = pending.replacements.map((replacement) => ({
             removeId: replacement.removeId,
-            addObjects: replacement.addObjects.filter((object) => !pending.selectedFragmentIds.has(object.id))
+            addObjects: replacement.addObjects.filter((object) => !dropsFragment(object))
           }));
           const replacementSourceIds = new Set(replacements.map((replacement) => replacement.removeId));
           const snapshotIds = new Set(
@@ -18421,6 +18458,7 @@ void main() {
           const canvasObjects = new Map(
             fabricCanvas.getObjects().filter((object) => object.__baeframeObjectId).map((object) => [object.__baeframeObjectId, object])
           );
+          const recordsById = new Map((snapshot?.objects || []).map((object) => [object.id, object]));
           const replacementPlans = [];
           const selectedPersistedIds = /* @__PURE__ */ new Set();
           const polygonBounds = boundsForPoints(polygon);
@@ -18435,13 +18473,13 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
-          const queueReplacementPlan = (record, object, componentPlans, geometryOptions) => {
+          const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null) => {
             accumulatedFragments += componentPlans.length;
             const projectedObjectCount = snapshot.objects.length - (replacementPlans.length + 1) + accumulatedFragments;
             if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
               return false;
             }
-            replacementPlans.push({ record, object, componentPlans, geometryOptions });
+            replacementPlans.push({ record, object, componentPlans, geometryOptions, outlineSpec });
             return true;
           };
           if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -18630,7 +18668,19 @@ void main() {
               );
             }
             componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
-            if (!queueReplacementPlan(record, object, componentPlans, geometryOptions)) {
+            const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
+            if (outlineSpec) {
+              for (const plan of componentPlans) {
+                plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
+                  plan,
+                  record,
+                  outlineSpec,
+                  sourceSelection,
+                  geometryOptions
+                );
+              }
+            }
+            if (!queueReplacementPlan(record, object, componentPlans, geometryOptions, outlineSpec)) {
               return fail("lasso-fragment-limit-exceeded");
             }
           }
@@ -18638,6 +18688,7 @@ void main() {
           const selectedFragmentIds = /* @__PURE__ */ new Set();
           for (const replacementPlan of replacementPlans) {
             const addObjects = [];
+            const outlineAddObjects = [];
             let fragmentBuildFailed = false;
             for (const plan of replacementPlan.componentPlans) {
               const fragment = createStrokeFragment(
@@ -18655,9 +18706,21 @@ void main() {
               }
               addObjects.push(fragment);
               if (plan.selected) selectedFragmentIds.add(fragment.id);
+              if (replacementPlan.outlineSpec && plan.outlineRenderGeometry) {
+                const outlineFragment = makeOutlineFragmentRecord(
+                  fragment,
+                  replacementPlan.outlineSpec,
+                  plan.outlineRenderGeometry
+                );
+                if (outlineFragment) outlineAddObjects.push(outlineFragment);
+              }
             }
             if (fragmentBuildFailed) {
               return fail("fragment-build-failed");
+            }
+            const outlineId = outlineIdFor(replacementPlan.record.id);
+            if (replacementPlan.outlineSpec && outlineId) {
+              replacements.push({ removeId: outlineId, addObjects: outlineAddObjects });
             }
             replacements.push({
               removeId: replacementPlan.record.id,
@@ -18668,9 +18731,8 @@ void main() {
           let result = { applied: false, selectedObjectIds };
           if (replacements.length > 0 && selectedFragmentIds.size > 0) {
             const staged = stagePendingLassoSelection({
-              // 외곽선 제거를 **스테이징 시점에** 반영한다. 커밋 때만 확장하면 드래그하는
-              // 내내 쪼개지지 않은 원본 외곽선이 캔버스에 그대로 남아 있다.
-              replacements: expandOutlineReplacements(replacements),
+              // 외곽선 교체는 조각 루프에서 이미 만들어 넣었다(잘라 낸 기하 포함).
+              replacements,
               selectedPersistedIds,
               selectedFragmentIds,
               snapshot,
