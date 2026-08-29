@@ -16634,3 +16634,44 @@ test('the gesture preview uses the same ring as the committed outline', async ()
     await harness.destroy();
   }
 });
+
+test('a regenerated fragment outline gets its own natural transform', async () => {
+  // 잘라 낸 고리는 pathOffset·바운딩 박스 중심이 본체 조각과 다르다. 본체 조각의
+  // transform 을 그대로 베끼면 두 오브젝트 중심만 맞춰지고 소스 좌표가 어긋난다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 5 });
+    // 압력이 실려 좌우가 비대칭인 획 — 본체와 외곽선의 자연 위치가 확실히 갈린다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 100, 9501, 1, { pressure: 0.1 });
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, 9501, 1, { pressure: 0.9 });
+    harness.dispatchPointer(harness.element, 'pointermove', 180, 100, 9501, 1, { pressure: 0.2 });
+    harness.dispatchCapturedPointerUp(180, 100, 9501);
+
+    enableRealFabricShapeTool(harness, 'eraser', 5);
+    clickEraserMode(harness.root, 'pixel');
+    const pointerId = 9502;
+    harness.dispatchPointer(harness.element, 'pointerdown', 100, 70, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 100, 130, pointerId, 1);
+    harness.dispatchCapturedPointerUp(100, 130, pointerId);
+
+    const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
+    const outlines = objects.filter(object => object.id.endsWith('~outline'));
+    assert.ok(outlines.length > 0, '조각마다 외곽선이 있어야 한다');
+    // 조각 외곽선은 자기 자연 위치를 가지므로 본체 조각과 값이 같을 이유가 없다.
+    // 하나라도 본체와 정확히 같으면 베껴 쓴 것이다.
+    let differs = false;
+    for (const outline of outlines) {
+      const body = objects.find(candidate =>
+        candidate.id === outline.id.slice(0, -'~outline'.length));
+      assert.ok(body, '짝이 있어야 한다');
+      if (outline.transform.left !== body.transform.left ||
+          outline.transform.top !== body.transform.top) {
+        differs = true;
+      }
+    }
+    assert.equal(differs, true, '비대칭 획이면 조각 외곽선의 자연 위치가 본체와 달라야 한다');
+  } finally {
+    await harness.destroy();
+  }
+});

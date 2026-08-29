@@ -5292,24 +5292,37 @@ function createFabricOverlayRuntime(options = {}) {
 
     const ringPathData = `${outlineContour} ${plan.renderGeometry.pathData}`;
     if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
-    return { version: 1, pathData: ringPathData, fillRule: 'evenodd' };
+    return {
+      pathData: strokeData.pathData,
+      renderGeometry: { version: 1, pathData: ringPathData, fillRule: 'evenodd' }
+    };
   }
 
   // 조각 본체에서 외곽선 짝 레코드를 만든다. 기하는 이미 잘라 둔 것을 쓴다.
-  function makeOutlineFragmentRecord(fragment, spec, renderGeometry) {
+  function makeOutlineFragmentRecord(fragment, spec, outlineGeometry, sourceOutlineObject) {
     const id = outlineIdFor(fragment?.id);
-    if (!id || !renderGeometry) return null;
+    if (!id || !outlineGeometry?.renderGeometry || !outlineGeometry.pathData) return null;
     const size = finiteNumber(fragment.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
     const derived = {
       id,
       type: 'stroke',
-      pathData: fragment.pathData,
+      pathData: outlineGeometry.pathData,
       sourcePoints: clonePlain(fragment.sourcePoints),
       style: { ...fragment.style, color: spec.color, size },
-      transform: clonePlain(fragment.transform || {}),
-      renderGeometry: clonePlain(renderGeometry)
+      renderGeometry: clonePlain(outlineGeometry.renderGeometry)
     };
     if (fragment.strokeCaps) derived.strokeCaps = clonePlain(fragment.strokeCaps);
+    // 본체 조각의 transform 을 베끼면 안 된다. 잘라 낸 고리는 pathOffset·바운딩 박스
+    // 중심이 본체 조각과 달라서, 같은 값을 주면 두 **오브젝트 중심**이 맞춰질 뿐
+    // 소스 좌표가 어긋난다. 본체 조각과 똑같이 자기 경로에서 자연 위치를 뽑고
+    // 원본 외곽선의 변형을 얹는다.
+    try {
+      const path = makeFabricPath(derived);
+      if (!applySourceTransformToFragment(path, sourceOutlineObject)) return null;
+      derived.transform = captureTransform(path);
+    } catch (_error) {
+      return null;
+    }
     return derived;
   }
 
@@ -5944,7 +5957,14 @@ function createFabricOverlayRuntime(options = {}) {
         selectedObjectIds: restoredSelectionIds
       };
     };
-    const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null) => {
+    const queueReplacementPlan = (
+      record,
+      object,
+      componentPlans,
+      geometryOptions,
+      outlineSpec = null,
+      outlineObject = null
+    ) => {
       accumulatedFragments += componentPlans.length;
       // 외곽선 조각도 씬에 들어가는 오브젝트다. 세지 않으면 상한 근처에서 스테이징은
       // 통과하고 replaceObjects 가 scene-object-limit-exceeded 로 되돌린다.
@@ -5962,7 +5982,14 @@ function createFabricOverlayRuntime(options = {}) {
           projectedObjectCount > sceneLimits.maxObjects) {
         return false;
       }
-      replacementPlans.push({ record, object, componentPlans, geometryOptions, outlineSpec });
+      replacementPlans.push({
+        record,
+        object,
+        componentPlans,
+        geometryOptions,
+        outlineSpec,
+        outlineObject
+      });
       return true;
     };
     if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -6026,7 +6053,14 @@ function createFabricOverlayRuntime(options = {}) {
             );
           }
         }
-        return queueReplacementPlan(record, object, plans, geometryOptions, outlineSpec);
+        return queueReplacementPlan(
+          record,
+          object,
+          plans,
+          geometryOptions,
+          outlineSpec,
+          canvasObjects.get(outlineIdFor(record.id)) || null
+        );
       };
       if (!strokeHasSplittableLength(record.sourcePoints)) {
         selectedPersistedIds.add(record.id);
@@ -6225,7 +6259,8 @@ function createFabricOverlayRuntime(options = {}) {
           const outlineFragment = makeOutlineFragmentRecord(
             fragment,
             replacementPlan.outlineSpec,
-            plan.outlineRenderGeometry
+            plan.outlineRenderGeometry,
+            replacementPlan.outlineObject
           );
           if (outlineFragment) outlineAddObjects.push(outlineFragment);
         }

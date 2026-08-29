@@ -17956,22 +17956,31 @@ void main() {
           if (!outlineContour) return null;
           const ringPathData = `${outlineContour} ${plan.renderGeometry.pathData}`;
           if (ringPathData.length > MAX_PERSISTENCE_STRING_LENGTH) return null;
-          return { version: 1, pathData: ringPathData, fillRule: "evenodd" };
+          return {
+            pathData: strokeData.pathData,
+            renderGeometry: { version: 1, pathData: ringPathData, fillRule: "evenodd" }
+          };
         }
-        function makeOutlineFragmentRecord(fragment, spec, renderGeometry) {
+        function makeOutlineFragmentRecord(fragment, spec, outlineGeometry, sourceOutlineObject) {
           const id = outlineIdFor(fragment?.id);
-          if (!id || !renderGeometry) return null;
+          if (!id || !outlineGeometry?.renderGeometry || !outlineGeometry.pathData) return null;
           const size = finiteNumber(fragment.style?.size, DEFAULT_BRUSH_STYLE.size) + 2 * spec.width;
           const derived = {
             id,
             type: "stroke",
-            pathData: fragment.pathData,
+            pathData: outlineGeometry.pathData,
             sourcePoints: clonePlain(fragment.sourcePoints),
             style: { ...fragment.style, color: spec.color, size },
-            transform: clonePlain(fragment.transform || {}),
-            renderGeometry: clonePlain(renderGeometry)
+            renderGeometry: clonePlain(outlineGeometry.renderGeometry)
           };
           if (fragment.strokeCaps) derived.strokeCaps = clonePlain(fragment.strokeCaps);
+          try {
+            const path = makeFabricPath(derived);
+            if (!applySourceTransformToFragment(path, sourceOutlineObject)) return null;
+            derived.transform = captureTransform(path);
+          } catch (_error) {
+            return null;
+          }
           return derived;
         }
         function deriveOutlineRecord(record, outline, geometryOptions = null) {
@@ -18519,7 +18528,7 @@ void main() {
               selectedObjectIds: restoredSelectionIds
             };
           };
-          const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null) => {
+          const queueReplacementPlan = (record, object, componentPlans, geometryOptions, outlineSpec = null, outlineObject = null) => {
             accumulatedFragments += componentPlans.length;
             const outlineFragments = outlineSpec ? componentPlans.filter((plan) => plan.outlineRenderGeometry).length : 0;
             const removedPairs = outlineSpec ? 1 : 0;
@@ -18529,7 +18538,14 @@ void main() {
             if (accumulatedFragments > maxLassoFragments || projectedObjectCount > sceneLimits.maxObjects) {
               return false;
             }
-            replacementPlans.push({ record, object, componentPlans, geometryOptions, outlineSpec });
+            replacementPlans.push({
+              record,
+              object,
+              componentPlans,
+              geometryOptions,
+              outlineSpec,
+              outlineObject
+            });
             return true;
           };
           if (!validateSimpleContour(polygon, geometryBudget)) {
@@ -18580,7 +18596,14 @@ void main() {
                   );
                 }
               }
-              return queueReplacementPlan(record, object, plans, geometryOptions, outlineSpec);
+              return queueReplacementPlan(
+                record,
+                object,
+                plans,
+                geometryOptions,
+                outlineSpec,
+                canvasObjects.get(outlineIdFor(record.id)) || null
+              );
             };
             if (!strokeHasSplittableLength(record.sourcePoints)) {
               selectedPersistedIds.add(record.id);
@@ -18764,7 +18787,8 @@ void main() {
                 const outlineFragment = makeOutlineFragmentRecord(
                   fragment,
                   replacementPlan.outlineSpec,
-                  plan.outlineRenderGeometry
+                  plan.outlineRenderGeometry,
+                  replacementPlan.outlineObject
                 );
                 if (outlineFragment) outlineAddObjects.push(outlineFragment);
               }

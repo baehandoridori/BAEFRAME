@@ -1855,7 +1855,15 @@ test('the outline section sits under the colour palette in the brush panel', () 
   // 조각마다 새 예산을 주면 512조각에서 설정 한도의 수백 배를 동기로 돌아 멈춘다.
   assert.match(fabricRuntimeSource, /const outlineGeometryBudget = createGeometryBudget\(maxSelectionGeometryOperations\);/);
 
-  assert.match(fabricRuntimeSource, /function makeOutlineFragmentRecord\(fragment, spec, renderGeometry\) \{/);
+  assert.match(
+    fabricRuntimeSource,
+    /function makeOutlineFragmentRecord\(fragment, spec, outlineGeometry, sourceOutlineObject\) \{/
+  );
+  // 조각 외곽선도 본체와 똑같이 자기 경로에서 자연 위치를 뽑아야 어긋나지 않는다.
+  assert.match(
+    fabricRuntimeSource,
+    /if \(!applySourceTransformToFragment\(path, sourceOutlineObject\)\) return null;\n\s+derived\.transform = captureTransform\(path\);/
+  );
   // style 에 필드를 늘리면 구버전 앱이 문서를 통째로 거부한다.
   assert.doesNotMatch(fabricRuntimeSource, /outlineWidth:/);
 });
