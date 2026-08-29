@@ -18551,6 +18551,21 @@ void main() {
             if (!geometryOptions) {
               return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
             }
+            const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
+            const queueWithOutlines = (plans) => {
+              if (outlineSpec && record.renderGeometry === void 0) {
+                for (const plan of plans) {
+                  plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
+                    plan,
+                    record,
+                    outlineSpec,
+                    sourceSelection,
+                    geometryOptions
+                  );
+                }
+              }
+              return queueReplacementPlan(record, object, plans, geometryOptions, outlineSpec);
+            };
             if (!strokeHasSplittableLength(record.sourcePoints)) {
               selectedPersistedIds.add(record.id);
               continue;
@@ -18582,7 +18597,7 @@ void main() {
               if (!compact.plans || compact.reason) {
                 return fail(compact.reason || "selection-geometry-unavailable");
               }
-              if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
+              if (!queueWithOutlines(compact.plans)) {
                 return fail("lasso-fragment-limit-exceeded");
               }
               continue;
@@ -18629,7 +18644,7 @@ void main() {
                 if (!compact.plans || compact.reason) {
                   return fail(compact.reason || "selection-geometry-unavailable");
                 }
-                if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
+                if (!queueWithOutlines(compact.plans)) {
                   return fail("lasso-fragment-limit-exceeded");
                 }
                 continue;
@@ -18703,19 +18718,7 @@ void main() {
               );
             }
             componentPlans.sort((left, right) => left.interval[0] - right.interval[0] || Number(left.selected) - Number(right.selected) || left.interval[1] - right.interval[1]);
-            const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
-            if (outlineSpec) {
-              for (const plan of componentPlans) {
-                plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
-                  plan,
-                  record,
-                  outlineSpec,
-                  sourceSelection,
-                  geometryOptions
-                );
-              }
-            }
-            if (!queueReplacementPlan(record, object, componentPlans, geometryOptions, outlineSpec)) {
+            if (!queueWithOutlines(componentPlans)) {
               return fail("lasso-fragment-limit-exceeded");
             }
           }

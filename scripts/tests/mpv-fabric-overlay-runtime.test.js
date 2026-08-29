@@ -16571,3 +16571,42 @@ test('a shape gesture previews its outline too', async () => {
     await harness.destroy();
   }
 });
+
+test('splitting an already-split outlined stroke leaves no orphan outline', async () => {
+  // 이미 한 번 잘린 조각은 renderGeometry 를 쥐고 있어 다른 갈래를 탄다. 그 갈래가
+  // 외곽선 교체를 만들지 않으면 낡은 `<본체>~outline` 이 고아로 남고, 새 조각들은
+  // 짝 없이 생긴다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 3 });
+    harness.drawStroke([{ x: 10, y: 100 }, { x: 100, y: 100 }, { x: 190, y: 100 }], 9301);
+    enableRealFabricShapeTool(harness, 'eraser', 5);
+    clickEraserMode(harness.root, 'pixel');
+
+    const sweep = (x, pointerId) => {
+      harness.dispatchPointer(harness.element, 'pointerdown', x, 70, pointerId, 1);
+      harness.dispatchPointer(harness.element, 'pointermove', x, 100, pointerId, 1);
+      harness.dispatchPointer(harness.element, 'pointermove', x, 130, pointerId, 1);
+      harness.dispatchCapturedPointerUp(x, 130, pointerId);
+    };
+
+    sweep(70, 9302);
+    const afterFirst = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.ok(afterFirst.length >= 2, '첫 분할이 조각을 만들어야 한다');
+
+    // 같은 획을 한 번 더 가로지른다 — 이번엔 이미 잘린 조각이 대상이다.
+    sweep(140, 9303);
+
+    const survivors = harness.sceneStore.getActiveSceneSnapshot().objects;
+    for (const object of survivors) {
+      if (!object.id.endsWith('~outline')) continue;
+      const bodyId = object.id.slice(0, -'~outline'.length);
+      assert.ok(
+        survivors.some(candidate => candidate.id === bodyId),
+        `외곽선 ${object.id} 이 짝 없이 남았다`
+      );
+    }
+  } finally {
+    await harness.destroy();
+  }
+});

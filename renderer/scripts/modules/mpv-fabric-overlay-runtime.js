@@ -5982,6 +5982,26 @@ function createFabricOverlayRuntime(options = {}) {
           ? 'selection-complexity-limit-exceeded'
           : 'selection-geometry-unavailable');
       }
+      // 이 획에 살아 있는 외곽선이 있으면 어느 갈래로 가든 낡은 외곽선을 함께
+      // 교체해야 한다. 안 그러면 고아가 남는다.
+      const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
+      const queueWithOutlines = plans => {
+        // 이미 한 번 잘린 조각(renderGeometry 를 쥔 본체)은 그 마스크를 다시 반영할
+        // 방법이 없다. 중심선에서 새로 만든 외곽선은 앞서 지운 자리까지 되칠하므로
+        // **다시 만들지 않는다** — 낡은 외곽선만 걷어내고 조각은 테두리 없이 남긴다.
+        if (outlineSpec && record.renderGeometry === undefined) {
+          for (const plan of plans) {
+            plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
+              plan,
+              record,
+              outlineSpec,
+              sourceSelection,
+              geometryOptions
+            );
+          }
+        }
+        return queueReplacementPlan(record, object, plans, geometryOptions, outlineSpec);
+      };
       if (!strokeHasSplittableLength(record.sourcePoints)) {
         selectedPersistedIds.add(record.id);
         continue;
@@ -6013,7 +6033,7 @@ function createFabricOverlayRuntime(options = {}) {
         if (!compact.plans || compact.reason) {
           return fail(compact.reason || 'selection-geometry-unavailable');
         }
-        if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
+        if (!queueWithOutlines(compact.plans)) {
           return fail('lasso-fragment-limit-exceeded');
         }
         continue;
@@ -6060,7 +6080,7 @@ function createFabricOverlayRuntime(options = {}) {
           if (!compact.plans || compact.reason) {
             return fail(compact.reason || 'selection-geometry-unavailable');
           }
-          if (!queueReplacementPlan(record, object, compact.plans, geometryOptions)) {
+          if (!queueWithOutlines(compact.plans)) {
             return fail('lasso-fragment-limit-exceeded');
           }
           continue;
@@ -6148,20 +6168,7 @@ function createFabricOverlayRuntime(options = {}) {
         Number(left.selected) - Number(right.selected) ||
         left.interval[1] - right.interval[1]
       ));
-      // 이 획에 살아 있는 외곽선이 있으면 조각마다 잘라 낸 기하를 미리 만들어 둔다.
-      const outlineSpec = outlineSpecFromPair(record, recordsById.get(outlineIdFor(record.id)));
-      if (outlineSpec) {
-        for (const plan of componentPlans) {
-          plan.outlineRenderGeometry = buildClippedOutlineRenderGeometry(
-            plan,
-            record,
-            outlineSpec,
-            sourceSelection,
-            geometryOptions
-          );
-        }
-      }
-      if (!queueReplacementPlan(record, object, componentPlans, geometryOptions, outlineSpec)) {
+      if (!queueWithOutlines(componentPlans)) {
         return fail('lasso-fragment-limit-exceeded');
       }
     }
