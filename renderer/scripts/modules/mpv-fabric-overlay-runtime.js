@@ -3053,7 +3053,9 @@ function createFabricOverlayRuntime(options = {}) {
 
   function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
     if (!brushStatusRow) return;
-    const diameter = Math.min(22, Math.max(2, brushStyle.size));
+    // 하한이 2px 이면 문장 앞의 마침표로 읽힌다. 정확한 굵기는 옆의 숫자가 말하므로
+    // 견본은 색을 알아볼 수 있는 최소 크기(4px)를 지킨다.
+    const diameter = Math.min(22, Math.max(4, brushStyle.size));
     setStyles(brushStatusRow.swatch, {
       display: 'inline-block',
       width: `${diameter}px`,
@@ -3123,10 +3125,13 @@ function createFabricOverlayRuntime(options = {}) {
     const caret = documentRef.createElement('span');
     caret.dataset.fabricPilotOutput = 'shape-menu-caret';
     caret.innerHTML = SHAPE_MENU_CARET_SVG;
+    // 버튼 모서리 반경은 8px 이다. 2px 만 들이면 캐럿의 바깥 꼭짓점이 그 호(弧)
+    // **밖**으로 나가(중심에서 √(6²+6²)=8.49 > 8) 버튼에 매달린 티끌처럼 보인다.
+    // 4px 이면 √(4²+4²)=5.66 < 8 이라 확실히 버튼 면 안에 앉는다.
     setStyles(caret, {
       position: 'absolute',
-      right: '2px',
-      bottom: '2px',
+      right: '4px',
+      bottom: '4px',
       lineHeight: '0',
       pointerEvents: 'none'
     });
@@ -3570,13 +3575,15 @@ function createFabricOverlayRuntime(options = {}) {
     panel.setAttribute?.('role', 'group');
     panel.setAttribute?.('aria-label', '브러시 설정');
     // 팔레트 안에 인라인으로 펼쳐진다(더 이상 툴바 아래로 떨어지는 드롭다운이 아니다)
+    // 높이를 210px 로 자르면 안 된다 — 내용이 500px 을 넘어(색·굵기·불투명도·
+    // 외곽선·최근 색) **팔레트 스크롤 안에 또 스크롤**이 생기고, 맨 아래 외곽선
+    // 설정은 안쪽 스크롤을 따로 내려야만 닿는다. 바깥
+    // `.mpv-fabric-pilot-toolbar-content` 가 이미 70vh 에서 스크롤하므로
+    // 여기서는 자르지 않는다 — 스크롤 막대는 하나여야 한다.
     setStyles(panel, {
       display: 'none',
       position: 'static',
       width: '100%',
-      maxHeight: '210px',
-      overflowY: 'auto',
-      overscrollBehavior: 'contain',
       flexDirection: 'column',
       gap: '10px',
       marginTop: '6px',
@@ -3606,24 +3613,27 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(palette, {
       display: 'flex',
       flexWrap: 'wrap',
-      gap: '6px'
+      // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
+      gap: 'var(--fabric-palette-gap)'
     });
     const colorButtons = BRUSH_COLORS.map(color => {
       const button = createButton('', 'brush-color');
       button.dataset.fabricPilotColor = color;
       button.setAttribute?.('aria-label', `브러시 색상 ${BRUSH_COLOR_LABELS[color]}`);
       button.setAttribute?.('aria-pressed', 'false');
+      // 치수는 **인라인으로 주지 않는다.** 기본 버튼 CSS 의 `padding: 0 12px` 가
+      // 22px 점에 더해져 46px 이 되면 한 줄에 둘밖에 못 들어가지만, 인라인으로
+      // 36px 을 박으면 이번엔 좁은 화면(≤800px, 팔레트 190px)에서 미디어 쿼리가
+      // 이길 수 없어 3/3/2 로 흘러넘친다. 호스트 CSS 가 두 폭 모두 책임진다.
       setStyles(button, {
         display: 'inline-flex',
         alignItems: 'center',
-        justifyContent: 'center',
-        minWidth: '40px',
-        minHeight: '40px'
+        justifyContent: 'center'
       });
       const dot = documentRef.createElement('span');
       setStyles(dot, {
-        width: '22px',
-        height: '22px',
+        width: '20px',
+        height: '20px',
         borderRadius: '50%',
         background: color,
         border: color === '#ffffff' ? '1px solid rgba(0, 0, 0, 0.7)' : 'none'
@@ -3664,7 +3674,10 @@ function createFabricOverlayRuntime(options = {}) {
       input.step = '1';
       input.dataset.fabricPilotSetting = setting;
       input.setAttribute?.('aria-label', label);
-      setStyles(input, { flex: '1 1 auto', minWidth: '0' });
+      // basis 를 auto 로 두면 range 입력의 기본 폭(크로뮴 기준 129px)이 그대로
+      // 예약돼 폭 166px 짜리 패널에서 줄이 넘치고, −·슬라이더·+ 가 **세 줄로**
+      // 쪼개진다. basis 0 이면 남는 자리만큼만 늘어나 한 줄에 앉는다.
+      setStyles(input, { flex: '1 1 0', minWidth: '0' });
       const increase = createButton('+', increaseAction);
       increase.setAttribute?.('aria-label', increaseLabel);
       const outputElement = documentRef.createElement('span');

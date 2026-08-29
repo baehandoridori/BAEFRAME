@@ -16010,7 +16010,7 @@ void main() {
         }
         function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
           if (!brushStatusRow) return;
-          const diameter = Math.min(22, Math.max(2, brushStyle.size));
+          const diameter = Math.min(22, Math.max(4, brushStyle.size));
           setStyles(brushStatusRow.swatch, {
             display: "inline-block",
             width: `${diameter}px`,
@@ -16076,8 +16076,8 @@ void main() {
           caret.innerHTML = SHAPE_MENU_CARET_SVG;
           setStyles(caret, {
             position: "absolute",
-            right: "2px",
-            bottom: "2px",
+            right: "4px",
+            bottom: "4px",
             lineHeight: "0",
             pointerEvents: "none"
           });
@@ -16472,9 +16472,6 @@ void main() {
             display: "none",
             position: "static",
             width: "100%",
-            maxHeight: "210px",
-            overflowY: "auto",
-            overscrollBehavior: "contain",
             flexDirection: "column",
             gap: "10px",
             marginTop: "6px",
@@ -16502,7 +16499,8 @@ void main() {
           setStyles(palette, {
             display: "flex",
             flexWrap: "wrap",
-            gap: "6px"
+            // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
+            gap: "var(--fabric-palette-gap)"
           });
           const colorButtons = BRUSH_COLORS.map((color) => {
             const button = createButton("", "brush-color");
@@ -16512,14 +16510,12 @@ void main() {
             setStyles(button, {
               display: "inline-flex",
               alignItems: "center",
-              justifyContent: "center",
-              minWidth: "40px",
-              minHeight: "40px"
+              justifyContent: "center"
             });
             const dot = documentRef.createElement("span");
             setStyles(dot, {
-              width: "22px",
-              height: "22px",
+              width: "20px",
+              height: "20px",
               borderRadius: "50%",
               background: color,
               border: color === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
@@ -16559,7 +16555,7 @@ void main() {
             input.step = "1";
             input.dataset.fabricPilotSetting = setting;
             input.setAttribute?.("aria-label", label);
-            setStyles(input, { flex: "1 1 auto", minWidth: "0" });
+            setStyles(input, { flex: "1 1 0", minWidth: "0" });
             const increase = createButton("+", increaseAction);
             increase.setAttribute?.("aria-label", increaseLabel);
             const outputElement = documentRef.createElement("span");

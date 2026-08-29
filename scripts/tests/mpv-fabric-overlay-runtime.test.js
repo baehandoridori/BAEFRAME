@@ -8388,9 +8388,11 @@ test('responsive toolbar keeps one accessible DOM and a compact persistence badg
   assert.equal(toolbar.dataset.collapsed, 'false');
   assert.equal(panel.style.position, 'static');
   assert.equal(panel.style.width, '100%');
-  assert.equal(panel.style.maxHeight, '210px');
-  assert.equal(panel.style.overflowY, 'auto');
-  assert.equal(panel.style.overscrollBehavior, 'contain');
+  // 브러시 설정 패널은 스스로 스크롤하지 않는다. 바깥 팔레트 본문이 70vh 에서
+  // 스크롤하므로, 여기서 또 자르면 스크롤 막대가 둘이 되고 맨 아래 외곽선
+  // 설정이 안쪽 막대를 내리기 전에는 보이지 않는다.
+  assert.equal(panel.style.maxHeight, undefined);
+  assert.equal(panel.style.overflowY, undefined);
   for (const [action, label] of expectedLabels) {
     const button = findOne(toolbar, node => node.dataset.fabricPilotAction === action);
     assert.ok(button, `expected ${action} toolbar button`);

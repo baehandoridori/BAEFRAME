@@ -507,6 +507,39 @@ const OVERLAY_HTML = String.raw`
       min-height: 32px;
       padding: 0;
     }
+    /* 색 견본은 한 줄에 넷이 들어가야 8개가 두 줄로 끝난다.
+       팔레트 220px → 패널 안쪽 166px, 4*36 + 3*6 = 162 <= 166. */
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button[data-fabric-pilot-color] {
+      width: 36px;
+      height: 36px;
+      min-width: 36px;
+      min-height: 36px;
+      padding: 0;
+    }
+    .mpv-fabric-pilot-brush-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      color: var(--text-tertiary);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .mpv-fabric-pilot-brush-status [data-fabric-pilot-output="brush-status-swatch"] {
+      flex: 0 0 auto;
+    }
+    .mpv-fabric-pilot-brush-status [data-fabric-pilot-output="brush-status-text"] {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .mpv-fabric-pilot-eraser-mode,
+    .mpv-fabric-pilot-recent-colors {
+      display: flex;
+      flex-flow: row wrap;
+      gap: var(--fabric-palette-gap);
+    }
     .mpv-fabric-pilot-badge {
       display: block;
       width: 100%;
@@ -541,6 +574,15 @@ const OVERLAY_HTML = String.raw`
       }
       .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="selection-summary"] {
         display: none;
+      }
+      /* 팔레트가 190px 로 좁아지면 패널 안쪽은 약 156px 이다.
+         36px 그대로면 4*36 + 3*4 = 156 을 넘겨 3/3/2 로 흘러 세 줄이 된다.
+         32px 이면 4*32 + 3*4 = 140 이라 넉넉히 넷이 앉는다. */
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button[data-fabric-pilot-color] {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
       }
     }
     .mirror-canvas {

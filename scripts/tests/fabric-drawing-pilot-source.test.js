@@ -1573,7 +1573,51 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.doesNotMatch(fabricRuntimeSource, /top: 'calc\(100% \+ 6px\)'/);
   assert.match(
     fabricRuntimeSource,
-    /panel\.dataset\.fabricPilotPanel = 'brush-settings';[\s\S]+position: 'static',\n\s+width: '100%',\n\s+maxHeight: '210px',\n\s+overflowY: 'auto',\n\s+overscrollBehavior: 'contain',/
+    /panel\.dataset\.fabricPilotPanel = 'brush-settings';[\s\S]+position: 'static',\n\s+width: '100%',\n\s+flexDirection: 'column',/
+  );
+  // 패널은 스스로 스크롤하지 않는다 — 잘라 두면 팔레트 스크롤 안에 스크롤이
+  // 또 생겨 맨 아래 외곽선 설정에 닿으려면 안쪽 막대를 따로 내려야 한다.
+  assert.doesNotMatch(fabricRuntimeSource, /maxHeight: '210px'/);
+});
+
+test('팔레트가 붙이는 모든 클래스는 스타일 출처를 갖는다', () => {
+  // 이 라운드에서 UI 가 깨진 근본 원인이다. `mpv-fabric-pilot-brush-status` 와
+  // `-eraser-mode` 는 JS 가 클래스를 붙이지만 **어디에도 CSS 규칙이 없었다.**
+  // 그래서 상태 줄은 display:block·16px 로 떨어져 팔레트에서 가장 큰 글자가 됐고,
+  // 지우개 방식 버튼은 간격 없이 서로 맞붙었다. 런타임 테스트는 클래스 이름만
+  // 확인하므로 이걸 잡지 못한다 — 이름은 제대로 붙어 있었기 때문이다.
+  //
+  // 규칙: 클래스를 붙였으면 호스트 CSS 에 규칙이 있거나, 인라인 setStyles 로
+  // 스스로 배치를 지정해야 한다. 둘 다 아니면 브라우저 기본값에 맡긴 것이고
+  // 그건 의도가 아니라 누락이다.
+  const inlineStyled = new Set([
+    // 아래는 생성 직후 setStyles 로 배치를 직접 지정한다. 새 클래스를 이 목록에
+    // 넣기 전에 정말 인라인으로 배치하는지 코드에서 확인할 것.
+    'mpv-fabric-pilot-outline',
+    'mpv-fabric-pilot-shape-menu',
+    'mpv-fabric-pilot-size-hud',
+    'mpv-fabric-pilot-size-hud-label',
+    'mpv-fabric-pilot-viewport',
+    // 라벨·행 자식이 각자 CSS 를 갖는 단순 세로 래퍼다.
+    'mpv-fabric-pilot-section'
+  ]);
+  const used = new Set();
+  for (const source of [fabricRuntimeSource, fabricPaletteSource]) {
+    for (const match of source.matchAll(/className = '(mpv-fabric-pilot-[a-z-]+)'/g)) {
+      used.add(match[1]);
+    }
+  }
+  assert.ok(used.size >= 8, `팔레트 클래스를 ${used.size}개만 찾았다 — 추출 정규식을 확인할 것`);
+  const unstyled = [...used].filter(name =>
+    !inlineStyled.has(name) &&
+    !overlayHostSource.includes(`.${name} `) &&
+    !overlayHostSource.includes(`.${name},`) &&
+    !overlayHostSource.includes(`.${name} {`)
+  );
+  assert.deepEqual(
+    unstyled,
+    [],
+    `CSS 규칙도 인라인 배치도 없는 클래스: ${unstyled.join(', ')}`
   );
 });
 
