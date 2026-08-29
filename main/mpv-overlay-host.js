@@ -507,6 +507,30 @@ const OVERLAY_HTML = String.raw`
       min-height: 32px;
       padding: 0;
     }
+    .mpv-fabric-pilot-brush-status {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      min-width: 0;
+      color: var(--text-tertiary);
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .mpv-fabric-pilot-brush-status [data-fabric-pilot-output="brush-status-swatch"] {
+      flex: 0 0 auto;
+    }
+    .mpv-fabric-pilot-brush-status [data-fabric-pilot-output="brush-status-text"] {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .mpv-fabric-pilot-eraser-mode,
+    .mpv-fabric-pilot-recent-colors {
+      display: flex;
+      flex-flow: row wrap;
+      gap: var(--fabric-palette-gap);
+    }
     .mpv-fabric-pilot-badge {
       display: block;
       width: 100%;
