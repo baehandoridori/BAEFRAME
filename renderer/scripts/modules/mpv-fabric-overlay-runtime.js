@@ -3509,6 +3509,7 @@ function createFabricOverlayRuntime(options = {}) {
     brushControls.opacityInput.value = String(opacityPercent);
     brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
     brushControls.opacityOutput.textContent = `${opacityPercent}%`;
+    brushControls.syncFill();
     brushControls.summary.textContent = `${brushStyle.size}px · ${opacityPercent}%`;
     brushControls.colorPreview.style.background = brushStyle.color;
     brushControls.sizePreview.style.width = `${Math.min(22, Math.max(2, brushStyle.size))}px`;
@@ -3524,6 +3525,7 @@ function createFabricOverlayRuntime(options = {}) {
       setStyles(outlineControls.widthRow.row, { display: detailDisplay });
       outlineControls.widthRow.input.value = String(outlineStyle.width);
       outlineControls.widthRow.output.textContent = `${outlineStyle.width}px`;
+      outlineControls.syncFill();
       for (const button of outlineControls.colorButtons) {
         const active = button.dataset.fabricPilotOutlineColor === outlineStyle.color;
         button.setAttribute?.('aria-pressed', String(active));
@@ -3643,29 +3645,26 @@ function createFabricOverlayRuntime(options = {}) {
       return button;
     });
 
-    const createRangeRow = ({
-      label,
-      setting,
-      min,
-      max,
-      decreaseAction,
-      decreaseLabel,
-      increaseAction,
-      increaseLabel,
-      output
-    }) => {
+    // 목업(§0.3 시안)의 `.field` 구성이다 — **라벨과 수치를 한 줄에 두고 그 아래
+    // 3px 트랙**. 목업에는 −/+ 버튼이 없다. 40px 짜리 버튼 두 개가 트랙 양옆에
+    // 붙어 있으면 정작 조절하는 트랙보다 버튼이 커 보인다.
+    //
+    // ±1 정밀 조절은 `[` / `]` 단축키와 Alt 드래그가 맡는다. range 입력 자체도
+    // step=1 이라 클릭하면 정수 값으로 바로 간다.
+    const createRangeRow = ({ label, setting, min, max, output }) => {
       const row = documentRef.createElement('div');
-      setStyles(row, {
-        display: 'flex',
-        flexFlow: 'row wrap',
-        alignItems: 'center',
-        gap: '6px'
-      });
+      row.className = 'mpv-fabric-pilot-field';
+      const top = documentRef.createElement('div');
+      top.className = 'mpv-fabric-pilot-field-top';
       const labelElement = documentRef.createElement('span');
       labelElement.textContent = label;
-      setStyles(labelElement, { flex: '1 1 100%', fontSize: '11px' });
-      const decrease = createButton('−', decreaseAction);
-      decrease.setAttribute?.('aria-label', decreaseLabel);
+      const outputElement = documentRef.createElement('b');
+      outputElement.dataset.fabricPilotOutput = output;
+      outputElement.setAttribute?.('role', 'status');
+      outputElement.setAttribute?.('aria-live', 'polite');
+      outputElement.setAttribute?.('aria-atomic', 'true');
+      top.appendChild(labelElement);
+      top.appendChild(outputElement);
       const input = documentRef.createElement('input');
       input.type = 'range';
       input.tabIndex = -1;
@@ -3674,46 +3673,32 @@ function createFabricOverlayRuntime(options = {}) {
       input.step = '1';
       input.dataset.fabricPilotSetting = setting;
       input.setAttribute?.('aria-label', label);
-      // basis 를 auto 로 두면 range 입력의 기본 폭(크로뮴 기준 129px)이 그대로
-      // 예약돼 폭 166px 짜리 패널에서 줄이 넘치고, −·슬라이더·+ 가 **세 줄로**
-      // 쪼개진다. basis 0 이면 남는 자리만큼만 늘어나 한 줄에 앉는다.
-      setStyles(input, { flex: '1 1 0', minWidth: '0' });
-      const increase = createButton('+', increaseAction);
-      increase.setAttribute?.('aria-label', increaseLabel);
-      const outputElement = documentRef.createElement('span');
-      outputElement.dataset.fabricPilotOutput = output;
-      outputElement.setAttribute?.('role', 'status');
-      outputElement.setAttribute?.('aria-live', 'polite');
-      outputElement.setAttribute?.('aria-atomic', 'true');
-      setStyles(outputElement, { minWidth: '42px', textAlign: 'right' });
-      row.appendChild(labelElement);
-      row.appendChild(decrease);
+      row.appendChild(top);
       row.appendChild(input);
-      row.appendChild(increase);
-      row.appendChild(outputElement);
-      return { row, decrease, input, increase, output: outputElement };
+      return { row, input, output: outputElement };
+    };
+
+    // 트랙의 채워진 부분. range 입력은 기본으로 채움을 그리지 않으므로 값에 맞춘
+    // 그러데이션 경계를 사용자 정의 속성으로 넘긴다(호스트 CSS 가 읽는다).
+    const syncRangeFill = (input, min, max) => {
+      const span = Number(max) - Number(min);
+      const ratio = span > 0 ? (Number(input.value) - Number(min)) / span : 0;
+      const percent = Math.max(0, Math.min(1, ratio)) * 100;
+      input.style.setProperty('--fabric-range-fill', `${percent}%`);
     };
 
     const sizeRow = createRangeRow({
-      label: '브러시 크기',
+      label: '크기',
       setting: 'size',
       min: MIN_BRUSH_SIZE,
       max: MAX_BRUSH_SIZE,
-      decreaseAction: 'size-decrease',
-      decreaseLabel: '브러시 크기 1px 줄이기',
-      increaseAction: 'size-increase',
-      increaseLabel: '브러시 크기 1px 늘리기',
       output: 'size'
     });
     const opacityRow = createRangeRow({
-      label: '브러시 불투명도',
+      label: '불투명도',
       setting: 'opacity',
       min: MIN_BRUSH_OPACITY_PERCENT,
       max: MAX_BRUSH_OPACITY_PERCENT,
-      decreaseAction: 'opacity-decrease',
-      decreaseLabel: '브러시 불투명도 1% 줄이기',
-      increaseAction: 'opacity-increase',
-      increaseLabel: '브러시 불투명도 1% 늘리기',
       output: 'opacity'
     });
 
@@ -3752,14 +3737,10 @@ function createFabricOverlayRuntime(options = {}) {
     outlineGroup.appendChild(outlinePalette);
 
     const outlineWidthRow = createRangeRow({
-      label: '외곽선 굵기',
+      label: '굵기',
       setting: 'outline-width',
       min: MIN_OUTLINE_WIDTH,
       max: MAX_OUTLINE_WIDTH,
-      decreaseAction: 'outline-width-decrease',
-      decreaseLabel: '외곽선 굵기 1px 줄이기',
-      increaseAction: 'outline-width-increase',
-      increaseLabel: '외곽선 굵기 1px 늘리기',
       output: 'outline-width'
     });
     setStyles(outlineWidthRow.row, { flex: '1 1 100%' });
@@ -3779,14 +3760,6 @@ function createFabricOverlayRuntime(options = {}) {
     });
     addDomListener(sizeRow.input, 'input', () => setBrushSize(sizeRow.input.value));
     addDomListener(opacityRow.input, 'input', () => setBrushOpacityPercent(opacityRow.input.value));
-    addDomListener(sizeRow.decrease, 'click', () => setBrushSize(brushStyle.size - 1));
-    addDomListener(sizeRow.increase, 'click', () => setBrushSize(brushStyle.size + 1));
-    addDomListener(opacityRow.decrease, 'click', () => {
-      setBrushOpacityPercent(Math.round(brushStyle.opacity * 100) - 1);
-    });
-    addDomListener(opacityRow.increase, 'click', () => {
-      setBrushOpacityPercent(Math.round(brushStyle.opacity * 100) + 1);
-    });
     for (const button of colorButtons) {
       addDomListener(button, 'click', () => setBrushColor(button.dataset.fabricPilotColor));
     }
@@ -3795,8 +3768,6 @@ function createFabricOverlayRuntime(options = {}) {
       addDomListener(button, 'click', () => setOutlineColor(button.dataset.fabricPilotOutlineColor));
     }
     addDomListener(outlineWidthRow.input, 'input', () => setOutlineWidth(outlineWidthRow.input.value));
-    addDomListener(outlineWidthRow.decrease, 'click', () => setOutlineWidth(outlineStyle.width - 1));
-    addDomListener(outlineWidthRow.increase, 'click', () => setOutlineWidth(outlineStyle.width + 1));
 
     return {
       settingsButton,
@@ -3806,6 +3777,14 @@ function createFabricOverlayRuntime(options = {}) {
       opacityInput: opacityRow.input,
       sizeOutput: sizeRow.output,
       opacityOutput: opacityRow.output,
+      syncFill: () => {
+        syncRangeFill(sizeRow.input, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
+        syncRangeFill(
+          opacityRow.input,
+          MIN_BRUSH_OPACITY_PERCENT,
+          MAX_BRUSH_OPACITY_PERCENT
+        );
+      },
       summary,
       colorPreview,
       sizePreview,
@@ -3815,7 +3794,12 @@ function createFabricOverlayRuntime(options = {}) {
         toggle: outlineToggle,
         palette: outlinePalette,
         colorButtons: outlineColorButtons,
-        widthRow: outlineWidthRow
+        widthRow: outlineWidthRow,
+        syncFill: () => syncRangeFill(
+          outlineWidthRow.input,
+          MIN_OUTLINE_WIDTH,
+          MAX_OUTLINE_WIDTH
+        )
       }
     };
   }

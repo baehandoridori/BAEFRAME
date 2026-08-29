@@ -16411,6 +16411,7 @@ void main() {
           brushControls.opacityInput.value = String(opacityPercent);
           brushControls.sizeOutput.textContent = `${brushStyle.size}px`;
           brushControls.opacityOutput.textContent = `${opacityPercent}%`;
+          brushControls.syncFill();
           brushControls.summary.textContent = `${brushStyle.size}px \xB7 ${opacityPercent}%`;
           brushControls.colorPreview.style.background = brushStyle.color;
           brushControls.sizePreview.style.width = `${Math.min(22, Math.max(2, brushStyle.size))}px`;
@@ -16425,6 +16426,7 @@ void main() {
             setStyles(outlineControls.widthRow.row, { display: detailDisplay });
             outlineControls.widthRow.input.value = String(outlineStyle.width);
             outlineControls.widthRow.output.textContent = `${outlineStyle.width}px`;
+            outlineControls.syncFill();
             for (const button of outlineControls.colorButtons) {
               const active = button.dataset.fabricPilotOutlineColor === outlineStyle.color;
               button.setAttribute?.("aria-pressed", String(active));
@@ -16524,29 +16526,20 @@ void main() {
             palette.appendChild(button);
             return button;
           });
-          const createRangeRow = ({
-            label,
-            setting,
-            min,
-            max,
-            decreaseAction,
-            decreaseLabel,
-            increaseAction,
-            increaseLabel,
-            output
-          }) => {
+          const createRangeRow = ({ label, setting, min, max, output }) => {
             const row = documentRef.createElement("div");
-            setStyles(row, {
-              display: "flex",
-              flexFlow: "row wrap",
-              alignItems: "center",
-              gap: "6px"
-            });
+            row.className = "mpv-fabric-pilot-field";
+            const top = documentRef.createElement("div");
+            top.className = "mpv-fabric-pilot-field-top";
             const labelElement = documentRef.createElement("span");
             labelElement.textContent = label;
-            setStyles(labelElement, { flex: "1 1 100%", fontSize: "11px" });
-            const decrease = createButton("\u2212", decreaseAction);
-            decrease.setAttribute?.("aria-label", decreaseLabel);
+            const outputElement = documentRef.createElement("b");
+            outputElement.dataset.fabricPilotOutput = output;
+            outputElement.setAttribute?.("role", "status");
+            outputElement.setAttribute?.("aria-live", "polite");
+            outputElement.setAttribute?.("aria-atomic", "true");
+            top.appendChild(labelElement);
+            top.appendChild(outputElement);
             const input = documentRef.createElement("input");
             input.type = "range";
             input.tabIndex = -1;
@@ -16555,42 +16548,28 @@ void main() {
             input.step = "1";
             input.dataset.fabricPilotSetting = setting;
             input.setAttribute?.("aria-label", label);
-            setStyles(input, { flex: "1 1 0", minWidth: "0" });
-            const increase = createButton("+", increaseAction);
-            increase.setAttribute?.("aria-label", increaseLabel);
-            const outputElement = documentRef.createElement("span");
-            outputElement.dataset.fabricPilotOutput = output;
-            outputElement.setAttribute?.("role", "status");
-            outputElement.setAttribute?.("aria-live", "polite");
-            outputElement.setAttribute?.("aria-atomic", "true");
-            setStyles(outputElement, { minWidth: "42px", textAlign: "right" });
-            row.appendChild(labelElement);
-            row.appendChild(decrease);
+            row.appendChild(top);
             row.appendChild(input);
-            row.appendChild(increase);
-            row.appendChild(outputElement);
-            return { row, decrease, input, increase, output: outputElement };
+            return { row, input, output: outputElement };
+          };
+          const syncRangeFill = (input, min, max) => {
+            const span = Number(max) - Number(min);
+            const ratio = span > 0 ? (Number(input.value) - Number(min)) / span : 0;
+            const percent = Math.max(0, Math.min(1, ratio)) * 100;
+            input.style.setProperty("--fabric-range-fill", `${percent}%`);
           };
           const sizeRow = createRangeRow({
-            label: "\uBE0C\uB7EC\uC2DC \uD06C\uAE30",
+            label: "\uD06C\uAE30",
             setting: "size",
             min: MIN_BRUSH_SIZE,
             max: MAX_BRUSH_SIZE,
-            decreaseAction: "size-decrease",
-            decreaseLabel: "\uBE0C\uB7EC\uC2DC \uD06C\uAE30 1px \uC904\uC774\uAE30",
-            increaseAction: "size-increase",
-            increaseLabel: "\uBE0C\uB7EC\uC2DC \uD06C\uAE30 1px \uB298\uB9AC\uAE30",
             output: "size"
           });
           const opacityRow = createRangeRow({
-            label: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4",
+            label: "\uBD88\uD22C\uBA85\uB3C4",
             setting: "opacity",
             min: MIN_BRUSH_OPACITY_PERCENT,
             max: MAX_BRUSH_OPACITY_PERCENT,
-            decreaseAction: "opacity-decrease",
-            decreaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uC904\uC774\uAE30",
-            increaseAction: "opacity-increase",
-            increaseLabel: "\uBE0C\uB7EC\uC2DC \uBD88\uD22C\uBA85\uB3C4 1% \uB298\uB9AC\uAE30",
             output: "opacity"
           });
           const outlineGroup = documentRef.createElement("div");
@@ -16625,14 +16604,10 @@ void main() {
           });
           outlineGroup.appendChild(outlinePalette);
           const outlineWidthRow = createRangeRow({
-            label: "\uC678\uACFD\uC120 \uAD75\uAE30",
+            label: "\uAD75\uAE30",
             setting: "outline-width",
             min: MIN_OUTLINE_WIDTH,
             max: MAX_OUTLINE_WIDTH,
-            decreaseAction: "outline-width-decrease",
-            decreaseLabel: "\uC678\uACFD\uC120 \uAD75\uAE30 1px \uC904\uC774\uAE30",
-            increaseAction: "outline-width-increase",
-            increaseLabel: "\uC678\uACFD\uC120 \uAD75\uAE30 1px \uB298\uB9AC\uAE30",
             output: "outline-width"
           });
           setStyles(outlineWidthRow.row, { flex: "1 1 100%" });
@@ -16650,14 +16625,6 @@ void main() {
           });
           addDomListener(sizeRow.input, "input", () => setBrushSize(sizeRow.input.value));
           addDomListener(opacityRow.input, "input", () => setBrushOpacityPercent(opacityRow.input.value));
-          addDomListener(sizeRow.decrease, "click", () => setBrushSize(brushStyle.size - 1));
-          addDomListener(sizeRow.increase, "click", () => setBrushSize(brushStyle.size + 1));
-          addDomListener(opacityRow.decrease, "click", () => {
-            setBrushOpacityPercent(Math.round(brushStyle.opacity * 100) - 1);
-          });
-          addDomListener(opacityRow.increase, "click", () => {
-            setBrushOpacityPercent(Math.round(brushStyle.opacity * 100) + 1);
-          });
           for (const button of colorButtons) {
             addDomListener(button, "click", () => setBrushColor(button.dataset.fabricPilotColor));
           }
@@ -16666,8 +16633,6 @@ void main() {
             addDomListener(button, "click", () => setOutlineColor(button.dataset.fabricPilotOutlineColor));
           }
           addDomListener(outlineWidthRow.input, "input", () => setOutlineWidth(outlineWidthRow.input.value));
-          addDomListener(outlineWidthRow.decrease, "click", () => setOutlineWidth(outlineStyle.width - 1));
-          addDomListener(outlineWidthRow.increase, "click", () => setOutlineWidth(outlineStyle.width + 1));
           return {
             settingsButton,
             panel,
@@ -16676,6 +16641,14 @@ void main() {
             opacityInput: opacityRow.input,
             sizeOutput: sizeRow.output,
             opacityOutput: opacityRow.output,
+            syncFill: () => {
+              syncRangeFill(sizeRow.input, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE);
+              syncRangeFill(
+                opacityRow.input,
+                MIN_BRUSH_OPACITY_PERCENT,
+                MAX_BRUSH_OPACITY_PERCENT
+              );
+            },
             summary,
             colorPreview,
             sizePreview,
@@ -16685,7 +16658,12 @@ void main() {
               toggle: outlineToggle,
               palette: outlinePalette,
               colorButtons: outlineColorButtons,
-              widthRow: outlineWidthRow
+              widthRow: outlineWidthRow,
+              syncFill: () => syncRangeFill(
+                outlineWidthRow.input,
+                MIN_OUTLINE_WIDTH,
+                MAX_OUTLINE_WIDTH
+              )
             }
           };
         }
