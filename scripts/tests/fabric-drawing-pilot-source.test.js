@@ -1580,6 +1580,45 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   assert.doesNotMatch(fabricRuntimeSource, /maxHeight: '210px'/);
 });
 
+test('오버레이 슬라이더를 탭 순서에 넣지 않는다 — 키가 도달하지 못한다', () => {
+  // 코덱스가 "-/+ 버튼을 지웠으니 슬라이더를 탭 순서에 넣으라"고 지적했다.
+  // 그 전제가 이 창에서는 성립하지 않는다.
+  //
+  // 그리기 입력이 켜져 있는 동안 호스트의 before-input-event 가 Tab·Enter·Space·
+  // 방향키를 **메인 창으로 릴레이하고 preventDefault() 한다.** 오버레이 문서는
+  // 그 키를 아예 받지 못한다. 그래서
+  //   - Tab 으로는 오버레이 안 어떤 컨트롤에도 갈 수 없고(지운 -/+ 버튼도 마찬가지였다),
+  //   - 설령 슬라이더가 포커스를 얻어도 방향키가 소모돼 값이 바뀌지 않는다.
+  // tabindex 를 달면 조작할 수 있다는 **거짓 표시**만 남는다.
+  //
+  // 실제로 열어 주려면 오버레이→호스트 포커스 상태 채널이 먼저 필요하다.
+  // 그 전에는 tabIndex = -1 이 정직한 표시다.
+  const relayStart = overlayHostSource.indexOf('FORWARDED_NAMED_KEY_CODES = new Set([');
+  assert.ok(relayStart > 0, '릴레이 키 목록을 찾지 못했다');
+  const relayList = overlayHostSource.slice(relayStart, overlayHostSource.indexOf(']);', relayStart));
+  for (const code of ['Tab', 'Enter', 'Space', 'ArrowLeft', 'ArrowRight']) {
+    assert.ok(
+      relayList.includes("'" + code + "'"),
+      code + ' 가 릴레이 대상이 아니면 이 판단을 다시 해야 한다'
+    );
+  }
+  // 릴레이한 키는 오버레이 문서에 남기지 않는다.
+  assert.ok(overlayHostSource.includes('this.keyboardRelayCount += 1;'));
+  assert.ok(overlayHostSource.includes('createForwardedKeyboardInput(input, drawModeShortcut)'));
+
+  // 슬라이더는 모두 탭 순서 밖이다.
+  const marker = "input.type = 'range';";
+  let at = fabricRuntimeSource.indexOf(marker);
+  let seen = 0;
+  while (at !== -1) {
+    const near = fabricRuntimeSource.slice(at, at + 200);
+    assert.ok(near.includes('input.tabIndex = -1;'), '슬라이더는 탭 순서 밖이어야 한다');
+    seen += 1;
+    at = fabricRuntimeSource.indexOf(marker, at + marker.length);
+  }
+  assert.ok(seen >= 1, 'range 입력 생성부를 찾지 못했다');
+});
+
 test('오버레이 스크롤바는 본체 테마와 같은 값을 쓴다', () => {
   // 오버레이는 별도 BrowserWindow 라 renderer/styles/main.css 를 불러오지 않는다.
   // 스크롤바를 안 적으면 윈도우 기본 막대(밝은 회색 + 화살표 버튼)가 그려져

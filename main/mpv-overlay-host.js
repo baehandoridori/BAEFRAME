@@ -361,6 +361,8 @@ const OVERLAY_HTML = String.raw`
       --border-subtle: rgba(255, 255, 255, 0.16);
       --text-primary: #f5f5f5;
       --text-tertiary: rgba(255, 255, 255, 0.55);
+      --text-faint: rgba(255, 255, 255, 0.34);
+      --track-idle: rgba(255, 255, 255, 0.14);
       --success: #2ed573;
       --error: #ff5555;
       --shadow-lg: 0 10px 30px rgba(0, 0, 0, 0.38);
@@ -536,6 +538,71 @@ const OVERLAY_HTML = String.raw`
       min-width: 36px;
       min-height: 36px;
       padding: 0;
+    }
+    /* 목업(§0.3 시안)의 field 구성 — 라벨과 수치를 한 줄에, 그 아래 3px 트랙.
+       버튼이 없으므로 트랙이 이 줄에서 가장 큰 요소가 된다. */
+    .mpv-fabric-pilot-field {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    .mpv-fabric-pilot-field-top {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+      color: var(--text-faint);
+    }
+    .mpv-fabric-pilot-field-top b {
+      font-size: 11px;
+      font-weight: 500;
+      letter-spacing: 0;
+      text-transform: none;
+      font-variant-numeric: tabular-nums;
+      color: var(--text-primary);
+    }
+    /* range 입력을 목업의 트랙 모양으로 다시 그린다. 기본 렌더는 OS 위젯이라
+       팔레트와 따로 논다(스크롤바와 같은 이유). */
+    .mpv-fabric-pilot-toolbar input[type="range"] {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 100%;
+      /* 9px 손잡이가 잘리지 않을 만큼만. 더 키우면 필드 사이가 벌어진다. */
+      height: 9px;
+      margin: 0;
+      padding: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .mpv-fabric-pilot-toolbar input[type="range"]::-webkit-slider-runnable-track {
+      height: 3px;
+      border-radius: 2px;
+      /* 채운 부분과 남은 부분의 경계는 런타임이 --fabric-range-fill 로 넘긴다.
+         range 입력은 기본으로 채움을 그리지 않는다. */
+      background: linear-gradient(
+        to right,
+        var(--text-tertiary) 0 var(--fabric-range-fill, 0%),
+        var(--track-idle) var(--fabric-range-fill, 0%) 100%
+      );
+    }
+    .mpv-fabric-pilot-toolbar input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      appearance: none;
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: var(--text-primary);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+      /* 트랙 3px 한가운데에 9px 손잡이를 앉힌다: (3 - 9) / 2 */
+      margin-top: -3px;
+    }
+    .mpv-fabric-pilot-toolbar input[type="range"]:focus-visible {
+      outline: 2px solid var(--accent-secondary);
+      outline-offset: 2px;
     }
     .mpv-fabric-pilot-brush-status {
       display: flex;

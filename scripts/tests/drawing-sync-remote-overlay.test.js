@@ -36,7 +36,18 @@ class FakeCanvas extends EventTarget {
     super();
     this.width = 1920;
     this.height = 1080;
-    this.style = {};
+    this.style = {
+      setProperty(name, value) { this[name] = String(value); },
+      getPropertyValue(name) {
+        const value = this[name];
+        return typeof value === 'string' ? value : '';
+      },
+      removeProperty(name) {
+        const value = this.getPropertyValue(name);
+        delete this[name];
+        return value;
+      }
+    };
     this.context = new FakeCanvasContext();
     this.parentElement = {
       appendChild: element => {

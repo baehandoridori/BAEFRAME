@@ -81,7 +81,21 @@ class FakeElement {
     this.children = [];
     this.parentNode = null;
     this.dataset = {};
-    this.style = {};
+    // 런타임이 사용자 정의 속성(--fabric-range-fill)을 표준 API 로 넘기므로
+    // 가짜 style 도 setProperty/getPropertyValue 를 가져야 한다. 순수 객체로 두면
+    // 팔레트 구성 도중 TypeError 가 나 prepare() 자체가 실패한다.
+    this.style = {
+      setProperty(name, value) { this[name] = String(value); },
+      getPropertyValue(name) {
+        const value = this[name];
+        return typeof value === 'string' ? value : '';
+      },
+      removeProperty(name) {
+        const value = this.getPropertyValue(name);
+        delete this[name];
+        return value;
+      }
+    };
     this.attributes = new Map();
     this.className = '';
     this.textContent = '';
@@ -406,10 +420,9 @@ function getBrushControls(root) {
     summary: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'summary'),
     colorPreview: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'color-preview'),
     sizePreview: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'size-preview'),
-    sizeDecrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'size-decrease'),
-    sizeIncrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'size-increase'),
-    opacityDecrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'opacity-decrease'),
-    opacityIncrease: findOne(toolbar, node => node.dataset.fabricPilotAction === 'opacity-increase')
+    sizeField: findOne(toolbar, node =>
+      node.className === 'mpv-fabric-pilot-field' &&
+      findOne(node, child => child.dataset?.fabricPilotSetting === 'size') !== null)
   };
 }
 
@@ -8870,17 +8883,29 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   assert.equal(controls.sizeInput.step, '1');
   assert.equal(controls.sizeInput.value, '3');
   assert.equal(controls.sizeInput.tabIndex, -1);
-  assert.equal(controls.sizeInput.getAttribute('aria-label'), '브러시 크기');
+  assert.equal(controls.sizeInput.getAttribute('aria-label'), '크기');
   assert.equal(controls.opacityInput.min, '10');
   assert.equal(controls.opacityInput.max, '100');
   assert.equal(controls.opacityInput.step, '1');
   assert.equal(controls.opacityInput.value, '100');
   assert.equal(controls.opacityInput.tabIndex, -1);
-  assert.equal(controls.opacityInput.getAttribute('aria-label'), '브러시 불투명도');
-  assert.equal(controls.sizeDecrease.getAttribute('aria-label'), '브러시 크기 1px 줄이기');
-  assert.equal(controls.sizeIncrease.getAttribute('aria-label'), '브러시 크기 1px 늘리기');
-  assert.equal(controls.opacityDecrease.getAttribute('aria-label'), '브러시 불투명도 1% 줄이기');
-  assert.equal(controls.opacityIncrease.getAttribute('aria-label'), '브러시 불투명도 1% 늘리기');
+  assert.equal(controls.opacityInput.getAttribute('aria-label'), '불투명도');
+  // 목업(§0.3 시안)에는 -/+ 스텝 버튼이 없다. 트랙보다 버튼이 커 보이던 원인이다.
+  // ±1 정밀 조절은 [ / ] 단축키와 Alt 드래그가 맡는다.
+  for (const action of ['size-decrease', 'size-increase', 'opacity-decrease', 'opacity-increase']) {
+    assert.equal(
+      findOne(root, node => node.dataset.fabricPilotAction === action),
+      null,
+      `${action} 스텝 버튼은 목업에 없다`
+    );
+  }
+  // 필드는 라벨과 수치를 한 줄에 두고 그 아래 트랙을 둔다.
+  assert.ok(controls.sizeField, '크기 필드가 있다');
+  assert.equal(controls.sizeField.children.length, 2, '필드는 머리줄과 트랙 둘뿐이다');
+  assert.equal(controls.sizeField.children[0].className, 'mpv-fabric-pilot-field-top');
+  assert.equal(controls.sizeField.children[0].children[0].textContent, '크기');
+  assert.equal(controls.sizeField.children[0].children[1], controls.sizeOutput);
+  assert.equal(controls.sizeField.children[1], controls.sizeInput);
   assert.equal(controls.sizeOutput.textContent, '3px');
   assert.equal(controls.opacityOutput.textContent, '100%');
   for (const output of [controls.sizeOutput, controls.opacityOutput]) {
@@ -8914,32 +8939,33 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   assert.equal(controls.sizePreview.style.background, '#ffd000');
   assert.equal(controls.sizePreview.style.opacity, '0.4');
 
-  controls.sizeDecrease.dispatch('click');
-  assert.equal(controls.sizeInput.value, '23');
-  controls.sizeIncrease.dispatch('click');
-  controls.sizeIncrease.dispatch('click');
-  assert.equal(controls.sizeInput.value, '25');
-  controls.opacityDecrease.dispatch('click');
-  assert.equal(controls.opacityInput.value, '39');
-  controls.opacityIncrease.dispatch('click');
-  controls.opacityIncrease.dispatch('click');
-  assert.equal(controls.opacityInput.value, '41');
+  // 트랙의 채운 길이는 값에 비례한다. 이 값을 안 넘기면 range 입력은 채움을
+  // 그리지 않아 트랙이 통째로 빈칸으로 보인다.
+  controls.sizeInput.value = '25';
+  controls.sizeInput.dispatch('input');
+  assert.equal(
+    controls.sizeInput.style.getPropertyValue('--fabric-range-fill'),
+    `${((25 - 1) / (50 - 1)) * 100}%`
+  );
+  controls.opacityInput.value = '55';
+  controls.opacityInput.dispatch('input');
+  assert.equal(
+    controls.opacityInput.style.getPropertyValue('--fabric-range-fill'),
+    `${((55 - 10) / (100 - 10)) * 100}%`
+  );
 
-  controls.sizeInput.value = '1';
+  // 경계 밖 값은 그대로 물리지 않는다.
+  controls.sizeInput.value = '0';
   controls.sizeInput.dispatch('input');
-  controls.sizeDecrease.dispatch('click');
   assert.equal(controls.sizeInput.value, '1');
-  controls.sizeInput.value = '50';
+  controls.sizeInput.value = '999';
   controls.sizeInput.dispatch('input');
-  controls.sizeIncrease.dispatch('click');
   assert.equal(controls.sizeInput.value, '50');
-  controls.opacityInput.value = '10';
+  controls.opacityInput.value = '0';
   controls.opacityInput.dispatch('input');
-  controls.opacityDecrease.dispatch('click');
   assert.equal(controls.opacityInput.value, '10');
-  controls.opacityInput.value = '100';
+  controls.opacityInput.value = '999';
   controls.opacityInput.dispatch('input');
-  controls.opacityIncrease.dispatch('click');
   assert.equal(controls.opacityInput.value, '100');
 
   controls.sizeInput.value = 'invalid';
