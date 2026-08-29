@@ -16519,3 +16519,55 @@ test('an outline is skipped when the ring path would exceed the persistence limi
     await harness.destroy();
   }
 });
+
+test('an enabled outline shows up in the gesture preview, not only at commit', async () => {
+  // 커밋해야 나타나면 굵기 20px 에서는 손을 떼는 순간 자국이 확 커진다. 기존 그림이나
+  // 화면 가장자리 옆에 정확히 놓으려는 사용자가 결과를 예측할 수 없다.
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { color: '#ffffff', width: 8 });
+    const pointerId = 9101;
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 100, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 120, 100, pointerId, 1);
+
+    const previews = harness.canvas.getObjects()
+      .filter(object => object.__baeframeTransient === true || object.__baeframeObjectId === null);
+    assert.equal(previews.length, 2, '미리보기가 외곽선과 본체 두 겹이어야 한다');
+    // 씬에는 아직 아무것도 들어가지 않는다.
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+
+    harness.dispatchCapturedPointerUp(120, 100, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+    assert.equal(
+      harness.canvas.getObjects().filter(object => object.__baeframeObjectId === null).length,
+      0,
+      '커밋 후 미리보기가 남으면 안 된다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a shape gesture previews its outline too', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    enableOutline(harness, { width: 6 });
+    enableRealFabricShapeTool(harness, 'rect', 3);
+    const pointerId = 9111;
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 30, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 140, 110, pointerId, 1);
+
+    const previews = harness.canvas.getObjects()
+      .filter(object => object.__baeframeTransient === true);
+    assert.equal(previews.length, 2, '도형 미리보기도 외곽선과 본체 두 겹이어야 한다');
+
+    harness.dispatchCapturedPointerUp(140, 110, pointerId);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+    assert.equal(
+      harness.canvas.getObjects().filter(object => object.__baeframeTransient === true).length,
+      0
+    );
+  } finally {
+    await harness.destroy();
+  }
+});

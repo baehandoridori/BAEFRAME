@@ -4359,9 +4359,46 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function removeTransientPreview() {
-    if (!activeStroke?.preview || !fabricCanvas) return;
+    if (!fabricCanvas) return;
+    if (activeStroke?.outlinePreview) {
+      fabricCanvas.remove(activeStroke.outlinePreview);
+      activeStroke.outlinePreview = null;
+    }
+    if (!activeStroke?.preview) return;
     fabricCanvas.remove(activeStroke.preview);
     activeStroke.preview = null;
+  }
+
+  // 그리는 동안에도 외곽선을 함께 보여 준다. 커밋해야 나타나면 굵기 20px 에서는
+  // 손을 떼는 순간 자국이 확 커져, 기존 그림이나 화면 가장자리 옆에 정확히
+  // 놓으려는 사용자가 결과를 예측할 수 없다.
+  //
+  // 미리보기 레코드는 id 가 없어 짝 규약을 쓸 수 없으므로, 굵은 판을 **먼저**
+  // 올리고 본체를 나중에 올려 z-order 만 맞춘다. 고리로 깎지 않는 이유는
+  // 미리보기가 캔버스에만 살고 저장되지 않기 때문이다 — 불투명도가 1 미만이면
+  // 중심이 조금 진해 보이지만, 손을 떼면 곧바로 고리로 정리된다.
+  function makeOutlinePreviewPath(samples, style, geometryOptions) {
+    if (outlineStyle.enabled !== true) return null;
+    const width = boundedInteger(
+      outlineStyle.width,
+      MIN_OUTLINE_WIDTH,
+      MAX_OUTLINE_WIDTH,
+      DEFAULT_OUTLINE_WIDTH
+    );
+    try {
+      const strokeData = strokePathFactory(samples, {
+        size: finiteNumber(style.size, DEFAULT_BRUSH_STYLE.size) + 2 * width,
+        ...(geometryOptions || null)
+      });
+      if (!strokeData?.pathData) return null;
+      return makeFabricPath({
+        id: null,
+        pathData: strokeData.pathData,
+        style: { ...style, color: outlineStyle.color || DEFAULT_OUTLINE_COLOR }
+      }, true);
+    } catch (_error) {
+      return null;
+    }
   }
 
   function updateTransientPreview() {
@@ -4374,11 +4411,19 @@ function createFabricOverlayRuntime(options = {}) {
         ...(activeStroke.tool === 'pen' ? PEN_STROKE_GEOMETRY : null)
       });
       if (!strokeData.pathData) return;
+      const geometryOptions = activeStroke.tool === 'pen' ? PEN_STROKE_GEOMETRY : null;
+      activeStroke.outlinePreview = makeOutlinePreviewPath(
+        activeStroke.samples,
+        activeStroke.style,
+        geometryOptions
+      );
       activeStroke.preview = makeFabricPath({
         id: null,
         pathData: strokeData.pathData,
         style: { ...activeStroke.style }
       }, true);
+      // 외곽선이 먼저 올라가야 본체 뒤에 깔린다.
+      if (activeStroke.outlinePreview) fabricCanvas.add(activeStroke.outlinePreview);
       fabricCanvas.add(activeStroke.preview);
       fabricCanvas.requestRenderAll();
       metrics.recordPointerPreviewLatency(now() - startedAt);
@@ -6530,7 +6575,12 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function clearShapePreviewFor(gesture) {
-    if (!gesture?.preview || !fabricCanvas) return;
+    if (!fabricCanvas) return;
+    if (gesture?.outlinePreview) {
+      fabricCanvas.remove(gesture.outlinePreview);
+      gesture.outlinePreview = null;
+    }
+    if (!gesture?.preview) return;
     fabricCanvas.remove(gesture.preview);
     gesture.preview = null;
     fabricCanvas.requestRenderAll();
@@ -6546,6 +6596,17 @@ function createFabricOverlayRuntime(options = {}) {
     }
     const preview = makeFabricPath(record, true);
     preview.__baeframeTransient = true;
+    const outlinePreview = makeOutlinePreviewPath(
+      record.sourcePoints,
+      record.style,
+      SHAPE_STROKE_GEOMETRY
+    );
+    if (outlinePreview) {
+      outlinePreview.__baeframeTransient = true;
+      shapeGesture.outlinePreview = outlinePreview;
+      // 외곽선이 먼저 올라가야 본체 뒤에 깔린다.
+      fabricCanvas.add(outlinePreview);
+    }
     shapeGesture.preview = preview;
     fabricCanvas.add(preview);
     fabricCanvas.requestRenderAll();
@@ -7807,6 +7868,13 @@ function createFabricOverlayRuntime(options = {}) {
   // 네이티브 선택 모드에서는 fabric 이 직접 히트테스트를 한다. 고리로 칠한 외곽선
   // 테두리는 본체 밖이라, 그 픽셀을 클릭하면 fabric 이 외곽선을 타깃으로 잡는다.
   // 외곽선은 선택 대상이 아니므로 그대로 두면 아무것도 안 잡힌다 — 짝인 본체로 돌린다.
+  //
+  // 한계: fabric 의 __onMouseDown 은 selectable 이 false 인 타깃을 만나면 그 자리에서
+  // 마퀴(_groupSelector)를 시작하고, 이 핸들러는 그 뒤(down 이벤트)에 실행된다.
+  // 그래서 **클릭 선택은 되지만 그 밴드에서 바로 끌어 옮길 수는 없다** — 드래그는
+  // 획 본체를 잡아야 한다. 밴드에서도 끌리게 하려면 외곽선을 selectable 로 만들고
+  // 선택·변형을 외곽선→본체 방향으로 되짚어야 해서, 지금의 본체→외곽선 짝 방향을
+  // 양방향으로 늘려야 한다.
   function onCanvasMouseDown(event) {
     if (!fabricCanvas || !inputEnabled) return;
     const target = event?.target;

@@ -17167,9 +17167,37 @@ void main() {
           metrics.recordPointerSample(sample.pressure);
         }
         function removeTransientPreview() {
-          if (!activeStroke?.preview || !fabricCanvas) return;
+          if (!fabricCanvas) return;
+          if (activeStroke?.outlinePreview) {
+            fabricCanvas.remove(activeStroke.outlinePreview);
+            activeStroke.outlinePreview = null;
+          }
+          if (!activeStroke?.preview) return;
           fabricCanvas.remove(activeStroke.preview);
           activeStroke.preview = null;
+        }
+        function makeOutlinePreviewPath(samples, style, geometryOptions) {
+          if (outlineStyle.enabled !== true) return null;
+          const width = boundedInteger(
+            outlineStyle.width,
+            MIN_OUTLINE_WIDTH,
+            MAX_OUTLINE_WIDTH,
+            DEFAULT_OUTLINE_WIDTH
+          );
+          try {
+            const strokeData = strokePathFactory(samples, {
+              size: finiteNumber(style.size, DEFAULT_BRUSH_STYLE.size) + 2 * width,
+              ...geometryOptions || null
+            });
+            if (!strokeData?.pathData) return null;
+            return makeFabricPath({
+              id: null,
+              pathData: strokeData.pathData,
+              style: { ...style, color: outlineStyle.color || DEFAULT_OUTLINE_COLOR }
+            }, true);
+          } catch (_error) {
+            return null;
+          }
         }
         function updateTransientPreview() {
           if (!activeStroke || activeStroke.samples.length === 0) return;
@@ -17181,11 +17209,18 @@ void main() {
               ...activeStroke.tool === "pen" ? PEN_STROKE_GEOMETRY : null
             });
             if (!strokeData.pathData) return;
+            const geometryOptions = activeStroke.tool === "pen" ? PEN_STROKE_GEOMETRY : null;
+            activeStroke.outlinePreview = makeOutlinePreviewPath(
+              activeStroke.samples,
+              activeStroke.style,
+              geometryOptions
+            );
             activeStroke.preview = makeFabricPath({
               id: null,
               pathData: strokeData.pathData,
               style: { ...activeStroke.style }
             }, true);
+            if (activeStroke.outlinePreview) fabricCanvas.add(activeStroke.outlinePreview);
             fabricCanvas.add(activeStroke.preview);
             fabricCanvas.requestRenderAll();
             metrics.recordPointerPreviewLatency(now() - startedAt);
@@ -19039,7 +19074,12 @@ void main() {
           };
         }
         function clearShapePreviewFor(gesture) {
-          if (!gesture?.preview || !fabricCanvas) return;
+          if (!fabricCanvas) return;
+          if (gesture?.outlinePreview) {
+            fabricCanvas.remove(gesture.outlinePreview);
+            gesture.outlinePreview = null;
+          }
+          if (!gesture?.preview) return;
           fabricCanvas.remove(gesture.preview);
           gesture.preview = null;
           fabricCanvas.requestRenderAll();
@@ -19054,6 +19094,16 @@ void main() {
           }
           const preview = makeFabricPath(record, true);
           preview.__baeframeTransient = true;
+          const outlinePreview = makeOutlinePreviewPath(
+            record.sourcePoints,
+            record.style,
+            SHAPE_STROKE_GEOMETRY
+          );
+          if (outlinePreview) {
+            outlinePreview.__baeframeTransient = true;
+            shapeGesture.outlinePreview = outlinePreview;
+            fabricCanvas.add(outlinePreview);
+          }
           shapeGesture.preview = preview;
           fabricCanvas.add(preview);
           fabricCanvas.requestRenderAll();
