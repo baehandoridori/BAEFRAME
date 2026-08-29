@@ -16701,9 +16701,19 @@ test('every record an outlined gesture produces survives persistence validation'
   const harness = createRealFabricHarness();
   const assertPersistable = (objects, label) => {
     for (const record of objects) {
+      // 레코드 키 자체가 스키마다. 하나라도 늘어나면 저장소가 통째로 거부한다.
+      const keys = Object.keys(record).sort();
+      for (const key of keys) {
+        assert.ok(
+          ['id', 'pathData', 'renderGeometry', 'sourcePoints', 'strokeCaps',
+            'style', 'transform', 'type'].includes(key),
+          `${label}: ${record.id} 에 스키마 밖 키 ${key} 가 있다`
+        );
+      }
       if (record.renderGeometry === undefined) continue;
       assert.equal(
-        validateDrawingRenderGeometry(record.renderGeometry),
+        // 저장소가 거는 한도와 같은 값으로 검증한다(shared/fabric-drawing-limits.js).
+        validateDrawingRenderGeometry(record.renderGeometry, { maxPathLength: 32768 }),
         true,
         `${label}: ${record.id} 의 renderGeometry 가 지속화 스키마를 어긴다`
       );

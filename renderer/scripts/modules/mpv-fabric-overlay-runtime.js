@@ -3899,7 +3899,7 @@ function createFabricOverlayRuntime(options = {}) {
       strokeWidth: 0,
       // 외곽선은 본체에서 파생된 짝이라 **선택 대상은 아니다** — 따로 잡히면
       // 사용자가 본체 대신 윤곽만 옮기게 되어 쌍이 어긋난다.
-      // 다만 이벤트는 받아야 한다. 고리로 칠한 테두리는 본체 밖에 있어서,
+      // 다만 이벤트는 받아야 한다. 외곽선의 테두리는 본체 밖으로 삐져나오므로,
       // evented 까지 끄면 눈에 보이는 그 픽셀을 클릭해도 그냥 빠져 버린다.
       // 클릭이 들어오면 onCanvasMouseDown 이 짝인 본체로 돌린다.
       // 짝을 잃은 고아는 평범한 획으로 되돌아간다.
@@ -5225,8 +5225,7 @@ function createFabricOverlayRuntime(options = {}) {
   // 본체 레코드에서 외곽선 레코드를 만든다. 굵기만 키우고 색을 바꾼 같은 획이다.
   // geometryOptions 는 본체를 만든 생성 규약이어야 한다 — 도형·펜은 브러시와 다르다.
   // 조각의 외곽선 기하. 본체와 같은 중심선으로 굵은 획을 만든 뒤 **같은 폴리곤으로**
-  // 잘라, 조각이 실제로 남은 자리에만 테두리가 남게 한다. 마지막에 본체 조각 윤곽을
-  // 합쳐 evenodd 로 칠하면 겹침이 상쇄돼 고리가 된다(불투명도 이중 합성 방지).
+  // 잘라, 조각이 실제로 남은 자리에만 테두리가 남게 한다.
   //
   // 여기서 실패해도 본체 분할은 그대로 성공해야 한다. 예산은 본체와 **따로** 두되
   // 조각들이 **함께** 쓴다 — 조각마다 새 예산을 주면 512조각에서 설정 한도의
@@ -5308,7 +5307,7 @@ function createFabricOverlayRuntime(options = {}) {
       renderGeometry: clonePlain(outlineGeometry.renderGeometry)
     };
     if (fragment.strokeCaps) derived.strokeCaps = clonePlain(fragment.strokeCaps);
-    // 본체 조각의 transform 을 베끼면 안 된다. 잘라 낸 고리는 pathOffset·바운딩 박스
+    // 본체 조각의 transform 을 베끼면 안 된다. 잘라 낸 외곽선은 pathOffset·바운딩 박스
     // 중심이 본체 조각과 달라서, 같은 값을 주면 두 **오브젝트 중심**이 맞춰질 뿐
     // 소스 좌표가 어긋난다. 본체 조각과 똑같이 자기 경로에서 자연 위치를 뽑고
     // 원본 외곽선의 변형을 얹는다.
@@ -7932,8 +7931,8 @@ function createFabricOverlayRuntime(options = {}) {
     fabricCanvas?.requestRenderAll();
   }
 
-  // 네이티브 선택 모드에서는 fabric 이 직접 히트테스트를 한다. 고리로 칠한 외곽선
-  // 테두리는 본체 밖이라, 그 픽셀을 클릭하면 fabric 이 외곽선을 타깃으로 잡는다.
+  // 네이티브 선택 모드에서는 fabric 이 직접 히트테스트를 한다. 외곽선 테두리는
+  // 본체 밖으로 삐져나오므로, 그 픽셀을 클릭하면 fabric 이 외곽선을 타깃으로 잡는다.
   // 외곽선은 선택 대상이 아니므로 그대로 두면 아무것도 안 잡힌다 — 짝인 본체로 돌린다.
   //
   // 한계: fabric 의 __onMouseDown 은 selectable 이 false 인 타깃을 만나면 그 자리에서
