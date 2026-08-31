@@ -17389,3 +17389,186 @@ test('레이어 뷰 갱신은 낡은 세션이면 거절한다', () => {
   );
   runtime.destroy();
 });
+
+// ── 숨김·잠금은 기하 판정 경로에서도 지켜져야 한다 ─────────────────────────
+//
+// 라쏘·부분 선택·획 지우개는 fabric 의 히트테스트를 쓰지 않고 **씬 스냅샷을
+// 직접 훑는다.** visible/selectable/evented 만 끄면 이 경로들이 그대로 통과해,
+// 보이지도 않는 획이 선택·분할·이동·삭제된다.
+
+function applyRealFabricLayerView(harness, overrides = {}) {
+  return harness.runtime.updateDrawingLayerView({
+    sessionId: 'real-fabric-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    ...overrides
+  });
+}
+
+test('라쏘는 숨긴 레이어의 획을 잡지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(crossingStrokePoints(80), 8790);
+    harness.drawStroke(crossingStrokePoints(120), 8791);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [hiddenId, visibleId] = before.objects.map(object => object.id);
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      hiddenObjectIds: [hiddenId]
+    }).accepted, true);
+    enableRealFabricWholeStrokeLasso(harness);
+    harness.dragLasso(middleLassoPoints(91, 109), 8792);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(after.selectedObjectIds, [visibleId], '숨긴 획은 선택에서 빠진다');
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [visibleId]
+    );
+    assert.deepEqual(after.objects, before.objects, '문서는 그대로다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('라쏘는 잠근 레이어의 획을 잡지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(crossingStrokePoints(80), 8795);
+    harness.drawStroke(crossingStrokePoints(120), 8796);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [lockedId, freeId] = before.objects.map(object => object.id);
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      lockedObjectIds: [lockedId]
+    }).accepted, true);
+    enableRealFabricWholeStrokeLasso(harness);
+    harness.dragLasso(middleLassoPoints(91, 109), 8797);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [freeId],
+      '잠근 획은 선택에서 빠진다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('부분 선택 라쏘는 잠근 레이어의 획을 자르지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 8800);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [lockedId] = before.objects.map(object => object.id);
+    const sourceObject = harness.canvas.getObjects()[0];
+    const lassoPolygon = () => sourcePolygonInRealFabricScene(sourceObject, [
+      ...lTurnFillPolygon(),
+      lTurnFillPolygon()[0]
+    ]);
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      lockedObjectIds: [lockedId]
+    }).accepted, true);
+    enableRealFabricLasso(harness);
+    harness.dragLasso(lassoPolygon(), 8801);
+
+    assert.ok(
+      !harness.canvas.getActiveObject(),
+      '잠근 획은 조각으로 갈리지 않는다'
+    );
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '문서는 그대로다'
+    );
+
+    // 잠금을 풀면 같은 드래그가 조각을 만든다 — 위 단언이 우연이 아님을 못박는다.
+    assert.equal(applyRealFabricLayerView(harness).accepted, true);
+    harness.dragLasso(lassoPolygon(), 8802);
+    assert.ok(
+      harness.canvas.getActiveObject(),
+      '풀면 조각이 만들어진다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('획 지우개는 숨긴 레이어의 획을 지우지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8810);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [hiddenId] = before.objects.map(object => object.id);
+    assert.equal(applyRealFabricLayerView(harness, {
+      hiddenObjectIds: [hiddenId]
+    }).accepted, true);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 8811;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(after.objects, before.objects, '숨긴 획은 지워지지 않는다');
+    // 미리보기가 visible 을 직접 만지므로, 통과시켰다면 복원에서 다시 보이기까지 한다.
+    const object = harness.canvas.getObjects()
+      .find(candidate => candidate.__baeframeObjectId === hiddenId);
+    assert.equal(object.visible, false, '숨김이 그대로 유지된다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('선택 중이던 획이 잠기면 선택에서 빠진다', async () => {
+  // refreshSelectionInteractionPolicy 의 마지막이 활성 선택을 통째로 다시
+  // 켠다. 거기서 걸러 내지 않으면 앞선 루프가 막아 둔 것이 한 줄에 풀린다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8820);
+    const [objectId] = harness.sceneStore.getActiveSceneSnapshot().objects
+      .map(object => object.id);
+    activateRealFabricSelection(harness, [objectId]);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [objectId]
+    );
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      lockedObjectIds: [objectId]
+    }).accepted, true);
+
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [],
+      '잠긴 획은 활성 선택에서 빠진다'
+    );
+    const object = harness.canvas.getObjects()
+      .find(candidate => candidate.__baeframeObjectId === objectId);
+    assert.equal(object.selectable, false);
+    assert.equal(object.evented, false);
+  } finally {
+    await harness.destroy();
+  }
+});

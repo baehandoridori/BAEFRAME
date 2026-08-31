@@ -6478,7 +6478,11 @@ function createFabricOverlayRuntime(options = {}) {
       const targetId = sceneStore.isDerivedOutline(record.id)
         ? bodyIdFor(record.id)
         : record.id;
-      if (!targetId || selectedIdSet.has(targetId)) continue;
+      // 숨기거나 잠근 레이어의 획은 후보에서 뺀다. 이 경로는 씬 스냅샷을 직접
+      // 훑으므로 fabric 의 selectable·evented 를 거치지 않는다 — 여기서 막지
+      // 않으면 보이지도 않는 획이 라쏘에 걸려 함께 옮겨진다.
+      if (!targetId || selectedIdSet.has(targetId) ||
+          isLayerRestricted(targetId) || isLayerRestricted(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -6598,7 +6602,9 @@ function createFabricOverlayRuntime(options = {}) {
       // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
       // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
       // 짝을 잃은 고아는 평범한 획이므로 그대로 잘릴 수 있어야 한다.
-      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id)) continue;
+      // 숨기거나 잠근 레이어의 획은 자르지 않는다(위 라쏘와 같은 이유).
+      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id) ||
+          isLayerRestricted(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -7464,7 +7470,10 @@ function createFabricOverlayRuntime(options = {}) {
       const derivedOutline = sceneStore.isDerivedOutline(record.id);
       if (derivedOutline && gesture.mode === 'pixel') continue;
       const targetId = derivedOutline ? bodyIdFor(record.id) : record.id;
-      if (!targetId || gesture.erasedIds.has(targetId)) continue;
+      // 숨기거나 잠근 레이어의 획은 지우지 않는다. 미리보기가 visible 을 직접
+      // 만지므로, 통과시키면 복원에서 숨긴 획이 다시 보이기까지 한다.
+      if (!targetId || gesture.erasedIds.has(targetId) ||
+          isLayerRestricted(targetId) || isLayerRestricted(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = context.canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -8731,7 +8740,12 @@ function createFabricOverlayRuntime(options = {}) {
     const isPermanentActiveSelection = activeChildren.length > 0 && activeChildren.every(
       object => !!object?.__baeframeObjectId && !object.__baeframeTransient
     );
-    if (isPermanentPath || isPermanentActiveSelection) {
+    // 선택 중이던 것이 숨겨지거나 잠기면 여기서 되살리면 안 된다 — 위 루프가
+    // 막아 둔 것을 이 한 줄이 통째로 풀어 버린다.
+    const activeRestricted = isPermanentPath
+      ? isLayerRestricted(activeObject.__baeframeObjectId)
+      : activeChildren.some(object => isLayerRestricted(object.__baeframeObjectId));
+    if ((isPermanentPath || isPermanentActiveSelection) && !activeRestricted) {
       applyMoveOnlyConstraints(activeObject);
       applySelectedActivePolicy(activeObject);
       activeObject.set?.({ selectable: true, evented: true });
@@ -9508,6 +9522,13 @@ function createFabricOverlayRuntime(options = {}) {
     hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
+    // 이미 선택돼 있던 획이 숨겨지거나 잠기면 **선택에서 뺀다.** 남겨 두면
+    // 보이지도 않는 것이 함께 옮겨지거나 지워진다.
+    // 이미 선택돼 있던 획이 숨겨지거나 잠기면 **선택에서 뺀다.** 남겨 두면
+    // 보이지도 않는 것이 함께 옮겨지거나 지워진다.
+    const selected = selectionIds();
+    const kept = selected.filter(id => !isLayerRestricted(id));
+    if (kept.length !== selected.length) activateObjectIds(kept);
     // 캔버스를 다시 만들지 않고 지금 붙어 있는 오브젝트에 바로 반영한다.
     // 재구성 경로(renderActiveScene 등)는 makeFabricPath 에서 같은 값을 읽는다.
     refreshSelectionInteractionPolicy();
