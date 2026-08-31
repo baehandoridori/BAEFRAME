@@ -2711,3 +2711,39 @@ test('표시·잠금 토글은 그리기 모드일 때만 받는다', () => {
     '추가는 그리기 모드가 아니어도 의미가 있다'
   );
 });
+
+test('체크인된 오버레이 번들은 런타임 API 를 모두 담고 있다', () => {
+  // 오버레이 창은 모듈이 아니라 이 IIFE 번들을 읽는다. 릴리스 빌드는 prebuild 가
+  // 다시 만들지만 `npm start`·`npm run dev` 는 **체크인된 파일을 그대로 쓴다.**
+  // 런타임에 메서드를 더하고 번들을 안 만들면, 호스트의 호출이 던지고 그 실패가
+  // 조용히 삼켜져 화면은 그대로인데 모델과 토스트만 성공한 것처럼 군다.
+  const runtimeSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js'),
+    'utf8'
+  ));
+  const bundleSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/lib/mpv-fabric-overlay.iife.js'),
+    'utf8'
+  ));
+
+  // 런타임 팩토리가 돌려주는 공개 API 목록을 원문에서 뽑는다.
+  const marker = '  return {\n    prepare,';
+  const start = runtimeSource.indexOf(marker);
+  assert.ok(start > 0, '런타임 공개 API 목록을 찾지 못했다');
+  const end = runtimeSource.indexOf('  };', start);
+  assert.ok(end > start, '공개 API 목록의 끝을 찾지 못했다');
+  const methods = runtimeSource
+    .slice(start + '  return {'.length, end)
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(entry => /^[A-Za-z_$][\w$]*$/.test(entry));
+  assert.ok(methods.length >= 10, `공개 API 를 제대로 뽑지 못했다: ${methods.length}`);
+
+  const missing = methods.filter(method => !bundleSource.includes(`${method},`) &&
+    !bundleSource.includes(`${method}:`));
+  assert.deepEqual(
+    missing,
+    [],
+    `번들에 없는 런타임 API: ${missing.join(', ')} — npm run bundle:mpv-fabric-overlay 를 돌리고 함께 커밋할 것`
+  );
+});
