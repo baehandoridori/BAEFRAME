@@ -378,6 +378,19 @@ function mergeDrawingLayers(baseline, local, remote) {
   const theirsById = new Map(theirs.layers.map(layer => [layer.id, layer]));
   const sameLayer = (left, right) => Boolean(left) && Boolean(right) &&
     Object.keys(left).every(field => left[field] === right[field]);
+  // 같은 레이어의 **다른 속성**을 각자 바꿀 수 있다 — 한쪽은 이름, 한쪽은 잠금.
+  // 통째로 고르면 상대의 속성 변경이 조용히 사라지고 낡은 값이 디스크로 돌아간다.
+  // 필드마다 "기준선에서 바꾼 쪽" 을 고른다.
+  const mergeLayerFields = (baseLayer, myLayer, theirLayer) => {
+    if (!myLayer) return theirLayer;
+    if (!theirLayer) return myLayer;
+    if (!baseLayer) return myLayer;
+    const merged = { ...theirLayer };
+    for (const field of Object.keys(myLayer)) {
+      if (myLayer[field] !== baseLayer[field]) merged[field] = myLayer[field];
+    }
+    return merged;
+  };
 
   // 순서도 병합 대상이다. 로컬 변경이 **순서 바꾸기뿐**이면 필드 비교로는
   // 아무것도 달라지지 않아, 원격 순서로 다시 세우면서 사용자의 재배열이
@@ -418,8 +431,7 @@ function mergeDrawingLayers(baseline, local, remote) {
       continue;
     }
     // 양쪽에 있거나 어느 한쪽이 새로 만든 것.
-    const editedByMe = myLayer && baseLayer && !sameLayer(myLayer, baseLayer);
-    layers.push(editedByMe ? myLayer : (theirLayer || myLayer));
+    layers.push(mergeLayerFields(baseLayer, myLayer, theirLayer));
   }
 
   const liveIds = new Set(layers.map(layer => layer.id));

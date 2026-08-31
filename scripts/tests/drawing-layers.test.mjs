@@ -348,3 +348,27 @@ test('병합은 로컬 순서 바꾸기도 지킨다', () => {
     '내가 안 바꿨으면 상대 순서를 따른다'
   );
 });
+
+test('같은 레이어의 다른 속성을 각자 바꾸면 둘 다 살린다', () => {
+  // 통째로 고르면 상대의 속성 변경이 조용히 사라지고 낡은 값이 디스크로 돌아간다.
+  const base = createDefaultDrawingLayers();
+  const id = base.layers[0].id;
+
+  // 나는 이름을 바꾸고, 상대는 잠갔다.
+  const mine = normalizeDrawingLayers({
+    ...base,
+    layers: [{ ...base.layers[0], name: '내가 바꾼 이름' }]
+  });
+  const theirs = toggleLayerLock(base, id);
+  assert.equal(findLayer(theirs, id).locked, true);
+
+  const merged = mergeDrawingLayers(base, mine, theirs);
+  const layer = findLayer(merged, id);
+  assert.equal(layer.name, '내가 바꾼 이름', '내 이름 변경이 남는다');
+  assert.equal(layer.locked, true, '상대의 잠금도 남는다');
+
+  // 반대 방향도 같다.
+  const flipped = mergeDrawingLayers(base, theirs, mine);
+  assert.equal(findLayer(flipped, id).name, '내가 바꾼 이름');
+  assert.equal(findLayer(flipped, id).locked, true);
+});
