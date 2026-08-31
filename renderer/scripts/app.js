@@ -16,6 +16,13 @@ import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { ERASER_MODES, normalizeEraserMode } from './modules/drawing-stroke-records.js';
 import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
 import { ReviewDataManager, getBframePath } from './modules/review-data-manager.js';
+import {
+  addLayer as addDrawingLayerState,
+  assignObject as assignDrawingObjectLayer,
+  layerIdForObject as drawingLayerIdForObject,
+  pruneAssignments as pruneDrawingLayerAssignments,
+  selectLayerByOffset as selectDrawingLayerState
+} from '../../shared/drawing-layers.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
@@ -2031,7 +2038,18 @@ async function initApp() {
 
   // 레이어 선택
   timeline.addEventListener('layerSelect', (e) => {
-    drawingManager.setActiveLayer(e.detail.layerId);
+    // 파일럿 행은 drawingManager 가 소유하지 않는다. 접두어를 벗겨 레이어 모델의
+    // 활성 레이어를 바꾼다 — 안 그러면 헤더가 눌리는데 아무 일도 안 일어난다.
+    const layerId = String(e.detail.layerId || '');
+    if (layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX)) {
+      const state = reviewDataManager.getDrawingLayers();
+      const targetId = layerId.slice(FABRIC_PILOT_LAYER_ROW_PREFIX.length);
+      if (state.layers.some(layer => layer.id === targetId)) {
+        applyDrawingLayerStateChange({ ...state, activeLayerId: targetId }, null);
+      }
+      return;
+    }
+    drawingManager.setActiveLayer(layerId);
     renderActiveDrawingLayers();
   });
 
@@ -2178,8 +2196,11 @@ async function initApp() {
 
   function classifyFabricPilotKeyframeMove(keyframes) {
     if (!Array.isArray(keyframes) || keyframes.length === 0) return 'invalid';
+    // 행 id 는 레이어마다 다르다. 접두어로 판정하지 않으면 새 행의 마커 드래그가
+    // legacy 로 분류돼 레거시 drawingManager 로 가고 아무 일도 일어나지 않는다.
     const fabricCount = keyframes.filter(
-      keyframe => keyframe?.layerId === 'fabric-pilot-drawing-layer'
+      keyframe => typeof keyframe?.layerId === 'string' &&
+        keyframe.layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX)
     ).length;
     if (fabricCount === 0) return 'legacy';
     return fabricCount === keyframes.length ? 'fabric' : 'mixed';
@@ -2187,10 +2208,16 @@ async function initApp() {
 
   async function moveFabricPilotKeyframes(keyframes, frameDelta, anchor) {
     if (fabricPilotKeyframeMoveInProgress || _isProcessingUndo) return false;
-    const moves = keyframes.map(keyframe => ({
-      fromFrame: keyframe.fromFrame,
-      toFrame: keyframe.toFrame
-    }));
+    // 레이어마다 행이 있으므로 **같은 문서 프레임**을 여러 행에서 고를 수 있다.
+    // 그대로 넘기면 moveKeyframes 가 중복 출발 프레임을 거절해 드래그가 통째로
+    // 무산된다. 문서 프레임 기준으로 접는다.
+    const seenFromFrames = new Set();
+    const moves = [];
+    for (const keyframe of keyframes) {
+      if (seenFromFrames.has(keyframe.fromFrame)) continue;
+      seenFromFrames.add(keyframe.fromFrame);
+      moves.push({ fromFrame: keyframe.fromFrame, toFrame: keyframe.toFrame });
+    }
     fabricPilotKeyframeMoveInProgress = true;
     const globalHistoryMutation = beginGlobalHistoryMutation();
     if (!globalHistoryMutation) {
@@ -6308,6 +6335,24 @@ async function initApp() {
     framePaste: 'frame-paste'
   };
 
+  // 파일럿이 직접 처리하는 레이어 액션. 삭제·표시·잠금·이동은 오버레이가 그림을
+  // 지우거나 숨기거나 순서를 바꿔야 의미가 있어 아직 넣지 않는다 — 배선 없이
+  // 이으면 눌러도 화면이 그대로인 거짓 기능이 된다.
+  // 파일럿 타임라인 행 id 접두어. CSS 마스크·이동 라우터·활성 표시가 모두 이걸
+  // 기준으로 판정하므로 한 곳에서 정한다.
+  const FABRIC_PILOT_LAYER_ROW_PREFIX = 'fabric-pilot-layer-';
+
+  function activeFabricPilotLayerRowId() {
+    const state = reviewDataManager.getDrawingLayers();
+    return `${FABRIC_PILOT_LAYER_ROW_PREFIX}${state.activeLayerId}`;
+  }
+
+  const FABRIC_PILOT_LAYER_ACTIONS = new Set([
+    'drawingLayerAdd',
+    'drawingLayerSelectUp',
+    'drawingLayerSelectDown'
+  ]);
+
   function shouldBlockFabricDrawingLegacyShortcut(event) {
     const engaged = isFabricDrawingPilotEngaged();
     if (!engaged && !shouldSuppressLegacyDrawingForFabricPilot()) return false;
@@ -6330,6 +6375,12 @@ async function initApp() {
     if (matchedAction && Object.hasOwn(FABRIC_PILOT_FRAME_OPERATIONS, matchedAction)) {
       return false;
     }
+    // 레이어 추가·선택은 파일럿이 직접 처리한다. 이동(Ctrl+Shift+X·C)은 여기
+    // 없다 — 오버레이가 오브젝트 순서를 바꿔야 의미가 있어 docs 대조표대로
+    // 차단을 유지한다(표시·잠금·삭제와 함께 오버레이 배선 라운드에서 잇는다).
+    if (matchedAction && FABRIC_PILOT_LAYER_ACTIONS.has(matchedAction)) {
+      return false;
+    }
     // IME 조합 중에는 event.key가 'Process'가 되어 key 기반 차단이 무력화된다.
     // 단축키로 등록되지 않은 생 Ctrl+C/V/Z/Y(클립보드·브라우저 undo)는 matchedAction으로도
     // 걸리지 않으므로 event.code를 함께 본다(IME 여부와 무관하게 물리 키를 가리킨다).
@@ -6345,11 +6396,22 @@ async function initApp() {
     return Boolean(matchedAction);
   }
 
+  function isFabricPilotLayerHeader(element) {
+    return element?.classList?.contains('drawing-layer-header') === true &&
+      String(element.dataset?.layerId || '').startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX);
+  }
+
   function handleFabricDrawingPilotLegacyClick(event) {
     if (!isFabricDrawingPilotEngaged()) return;
     const target = event.target;
     if (!target || typeof target.closest !== 'function') return;
-    if (!target.closest(FABRIC_DRAWING_LEGACY_CLICK_SELECTOR)) return;
+    const matched = target.closest(FABRIC_DRAWING_LEGACY_CLICK_SELECTOR);
+    if (!matched) return;
+    // 파일럿 행의 헤더 클릭은 통과시킨다. 여기서 삼키면 Timeline 이 layerSelect 를
+    // 내보내지 못해 layerSelect 라우터에 영영 닿지 않고, 헤더를 눌러도 활성
+    // 레이어가 바뀌지 않는다. 행 안의 액션 버튼은 그대로 막는다 — 그건 레거시
+    // drawingManager 의 것이라 파일럿 상태와 어긋난다(closest 가 버튼을 먼저 문다).
+    if (isFabricPilotLayerHeader(matched)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
@@ -6548,32 +6610,55 @@ async function initApp() {
         }))
         .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
         .sort((a, b) => a.frame - b.frame);
-      projectedLayers.push({
-        id: 'fabric-pilot-drawing-layer',
-        name: '드로잉',
-        color: '#4f8ef7',
-        visible: true,
-        locked: true,
-        timelineKeyframesMovable: true,
-        opacity: 1,
-        keyframes,
-        getKeyframeRanges(totalFrames) {
-          const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
-          return keyframes.map((kf, index) => ({
-            start: kf.frame,
-            end: Math.max(
-              kf.frame,
-              Math.min(
-                tailFrame,
-                keyframes[index + 1]?.frame !== undefined
-                  ? keyframes[index + 1].frame - 1
-                  : tailFrame
-              )
-            ),
-            keyframe: kf
-          }));
-        }
-      });
+      // 레이어마다 한 행이다. drawingsV3 의 키프레임은 문서 단위이므로 프레임
+      // 목록은 모든 행이 같고, **그 프레임에 그 레이어의 획이 있는지**만 행마다
+      // 다르다(isEmpty). 애니메이트에서 각 레이어가 자기 키프레임을 보여 주는
+      // 것과 같은 모양이다.
+      const layerState = reviewDataManager.getDrawingLayers();
+      const objectIdsByFrame = new Map();
+      for (const keyframe of doc.keyframes || []) {
+        const frame = Math.trunc(Number(keyframe?.frame));
+        if (!Number.isInteger(frame) || frame < 0) continue;
+        objectIdsByFrame.set(
+          frame,
+          (keyframe.objects || []).map(object => object?.id).filter(Boolean)
+        );
+      }
+      for (const layer of layerState.layers) {
+        const layerKeyframes = keyframes.map(kf => ({
+          frame: kf.frame,
+          isEmpty: !(objectIdsByFrame.get(kf.frame) || [])
+            .some(id => drawingLayerIdForObject(layerState, id) === layer.id)
+        }));
+        projectedLayers.push({
+          id: `${FABRIC_PILOT_LAYER_ROW_PREFIX}${layer.id}`,
+          name: layer.name,
+          color: layer.color,
+          visible: layer.visible !== false,
+          // 타임라인에서 마커를 직접 편집하는 경로는 아직 열지 않는다.
+          locked: true,
+          timelineKeyframesMovable: true,
+          active: layer.id === layerState.activeLayerId,
+          opacity: 1,
+          keyframes: layerKeyframes,
+          getKeyframeRanges(totalFrames) {
+            const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
+            return layerKeyframes.map((kf, index) => ({
+              start: kf.frame,
+              end: Math.max(
+                kf.frame,
+                Math.min(
+                  tailFrame,
+                  layerKeyframes[index + 1]?.frame !== undefined
+                    ? layerKeyframes[index + 1].frame - 1
+                    : tailFrame
+                )
+              ),
+              keyframe: kf
+            }));
+          }
+        });
+      }
     }
     // 레거시 drawings(래스터)는 파일럿 소유 중에도 읽기 전용 행으로 계속 보여준다.
     // 원본 id·이름·색을 유지하고 locked/pilotProjected로 편집 경로만 봉쇄한다.
@@ -6607,7 +6692,9 @@ async function initApp() {
     try {
       const pilotLayers = getFabricPilotTimelineLayers();
       const hasFabricPilotSelection = Array.isArray(timeline.selectedKeyframes) &&
-        timeline.selectedKeyframes.some(keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer');
+        timeline.selectedKeyframes.some(keyframe =>
+          typeof keyframe.layerId === 'string' &&
+          keyframe.layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX));
       if (pilotLayers) {
         const videoGeneration = fabricDrawingPilotStatusSnapshot?.videoGeneration ?? null;
         const stableVideoIdentity = normalizeComparableFilePath(
@@ -6622,9 +6709,16 @@ async function initApp() {
             hasFabricPilotSelection) {
           timeline.clearSelection();
         }
+        // **초기화가 아니라 재시딩이다.** 세션이 active 가 되며 심은 직후 이 렌더가
+        // 새 영상 정체를 처음 보면, 초기화해 버리면 그 seed 가 지워진다. 그러면
+        // 다음 첫 획이 seed 단계로 흘러 활성 레이어 배정을 받지 못한다.
+        // 지금 문서로 다시 심으면 순서에 관계없이 옳다.
+        if (sourceChanged) seedFabricDrawingLayerAssignmentTracking({ prune: false });
         lastFabricPilotTimelineVideoGeneration = videoGeneration;
         lastFabricPilotTimelineStableVideoIdentity = stableVideoIdentity;
-        timeline.renderDrawingLayers(pilotLayers, null);
+        // 활성 레이어를 넘기지 않으면 헤더에 selected 가 붙지 않아, 다음 획이
+        // 어느 레이어로 가는지 화면에서 알 수 없다.
+        timeline.renderDrawingLayers(pilotLayers, activeFabricPilotLayerRowId());
         return;
       }
       lastFabricPilotTimelineVideoGeneration = null;
@@ -7810,12 +7904,142 @@ async function initApp() {
       return Promise.resolve(false);
     }
   });
+  // 파일럿이 그린 오브젝트를 레이어에 배정한다.
+  //
+  // 저장 레코드에는 레이어 정보가 없다(스키마 불가침). 그래서 **새로 나타난
+  // 오브젝트 id** 를 보고 그때의 활성 레이어에 붙인다. 처음 문서를 읽을 때는
+  // 전부 "새로" 보이므로, 그때는 붙이지 않고 목록만 seed 한다 — 안 그러면
+  // 파일에 저장된 배정이 활성 레이어로 통째로 덮인다.
+  let knownDrawingObjectIds = new Set();
+  // **이 세션에서 한 번이라도 본** id. 실행취소로 되살아난 오브젝트를 "새 것" 으로
+  // 오인해 활성 레이어로 옮기지 않으려면, 사라졌던 id 를 기억해 둬야 한다.
+  // 배정 유무로는 가릴 수 없다 — 기준 레이어의 오브젝트는 원래 배정이 없다.
+  let everSeenDrawingObjectIds = new Set();
+  let drawingObjectIdsSeeded = false;
+
+  function readFabricDrawingDocument() {
+    const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
+    if (!doc) return null;
+    const ids = new Set();
+    for (const keyframe of doc.keyframes || []) {
+      for (const object of keyframe?.objects || []) {
+        if (typeof object?.id === 'string' && object.id.length > 0) ids.add(object.id);
+      }
+    }
+    return { documentId: typeof doc.documentId === 'string' ? doc.documentId : null, ids };
+  }
+
+  function collectFabricDrawingObjectIds() {
+    return readFabricDrawingDocument()?.ids || null;
+  }
+
+  // 이번 알림에서 사라진 오브젝트들이 모두 같은 레이어에 있었으면 그 레이어를
+  // 돌려준다. 하나라도 다르면 null — 조각의 출처를 특정할 수 없다.
+  function inheritedDrawingLayerForReplacements(state, live) {
+    let layerId = null;
+    for (const id of knownDrawingObjectIds) {
+      if (live.has(id)) continue;
+      const removedLayerId = drawingLayerIdForObject(state, id);
+      if (layerId !== null && layerId !== removedLayerId) return null;
+      layerId = removedLayerId;
+    }
+    return layerId;
+  }
+
+  function syncFabricDrawingLayerAssignments() {
+    const live = collectFabricDrawingObjectIds();
+    if (!live) return;
+    if (!drawingObjectIdsSeeded) {
+      knownDrawingObjectIds = live;
+      drawingObjectIdsSeeded = true;
+      return;
+    }
+    let next = reviewDataManager.getDrawingLayers();
+    // 획을 자르면(지우개 부분 지우기·올가미 이동) 런타임이 원본을 지우고 **새 id** 의
+    // 조각으로 갈아 끼운다. 그 조각을 새로 그린 획으로 보면 활성 레이어로 옮겨가,
+    // 다른 레이어를 고른 채 획 일부만 지웠을 뿐인데 그림이 통째로 이동한다.
+    // 이번 알림에서 사라진 오브젝트들의 배정이 한 레이어로 모이면 그것을 물려준다.
+    // 여러 레이어가 섞이면 어느 조각이 어디서 왔는지 알 수 없어 활성 레이어로 둔다
+    // (저장 레코드에 부모 링크가 없다 — 스키마 불가침).
+    const inheritedLayerId = inheritedDrawingLayerForReplacements(next, live);
+    for (const id of live) {
+      if (knownDrawingObjectIds.has(id)) continue;
+      // 되살아난 것이면 원래 배정을 그대로 둔다. 덮으면 지우고 → 레이어를 바꾸고
+      // → 되돌렸을 때 그림이 다른 레이어로 옮겨간 채 저장된다.
+      if (everSeenDrawingObjectIds.has(id)) continue;
+      everSeenDrawingObjectIds.add(id);
+      next = assignDrawingObjectLayer(next, id, inheritedLayerId || next.activeLayerId);
+    }
+    // **여기서 걷어내면 안 된다.** 획을 지운 뒤 실행취소로 되살리면, 배정이
+    // 이미 사라져 그 획이 "새 오브젝트" 로 보이고 그때의 활성 레이어로 옮겨간다.
+    // 사용자가 지우고 → 레이어를 바꾸고 → 되돌리면 그림이 다른 레이어로 이동한
+    // 채 저장된다. 정리는 문서를 새로 심을 때(seed) 한 번만 한다 — 그 시점에는
+    // 그 영상의 실행취소 이력도 이미 사라진 뒤다.
+    knownDrawingObjectIds = live;
+    reviewDataManager.setDrawingLayers(next);
+  }
+
+  /**
+   * 추적을 **지금 문서 상태로** 초기화한다.
+   *
+   * 첫 변이 알림을 기다리면 늦다 — importRootValue·reset 경로는 구독자를 부르지
+   * 않으므로, 사용자가 새 레이어를 고르고 첫 획을 그은 **그 알림**이 첫 seed 가
+   * 된다. 그러면 그 획은 배정을 받지 못하고 기준 레이어로 떨어진다.
+   */
+  // 마지막으로 배정을 걷어낸 문서. **같은 문서에서는 두 번 걷지 않는다.**
+  // 그리기 모드를 껐다 켜면 seed 가 다시 도는데, 오버레이는 그동안 씬 이력을
+  // 그대로 들고 있다. 그때 걷으면 지운 획의 배정이 사라지고 본 목록에서도
+  // 잊혀서, 실행취소로 되살렸을 때 "새 오브젝트" 로 보여 그때의 활성 레이어로
+  // 옮겨간 채 저장된다.
+  let lastPrunedDrawingDocumentId = null;
+  // 마지막으로 심은 문서. 걷어낸 문서와 따로 센다 — 걷어내기를 끈 재시딩도
+  // 여기는 갱신해야 "같은 문서인가" 를 옳게 판정한다.
+  let lastSeededDrawingDocumentId = null;
+
+  function seedFabricDrawingLayerAssignmentTracking({ prune = true } = {}) {
+    const snapshot = readFabricDrawingDocument();
+    const live = snapshot?.ids || null;
+    const documentId = snapshot?.documentId || null;
+    // 같은 문서로 다시 심을 때는 **본 목록을 지우지 않는다.** 지운 획의 id 는
+    // 지금 문서에 없으므로 다시 심으면 잊혀지는데, 배정은(걷지 않으므로) 남아
+    // 있다. 그 상태에서 실행취소로 되살리면 "새 오브젝트" 로 보여 그때의 활성
+    // 레이어로 덮인다. 문서가 바뀌었을 때만 새로 센다 — 그때는 이전 문서의
+    // 실행취소 이력도 함께 사라진 뒤다.
+    const sameDocument = documentId === null || documentId === lastSeededDrawingDocumentId;
+    knownDrawingObjectIds = live || new Set();
+    everSeenDrawingObjectIds = sameDocument
+      ? new Set([...everSeenDrawingObjectIds, ...knownDrawingObjectIds])
+      : new Set(knownDrawingObjectIds);
+    drawingObjectIdsSeeded = live !== null;
+    if (documentId !== null) lastSeededDrawingDocumentId = documentId;
+    // 사라진 오브젝트의 배정은 **문서를 처음 심을 때 한 번만** 걷는다. 그 시점에는
+    // 그 문서의 실행취소 이력도 아직 없다. 이후 같은 문서에서는 남겨 둔다.
+    //
+    // 영상 전환 렌더는 걷지 않는다(prune: false). 리뷰 파일은 영상당 하나라
+    // 전환 순간에 레이어 상태는 **새 파일**로 바뀌었는데 스토어는 아직 이전
+    // 문서를 들고 ready 일 수 있다. 그때 걷으면 새 파일의 배정이 전부 사라진
+    // 채 저장된다 — 고치려는 버그보다 피해가 크다.
+    if (!live || !prune || !documentId || documentId === lastPrunedDrawingDocumentId) return;
+    lastPrunedDrawingDocumentId = documentId;
+    reviewDataManager.setDrawingLayers(
+      pruneDrawingLayerAssignments(reviewDataManager.getDrawingLayers(), [...live])
+    );
+  }
+
+  function applyDrawingLayerStateChange(nextState, message) {
+    if (!reviewDataManager.setDrawingLayers(nextState)) return false;
+    renderActiveDrawingLayers();
+    if (message) showToast(message, 'info');
+    return true;
+  }
+
   let fabricPilotTimelineRenderQueued = false;
   fabricDrawingPersistenceStore.subscribe(() => {
     if (fabricPilotTimelineRenderQueued) return;
     fabricPilotTimelineRenderQueued = true;
     requestAnimationFrame(() => {
       fabricPilotTimelineRenderQueued = false;
+      syncFabricDrawingLayerAssignments();
       renderActiveDrawingLayers();
       syncCurrentFabricDrawingDisplayFrame();
     });
@@ -8943,7 +9167,10 @@ async function initApp() {
     // 프레임·키프레임 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때
     // 릴레이가 이 키를 에디터로 보내고, handleKeydown 이 shouldIgnoreGlobalShortcutTarget
     // 에서 먼저 돌아가 조작이 실패한다. 수식키 없는 2·3·4 는 에디터에 글자로 들어간다.
-    ...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS)
+    ...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS),
+    // 레이어 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때
+    // 릴레이가 이 키를 에디터로 보내고 handleKeydown 이 먼저 돌아간다.
+    ...FABRIC_PILOT_LAYER_ACTIONS
   ]);
 
   function getMpvOverlayDrawModeShortcutDescriptor() {
@@ -10821,6 +11048,11 @@ async function initApp() {
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     fabricDrawingPilotStatusSnapshot = snapshot ? { ...snapshot } : null;
+    // 세션이 살아나는 **그때** 오브젝트 추적을 심는다. 첫 변이 알림을 기다리면
+    // 늦다 — importRootValue·reset 은 구독자를 부르지 않으므로, 사용자가 새
+    // 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어 그 획이 배정을 받지
+    // 못하고 기준 레이어로 떨어진다.
+    if (nextState === 'active') seedFabricDrawingLayerAssignmentTracking();
     if (nextState === 'passive') {
       syncCurrentFabricDrawingDisplayFrame();
     }
@@ -14267,6 +14499,32 @@ async function initApp() {
       return;
     }
 
+    // 파일럿이 소유 중이면 레이어 조작은 drawingLayersV1 모델을 바꾼다.
+    // 레거시 drawingManager 는 mpv 모드에서 비어 있어 아무 일도 일어나지 않는다.
+    if (getFabricPilotTimelineLayers()) {
+      if (userSettings.matchShortcut('drawingLayerAdd', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const added = addDrawingLayerState(state);
+        if (!added.added) {
+          showToast('레이어를 더 만들 수 없습니다', 'warning');
+        } else {
+          applyDrawingLayerStateChange(added.state, `레이어 추가: ${added.added.name}`);
+        }
+        return;
+      }
+      const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)
+        ? -1
+        : (userSettings.matchShortcut('drawingLayerSelectDown', e) ? 1 : 0);
+      if (selectOffset !== 0) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = selectDrawingLayerState(state, selectOffset);
+        const active = next.layers.find(layer => layer.id === next.activeLayerId);
+        applyDrawingLayerStateChange(next, active ? `선택: ${active.name}` : null);
+        return;
+      }
+    }
     if (userSettings.matchShortcut('drawingLayerAdd', e)) {
       e.preventDefault();
       addDrawingLayer();

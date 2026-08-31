@@ -29,10 +29,10 @@
 |---|---|---|---|---|
 | `keyframeAddWithCopy` | `F6` | 키프레임 추가 (복사) | 레거시 | **A. 차단** |
 | `keyframeAddBlank` | `F7` | 빈 키프레임 추가 | 레거시 | **A. 차단** |
-| `keyframeAddBlank2` | `2` | 빈 키프레임 삽입 | 레거시 | **A. 차단** |
+| `keyframeAddBlank2` | `2` | 빈 키프레임 삽입 | **파일럿 씬** | ✅ 동작 (v2.6.4-beta) — `frame-insert-blank-keyframe` |
 | `keyframeDelete` | `Delete` | 키프레임 삭제 | 레거시 | **차단** — 단, 같은 `Delete` 키를 `routeKeydown`이 먼저 가로채 **선택 획 삭제**로 쓴다(§2.4). 키프레임 삭제 능력 자체가 없다 |
-| `keyframeConvertToFrame` | `Shift+2` | 키프레임 → 일반 프레임 | 레거시 | **A. 차단** |
-| `keyframeConvertToKeyframe` | `Shift+3` | 프레임 → 키프레임 | 레거시 | **A. 차단** |
+| `keyframeConvertToFrame` | `Shift+2` | 키프레임 → 일반 프레임 | **파일럿 씬** | ✅ 동작 (v2.6.4-beta) — `keyframe-to-frame` |
+| `keyframeConvertToKeyframe` | `Shift+3` | 프레임 → 키프레임 | **파일럿 씬** | ✅ 동작 (v2.6.4-beta) — `frame-to-keyframe`, 홀드 내용을 복사한다(Animate F6 과 같다) |
 | `prevKeyframe` | `A` | 이전 키프레임 | **소유자에 따라 분기** | ✅ 동작 (v2.4.3-beta) |
 | `nextKeyframe` | `D` | 다음 키프레임 | **소유자에 따라 분기** | ✅ 동작 (v2.4.3-beta) |
 
@@ -40,23 +40,25 @@
 
 | 액션 id | 기본 키 | 라벨 | mpv 모드 상태 |
 |---|---|---|---|
-| `insertFrame` | `3` | 프레임 삽입 (홀드) | **A. 차단** |
-| `deleteFrame` | `4` | 프레임 삭제 | **A. 차단** |
-| `frameCopy` | `Ctrl+Alt+C` | 프레임 복사 | **A. 차단** |
-| `framePaste` | `Ctrl+Alt+V` | 프레임 붙여넣기 | **A. 차단** |
+| `insertFrame` | `3` | 프레임 삽입 (홀드) | ✅ 동작 (v2.6.4-beta) — `frame-insert`. 마지막 프레임 밖으로 밀려나는 키프레임이 있으면 **거절**(`timeline-full`) |
+| `deleteFrame` | `4` | 프레임 삭제 | ✅ 동작 (v2.6.4-beta) — `frame-remove`. 홀드가 남으면 그 키프레임은 살린다(레거시 `deleteFrame` 과 같다) |
+| `frameCopy` | `Ctrl+Alt+C` | 프레임 복사 | ✅ 동작 (v2.6.4-beta) — `frame-copy`. 홀드 중이면 그 키프레임 내용을 뜬다. **영상 사이를 넘지 않는다** |
+| `framePaste` | `Ctrl+Alt+V` | 프레임 붙여넣기 | ✅ 동작 (v2.6.4-beta) — `frame-paste` |
 
 ### 2.3 드로잉 레이어 조작 — 파일럿에는 레이어 개념 자체가 없다
 
 | 액션 id | 기본 키 | 라벨 | mpv 모드 상태 |
 |---|---|---|---|
-| `drawingLayerAdd` | `Shift+F1` | 드로잉 레이어 추가 | **A. 차단** |
-| `drawingLayerDelete` | ``Shift+` `` | 드로잉 레이어 삭제 | **A. 차단** |
-| `drawingLayerVisibilityToggle` | `` ` `` | 활성 레이어 표시 토글 | **A. 차단** |
-| `drawingLayerLockToggle` | `Ctrl+2` | 활성 레이어 잠금 토글 | **A. 차단** |
-| `drawingLayerSelectUp` / `Down` | `Shift+X` / `Shift+C` | 위/아래 레이어 선택 | **A. 차단** |
-| `drawingLayerMoveUp` / `Down` | `Ctrl+Shift+X` / `Ctrl+Shift+C` | 레이어 위/아래 이동 | **A. 차단** |
+| `drawingLayerAdd` | `Shift+F1` | 드로잉 레이어 추가 | ✅ 동작 (v2.6.4-beta) — 루트 `drawingLayers` 에 저장 |
+| `drawingLayerDelete` | ``Shift+` `` | 드로잉 레이어 삭제 | **A. 차단** — 오버레이가 그 레이어의 오브젝트를 지워야 의미가 있다 |
+| `drawingLayerVisibilityToggle` | `` ` `` | 활성 레이어 표시 토글 | **A. 차단** — 오버레이가 숨겨야 의미가 있다 |
+| `drawingLayerLockToggle` | `Ctrl+2` | 활성 레이어 잠금 토글 | **A. 차단** — 오버레이가 선택·편집을 막아야 의미가 있다 |
+| `drawingLayerSelectUp` / `Down` | `Shift+X` / `Shift+C` | 위/아래 레이어 선택 | ✅ 동작 (v2.6.4-beta) — 헤더 클릭으로도 바뀐다 |
+| `drawingLayerMoveUp` / `Down` | `Ctrl+Shift+X` / `Ctrl+Shift+C` | 레이어 위/아래 이동 | **A. 차단** — 오버레이가 오브젝트 순서를 바꿔야 의미가 있다. 메타데이터만 바꾸면 타임라인 행만 움직이고 화면의 겹침 순서는 그대로다 |
 
-> 파일럿은 **단일 씬 모델**이다. `drawingsV3`에는 레이어가 없고 키프레임마다 오브젝트 목록만 있다. 레이어 기능을 파일럿에 이식하려면 저장 스키마 확장이 필요하므로 **단순 배선으로는 불가능하다.**
+> `drawingsV3` 에는 여전히 레이어가 없다(스키마 불가침). 레이어 모델은 `.bframe` **루트의 `drawingLayers`** 에 따로 살고, 오브젝트 id → 레이어 id 배정으로 그림과 이어진다. 그래서 추가·선택·이름·색처럼 **메타데이터만으로 완결되는 것**은 동작하고, 삭제·표시·잠금·이동처럼 **오버레이가 그림을 지우거나 숨기거나 순서를 바꿔야 하는 것**은 아직 차단이다. 배선 없이 이으면 눌러도 화면이 그대로인 거짓 기능이 된다.
+>
+> 배정은 **새로 나타난 오브젝트 id** 를 보고 그때의 활성 레이어에 붙인다. 단, 획을 자르면(지우개 부분 지우기·올가미 이동) 런타임이 원본을 지우고 **새 id 의 조각**으로 갈아 끼우므로, 같은 알림에서 사라진 오브젝트들이 한 레이어에 모여 있으면 조각은 그 레이어를 물려받는다(여러 레이어가 섞이면 출처를 알 수 없어 활성 레이어로 둔다 — 저장 레코드에 부모 링크가 없다). 그래서 두 가지 규칙이 따라온다: (1) 사라진 배정은 **문서를 처음 심을 때 한 번만** 걷는다 — 실행취소가 되살릴 수 있는 동안 걷으면 그 획이 다른 레이어로 옮겨간 채 저장된다. (2) 영상 전환 렌더는 걷지 않는다 — 그 순간 레이어 상태는 새 파일인데 스토어가 아직 이전 문서를 들고 있을 수 있다.
 
 ### 2.4 파일럿이 자체 경로로 처리하는 것 (차단 목록에 있지만 예외)
 
@@ -79,8 +81,8 @@
 
 | 항목 | 레거시 레이어 | 파일럿 투영 행 |
 |---|---|---|
-| 행 id | `layer-*` | `fabric-pilot-drawing-layer` |
-| 이름 / 색 | 사용자 지정 | `드로잉` / `#4f8ef7`(파랑) |
+| 행 id | `layer-*` | `fabric-pilot-layer-<레이어 id>` (레이어마다 한 행) |
+| 이름 / 색 | 사용자 지정 | 레이어 모델의 이름·색 (`drawingLayers`) |
 | 키프레임 마커 | ● 채움 / ○ 빈 키프레임 | **동일하게 렌더됨** (`keyframe.isEmpty` 기준) |
 | 홀드 구간 | `getKeyframeRanges()` | **동일** (다음 키프레임 직전까지) |
 | 마커 클릭 선택 | 가능 | **가능** (시각 확인용) |
