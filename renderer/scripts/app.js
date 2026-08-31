@@ -6335,9 +6335,9 @@ async function initApp() {
     framePaste: 'frame-paste'
   };
 
-  // 파일럿이 직접 처리하는 레이어 액션. 삭제·표시·잠금은 오버레이가 그림을
-  // 지우거나 숨겨야 의미가 있어 아직 넣지 않는다 — 배선 없이 이으면 눌러도
-  // 화면이 그대로인 거짓 기능이 된다.
+  // 파일럿이 직접 처리하는 레이어 액션. 삭제·표시·잠금·이동은 오버레이가 그림을
+  // 지우거나 숨기거나 순서를 바꿔야 의미가 있어 아직 넣지 않는다 — 배선 없이
+  // 이으면 눌러도 화면이 그대로인 거짓 기능이 된다.
   // 파일럿 타임라인 행 id 접두어. CSS 마스크·이동 라우터·활성 표시가 모두 이걸
   // 기준으로 판정하므로 한 곳에서 정한다.
   const FABRIC_PILOT_LAYER_ROW_PREFIX = 'fabric-pilot-layer-';
@@ -6375,8 +6375,9 @@ async function initApp() {
     if (matchedAction && Object.hasOwn(FABRIC_PILOT_FRAME_OPERATIONS, matchedAction)) {
       return false;
     }
-    // 레이어 추가·선택·이동은 파일럿이 직접 처리한다. Ctrl+Shift+X·C 가 아래
-    // chord 차단에 먼저 걸리므로 여기서 통과시킨다.
+    // 레이어 추가·선택은 파일럿이 직접 처리한다. 이동(Ctrl+Shift+X·C)은 여기
+    // 없다 — 오버레이가 오브젝트 순서를 바꿔야 의미가 있어 docs 대조표대로
+    // 차단을 유지한다(표시·잠금·삭제와 함께 오버레이 배선 라운드에서 잇는다).
     if (matchedAction && FABRIC_PILOT_LAYER_ACTIONS.has(matchedAction)) {
       return false;
     }
@@ -6395,11 +6396,22 @@ async function initApp() {
     return Boolean(matchedAction);
   }
 
+  function isFabricPilotLayerHeader(element) {
+    return element?.classList?.contains('drawing-layer-header') === true &&
+      String(element.dataset?.layerId || '').startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX);
+  }
+
   function handleFabricDrawingPilotLegacyClick(event) {
     if (!isFabricDrawingPilotEngaged()) return;
     const target = event.target;
     if (!target || typeof target.closest !== 'function') return;
-    if (!target.closest(FABRIC_DRAWING_LEGACY_CLICK_SELECTOR)) return;
+    const matched = target.closest(FABRIC_DRAWING_LEGACY_CLICK_SELECTOR);
+    if (!matched) return;
+    // 파일럿 행의 헤더 클릭은 통과시킨다. 여기서 삼키면 Timeline 이 layerSelect 를
+    // 내보내지 못해 layerSelect 라우터에 영영 닿지 않고, 헤더를 눌러도 활성
+    // 레이어가 바뀌지 않는다. 행 안의 액션 버튼은 그대로 막는다 — 그건 레거시
+    // drawingManager 의 것이라 파일럿 상태와 어긋난다(closest 가 버튼을 먼저 문다).
+    if (isFabricPilotLayerHeader(matched)) return;
     event.preventDefault();
     event.stopImmediatePropagation();
   }
@@ -7905,7 +7917,7 @@ async function initApp() {
   let everSeenDrawingObjectIds = new Set();
   let drawingObjectIdsSeeded = false;
 
-  function collectFabricDrawingObjectIds() {
+  function readFabricDrawingDocument() {
     const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
     if (!doc) return null;
     const ids = new Set();
@@ -7914,7 +7926,11 @@ async function initApp() {
         if (typeof object?.id === 'string' && object.id.length > 0) ids.add(object.id);
       }
     }
-    return ids;
+    return { documentId: typeof doc.documentId === 'string' ? doc.documentId : null, ids };
+  }
+
+  function collectFabricDrawingObjectIds() {
+    return readFabricDrawingDocument()?.ids || null;
   }
 
   function syncFabricDrawingLayerAssignments() {
@@ -7950,21 +7966,32 @@ async function initApp() {
    * 않으므로, 사용자가 새 레이어를 고르고 첫 획을 그은 **그 알림**이 첫 seed 가
    * 된다. 그러면 그 획은 배정을 받지 못하고 기준 레이어로 떨어진다.
    */
+  // 마지막으로 배정을 걷어낸 문서. **같은 문서에서는 두 번 걷지 않는다.**
+  // 그리기 모드를 껐다 켜면 seed 가 다시 도는데, 오버레이는 그동안 씬 이력을
+  // 그대로 들고 있다. 그때 걷으면 지운 획의 배정이 사라지고 본 목록에서도
+  // 잊혀서, 실행취소로 되살렸을 때 "새 오브젝트" 로 보여 그때의 활성 레이어로
+  // 옮겨간 채 저장된다.
+  let lastPrunedDrawingDocumentId = null;
+
   function seedFabricDrawingLayerAssignmentTracking({ prune = true } = {}) {
-    const live = collectFabricDrawingObjectIds();
+    const snapshot = readFabricDrawingDocument();
+    const live = snapshot?.ids || null;
     knownDrawingObjectIds = live || new Set();
     everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);
     drawingObjectIdsSeeded = live !== null;
-    // 사라진 오브젝트의 배정은 여기서만 걷는다. 실행취소로 되살아날 수 있는
-    // 동안에는 남겨 둬야 한다(위 주석 참조).
+    const documentId = snapshot?.documentId || null;
+    // 사라진 오브젝트의 배정은 **문서를 처음 심을 때 한 번만** 걷는다. 그 시점에는
+    // 그 문서의 실행취소 이력도 아직 없다. 이후 같은 문서에서는 남겨 둔다.
     //
-    // 영상 전환 중에는 걷지 않는다(prune: false). 리뷰 파일은 영상당 하나라
+    // 영상 전환 렌더는 걷지 않는다(prune: false). 리뷰 파일은 영상당 하나라
     // 전환 순간에 레이어 상태는 **새 파일**로 바뀌었는데 스토어는 아직 이전
     // 문서를 들고 ready 일 수 있다. 그때 걷으면 새 파일의 배정이 전부 사라진
     // 채 저장된다 — 고치려는 버그보다 피해가 크다.
-    if (live && prune) {reviewDataManager.setDrawingLayers(
+    if (!live || !prune || !documentId || documentId === lastPrunedDrawingDocumentId) return;
+    lastPrunedDrawingDocumentId = documentId;
+    reviewDataManager.setDrawingLayers(
       pruneDrawingLayerAssignments(reviewDataManager.getDrawingLayers(), [...live])
-    );}
+    );
   }
 
   function applyDrawingLayerStateChange(nextState, message) {

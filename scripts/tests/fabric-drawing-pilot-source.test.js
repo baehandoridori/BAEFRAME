@@ -2116,7 +2116,9 @@ test('새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을
   assert.ok(appSource.includes(
     'function seedFabricDrawingLayerAssignmentTracking({ prune = true } = {}) {'
   ));
-  assert.ok(appSource.includes('if (live && prune) {reviewDataManager.setDrawingLayers('));
+  assert.ok(appSource.includes(
+    'if (!live || !prune || !documentId || documentId === lastPrunedDrawingDocumentId) return;'
+  ));
 });
 
 test('키프레임 이동 라우터는 레이어별 행 id 를 알아본다', () => {
@@ -2360,4 +2362,111 @@ test('레이어 헤더 클릭은 레이어 모델의 활성 레이어를 바꾼�
     '접두어를 벗겨 레이어 id 를 얻는다'
   );
   assert.ok(handler.includes('applyDrawingLayerStateChange'), '모델을 갱신한다');
+});
+
+test('배정 걷어내기는 문서마다 한 번만 한다', () => {
+  // 그리기 모드를 껐다 켜면 seed 가 다시 돈다. 오버레이는 그동안 씬 이력을 그대로
+  // 들고 있으므로, 그때 걷으면 지운 획의 배정이 사라지고 본 목록에서도 잊혀서
+  // 실행취소로 되살렸을 때 그때의 활성 레이어로 옮겨간 채 저장된다.
+  const seedStart = appSource.indexOf('  let lastPrunedDrawingDocumentId = null;');
+  assert.ok(seedStart > 0, 'seed 소스를 찾지 못했다');
+  const seedEnd = appSource.indexOf('function applyDrawingLayerStateChange(', seedStart);
+  assert.ok(seedEnd > seedStart, 'seed 소스의 끝을 찾지 못했다');
+  const seedSource = appSource.slice(seedStart, seedEnd);
+
+  let documentSnapshot = { documentId: 'doc-a', ids: new Set(['obj-1']) };
+  const pruned = [];
+  const layerState = { activeLayerId: 'layer-1', layers: [], assignments: {} };
+  const seed = new Function(
+    'knownDrawingObjectIds',
+    'everSeenDrawingObjectIds',
+    'drawingObjectIdsSeeded',
+    'readFabricDrawingDocument',
+    'reviewDataManager',
+    'pruneDrawingLayerAssignments',
+    `${seedSource}\nreturn seedFabricDrawingLayerAssignmentTracking;`
+  )(
+    new Set(),
+    new Set(),
+    false,
+    () => documentSnapshot,
+    {
+      getDrawingLayers: () => layerState,
+      setDrawingLayers: () => true
+    },
+    (state, ids) => { pruned.push(ids.slice()); return state; }
+  );
+
+  seed();
+  assert.deepEqual(pruned, [['obj-1']], '문서를 처음 심을 때는 걷는다');
+
+  // 같은 문서에서 다시 켜면 걷지 않는다 — 실행취소가 아직 되살릴 수 있다.
+  documentSnapshot = { documentId: 'doc-a', ids: new Set(['obj-1']) };
+  seed();
+  assert.equal(pruned.length, 1, '같은 문서에서는 두 번 걷지 않는다');
+
+  // 걷어내기를 끈 재시딩(영상 전환 렌더)도 걷지 않는다.
+  documentSnapshot = { documentId: 'doc-b', ids: new Set(['obj-2']) };
+  seed({ prune: false });
+  assert.equal(pruned.length, 1, 'prune: false 는 걷지 않는다');
+
+  // 아직 걷지 않은 문서이므로 다음 활성화에서 걷는다.
+  seed();
+  assert.deepEqual(pruned[1], ['obj-2'], '새 문서는 한 번 걷는다');
+
+  // 문서가 없으면(스토어 미준비) 걷지 않는다.
+  documentSnapshot = null;
+  seed();
+  assert.equal(pruned.length, 2, '문서가 없으면 걷지 않는다');
+});
+
+test('파일럿 레이어 헤더 클릭은 캡처 방화벽을 통과한다', () => {
+  // 캡처에서 삼키면 Timeline 이 layerSelect 를 내보내지 못해, 헤더를 눌러도
+  // 활성 레이어가 바뀌지 않는다(레이어 라우터에 영영 닿지 않는다).
+  const start = appSource.indexOf('function isFabricPilotLayerHeader(element) {');
+  assert.ok(start > 0, '헤더 판정 함수를 찾지 못했다');
+  const tail = 'event.stopImmediatePropagation();\n  }';
+  const end = appSource.indexOf(tail, start);
+  assert.ok(end > start, '클릭 방화벽의 끝을 찾지 못했다');
+  const source = appSource.slice(start, end + tail.length);
+
+  const handleClick = new Function(
+    'isFabricDrawingPilotEngaged',
+    'FABRIC_DRAWING_LEGACY_CLICK_SELECTOR',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
+    `${source}\nreturn handleFabricDrawingPilotLegacyClick;`
+  )(
+    () => true,
+    '.drawing-layer-header,.layer-action-btn',
+    'fabric-pilot-layer-'
+  );
+
+  const makeEvent = target => {
+    const event = { target, blocked: false };
+    event.preventDefault = () => { event.blocked = true; };
+    event.stopImmediatePropagation = () => { event.blocked = true; };
+    return event;
+  };
+  const makeHeader = layerId => ({
+    classList: { contains: name => name === 'drawing-layer-header' },
+    dataset: { layerId },
+    closest(selector) { return selector.includes('.drawing-layer-header') ? this : null; }
+  });
+
+  const pilotHeader = makeEvent(makeHeader('fabric-pilot-layer-drawing-layer-1'));
+  handleClick(pilotHeader);
+  assert.equal(pilotHeader.blocked, false, '파일럿 헤더는 통과한다');
+
+  const legacyHeader = makeEvent(makeHeader('legacy-layer'));
+  handleClick(legacyHeader);
+  assert.equal(legacyHeader.blocked, true, '레거시 헤더는 그대로 막는다');
+
+  // 파일럿 행 안의 액션 버튼은 막는다 — closest 가 버튼을 먼저 문다.
+  const actionButton = makeEvent({
+    classList: { contains: () => false },
+    dataset: {},
+    closest() { return this; }
+  });
+  handleClick(actionButton);
+  assert.equal(actionButton.blocked, true, '행 안의 액션 버튼은 막는다');
 });
