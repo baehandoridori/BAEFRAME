@@ -22,6 +22,12 @@ import {
   isValidReviewDocumentId,
   mergeBframeRoot
 } from '../../../shared/bframe-root-envelope.js';
+import {
+  DRAWING_LAYERS_ROOT_KEY,
+  createDefaultDrawingLayers,
+  normalizeDrawingLayers,
+  serializeDrawingLayers
+} from '../../../shared/drawing-layers.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
 
 // 저장 재시도 백오프(ms). 2s → 5s → 10s, 최대 3회.
@@ -920,6 +926,7 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingSourceRefreshHandler = null;
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
+    this._drawingLayers = createDefaultDrawingLayers();
     this._fabricDrawingPersistenceContext = {};
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
@@ -2052,6 +2059,7 @@ export class ReviewDataManager extends EventTarget {
 
   _resetRootEnvelopeState() {
     this._opaqueRootFields = {};
+    this._drawingLayers = createDefaultDrawingLayers();
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
     this._writeBlockedVersion = null;
@@ -2571,6 +2579,11 @@ export class ReviewDataManager extends EventTarget {
     }
 
     this._opaqueRootFields = extractOpaqueBframeRoot(data);
+    // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다. 드로잉 스키마를
+    // 건드리지 않으면서 이 브리지를 가진 버전끼리는 왕복해도 보존된다.
+    this._drawingLayers = normalizeDrawingLayers(
+      this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
+    );
 
     const dataVersion = getDataVersion(data);
     const unsupportedMajor = getUnsupportedBframeMajor(
@@ -2766,7 +2779,15 @@ export class ReviewDataManager extends EventTarget {
       knownRoot.reviewDocumentId = this._reviewDocumentId;
     }
 
-    return mergeBframeRoot(this._opaqueRootFields, knownRoot);
+    // 기본 상태면 키 자체를 만들지 않는다. 레이어를 쓰지 않은 파일에 빈 구조를
+    // 심어 저장 diff 를 늘릴 이유가 없다.
+    const serializedLayers = serializeDrawingLayers(this._drawingLayers);
+    const opaqueRoot = { ...this._opaqueRootFields };
+    if (serializedLayers === undefined) delete opaqueRoot[DRAWING_LAYERS_ROOT_KEY];
+    else opaqueRoot[DRAWING_LAYERS_ROOT_KEY] = serializedLayers;
+    this._opaqueRootFields = opaqueRoot;
+
+    return mergeBframeRoot(opaqueRoot, knownRoot);
   }
 
   _collectFabricDrawingPersistenceRoot() {
@@ -2794,6 +2815,22 @@ export class ReviewDataManager extends EventTarget {
       drawingsV3: snapshot
     };
     this._fabricDrawingCollectedRevision = status.revision;
+  }
+
+  /** 현재 드로잉 레이어 상태. 항상 쓸 수 있는 정규화된 값이다. */
+  getDrawingLayers() {
+    return this._drawingLayers;
+  }
+
+  /**
+   * 레이어 상태를 갈아 끼운다. 실제로 달라졌을 때만 변경으로 표시해, 읽기만 해도
+   * 저장 대상이 되는 일을 막는다.
+   */
+  setDrawingLayers(state) {
+    const next = normalizeDrawingLayers(state);
+    const changed = JSON.stringify(next) !== JSON.stringify(this._drawingLayers);
+    this._drawingLayers = next;
+    return changed;
   }
 
   _acknowledgeFabricDrawingSave(savedRevision) {
