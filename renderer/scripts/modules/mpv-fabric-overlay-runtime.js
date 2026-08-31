@@ -2431,7 +2431,7 @@ function createSessionSceneStore(options = {}) {
         sourceHeight: held.sourceHeight,
         objects: [...held.objects.values()].map(clonePlain)
       }
-      : { objects: [] });
+      : blankBlueprint(stableVideoIdentity));
     scene.provisional = true;
     scene.provisionalSourceFrame = held ? held.targetFrame : null;
     scene.dirty = false;
@@ -2600,7 +2600,7 @@ function createSessionSceneStore(options = {}) {
   }
 
   function applyStructuralHistory(entry, order, direction) {
-    const { stableVideoIdentity, frame, shift } = entry.structural;
+    const { stableVideoIdentity, frame, shift, tailBlankFrame } = entry.structural;
     const before = direction === 'undo' ? entry.structural.after : entry.structural.before;
     const after = direction === 'undo' ? entry.structural.before : entry.structural.after;
     // undo 는 민 방향을 뒤집고, redo 는 원래대로 민다. inclusive 경계가 방향마다
@@ -2610,10 +2610,17 @@ function createSessionSceneStore(options = {}) {
     if (before) {
       detachScene(scenes.get(makeSceneKey(stableVideoIdentity, frame)) || null);
     }
+    // 꼬리 경계는 당김 **뒤** 자리에 남아 있으므로 되돌릴 때 되미는 것보다 먼저 걷는다.
+    if (tailBlankFrame !== null && direction === 'undo') {
+      detachScene(scenes.get(makeSceneKey(stableVideoIdentity, tailBlankFrame)) || null);
+    }
     if (delta !== 0) {
       shiftScenesBy(stableVideoIdentity, frame, delta, delta > 0);
     }
     if (after) materializeSceneAt(stableVideoIdentity, frame, after);
+    if (tailBlankFrame !== null && direction === 'redo') {
+      materializeSceneAt(stableVideoIdentity, tailBlankFrame, blankBlueprint(stableVideoIdentity));
+    }
     rebuildActiveProvisionalScene(stableVideoIdentity);
     moveGlobalOrderEntry(order, direction, entry.commandId);
     return {
@@ -2685,6 +2692,24 @@ function createSessionSceneStore(options = {}) {
     }
   }
 
+  // 빈 씬에도 영상의 실제 소스 크기를 준다. 안 주면 sourceDimension 이 1×1 로
+  // 접어 버리고, 거기 그린 획은 진짜 영상 좌표를 쓰므로 저장 메타데이터와
+  // Drawing V3 좌표계가 오브젝트와 어긋난다.
+  function videoSourceDimensions(stableVideoIdentity) {
+    const active = activeScene();
+    const reference = active?.stableVideoIdentity === stableVideoIdentity
+      ? active
+      : committedScenesForVideo(stableVideoIdentity)[0];
+    return {
+      sourceWidth: reference?.sourceWidth,
+      sourceHeight: reference?.sourceHeight
+    };
+  }
+
+  function blankBlueprint(stableVideoIdentity) {
+    return { ...videoSourceDimensions(stableVideoIdentity), objects: [] };
+  }
+
   function sceneBlueprint(scene) {
     if (!scene) return null;
     return {
@@ -2694,10 +2719,14 @@ function createSessionSceneStore(options = {}) {
     };
   }
 
-  function recordStructural(stableVideoIdentity, operation, frame, shift, before, after) {
+  function recordStructural(
+    stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame = null
+  ) {
     appendStructuralOrder(stableVideoIdentity, {
       commandId: `frame-op:${stableVideoIdentity}:${(commandSequence += 1)}`,
-      structural: { stableVideoIdentity, operation, frame, shift, before, after }
+      structural: {
+        stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame
+      }
     });
   }
 
@@ -2726,7 +2755,7 @@ function createSessionSceneStore(options = {}) {
     // 있으면 **거절한다.** 조용히 버리면 그림이 사라진다.
     const shiftsRight = operation === 'frame-insert' || operation === 'frame-insert-blank-keyframe';
     if (operation === 'frame-insert-blank-keyframe' &&
-        !canMaterializeScene(stableVideoIdentity, { objects: [] })) {
+        !canMaterializeScene(stableVideoIdentity, blankBlueprint(stableVideoIdentity))) {
       return { applied: false, reason: 'scene-capacity-exceeded' };
     }
     if (shiftsRight && totalFrames !== null) {
@@ -2798,7 +2827,7 @@ function createSessionSceneStore(options = {}) {
       if (committedAtFrame) return { applied: false, reason: 'already-keyframe' };
       // 홀드 중인 내용을 복사해 정식 키프레임으로 만든다(애니메이트 F6 과 같다).
       const held = heldSceneAt(stableVideoIdentity, frame);
-      const heldBlueprint = held ? sceneBlueprint(held) : { objects: [] };
+      const heldBlueprint = held ? sceneBlueprint(held) : blankBlueprint(stableVideoIdentity);
       if (!canMaterializeScene(stableVideoIdentity, heldBlueprint)) {
         return { applied: false, reason: 'scene-capacity-exceeded' };
       }
@@ -2809,7 +2838,7 @@ function createSessionSceneStore(options = {}) {
           sourceHeight: held.sourceHeight,
           objects: [...held.objects.values()].map(clonePlain)
         }
-        : { objects: [] });
+        : blankBlueprint(stableVideoIdentity));
       recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
@@ -2832,15 +2861,39 @@ function createSessionSceneStore(options = {}) {
         : (totalFrames === null || frame < totalFrames - 1);
       const doomed = hasHold ? null : committedAtFrame;
       const removed = sceneBlueprint(doomed);
+
+      // 마지막 키프레임 **뒤쪽 홀드 구간**에서 프레임을 지우면 당길 씬이 없어
+      // 그 그림이 타임라인 끝까지 한 칸 더 늘어난다. 레거시는 totalFrames 자리에
+      // 빈 경계 키프레임을 넣어 당김과 함께 마지막 프레임으로 내려 이를 막는다
+      // (DrawingLayer.deleteFrame 의 deletesTailHeldFrame).
+      const held = heldSceneAt(stableVideoIdentity, frame);
+      const needsTailBoundary = !nextKeyframe &&
+        totalFrames !== null &&
+        held !== null &&
+        held.objects.size > 0 &&
+        (held.targetFrame < frame || hasHold);
+      let tailBlankFrame = null;
+      if (needsTailBoundary) {
+        // 마지막 프레임 자체를 지우는 경우엔 그 자리가 곧 경계다.
+        const boundary = frame < totalFrames - 1 ? totalFrames : frame;
+        if (!canMaterializeScene(stableVideoIdentity, blankBlueprint(stableVideoIdentity))) {
+          return { applied: false, reason: 'scene-capacity-exceeded' };
+        }
+        materializeSceneAt(stableVideoIdentity, boundary, blankBlueprint(stableVideoIdentity));
+        // 아래 당김이 boundary > frame 이면 한 칸 내린다.
+        tailBlankFrame = boundary > frame ? boundary - 1 : boundary;
+      }
+
       dropProvisionalScenes(stableVideoIdentity);
       detachScene(doomed);
+      // 씬 목록을 **다시** 뜬다. 위에서 꼬리 경계를 새로 만들었을 수 있고,
+      // 그것도 함께 당겨져야 totalFrames 밖에 남지 않는다.
       const nextFrameByKey = new Map();
-      for (const scene of ordered) {
-        if (scene === doomed) continue;
+      for (const scene of committedScenesForVideo(stableVideoIdentity)) {
         if (scene.targetFrame > frame) nextFrameByKey.set(scene.key, scene.targetFrame - 1);
       }
       rekeyScenes(stableVideoIdentity, nextFrameByKey);
-      recordStructural(stableVideoIdentity, operation, frame, -1, removed, null);
+      recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
@@ -2861,7 +2914,7 @@ function createSessionSceneStore(options = {}) {
     }
     rekeyScenes(stableVideoIdentity, nextFrameByKey);
     const inserted = operation === 'frame-insert-blank-keyframe'
-      ? materializeSceneAt(stableVideoIdentity, frame, { objects: [] })
+      ? materializeSceneAt(stableVideoIdentity, frame, blankBlueprint(stableVideoIdentity))
       : null;
     recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
     rebuildActiveProvisionalScene(stableVideoIdentity);

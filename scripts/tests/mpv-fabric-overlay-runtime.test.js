@@ -16813,12 +16813,29 @@ test('프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바�
     // 2 — 빈 키프레임 삽입: 밀고 그 자리에 빈 키프레임을 만든다.
     assert.equal(op('frame-insert-blank-keyframe').applied, true);
     assert.deepEqual(keyframeFrames(), [0, 2, 5]);
-    gotoFrame(2);
     assert.deepEqual(
-      harness.sceneStore.getActiveSceneSnapshot().objects,
+      harness.sceneStore.getSceneSnapshot('real-fabric-video', 2).objects,
       [],
       '삽입된 키프레임은 비어 있다'
     );
+    // 빈 씬에도 영상의 실제 소스 크기를 준다. 안 주면 1×1 로 접혀, 거기 그린 획이
+    // 진짜 영상 좌표를 쓰므로 **저장 메타데이터**와 좌표계가 오브젝트와 어긋난다.
+    // 그래서 지속화가 실제로 보는 표면(exportVideo)에서 확인한다.
+    const exported = harness.sceneStore.exportVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'frame-op-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240
+    });
+    assert.equal(exported.accepted, true, '스냅샷을 내보낼 수 있다');
+    const blankScene = exported.snapshot.scenes.find(scene => scene.targetFrame === 2);
+    const referenceScene = exported.snapshot.scenes.find(scene => scene.targetFrame === 0);
+    assert.ok(blankScene && referenceScene);
+    assert.equal(blankScene.sourceWidth, referenceScene.sourceWidth, '빈 씬도 영상 폭을 갖는다');
+    assert.equal(blankScene.sourceHeight, referenceScene.sourceHeight, '빈 씬도 영상 높이를 갖는다');
+    assert.ok(blankScene.sourceWidth > 1, '1×1 로 접히지 않는다');
 
     // Shift+2 — 키프레임을 프레임으로: 마커만 지우고 뒤를 당기지 않는다.
     assert.equal(op('keyframe-to-frame').applied, true);
@@ -16857,12 +16874,35 @@ test('프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바�
     assert.equal(op('frame-remove').applied, true);
     assert.deepEqual(keyframeFrames(), [0, 3, 5, 6], '홀드가 없으면 그 키프레임을 지운다');
 
+    // 4 — 마지막 키프레임 뒤쪽 홀드 구간에서 지우면 빈 경계를 만든다.
+    // 당길 씬이 없으므로 그냥 두면 그 그림이 타임라인 끝까지 한 칸 더 늘어난다.
+    // (레거시 DrawingLayer.deleteFrame 의 deletesTailHeldFrame)
+    gotoFrame(20);
+    const tail = op('frame-remove');
+    assert.equal(tail.applied, true);
+    assert.deepEqual(
+      tail.keyframeFrames,
+      [0, 3, 5, 6, 239],
+      '타임라인 마지막에 빈 경계가 생긴다'
+    );
+    // 되돌리면 그 경계도 함께 사라진다.
+    assert.deepEqual(op('undo').keyframeFrames, [0, 3, 5, 6]);
+
     // Ctrl+Alt+C / V — 프레임 복사·붙여넣기
+    // 복사 원본을 명시적으로 고른다. 프레임 3 은 앞서 홀드 내용을 물려받아 획 하나다.
+    gotoFrame(3);
+    const source = harness.sceneStore
+      .getSceneSnapshot('real-fabric-video', 3).objects.map(record => record.id);
+    assert.equal(source.length, 1);
     assert.equal(op('frame-copy').applied, true);
     gotoFrame(9);
     assert.equal(op('frame-paste').applied, true);
     assert.deepEqual(keyframeFrames(), [0, 3, 5, 6, 9]);
-    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+    assert.deepEqual(
+      harness.sceneStore.getSceneSnapshot('real-fabric-video', 9).objects.map(r => r.id),
+      source,
+      '붙여넣은 프레임이 원본 내용을 그대로 갖는다'
+    );
   } finally {
     await harness.destroy();
   }

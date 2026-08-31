@@ -15505,7 +15505,7 @@ void main() {
             sourceWidth: held.sourceWidth,
             sourceHeight: held.sourceHeight,
             objects: [...held.objects.values()].map(clonePlain)
-          } : { objects: [] });
+          } : blankBlueprint(stableVideoIdentity));
           scene.provisional = true;
           scene.provisionalSourceFrame = held ? held.targetFrame : null;
           scene.dirty = false;
@@ -15633,7 +15633,7 @@ void main() {
           trimStructuralOrder(order);
         }
         function applyStructuralHistory(entry, order, direction) {
-          const { stableVideoIdentity, frame, shift } = entry.structural;
+          const { stableVideoIdentity, frame, shift, tailBlankFrame } = entry.structural;
           const before = direction === "undo" ? entry.structural.after : entry.structural.before;
           const after = direction === "undo" ? entry.structural.before : entry.structural.after;
           const delta = direction === "undo" ? -shift : shift;
@@ -15641,10 +15641,16 @@ void main() {
           if (before) {
             detachScene(scenes.get(makeSceneKey(stableVideoIdentity, frame)) || null);
           }
+          if (tailBlankFrame !== null && direction === "undo") {
+            detachScene(scenes.get(makeSceneKey(stableVideoIdentity, tailBlankFrame)) || null);
+          }
           if (delta !== 0) {
             shiftScenesBy(stableVideoIdentity, frame, delta, delta > 0);
           }
           if (after) materializeSceneAt(stableVideoIdentity, frame, after);
+          if (tailBlankFrame !== null && direction === "redo") {
+            materializeSceneAt(stableVideoIdentity, tailBlankFrame, blankBlueprint(stableVideoIdentity));
+          }
           rebuildActiveProvisionalScene(stableVideoIdentity);
           moveGlobalOrderEntry(order, direction, entry.commandId);
           return {
@@ -15694,6 +15700,17 @@ void main() {
             order.undo.splice(index, 1);
           }
         }
+        function videoSourceDimensions(stableVideoIdentity) {
+          const active = activeScene();
+          const reference = active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0];
+          return {
+            sourceWidth: reference?.sourceWidth,
+            sourceHeight: reference?.sourceHeight
+          };
+        }
+        function blankBlueprint(stableVideoIdentity) {
+          return { ...videoSourceDimensions(stableVideoIdentity), objects: [] };
+        }
         function sceneBlueprint(scene) {
           if (!scene) return null;
           return {
@@ -15702,10 +15719,18 @@ void main() {
             objects: [...scene.objects.values()].map(clonePlain)
           };
         }
-        function recordStructural(stableVideoIdentity, operation, frame, shift, before, after) {
+        function recordStructural(stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame = null) {
           appendStructuralOrder(stableVideoIdentity, {
             commandId: `frame-op:${stableVideoIdentity}:${commandSequence += 1}`,
-            structural: { stableVideoIdentity, operation, frame, shift, before, after }
+            structural: {
+              stableVideoIdentity,
+              operation,
+              frame,
+              shift,
+              before,
+              after,
+              tailBlankFrame
+            }
           });
         }
         function applyFrameOperation(command = {}) {
@@ -15728,7 +15753,7 @@ void main() {
           const ordered = committedScenesForVideo(stableVideoIdentity);
           const committedAtFrame = ordered.find((scene) => scene.targetFrame === frame) || null;
           const shiftsRight = operation === "frame-insert" || operation === "frame-insert-blank-keyframe";
-          if (operation === "frame-insert-blank-keyframe" && !canMaterializeScene(stableVideoIdentity, { objects: [] })) {
+          if (operation === "frame-insert-blank-keyframe" && !canMaterializeScene(stableVideoIdentity, blankBlueprint(stableVideoIdentity))) {
             return { applied: false, reason: "scene-capacity-exceeded" };
           }
           if (shiftsRight && totalFrames !== null) {
@@ -15795,7 +15820,7 @@ void main() {
           if (operation === "frame-to-keyframe") {
             if (committedAtFrame) return { applied: false, reason: "already-keyframe" };
             const held = heldSceneAt(stableVideoIdentity, frame);
-            const heldBlueprint = held ? sceneBlueprint(held) : { objects: [] };
+            const heldBlueprint = held ? sceneBlueprint(held) : blankBlueprint(stableVideoIdentity);
             if (!canMaterializeScene(stableVideoIdentity, heldBlueprint)) {
               return { applied: false, reason: "scene-capacity-exceeded" };
             }
@@ -15804,7 +15829,7 @@ void main() {
               sourceWidth: held.sourceWidth,
               sourceHeight: held.sourceHeight,
               objects: [...held.objects.values()].map(clonePlain)
-            } : { objects: [] });
+            } : blankBlueprint(stableVideoIdentity));
             recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
@@ -15820,15 +15845,25 @@ void main() {
             const hasHold = nextKeyframe ? nextKeyframe.targetFrame > frame + 1 : totalFrames === null || frame < totalFrames - 1;
             const doomed = hasHold ? null : committedAtFrame;
             const removed = sceneBlueprint(doomed);
+            const held = heldSceneAt(stableVideoIdentity, frame);
+            const needsTailBoundary = !nextKeyframe && totalFrames !== null && held !== null && held.objects.size > 0 && (held.targetFrame < frame || hasHold);
+            let tailBlankFrame = null;
+            if (needsTailBoundary) {
+              const boundary = frame < totalFrames - 1 ? totalFrames : frame;
+              if (!canMaterializeScene(stableVideoIdentity, blankBlueprint(stableVideoIdentity))) {
+                return { applied: false, reason: "scene-capacity-exceeded" };
+              }
+              materializeSceneAt(stableVideoIdentity, boundary, blankBlueprint(stableVideoIdentity));
+              tailBlankFrame = boundary > frame ? boundary - 1 : boundary;
+            }
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(doomed);
             const nextFrameByKey2 = /* @__PURE__ */ new Map();
-            for (const scene of ordered) {
-              if (scene === doomed) continue;
+            for (const scene of committedScenesForVideo(stableVideoIdentity)) {
               if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
             }
             rekeyScenes(stableVideoIdentity, nextFrameByKey2);
-            recordStructural(stableVideoIdentity, operation, frame, -1, removed, null);
+            recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
@@ -15845,7 +15880,7 @@ void main() {
             if (scene.targetFrame >= frame) nextFrameByKey.set(scene.key, scene.targetFrame + 1);
           }
           rekeyScenes(stableVideoIdentity, nextFrameByKey);
-          const inserted = operation === "frame-insert-blank-keyframe" ? materializeSceneAt(stableVideoIdentity, frame, { objects: [] }) : null;
+          const inserted = operation === "frame-insert-blank-keyframe" ? materializeSceneAt(stableVideoIdentity, frame, blankBlueprint(stableVideoIdentity)) : null;
           recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
           rebuildActiveProvisionalScene(stableVideoIdentity);
           return {
