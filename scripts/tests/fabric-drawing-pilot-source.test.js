@@ -4,6 +4,15 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const rootDir = path.resolve(__dirname, '../..');
+
+// 투영 테스트가 쓰는 기본 레이어 상태. shared/drawing-layers.js 의 기본값과 같은 모양이다.
+const projectionLayerState = {
+  version: 1,
+  layers: [{ id: 'drawing-layer-1', name: '드로잉 1', visible: true, locked: false, color: '#4f8ef7' }],
+  activeLayerId: 'drawing-layer-1',
+  baseLayerId: 'drawing-layer-1',
+  assignments: {}
+};
 const normalizeNewlines = value => value.replace(/\r\n/g, '\n');
 const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8'));
 const mainCss = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/styles/main.css'), 'utf8'));
@@ -558,11 +567,20 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   const frameOperations = Object.fromEntries(
     frameOperationActions.map(action => [action, 'op'])
   );
+  // 레이어 액션 목록도 app.js 원문에서 뽑는다.
+  const layerSetStart = appSource.indexOf('const FABRIC_PILOT_LAYER_ACTIONS = new Set([');
+  assert.ok(layerSetStart > 0, '레이어 액션 목록을 찾지 못했다');
+  const layerActionNames = [...appSource
+    .slice(layerSetStart, appSource.indexOf(']);', layerSetStart))
+    .matchAll(/'([^']+)'/g)].map(match => match[1]);
+  assert.equal(layerActionNames.length, 5, '오버레이 없이 완결되는 레이어 액션 5종');
+  const layerActions = new Set(layerActionNames);
   let engaged = false;
   let projectionOwned = true;
   const shouldBlock = new Function(
     'FABRIC_DRAWING_LEGACY_SHORTCUTS',
     'FABRIC_PILOT_FRAME_OPERATIONS',
+    'FABRIC_PILOT_LAYER_ACTIONS',
     'userSettings',
     'isFabricDrawingPilotEngaged',
     'shouldSuppressLegacyDrawingForFabricPilot',
@@ -570,6 +588,7 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   )(
     actionSet,
     frameOperations,
+    layerActions,
     { matchShortcut: (action, event) => action === event.action },
     () => engaged,
     () => projectionOwned
@@ -614,6 +633,16 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
     shouldBlock({ action: 'framePaste', key: 'v', code: 'KeyV', ctrlKey: true, altKey: true }),
     false
   );
+  // 레이어 조작 5종도 파일럿이 처리하므로 통과한다. Ctrl+Shift+X·C 는 chord
+  // 차단에 먼저 걸리므로 예외가 그보다 앞에 있어야 한다.
+  for (const action of layerActionNames) {
+    assert.equal(shouldBlock({ action, key: '', code: '' }), false, `레이어 조작: ${action}`);
+  }
+  assert.equal(
+    shouldBlock({ action: 'drawingLayerMoveUp', key: 'x', code: 'KeyX', ctrlKey: true, shiftKey: true }),
+    false,
+    'Ctrl+Shift+X 는 chord 차단보다 먼저 통과해야 한다'
+  );
   assert.equal(shouldBlock({ action: 'drawingToolSelect', key: '', code: '' }), true);
 });
 
@@ -643,6 +672,8 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     'cutlistUIState',
     'getCutlistManager',
     'drawingManager',
+    'reviewDataManager',
+    'drawingLayerIdForObject',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -650,14 +681,17 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     {
       getHydrationDocument: () => {
         hydrationReads += 1;
-        return { keyframes: [{ frame: 12, objects: [{}] }] };
+        return { keyframes: [{ frame: 12, objects: [{ id: 'projection-object-1' }] }] };
       }
     },
     playlistState,
     timelineState,
     cutlistState,
     () => ({ isActive: () => cutlistManagerActive }),
-    { layers: [] }
+    { layers: [] },
+    // 레이어 모델은 기본 한 장이다 — 투영이 레이어마다 행을 만드는지 확인한다.
+    { getDrawingLayers: () => projectionLayerState },
+    (state, objectId) => state.layers[0].id
   );
 
   assert.equal(getProjection().length, 1);
@@ -714,6 +748,8 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
     'cutlistUIState',
     'getCutlistManager',
     'drawingManager',
+    'reviewDataManager',
+    'drawingLayerIdForObject',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -721,7 +757,7 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
     {
       getHydrationDocument: () => ({
         keyframes: [
-          { frame: 10, objects: [{}] },
+          { frame: 10, objects: [{ id: 'projection-object-1' }] },
           { frame: 20, objects: [] }
         ]
       })
@@ -735,7 +771,9 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
     },
     { active: false },
     () => ({ isActive: () => false }),
-    { layers: [] }
+    { layers: [] },
+    { getDrawingLayers: () => projectionLayerState },
+    (state, objectId) => state.layers[0].id
   );
 
   const [layer] = getProjection();
@@ -1345,7 +1383,7 @@ test('레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 
       getKeyframeRanges: () => []
     }
   ];
-  let hydrationDocument = { keyframes: [{ frame: 12, objects: [{}] }] };
+  let hydrationDocument = { keyframes: [{ frame: 12, objects: [{ id: 'projection-object-1' }] }] };
   const getProjection = new Function(
     'fabricDrawingPilotController',
     'isMpvPilotPlaybackActive',
@@ -1355,6 +1393,8 @@ test('레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 
     'cutlistUIState',
     'getCutlistManager',
     'drawingManager',
+    'reviewDataManager',
+    'drawingLayerIdForObject',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -1369,12 +1409,14 @@ test('레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 
     },
     { active: false },
     () => ({ isActive: () => false }),
-    { layers: legacyLayers }
+    { layers: legacyLayers },
+    { getDrawingLayers: () => projectionLayerState },
+    (state, objectId) => state.layers[0].id
   );
 
   const layers = getProjection();
   assert.equal(layers.length, 2);
-  assert.equal(layers[0].id, 'fabric-pilot-drawing-layer');
+  assert.equal(layers[0].id, 'fabric-pilot-layer-drawing-layer-1');
 
   const projected = layers[1];
   assert.equal(projected.id, 'layer-legacy-1');
@@ -1887,6 +1929,93 @@ test('shape and pen tools are registered as assignable shortcut actions without 
     3,
     '키 표시 함수 3곳 모두에 미지정 가드가 있어야 한다'
   );
+});
+
+test('타임라인은 레이어마다 한 행을 만들고 그 레이어의 획만 채운다', () => {
+  // drawingsV3 의 키프레임은 문서 단위다. 프레임 목록은 모든 행이 같고, 그
+  // 프레임에 **그 레이어의 획이 있는지**만 행마다 다르다(isEmpty).
+  const projectionStart = appSource.indexOf('function getFabricPilotTimelineLayers() {');
+  assert.ok(projectionStart > 0, '투영 소스를 찾지 못했다');
+  const projectionSource = appSource.slice(
+    projectionStart,
+    appSource.indexOf('let lastFabricPilotTimeline', projectionStart)
+  );
+
+  const twoLayers = {
+    version: 1,
+    layers: [
+      { id: 'top', name: '윗장', visible: true, locked: false, color: '#ff4757' },
+      { id: 'bottom', name: '아랫장', visible: true, locked: false, color: '#4f8ef7' }
+    ],
+    activeLayerId: 'top',
+    baseLayerId: 'bottom',
+    assignments: { 'obj-top': 'top' }
+  };
+  const getProjection = new Function(
+    'fabricDrawingPilotController',
+    'isMpvPilotPlaybackActive',
+    'fabricDrawingPersistenceStore',
+    'playlistUIState',
+    'timeline',
+    'cutlistUIState',
+    'getCutlistManager',
+    'drawingManager',
+    'reviewDataManager',
+    'drawingLayerIdForObject',
+    `${projectionSource}
+return getFabricPilotTimelineLayers;`
+  )(
+    { shouldOwnDrawingShortcut: () => true },
+    () => true,
+    {
+      getHydrationDocument: () => ({
+        keyframes: [
+          { frame: 5, objects: [{ id: 'obj-top' }] },
+          { frame: 9, objects: [{ id: 'obj-bottom' }] }
+        ]
+      })
+    },
+    { mode: 'review' },
+    { playlistDuration: 0, playlistSegments: [], cutlistDuration: 0, cutlistSegments: [] },
+    { active: false },
+    () => ({ isActive: () => false }),
+    { layers: [] },
+    { getDrawingLayers: () => twoLayers },
+    (state, objectId) => state.assignments[objectId] || state.baseLayerId
+  );
+
+  const rows = getProjection();
+  assert.equal(rows.length, 2, '레이어마다 한 행');
+  assert.deepEqual(rows.map(row => row.name), ['윗장', '아랫장']);
+  assert.deepEqual(rows.map(row => row.color), ['#ff4757', '#4f8ef7']);
+  assert.equal(rows[0].active, true, '활성 레이어를 표시한다');
+  assert.equal(rows[1].active, false);
+
+  // 프레임 목록은 같고 채워짐만 다르다.
+  assert.deepEqual(rows[0].keyframes.map(kf => kf.frame), [5, 9]);
+  assert.deepEqual(rows[1].keyframes.map(kf => kf.frame), [5, 9]);
+  assert.deepEqual(rows[0].keyframes.map(kf => kf.isEmpty), [false, true], '윗장은 5 에만 있다');
+  assert.deepEqual(rows[1].keyframes.map(kf => kf.isEmpty), [true, false], '아랫장은 9 에만 있다');
+});
+
+test('새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을 덮지 않는다', () => {
+  // 저장 레코드에는 레이어 정보가 없다(스키마 불가침). 새로 나타난 오브젝트 id 를
+  // 보고 그때의 활성 레이어에 붙인다. 처음 문서를 읽을 때는 전부 "새로" 보이므로
+  // 그때 붙이면 파일에 저장된 배정이 활성 레이어로 통째로 덮인다.
+  const syncStart = appSource.indexOf('function syncFabricDrawingLayerAssignments() {');
+  assert.ok(syncStart > 0, '동기화 소스를 찾지 못했다');
+  const syncSource = appSource.slice(syncStart, syncStart + 1600);
+  assert.ok(syncSource.includes('if (!drawingObjectIdsSeeded) {'), '첫 로드는 seed 만 한다');
+  assert.ok(
+    syncSource.includes('assignDrawingObjectLayer(next, id, next.activeLayerId)'),
+    '새 오브젝트는 활성 레이어에 붙는다'
+  );
+  assert.ok(
+    appSource.slice(syncStart, syncStart + 1600).includes('pruneDrawingLayerAssignments'),
+    '사라진 오브젝트의 배정을 걷는다'
+  );
+  // 영상이 바뀌면 추적을 처음부터 다시 한다.
+  assert.ok(appSource.includes('function resetFabricDrawingLayerAssignmentTracking() {'));
 });
 
 test('brush size shortcuts are routed by action id, not by a hard-coded key code', () => {

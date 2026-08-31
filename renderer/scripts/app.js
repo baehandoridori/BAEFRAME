@@ -16,6 +16,14 @@ import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
 import { ERASER_MODES, normalizeEraserMode } from './modules/drawing-stroke-records.js';
 import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
 import { ReviewDataManager, getBframePath } from './modules/review-data-manager.js';
+import {
+  addLayer as addDrawingLayerState,
+  assignObject as assignDrawingObjectLayer,
+  layerIdForObject as drawingLayerIdForObject,
+  moveLayerByOffset as moveDrawingLayerState,
+  pruneAssignments as pruneDrawingLayerAssignments,
+  selectLayerByOffset as selectDrawingLayerState
+} from '../../shared/drawing-layers.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
 import { DrawingSync } from './modules/drawing-sync.js';
@@ -6308,6 +6316,17 @@ async function initApp() {
     framePaste: 'frame-paste'
   };
 
+  // 파일럿이 직접 처리하는 레이어 액션. 삭제·표시·잠금은 오버레이가 그림을
+  // 지우거나 숨겨야 의미가 있어 아직 넣지 않는다 — 배선 없이 이으면 눌러도
+  // 화면이 그대로인 거짓 기능이 된다.
+  const FABRIC_PILOT_LAYER_ACTIONS = new Set([
+    'drawingLayerAdd',
+    'drawingLayerSelectUp',
+    'drawingLayerSelectDown',
+    'drawingLayerMoveUp',
+    'drawingLayerMoveDown'
+  ]);
+
   function shouldBlockFabricDrawingLegacyShortcut(event) {
     const engaged = isFabricDrawingPilotEngaged();
     if (!engaged && !shouldSuppressLegacyDrawingForFabricPilot()) return false;
@@ -6328,6 +6347,11 @@ async function initApp() {
     // chord 차단에 먼저 걸리므로 **반드시 그 앞에서** 통과시켜야 한다
     // (docs/drawing-keyframe-features.md §4.2 의 drawMode 선례와 같은 이유).
     if (matchedAction && Object.hasOwn(FABRIC_PILOT_FRAME_OPERATIONS, matchedAction)) {
+      return false;
+    }
+    // 레이어 추가·선택·이동은 파일럿이 직접 처리한다. Ctrl+Shift+X·C 가 아래
+    // chord 차단에 먼저 걸리므로 여기서 통과시킨다.
+    if (matchedAction && FABRIC_PILOT_LAYER_ACTIONS.has(matchedAction)) {
       return false;
     }
     // IME 조합 중에는 event.key가 'Process'가 되어 key 기반 차단이 무력화된다.
@@ -6548,32 +6572,55 @@ async function initApp() {
         }))
         .filter(kf => Number.isInteger(kf.frame) && kf.frame >= 0)
         .sort((a, b) => a.frame - b.frame);
-      projectedLayers.push({
-        id: 'fabric-pilot-drawing-layer',
-        name: '드로잉',
-        color: '#4f8ef7',
-        visible: true,
-        locked: true,
-        timelineKeyframesMovable: true,
-        opacity: 1,
-        keyframes,
-        getKeyframeRanges(totalFrames) {
-          const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
-          return keyframes.map((kf, index) => ({
-            start: kf.frame,
-            end: Math.max(
-              kf.frame,
-              Math.min(
-                tailFrame,
-                keyframes[index + 1]?.frame !== undefined
-                  ? keyframes[index + 1].frame - 1
-                  : tailFrame
-              )
-            ),
-            keyframe: kf
-          }));
-        }
-      });
+      // 레이어마다 한 행이다. drawingsV3 의 키프레임은 문서 단위이므로 프레임
+      // 목록은 모든 행이 같고, **그 프레임에 그 레이어의 획이 있는지**만 행마다
+      // 다르다(isEmpty). 애니메이트에서 각 레이어가 자기 키프레임을 보여 주는
+      // 것과 같은 모양이다.
+      const layerState = reviewDataManager.getDrawingLayers();
+      const objectIdsByFrame = new Map();
+      for (const keyframe of doc.keyframes || []) {
+        const frame = Math.trunc(Number(keyframe?.frame));
+        if (!Number.isInteger(frame) || frame < 0) continue;
+        objectIdsByFrame.set(
+          frame,
+          (keyframe.objects || []).map(object => object?.id).filter(Boolean)
+        );
+      }
+      for (const layer of layerState.layers) {
+        const layerKeyframes = keyframes.map(kf => ({
+          frame: kf.frame,
+          isEmpty: !(objectIdsByFrame.get(kf.frame) || [])
+            .some(id => drawingLayerIdForObject(layerState, id) === layer.id)
+        }));
+        projectedLayers.push({
+          id: `fabric-pilot-layer-${layer.id}`,
+          name: layer.name,
+          color: layer.color,
+          visible: layer.visible !== false,
+          // 타임라인에서 마커를 직접 편집하는 경로는 아직 열지 않는다.
+          locked: true,
+          timelineKeyframesMovable: true,
+          active: layer.id === layerState.activeLayerId,
+          opacity: 1,
+          keyframes: layerKeyframes,
+          getKeyframeRanges(totalFrames) {
+            const tailFrame = Math.max(0, Math.trunc(Number(totalFrames) || 0) - 1);
+            return layerKeyframes.map((kf, index) => ({
+              start: kf.frame,
+              end: Math.max(
+                kf.frame,
+                Math.min(
+                  tailFrame,
+                  layerKeyframes[index + 1]?.frame !== undefined
+                    ? layerKeyframes[index + 1].frame - 1
+                    : tailFrame
+                )
+              ),
+              keyframe: kf
+            }));
+          }
+        });
+      }
     }
     // 레거시 drawings(래스터)는 파일럿 소유 중에도 읽기 전용 행으로 계속 보여준다.
     // 원본 id·이름·색을 유지하고 locked/pilotProjected로 편집 경로만 봉쇄한다.
@@ -7810,12 +7857,65 @@ async function initApp() {
       return Promise.resolve(false);
     }
   });
+  // 파일럿이 그린 오브젝트를 레이어에 배정한다.
+  //
+  // 저장 레코드에는 레이어 정보가 없다(스키마 불가침). 그래서 **새로 나타난
+  // 오브젝트 id** 를 보고 그때의 활성 레이어에 붙인다. 처음 문서를 읽을 때는
+  // 전부 "새로" 보이므로, 그때는 붙이지 않고 목록만 seed 한다 — 안 그러면
+  // 파일에 저장된 배정이 활성 레이어로 통째로 덮인다.
+  let knownDrawingObjectIds = new Set();
+  let drawingObjectIdsSeeded = false;
+
+  function collectFabricDrawingObjectIds() {
+    const doc = fabricDrawingPersistenceStore.getHydrationDocument?.();
+    if (!doc) return null;
+    const ids = new Set();
+    for (const keyframe of doc.keyframes || []) {
+      for (const object of keyframe?.objects || []) {
+        if (typeof object?.id === 'string' && object.id.length > 0) ids.add(object.id);
+      }
+    }
+    return ids;
+  }
+
+  function syncFabricDrawingLayerAssignments() {
+    const live = collectFabricDrawingObjectIds();
+    if (!live) return;
+    if (!drawingObjectIdsSeeded) {
+      knownDrawingObjectIds = live;
+      drawingObjectIdsSeeded = true;
+      return;
+    }
+    let next = reviewDataManager.getDrawingLayers();
+    for (const id of live) {
+      if (knownDrawingObjectIds.has(id)) continue;
+      next = assignDrawingObjectLayer(next, id, next.activeLayerId);
+    }
+    // 사라진 오브젝트의 배정을 남겨 두면 저장 파일이 계속 자란다.
+    next = pruneDrawingLayerAssignments(next, [...live]);
+    knownDrawingObjectIds = live;
+    reviewDataManager.setDrawingLayers(next);
+  }
+
+  function resetFabricDrawingLayerAssignmentTracking() {
+    knownDrawingObjectIds = new Set();
+    drawingObjectIdsSeeded = false;
+  }
+
+  function applyDrawingLayerStateChange(nextState, message) {
+    if (!reviewDataManager.setDrawingLayers(nextState)) return false;
+    renderActiveDrawingLayers();
+    if (message) showToast(message, 'info');
+    return true;
+  }
+
   let fabricPilotTimelineRenderQueued = false;
   fabricDrawingPersistenceStore.subscribe(() => {
     if (fabricPilotTimelineRenderQueued) return;
     fabricPilotTimelineRenderQueued = true;
     requestAnimationFrame(() => {
       fabricPilotTimelineRenderQueued = false;
+      syncFabricDrawingLayerAssignments();
       renderActiveDrawingLayers();
       syncCurrentFabricDrawingDisplayFrame();
     });
@@ -14267,6 +14367,44 @@ async function initApp() {
       return;
     }
 
+    // 파일럿이 소유 중이면 레이어 조작은 drawingLayersV1 모델을 바꾼다.
+    // 레거시 drawingManager 는 mpv 모드에서 비어 있어 아무 일도 일어나지 않는다.
+    if (getFabricPilotTimelineLayers()) {
+      if (userSettings.matchShortcut('drawingLayerAdd', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const added = addDrawingLayerState(state);
+        if (!added.added) {
+          showToast('레이어를 더 만들 수 없습니다', 'warning');
+        } else {
+          applyDrawingLayerStateChange(added.state, `레이어 추가: ${added.added.name}`);
+        }
+        return;
+      }
+      const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)
+        ? -1
+        : (userSettings.matchShortcut('drawingLayerSelectDown', e) ? 1 : 0);
+      if (selectOffset !== 0) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = selectDrawingLayerState(state, selectOffset);
+        const active = next.layers.find(layer => layer.id === next.activeLayerId);
+        applyDrawingLayerStateChange(next, active ? `선택: ${active.name}` : null);
+        return;
+      }
+      const moveOffset = userSettings.matchShortcut('drawingLayerMoveUp', e)
+        ? -1
+        : (userSettings.matchShortcut('drawingLayerMoveDown', e) ? 1 : 0);
+      if (moveOffset !== 0) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        applyDrawingLayerStateChange(
+          moveDrawingLayerState(state, moveOffset),
+          moveOffset < 0 ? '레이어를 위로 옮김' : '레이어를 아래로 옮김'
+        );
+        return;
+      }
+    }
     if (userSettings.matchShortcut('drawingLayerAdd', e)) {
       e.preventDefault();
       addDrawingLayer();
