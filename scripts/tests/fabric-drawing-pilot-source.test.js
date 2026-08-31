@@ -3137,6 +3137,25 @@ test('지운 레이어는 이웃 정체를 기준으로 되돌아온다', () => 
   );
   assert.equal(keepsBase.baseLayerId, 'A', '기준이 아니었으면 그대로 둔다');
 
+  // 지운 것이 활성 레이어였으면 활성도 되돌린다 — 안 그러면 되돌린 직후 그은
+  // 획이 삭제가 골라 둔 대체 레이어로 간다.
+  const restoresActive = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A', activeLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false, wasActive: true, replacementActiveId: 'A' },
+    []
+  );
+  assert.equal(restoresActive.activeLayerId, 'B');
+
+  // 그 사이 사용자가 다른 레이어를 골랐으면 그 선택을 지킨다.
+  const keepsUserChoice = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A', activeLayerId: 'C' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false, wasActive: true, replacementActiveId: 'A' },
+    []
+  );
+  assert.equal(keepsUserChoice.activeLayerId, 'C');
+
   // 이미 있는 레이어는 다시 넣지 않는다.
   const duplicate = insertNear(
     { layers: [{ id: 'B' }], baseLayerId: 'B' },
@@ -3263,5 +3282,24 @@ test('정규화는 사용자 히스토리에 남기지 않는다', () => {
   assert.ok(
     source.includes('{ ...ranks, silent: true }'),
     '정규화는 silent 로 보낸다'
+  );
+});
+
+test('정규화 재정렬은 그림자 관찰자를 다시 심는다', () => {
+  // 제자리 재정렬은 전이를 내보내지 않으면서 mutationSequence 를 올린다.
+  // 그림자가 그대로 머물면 다음 획 전이를 sequence-gap 으로 거절하고 그 씬의
+  // 그림자가 영구히 저하된다.
+  const start = fabricRuntimeSource.indexOf(
+    "if (operation === 'layer-objects-reorder' && command.silent === true) {"
+  );
+  assert.ok(start > 0, '정규화 분기를 찾지 못했다');
+  const source = fabricRuntimeSource.slice(start, start + 1600);
+  assert.ok(
+    source.includes('reseededSceneInstanceIds.push(scene.sceneInstanceId);'),
+    '바꾼 씬을 모은다'
+  );
+  assert.ok(
+    source.includes('notifyScenesDropped(reseededSceneInstanceIds);'),
+    '그 씬들을 떨어뜨려 다시 심게 한다'
   );
 });

@@ -2941,6 +2941,11 @@ function createSessionSceneStore(options = {}) {
     // 정리를 되돌리고, 그 획의 이력은 이미 사라진 뒤다.
     if (operation === 'layer-objects-reorder' && command.silent === true) {
       let changed = 0;
+      // 제자리 재정렬은 전이를 내보내지 않으면서 mutationSequence 를 올린다.
+      // 그림자(Drawing V3) 관찰자는 그대로 N 에 머물다 다음 획 전이를 N+2 로
+      // 받아 sequence-gap 으로 거절하고, 그 씬의 그림자가 영구히 저하된다.
+      // 바꾼 씬은 **떨어뜨려** 다음 투영에서 다시 심게 한다.
+      const reseededSceneInstanceIds = [];
       for (const scene of committedScenesForVideo(stableVideoIdentity)) {
         const current = [...scene.objects.values()];
         const next = [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
@@ -2953,8 +2958,10 @@ function createSessionSceneStore(options = {}) {
         scene.dirty = true;
         scene.mutationCount += 1;
         scene.mutationSequence += 1;
+        reseededSceneInstanceIds.push(scene.sceneInstanceId);
         changed += 1;
       }
+      notifyScenesDropped(reseededSceneInstanceIds);
       rebuildActiveProvisionalScene(stableVideoIdentity);
       if (changed === 0) return { applied: false, reason: 'no-change' };
       return {

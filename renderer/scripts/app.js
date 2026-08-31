@@ -8236,6 +8236,11 @@ async function initApp() {
   function insertDrawingLayerNear(state, layer, anchors, assignedObjectIds) {
     if (!layer || state.layers.some(candidate => candidate.id === layer.id)) return state;
     const layers = [...state.layers];
+    // 지운 것이 활성 레이어였으면 삭제가 다른 레이어를 골라 뒀다. 그 뒤로 사용자가
+    // 직접 고른 것이 없을 때만(=아직 그 대체 레이어일 때만) 활성도 되돌린다 —
+    // 안 그러면 되돌린 직후 그은 획이 대체 레이어로 간다.
+    const restoresActive = anchors?.wasActive === true &&
+      state.activeLayerId === anchors?.replacementActiveId;
     const aboveIndex = layers.findIndex(candidate => candidate.id === anchors?.aboveId);
     const belowIndex = layers.findIndex(candidate => candidate.id === anchors?.belowId);
     const at = aboveIndex >= 0
@@ -8248,7 +8253,8 @@ async function initApp() {
     let next = normalizeDrawingLayersState({
       ...state,
       layers,
-      ...(anchors?.wasBase === true ? { baseLayerId: layer.id } : null)
+      ...(anchors?.wasBase === true ? { baseLayerId: layer.id } : null),
+      ...(restoresActive ? { activeLayerId: layer.id } : null)
     });
     for (const objectId of assignedObjectIds || []) {
       next = assignDrawingObjectLayer(next, objectId, layer.id);
@@ -14873,7 +14879,9 @@ async function initApp() {
           const anchors = {
             aboveId: state.layers[removedIndex - 1]?.id || null,
             belowId: state.layers[removedIndex + 1]?.id || null,
-            wasBase: state.baseLayerId === layerId
+            wasBase: state.baseLayerId === layerId,
+            wasActive: state.activeLayerId === layerId,
+            replacementActiveId: result.state.activeLayerId
           };
           rememberFabricPilotLayerHistory(sent.commandId, {
             revert: current => insertDrawingLayerNear(
