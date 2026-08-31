@@ -2798,7 +2798,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 반대로 하면 모델에는 없는데 그림은 남는 상태가 저장된다.
   const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerDelete', e)");
   assert.ok(start > 0, '삭제 단축키를 찾지 못했다');
-  const source = appSource.slice(start, start + 4200);
+  const source = appSource.slice(start, start + 5600);
 
   assert.ok(
     source.includes('isFabricDrawingPilotEngaged() &&'),
@@ -2845,15 +2845,19 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     source.includes('fabricPilotObjectRanks(next)'),
     '이동은 옮긴 뒤의 랭크를 보낸다'
   );
-  // 이동은 **상대 offset** 으로 기억하고 다시 계산한다. 절대 인덱스는 기다리는
-  // 동안 레이어가 추가되면 같은 이동을 재현하지 못한다.
+  // 이동은 **짝 레이어를 기준으로** 기억한다. 인덱스도 상대 칸 수도 기다리는
+  // 동안 레이어가 끼면 같은 이동을 재현하지 못한다.
   assert.ok(
-    source.includes('revert: current => moveDrawingLayerByOffsetOn(current, movedId, -moveOffset)'),
-    '이동은 상대 offset 델타로 기억한다'
+    source.includes("const neighborId = state.layers[movedFrom + moveOffset]?.id || null;"),
+    '넘어간 짝 레이어를 기억한다'
   );
   assert.ok(
-    source.includes('reviewDataManager.getDrawingLayers(), movedId, moveOffset'),
-    '커밋도 지금 상태 위에서 같은 상대 이동을 한다'
+    source.includes('placeDrawingLayerRelativeTo(current, movedId, neighborId, revertSide)'),
+    '되돌리기는 짝의 반대편으로 되돌린다'
+  );
+  assert.ok(
+    source.includes('reviewDataManager.getDrawingLayers(), movedId, neighborId, movedSide'),
+    '커밋도 지금 상태 위에서 같은 짝 기준 이동을 한다'
   );
   // 방금 그은 획의 배정은 다음 프레임에 붙는다 — 먼저 흘려보내지 않으면 그 획이
   // 지울 목록에서 빠져 레이어만 사라지고 획은 기준 레이어에 남는다.

@@ -8189,23 +8189,17 @@ async function initApp() {
     return next;
   }
 
-  // 이동은 **상대 offset** 으로 다시 계산한다. 기다리는 동안 레이어가 추가되면
-  // 그때 계산해 둔 절대 인덱스는 같은 이동을 재현하지 못한다 — [A,B] 에서 A 를
-  // 아래로 옮기면 인덱스 1 인데, 위에 N 이 끼어 [N,A,B] 가 되면 인덱스 1 은
-  // 제자리라 아무 일도 일어나지 않는다(오버레이는 이미 순서를 바꾼 뒤다).
-  function moveDrawingLayerByOffsetOn(state, layerId, offset) {
-    const from = state.layers.findIndex(layer => layer.id === layerId);
-    if (from < 0) return state;
-    const next = Math.max(0, Math.min(state.layers.length - 1, from + offset));
-    return moveDrawingLayerToIndex(state, layerId, next);
-  }
-
-  function moveDrawingLayerToIndex(state, layerId, index) {
-    const layers = [...state.layers];
-    const from = layers.findIndex(layer => layer.id === layerId);
-    if (from < 0 || index < 0 || index >= layers.length || from === index) return state;
-    const [moved] = layers.splice(from, 1);
-    layers.splice(index, 0, moved);
+  // 이동은 **짝 레이어를 기준으로** 기억한다. 인덱스도, 상대 칸 수도 기다리는
+  // 동안 레이어가 끼면 같은 이동을 재현하지 못한다 — [A,B] 에서 A 를 아래로
+  // 옮겨 [B,A] 가 된 뒤 위에 N 이 끼어 [B,N,A] 가 되면, 한 칸 되돌리기는
+  // [B,A,N] 이 되어 오버레이가 되돌린 겹침 순서(A 가 B 위)와 어긋난다.
+  // "A 를 B 의 반대편으로" 가 이 조작의 실제 뜻이다.
+  function placeDrawingLayerRelativeTo(state, layerId, neighborId, side) {
+    const moved = state.layers.find(layer => layer.id === layerId);
+    const layers = state.layers.filter(layer => layer.id !== layerId);
+    const neighborIndex = layers.findIndex(layer => layer.id === neighborId);
+    if (!moved || neighborIndex < 0) return state;
+    layers.splice(side === 'before' ? neighborIndex : neighborIndex + 1, 0, moved);
     return normalizeDrawingLayersState({ ...state, layers });
   }
 
@@ -14846,14 +14840,21 @@ async function initApp() {
             return;
           }
           const movedId = next.activeLayerId;
+          // 넘어간 짝 레이어. 위로면 바로 위, 아래로면 바로 아래 레이어다.
+          const movedFrom = state.layers.findIndex(candidate => candidate.id === movedId);
+          const neighborId = state.layers[movedFrom + moveOffset]?.id || null;
+          const movedSide = moveOffset < 0 ? 'before' : 'after';
+          const revertSide = moveOffset < 0 ? 'after' : 'before';
           rememberFabricPilotLayerHistory(sent.commandId, {
-            revert: current => moveDrawingLayerByOffsetOn(current, movedId, -moveOffset),
-            apply: current => moveDrawingLayerByOffsetOn(current, movedId, moveOffset)
+            revert: current =>
+              placeDrawingLayerRelativeTo(current, movedId, neighborId, revertSide),
+            apply: current =>
+              placeDrawingLayerRelativeTo(current, movedId, neighborId, movedSide)
           });
-          // 커밋도 지금 상태 위에서 **같은 상대 이동**을 다시 한다.
+          // 커밋도 지금 상태 위에서 **같은 짝 기준 이동**을 다시 한다.
           applyDrawingLayerStateChange(
-            moveDrawingLayerByOffsetOn(
-              reviewDataManager.getDrawingLayers(), movedId, moveOffset
+            placeDrawingLayerRelativeTo(
+              reviewDataManager.getDrawingLayers(), movedId, neighborId, movedSide
             ),
             layer ? `레이어 이동: ${layer.name}` : null
           );

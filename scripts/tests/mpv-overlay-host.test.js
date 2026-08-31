@@ -6007,6 +6007,42 @@ test('updateDrawingLayerView relays a valid request and advances the revision', 
   assert.equal(second.success, true);
 });
 
+test('레이어 뷰는 새 획이 들어갈 자리(activeLayerRank)를 함께 넘긴다', async () => {
+  // 정규화 결과가 request 를 덮는다. 여기서 빠지면 런타임이 기본 랭크로
+  // 떨어져 새 획이 활성 레이어가 무엇이든 늘 기준 레이어 자리에 꽂힌다.
+  const forwarded = [];
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingLayerView(')) return undefined;
+      forwarded.push(readFabricMethodPayload(script, 'updateDrawingLayerView'));
+      return { accepted: true };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableLayerViewSession(
+    host, ensured.drawingCapability.hostGeneration, 'session-active-rank', 2
+  );
+
+  assert.equal((await send(1, {
+    objectRanks: [['obj-1', 0]],
+    defaultRank: 0,
+    activeLayerRank: 3
+  })).success, true);
+  assert.equal(forwarded[0].activeLayerRank, 3, '활성 레이어 랭크가 런타임까지 간다');
+
+  // 범위 밖이면 요청 자체를 거절한다.
+  assert.equal((await send(2, {
+    objectRanks: [['obj-1', 0]],
+    defaultRank: 0,
+    activeLayerRank: -1
+  })).success, false);
+  assert.equal((await send(2, {
+    objectRanks: [['obj-1', 0]],
+    defaultRank: 0,
+    activeLayerRank: 1.5
+  })).success, false);
+});
+
 test('updateDrawingLayerView rejects stale tokens, backward revisions and malformed id 목록', async () => {
   const { host } = createLayerViewHost();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });

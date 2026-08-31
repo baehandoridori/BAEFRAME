@@ -3341,7 +3341,8 @@ class MPVOverlayHost {
         (request.objectRanks !== undefined && this._normalizeLayerObjectsPayload({
           action: 'layer-objects-reorder',
           objectRanks: request.objectRanks,
-          defaultRank: request.defaultRank
+          defaultRank: request.defaultRank,
+          activeLayerRank: request.activeLayerRank
         }) === null)) {
       return { success: false, accepted: false, error: 'stale or invalid layer view request' };
     }
@@ -3349,10 +3350,13 @@ class MPVOverlayHost {
     try {
       const result = await this._executeFabricMethod('updateDrawingLayerView', {
         ...request,
+        // **activeLayerRank 도 함께 넘긴다.** 정규화 결과가 request 를 덮으므로
+        // 여기서 빠지면 새 획이 늘 기준 레이어 자리에 꽂힌다.
         ...(request.objectRanks === undefined ? {} : this._normalizeLayerObjectsPayload({
           action: 'layer-objects-reorder',
           objectRanks: request.objectRanks,
-          defaultRank: request.defaultRank
+          defaultRank: request.defaultRank,
+          activeLayerRank: request.activeLayerRank
         }))
       });
       if (result?.accepted !== true) {
