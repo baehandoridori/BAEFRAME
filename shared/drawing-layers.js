@@ -163,10 +163,16 @@ function isObjectEditable(state, objectId) {
  */
 function serializeDrawingLayers(state) {
   const normalized = normalizeDrawingLayers(state);
-  const isDefault = normalized.layers.length === 1 &&
-    normalized.layers[0].visible === true &&
-    normalized.layers[0].locked !== true &&
-    Object.keys(normalized.assignments).length === 0;
+  if (normalized.layers.length !== 1 || Object.keys(normalized.assignments).length !== 0) {
+    return normalized;
+  }
+  // **레이어 필드를 전부 비교해야 한다.** 이름·색·id 만 다른 한 장짜리 상태를
+  // 기본으로 판정하면 저장 때 키가 지워지고, 다시 열 때 '드로잉 1' 기본값으로
+  // 되돌아가 사용자가 붙인 이름과 색이 사라진다.
+  const [layer] = normalized.layers;
+  const [reference] = createDefaultDrawingLayers().layers;
+  const isDefault = Object.keys(reference)
+    .every(field => layer[field] === reference[field]);
   return isDefault ? undefined : normalized;
 }
 
@@ -185,6 +191,15 @@ function withLayers(state, layers, activeLayerId, assignments, baseLayerId) {
   });
 }
 
+function allocateLayerId(state) {
+  const used = new Set(state.layers.map(layer => layer.id));
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid && !used.has(`drawing-layer-${uuid}`)) return `drawing-layer-${uuid}`;
+  let ordinal = state.layers.length + 1;
+  while (used.has(`drawing-layer-${ordinal}`)) ordinal += 1;
+  return `drawing-layer-${ordinal}`;
+}
+
 /** 활성 레이어 **위에** 새 레이어를 넣고 활성으로 삼는다(레거시와 같다). */
 function addLayer(state, options = {}) {
   const current = normalizeDrawingLayers(state);
@@ -195,7 +210,11 @@ function addLayer(state, options = {}) {
   const ordinal = current.layers.length;
   const layer = makeLayer({
     ...options,
-    id: isLayerId(options.id) ? options.id : `drawing-layer-${ordinal + 1}-${current.layers.length}`,
+    // **개수에서 id 를 유도하면 안 된다.** 셋 만들고 하나 지운 뒤 또 만들면
+    // 살아남은 레이어와 같은 id 가 나오고, 정규화가 중복을 버려 개수가 늘지
+    // 않으면서 기존 레이어의 메타데이터만 덮어쓴다. 그런데도 "추가됨" 으로
+    // 보고된다. 쓰이지 않는 id 를 찾을 때까지 센다.
+    id: isLayerId(options.id) ? options.id : allocateLayerId(current),
     name: normalizeName(options.name, `드로잉 ${ordinal + 1}`)
   }, ordinal);
   const layers = [...current.layers];

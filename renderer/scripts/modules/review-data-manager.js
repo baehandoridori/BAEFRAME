@@ -2579,11 +2579,6 @@ export class ReviewDataManager extends EventTarget {
     }
 
     this._opaqueRootFields = extractOpaqueBframeRoot(data);
-    // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다. 드로잉 스키마를
-    // 건드리지 않으면서 이 브리지를 가진 버전끼리는 왕복해도 보존된다.
-    this._drawingLayers = normalizeDrawingLayers(
-      this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
-    );
 
     const dataVersion = getDataVersion(data);
     const unsupportedMajor = getUnsupportedBframeMajor(
@@ -2847,6 +2842,13 @@ export class ReviewDataManager extends EventTarget {
    */
   _applyData(data, options = {}) {
     this._captureRootEnvelope(data, options);
+    // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다. 다만 채택은 **로드
+    // 경로에서만** 한다 — _captureRootEnvelope 는 저장 직전 새로고침
+    // (_refreshRootEnvelopeBeforeSave)에서도 불리므로, 거기서 갈아 끼우면 방금
+    // 사용자가 만든 레이어 변경이 디스크 값으로 조용히 되돌아간다.
+    this._drawingLayers = normalizeDrawingLayers(
+      this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
+    );
     if (!options.skipFabricDrawingImport) {
       this._importFabricDrawingPersistenceRoot(data);
     }

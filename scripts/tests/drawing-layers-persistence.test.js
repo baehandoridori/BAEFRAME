@@ -69,3 +69,32 @@ test('상한 값을 넣어도 쓸 수 있는 상태로 정규화된다', async (
   assert.equal(state.activeLayerId, state.layers[0].id);
   assert.equal(state.baseLayerId, state.layers[0].id);
 });
+
+test('저장 직전 새로고침이 로컬 레이어 변경을 되돌리지 않는다', async () => {
+  // _captureRootEnvelope 는 로드뿐 아니라 **저장 직전 새로고침**에서도 불린다.
+  // 거기서 레이어를 디스크 값으로 갈아 끼우면 방금 사용자가 만든 레이어가
+  // 조용히 사라지고 낡은 상태가 저장된다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+
+  // 로드: 디스크에 레이어가 둘인 파일을 읽는다.
+  const onDisk = layers.addLayer(layers.createDefaultDrawingLayers()).state;
+  manager._applyData({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(onDisk))
+  });
+  assert.equal(manager.getDrawingLayers().layers.length, 2, '로드가 디스크 값을 채택한다');
+
+  // 사용자가 레이어를 하나 더 만든다.
+  manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers()).state);
+  assert.equal(manager.getDrawingLayers().layers.length, 3);
+
+  // 저장 직전 새로고침: 같은 디스크 내용을 다시 읽는다.
+  manager._captureRootEnvelope({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(onDisk))
+  });
+  assert.equal(
+    manager.getDrawingLayers().layers.length,
+    3,
+    '새로고침이 로컬 변경을 덮지 않는다'
+  );
+});

@@ -173,3 +173,46 @@ test('저장한 값을 다시 읽으면 같은 상태가 된다', () => {
   // JSON 을 거쳐도 같아야 한다 — .bframe 은 JSON 파일이다.
   assert.deepEqual(normalizeDrawingLayers(JSON.parse(JSON.stringify(serialized))), assigned);
 });
+
+test('레이어 id 는 개수에서 유도하지 않는다', () => {
+  // 셋 만들고 하나 지운 뒤 또 만들면, 개수로 id 를 지으면 살아남은 레이어와
+  // 같은 id 가 나온다. 정규화가 중복을 버려 **개수가 늘지 않으면서** 기존
+  // 레이어의 메타데이터만 덮어쓰는데도 "추가됨" 으로 보고된다.
+  let state = createDefaultDrawingLayers();
+  const created = [];
+  for (let index = 0; index < 3; index += 1) {
+    const result = addLayer(state);
+    state = result.state;
+    created.push(result.added.id);
+  }
+  assert.equal(state.layers.length, 4);
+
+  const removed = deleteLayer(state, created[0], []);
+  assert.equal(removed.state.layers.length, 3);
+
+  const again = addLayer(removed.state);
+  assert.ok(again.added, '추가에 성공한다');
+  assert.equal(again.state.layers.length, 4, '개수가 실제로 늘어난다');
+  assert.equal(
+    new Set(again.state.layers.map(layer => layer.id)).size,
+    4,
+    'id 가 겹치지 않는다'
+  );
+});
+
+test('이름·색만 다른 한 장짜리 상태도 저장한다', () => {
+  // 기본 판정이 visible/locked 만 보면, 이름과 색을 붙인 한 장짜리 문서가
+  // 저장 때 키째 지워지고 다시 열 때 기본값으로 되돌아간다.
+  const base = createDefaultDrawingLayers();
+  const renamed = normalizeDrawingLayers({
+    ...base,
+    layers: [{ ...base.layers[0], name: '배경', color: '#ff4757' }]
+  });
+  const serialized = serializeDrawingLayers(renamed);
+  assert.ok(serialized, '기본값과 다르면 저장한다');
+  assert.equal(serialized.layers[0].name, '배경');
+  assert.equal(serialized.layers[0].color, '#ff4757');
+
+  // 진짜 기본 상태는 여전히 저장하지 않는다.
+  assert.equal(serializeDrawingLayers(base), undefined);
+});
