@@ -1527,6 +1527,12 @@ export class ReviewDataManager extends EventTarget {
         }
         this._hasPersistedFile = true;
         this._reviewDocumentIdPersisted = true;
+        // 기준선은 **IPC 쓰기가 성공할 때마다 즉시** 전진한다. 아래에는 쓰기가
+        // 끝난 뒤에도 재시도로 빠지는 경로가 있어(fabric-drawing-authority-changed),
+        // 루프 밖에서만 옮기면 그 경로가 낡은 기준선으로 다음 병합을 한다.
+        // 그러면 이 쓰기가 흡수한 원격 변경이 "내 편집" 으로 오인돼 더 새 원격
+        // 값을 덮어쓴다.
+        this._drawingLayersBaseline = attemptDrawingLayers;
         if (attemptFabricDrawingAuthorityEpoch !== this._fabricDrawingAuthorityEpoch) {
           // IPC write는 이미 끝났지만, collect 이후 더 최신 Fabric 권위가 생겼다.
           // 방금 쓴 payload를 current로 승인하거나 saved로 전파하지 않고 다시 저장한다.
@@ -1581,11 +1587,8 @@ export class ReviewDataManager extends EventTarget {
       // 상태가 아직 최신일 때만** 그렇다. IPC 를 기다리는 사이 사용자가 레이어를
       // 또 바꿨다면 그 변경은 아직 디스크에 없다. 여기서 플래그를 내리면 다음
       // 저장의 새로고침이 방금 쓴 낡은 값으로 되돌린다.
-      // 기준선은 **쓰기가 성공할 때마다** 전진한다. 방금 쓴 것이 디스크의 사실이고,
-      // 이후 동시 편집은 거기서부터 재야 한다. 뒤처지면 그 저장이 이미 받아들인
-      // 외부 변경을 다음 병합이 "내 편집" 으로 오인해 더 새 원격 값을 덮어쓴다.
-      this._drawingLayersBaseline = savedDrawingLayers;
-      // 반면 dirty 표시는 조건부다. IPC 를 기다리는 사이 들어온 변경은 아직
+      // 기준선은 위 루프에서 쓰기가 성공할 때마다 이미 옮겼다. 여기서는 dirty
+      // 표시만 조건부로 내린다 — IPC 를 기다리는 사이 들어온 변경은 아직
       // 디스크에 없으므로 표시를 유지해야 한다.
       if (this._drawingLayers === savedDrawingLayers) {
         this._drawingLayersDirty = false;

@@ -254,3 +254,26 @@ test('병합으로 흡수한 원격 값이 새 기준선이 된다', async () =>
     '내 추가는 그대로 남는다'
   );
 });
+
+test('기준선은 IPC 쓰기가 성공할 때마다 즉시 전진한다', async () => {
+  // 쓰기가 끝난 뒤에도 재시도로 빠지는 경로가 있다(fabric-drawing-authority-changed).
+  // 루프 밖에서만 기준선을 옮기면 그 경로가 낡은 기준선으로 다음 병합을 하고,
+  // 이 쓰기가 흡수한 원격 변경이 "내 편집" 으로 오인돼 더 새 원격 값을 덮어쓴다.
+  //
+  // 실행 경로 전체를 재현하기 어려우므로 배선 자체를 고정한다.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'renderer/scripts/modules/review-data-manager.js'),
+    'utf8'
+  );
+  const writeSucceeded = source.indexOf('this._reviewDocumentIdPersisted = true;');
+  assert.ok(writeSucceeded > 0, '쓰기 성공 지점을 찾지 못했다');
+  const nearby = source.slice(writeSucceeded, writeSucceeded + 600);
+  assert.ok(
+    nearby.includes('this._drawingLayersBaseline = attemptDrawingLayers;'),
+    '쓰기 성공 직후 기준선을 옮겨야 한다'
+  );
+  // 재시도로 빠지는 continue 가 그 뒤에 있어야 의미가 있다.
+  assert.ok(nearby.includes('fabric-drawing-authority-changed'), '재시도 경로가 뒤에 온다');
+});
