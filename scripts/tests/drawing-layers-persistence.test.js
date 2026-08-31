@@ -319,3 +319,15 @@ test('덮어쓰기가 완전히 끝나기 전 실패는 로컬 레이어를 되�
     '바깥 catch 에서도 되돌린다'
   );
 });
+
+test('레이어만 바꾼 것도 저장할 내용으로 센다', async () => {
+  // .bframe 이 아직 없는 새 영상에서, 이걸 빼면 자동 저장 타이머가
+  // hasUnsavedChanges 로 걸러지고 영상 전환 전 저장도 건너뛰어져 사용자의
+  // 레이어 작업이 조용히 사라진다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  assert.equal(manager.hasSubstantiveContent(), false, '기본 상태는 내용이 없다');
+
+  manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers(), { name: '새 레이어' }).state);
+  assert.equal(manager.hasSubstantiveContent(), true, '레이어를 만들면 내용이 있다');
+});

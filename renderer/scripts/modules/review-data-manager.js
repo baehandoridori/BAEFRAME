@@ -3196,8 +3196,13 @@ export class ReviewDataManager extends EventTarget {
     const hasHighlights = (this.highlightManager?.highlights?.length || 0) > 0;
     const hasCompositionLayers = (this.compositionLayerManager?.layers?.length || 0) > 0;
     const hasManualVersions = (this._manualVersions?.length || 0) > 0;
+    // 레이어만 바꾼 것도 저장할 내용이다. 빼면 .bframe 이 아직 없는 새 영상에서
+    // 자동 저장 타이머가 hasUnsavedChanges 로 걸러지고, 영상 전환 전 저장도
+    // 건너뛰어져 사용자의 레이어 작업이 조용히 사라진다.
+    // 기본 상태면 serializeDrawingLayers 가 undefined 를 돌려주므로 그걸로 잰다.
+    const hasDrawingLayers = serializeDrawingLayers(this._drawingLayers) !== undefined;
     return hasComments || hasDrawings || hasFabricDrawings ||
-      hasHighlights || hasCompositionLayers || hasManualVersions;
+      hasHighlights || hasCompositionLayers || hasManualVersions || hasDrawingLayers;
   }
 
   /**
