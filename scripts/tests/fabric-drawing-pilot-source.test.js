@@ -177,7 +177,7 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(mainCss, /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-overlay[\s\S]+visibility:\s*hidden;[\s\S]+pointer-events:\s*none(?:\s*!important)?;/);
   assert.match(
     mainCss,
-    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\):not\(\[data-pilot-projected="true"\]\),[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row:not\(\[data-layer-id="fabric-pilot-drawing-layer"\]\):not\(\[data-pilot-projected="true"\]\)[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header:not\(\[data-layer-id\^="fabric-pilot-layer-"\]\):not\(\[data-pilot-projected="true"\]\),[\s\S]+body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-track-row:not\(\[data-layer-id\^="fabric-pilot-layer-"\]\):not\(\[data-pilot-projected="true"\]\)[\s\S]+display:\s*none;[\s\S]+pointer-events:\s*none;/
   );
   assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
@@ -400,7 +400,7 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
   const legacyLayers = [{ id: 'legacy-layer' }];
   const calls = [];
   const timelineHarness = {
-    selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 0 }],
+    selectedKeyframes: [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 0 }],
     clearSelection() {
       calls.push('clear');
       this.selectedKeyframes = [];
@@ -421,6 +421,10 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
     'videoPlayer',
     'state',
     'normalizeComparableFilePath',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
+    'reviewDataManager',
+    'activeFabricPilotLayerRowId',
+    'resetFabricDrawingLayerAssignmentTracking',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
     () => null,
@@ -433,7 +437,11 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
     null,
     { filePath: 'C:\\videos\\a.mp4' },
     { currentFile: 'C:\\videos\\a.mp4' },
-    value => String(value || '').replace(/\//g, '\\').toLowerCase()
+    value => String(value || '').replace(/\//g, '\\').toLowerCase(),
+    'fabric-pilot-layer-',
+    { getDrawingLayers: () => projectionLayerState },
+    () => 'fabric-pilot-layer-drawing-layer-1',
+    () => {}
   );
 
   renderActiveDrawingLayers();
@@ -464,7 +472,7 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
   const videoPlayerHarness = { filePath: 'C:\\videos\\a.mp4' };
   const calls = [];
   const timelineHarness = {
-    selectedKeyframes: [{ layerId: 'fabric-pilot-drawing-layer', frame: 12 }],
+    selectedKeyframes: [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 12 }],
     clearSelection() {
       calls.push('clear');
       this.selectedKeyframes = [];
@@ -485,9 +493,13 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
     'videoPlayer',
     'state',
     'normalizeComparableFilePath',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
+    'reviewDataManager',
+    'activeFabricPilotLayerRowId',
+    'resetFabricDrawingLayerAssignmentTracking',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
-    () => [{ id: 'fabric-pilot-drawing-layer' }],
+    () => [{ id: 'fabric-pilot-layer-drawing-layer-1' }],
     timelineHarness,
     { layers: [], activeLayerId: null },
     { getSourceEpoch: () => sourceEpoch },
@@ -497,7 +509,11 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
     null,
     videoPlayerHarness,
     { currentFile: videoPlayerHarness.filePath },
-    value => String(value || '').replace(/\//g, '\\').toLowerCase()
+    value => String(value || '').replace(/\//g, '\\').toLowerCase(),
+    'fabric-pilot-layer-',
+    { getDrawingLayers: () => projectionLayerState },
+    () => 'fabric-pilot-layer-drawing-layer-1',
+    () => {}
   );
 
   renderActiveDrawingLayers();
@@ -509,24 +525,24 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
   assert.deepEqual(calls, ['render']);
 
   calls.length = 0;
-  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 24 }];
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 24 }];
   videoPlayerHarness.filePath = 'C:\\videos\\b.mp4';
   renderActiveDrawingLayers();
   assert.deepEqual(calls, ['clear', 'render']);
 
   calls.length = 0;
-  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 36 }];
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 36 }];
   renderActiveDrawingLayers();
   assert.deepEqual(calls, ['render']);
 
   calls.length = 0;
-  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 48 }];
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 48 }];
   statusSnapshot.videoGeneration = 2;
   renderActiveDrawingLayers();
   assert.deepEqual(calls, ['clear', 'render']);
 
   calls.length = 0;
-  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-drawing-layer', frame: 60 }];
+  timelineHarness.selectedKeyframes = [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 60 }];
   renderActiveDrawingLayers();
   assert.deepEqual(calls, ['render']);
   assert.match(appSource, /let lastFabricPilotTimelineVideoGeneration = null;/);
@@ -536,7 +552,7 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
 test('읽기 전용 합성 행과 투영 행의 가시성·잠금 버튼은 숨긴다', () => {
   assert.match(
     mainCss,
-    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id="fabric-pilot-drawing-layer"\] \.layer-lock,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-pilot-projected="true"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-pilot-projected="true"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
+    /body\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id\^="fabric-pilot-layer-"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-layer-id\^="fabric-pilot-layer-"\] \.layer-lock,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-pilot-projected="true"\] \.layer-visibility,\nbody\.fabric-drawing-pilot-enabled\.mpv-pilot-mode \.drawing-layer-header\[data-pilot-projected="true"\] \.layer-lock \{\n\s+display:\s*none;\n\s+pointer-events:\s*none;\n\}/
   );
 });
 
@@ -674,6 +690,7 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     'drawingManager',
     'reviewDataManager',
     'drawingLayerIdForObject',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -691,7 +708,8 @@ test('집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 �
     { layers: [] },
     // 레이어 모델은 기본 한 장이다 — 투영이 레이어마다 행을 만드는지 확인한다.
     { getDrawingLayers: () => projectionLayerState },
-    (state, objectId) => state.layers[0].id
+    (state, objectId) => state.layers[0].id,
+    'fabric-pilot-layer-'
   );
 
   assert.equal(getProjection().length, 1);
@@ -750,6 +768,7 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
     'drawingManager',
     'reviewDataManager',
     'drawingLayerIdForObject',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -773,7 +792,8 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
     () => ({ isActive: () => false }),
     { layers: [] },
     { getDrawingLayers: () => projectionLayerState },
-    (state, objectId) => state.layers[0].id
+    (state, objectId) => state.layers[0].id,
+    'fabric-pilot-layer-'
   );
 
   const [layer] = getProjection();
@@ -881,11 +901,11 @@ test('Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸
     { warn: (...args) => warnings.push(args) }
   );
   const keyframes = [{
-    layerId: 'fabric-pilot-drawing-layer',
+    layerId: 'fabric-pilot-layer-drawing-layer-1',
     fromFrame: 10,
     toFrame: 20
   }];
-  const anchor = { layerId: 'fabric-pilot-drawing-layer', frame: 20 };
+  const anchor = { layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 20 };
 
   const heldMove = moveFabricPilotKeyframes(keyframes, 10, anchor);
   assert.equal(await moveFabricPilotKeyframes(keyframes, 10, anchor), false);
@@ -898,7 +918,7 @@ test('Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸
   assert.equal(await moveFabricPilotKeyframes(keyframes, 10, anchor), true);
   assert.deepEqual(storeCalls[0], ['move', [{ fromFrame: 10, toFrame: 20 }]]);
   assert.deepEqual(selections[0], {
-    selection: [{ layerId: 'fabric-pilot-drawing-layer', frame: 20 }],
+    selection: [{ layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 20 }],
     options: { anchor }
   });
   assert.equal(renders, 1);
@@ -1026,14 +1046,14 @@ test('Fabric 이동 tail 중 추가된 후속 action은 이동 뒤에 순서대�
   harness.pushUndo(previousAction);
 
   const keyframes = [{
-    layerId: 'fabric-pilot-drawing-layer',
+    layerId: 'fabric-pilot-layer-drawing-layer-1',
     fromFrame: 10,
     toFrame: 20
   }];
   const move = harness.moveFabricPilotKeyframes(
     keyframes,
     10,
-    { layerId: 'fabric-pilot-drawing-layer', frame: 20 }
+    { layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 20 }
   );
   await committed.promise;
 
@@ -1080,7 +1100,7 @@ test('Fabric 이동 tail 중 추가된 후속 action은 이동 뒤에 순서대�
   const ownerLossMove = harness.moveFabricPilotKeyframes(
     keyframes,
     10,
-    { layerId: 'fabric-pilot-drawing-layer', frame: 20 }
+    { layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 20 }
   );
   await ownerLossCommitted.promise;
   const ownerLossExternalAction = {
@@ -1176,12 +1196,12 @@ test('전역 Undo가 진행 중이면 Fabric 이동은 store를 commit하지 않
   await undoStarted;
   const moveResult = await harness.moveFabricPilotKeyframes(
     [{
-      layerId: 'fabric-pilot-drawing-layer',
+      layerId: 'fabric-pilot-layer-drawing-layer-1',
       fromFrame: 10,
       toFrame: 20
     }],
     10,
-    { layerId: 'fabric-pilot-drawing-layer', frame: 20 }
+    { layerId: 'fabric-pilot-layer-drawing-layer-1', frame: 20 }
   );
   rejectUndo(new Error('expected in-flight undo failure'));
 
@@ -1213,7 +1233,7 @@ test('timeline move router sends only the synthetic layer to Fabric and preserve
   )(
     keyframes => {
       const fabricCount = keyframes.filter(
-        keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer'
+        keyframe => keyframe.layerId === 'fabric-pilot-layer-drawing-layer-1'
       ).length;
       if (fabricCount === 0) return 'legacy';
       return fabricCount === keyframes.length ? 'fabric' : 'mixed';
@@ -1239,7 +1259,7 @@ test('timeline move router sends only the synthetic layer to Fabric and preserve
   );
 
   const fabricMove = [{
-    layerId: 'fabric-pilot-drawing-layer',
+    layerId: 'fabric-pilot-layer-drawing-layer-1',
     fromFrame: 10,
     toFrame: 20
   }];
@@ -1395,6 +1415,7 @@ test('레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 
     'drawingManager',
     'reviewDataManager',
     'drawingLayerIdForObject',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
     `${projectionSource}\nreturn getFabricPilotTimelineLayers;`
   )(
     { shouldOwnDrawingShortcut: () => true },
@@ -1411,7 +1432,8 @@ test('레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 
     () => ({ isActive: () => false }),
     { layers: legacyLayers },
     { getDrawingLayers: () => projectionLayerState },
-    (state, objectId) => state.layers[0].id
+    (state, objectId) => state.layers[0].id,
+    'fabric-pilot-layer-'
   );
 
   const layers = getProjection();
@@ -1962,6 +1984,7 @@ test('타임라인은 레이어마다 한 행을 만들고 그 레이어의 획�
     'drawingManager',
     'reviewDataManager',
     'drawingLayerIdForObject',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
     `${projectionSource}
 return getFabricPilotTimelineLayers;`
   )(
@@ -1981,7 +2004,8 @@ return getFabricPilotTimelineLayers;`
     () => ({ isActive: () => false }),
     { layers: [] },
     { getDrawingLayers: () => twoLayers },
-    (state, objectId) => state.assignments[objectId] || state.baseLayerId
+    (state, objectId) => state.assignments[objectId] || state.baseLayerId,
+    'fabric-pilot-layer-'
   );
 
   const rows = getProjection();
@@ -2016,6 +2040,50 @@ test('새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을
   );
   // 영상이 바뀌면 추적을 처음부터 다시 한다.
   assert.ok(appSource.includes('function resetFabricDrawingLayerAssignmentTracking() {'));
+});
+
+test('키프레임 이동 라우터는 레이어별 행 id 를 알아본다', () => {
+  // 행 id 는 레이어마다 다르다. 접두어로 판정하지 않으면 새 행의 마커 드래그가
+  // legacy 로 분류돼 레거시 drawingManager 로 가고 아무 일도 일어나지 않는다.
+  const start = appSource.indexOf('function classifyFabricPilotKeyframeMove(keyframes) {');
+  assert.ok(start > 0, '분류 함수를 찾지 못했다');
+  const tail = "return fabricCount === keyframes.length ? 'fabric' : 'mixed';";
+  const end = appSource.indexOf(tail, start);
+  assert.ok(end > start, '분류 함수의 끝을 찾지 못했다');
+  const source = `${appSource.slice(start, end + tail.length)} }`;
+  const classify = new Function(
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
+    `${source}
+return classifyFabricPilotKeyframeMove;`
+  )('fabric-pilot-layer-');
+
+  assert.equal(classify([{ layerId: 'fabric-pilot-layer-drawing-layer-1' }]), 'fabric');
+  assert.equal(classify([{ layerId: 'fabric-pilot-layer-custom-2' }]), 'fabric', '새 레이어 행도 파일럿이다');
+  assert.equal(classify([{ layerId: 'layer-legacy-1' }]), 'legacy');
+  assert.equal(
+    classify([{ layerId: 'fabric-pilot-layer-a' }, { layerId: 'layer-legacy-1' }]),
+    'mixed'
+  );
+});
+
+test('오브젝트 추적은 세션이 살아나는 순간 심는다', () => {
+  // 첫 변이 알림을 기다리면 늦다 — importRootValue·reset 은 구독자를 부르지
+  // 않으므로, 사용자가 새 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어
+  // 그 획이 배정을 받지 못하고 기준 레이어로 떨어진다.
+  const start = appSource.indexOf('function handleFabricDrawingPilotStateChange(');
+  assert.ok(start > 0, '상태 변경 핸들러를 찾지 못했다');
+  const head = appSource.slice(start, start + 900);
+  assert.ok(
+    head.includes("if (nextState === 'active') seedFabricDrawingLayerAssignmentTracking();"),
+    '세션이 active 가 되는 순간 추적을 심어야 한다'
+  );
+  // 영상이 바뀌면 처음부터 다시 센다.
+  const renderStart = appSource.indexOf('function renderActiveDrawingLayers() {');
+  assert.ok(
+    appSource.slice(renderStart, renderStart + 1400)
+      .includes('if (sourceChanged) resetFabricDrawingLayerAssignmentTracking();'),
+    '소스가 바뀌면 추적을 초기화해야 한다'
+  );
 });
 
 test('brush size shortcuts are routed by action id, not by a hard-coded key code', () => {

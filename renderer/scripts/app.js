@@ -2186,8 +2186,11 @@ async function initApp() {
 
   function classifyFabricPilotKeyframeMove(keyframes) {
     if (!Array.isArray(keyframes) || keyframes.length === 0) return 'invalid';
+    // 행 id 는 레이어마다 다르다. 접두어로 판정하지 않으면 새 행의 마커 드래그가
+    // legacy 로 분류돼 레거시 drawingManager 로 가고 아무 일도 일어나지 않는다.
     const fabricCount = keyframes.filter(
-      keyframe => keyframe?.layerId === 'fabric-pilot-drawing-layer'
+      keyframe => typeof keyframe?.layerId === 'string' &&
+        keyframe.layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX)
     ).length;
     if (fabricCount === 0) return 'legacy';
     return fabricCount === keyframes.length ? 'fabric' : 'mixed';
@@ -6319,6 +6322,15 @@ async function initApp() {
   // 파일럿이 직접 처리하는 레이어 액션. 삭제·표시·잠금은 오버레이가 그림을
   // 지우거나 숨겨야 의미가 있어 아직 넣지 않는다 — 배선 없이 이으면 눌러도
   // 화면이 그대로인 거짓 기능이 된다.
+  // 파일럿 타임라인 행 id 접두어. CSS 마스크·이동 라우터·활성 표시가 모두 이걸
+  // 기준으로 판정하므로 한 곳에서 정한다.
+  const FABRIC_PILOT_LAYER_ROW_PREFIX = 'fabric-pilot-layer-';
+
+  function activeFabricPilotLayerRowId() {
+    const state = reviewDataManager.getDrawingLayers();
+    return `${FABRIC_PILOT_LAYER_ROW_PREFIX}${state.activeLayerId}`;
+  }
+
   const FABRIC_PILOT_LAYER_ACTIONS = new Set([
     'drawingLayerAdd',
     'drawingLayerSelectUp',
@@ -6593,7 +6605,7 @@ async function initApp() {
             .some(id => drawingLayerIdForObject(layerState, id) === layer.id)
         }));
         projectedLayers.push({
-          id: `fabric-pilot-layer-${layer.id}`,
+          id: `${FABRIC_PILOT_LAYER_ROW_PREFIX}${layer.id}`,
           name: layer.name,
           color: layer.color,
           visible: layer.visible !== false,
@@ -6654,7 +6666,9 @@ async function initApp() {
     try {
       const pilotLayers = getFabricPilotTimelineLayers();
       const hasFabricPilotSelection = Array.isArray(timeline.selectedKeyframes) &&
-        timeline.selectedKeyframes.some(keyframe => keyframe.layerId === 'fabric-pilot-drawing-layer');
+        timeline.selectedKeyframes.some(keyframe =>
+          typeof keyframe.layerId === 'string' &&
+          keyframe.layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX));
       if (pilotLayers) {
         const videoGeneration = fabricDrawingPilotStatusSnapshot?.videoGeneration ?? null;
         const stableVideoIdentity = normalizeComparableFilePath(
@@ -6669,9 +6683,12 @@ async function initApp() {
             hasFabricPilotSelection) {
           timeline.clearSelection();
         }
+        if (sourceChanged) resetFabricDrawingLayerAssignmentTracking();
         lastFabricPilotTimelineVideoGeneration = videoGeneration;
         lastFabricPilotTimelineStableVideoIdentity = stableVideoIdentity;
-        timeline.renderDrawingLayers(pilotLayers, null);
+        // 활성 레이어를 넘기지 않으면 헤더에 selected 가 붙지 않아, 다음 획이
+        // 어느 레이어로 가는지 화면에서 알 수 없다.
+        timeline.renderDrawingLayers(pilotLayers, activeFabricPilotLayerRowId());
         return;
       }
       lastFabricPilotTimelineVideoGeneration = null;
@@ -7895,6 +7912,19 @@ async function initApp() {
     next = pruneDrawingLayerAssignments(next, [...live]);
     knownDrawingObjectIds = live;
     reviewDataManager.setDrawingLayers(next);
+  }
+
+  /**
+   * 추적을 **지금 문서 상태로** 초기화한다.
+   *
+   * 첫 변이 알림을 기다리면 늦다 — importRootValue·reset 경로는 구독자를 부르지
+   * 않으므로, 사용자가 새 레이어를 고르고 첫 획을 그은 **그 알림**이 첫 seed 가
+   * 된다. 그러면 그 획은 배정을 받지 못하고 기준 레이어로 떨어진다.
+   */
+  function seedFabricDrawingLayerAssignmentTracking() {
+    const live = collectFabricDrawingObjectIds();
+    knownDrawingObjectIds = live || new Set();
+    drawingObjectIdsSeeded = live !== null;
   }
 
   function resetFabricDrawingLayerAssignmentTracking() {
@@ -10921,6 +10951,11 @@ async function initApp() {
 
   function handleFabricDrawingPilotStateChange(nextState, snapshot) {
     fabricDrawingPilotStatusSnapshot = snapshot ? { ...snapshot } : null;
+    // 세션이 살아나는 **그때** 오브젝트 추적을 심는다. 첫 변이 알림을 기다리면
+    // 늦다 — importRootValue·reset 은 구독자를 부르지 않으므로, 사용자가 새
+    // 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어 그 획이 배정을 받지
+    // 못하고 기준 레이어로 떨어진다.
+    if (nextState === 'active') seedFabricDrawingLayerAssignmentTracking();
     if (nextState === 'passive') {
       syncCurrentFabricDrawingDisplayFrame();
     }
