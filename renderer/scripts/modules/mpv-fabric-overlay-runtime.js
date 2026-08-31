@@ -9533,8 +9533,16 @@ function createFabricOverlayRuntime(options = {}) {
     hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
-    // 이미 선택돼 있던 획이 숨겨지거나 잠기면 **선택에서 뺀다.** 남겨 두면
-    // 보이지도 않는 것이 함께 옮겨지거나 지워진다.
+    // 부분 선택으로 스테이징된 조각은 **새 id 의 프록시**다. 제한 집합은 원본
+    // id 로 되어 있어 아래 selectionIds() 필터를 그대로 빠져나간다. 그대로 두면
+    // 잠긴 뒤에도 커밋이 원본을 자르거나 지운다 — 통째로 물린다.
+    const pendingRestricted = pendingLassoSelection && (
+      (pendingLassoSelection.replacements || [])
+        .some(entry => isLayerRestricted(entry.removeId)) ||
+      [...(pendingLassoSelection.selectedPersistedIds || [])]
+        .some(id => isLayerRestricted(id))
+    );
+    if (pendingRestricted) abortPendingLassoSelection();
     // 이미 선택돼 있던 획이 숨겨지거나 잠기면 **선택에서 뺀다.** 남겨 두면
     // 보이지도 않는 것이 함께 옮겨지거나 지워진다.
     const selected = selectionIds();

@@ -21521,6 +21521,8 @@ void main() {
           hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
+          const pendingRestricted = pendingLassoSelection && ((pendingLassoSelection.replacements || []).some((entry) => isLayerRestricted(entry.removeId)) || [...pendingLassoSelection.selectedPersistedIds || []].some((id) => isLayerRestricted(id)));
+          if (pendingRestricted) abortPendingLassoSelection();
           const selected = selectionIds();
           const kept = selected.filter((id) => !isLayerRestricted(id));
           if (kept.length !== selected.length) activateObjectIds(kept);

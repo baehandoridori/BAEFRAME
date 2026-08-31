@@ -17635,3 +17635,53 @@ test('다른 영상을 수화하면 표시·잠금 집합을 버린다', () => {
   );
   runtime.destroy();
 });
+
+test('스테이징된 조각은 원본 레이어가 잠기면 취소된다', async () => {
+  // 부분 선택은 조각을 **새 id 의 프록시**로 먼저 세운다. 제한 집합은 원본 id 로
+  // 되어 있어 선택 id 필터를 그대로 빠져나간다 — 그대로 두면 잠긴 뒤에도 커밋이
+  // 원본을 자르거나 지운다.
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 8830);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [sourceId] = before.objects.map(object => object.id);
+    const sourceObject = harness.canvas.getObjects()[0];
+
+    enableRealFabricLasso(harness);
+    harness.dragLasso(sourcePolygonInRealFabricScene(sourceObject, [
+      ...lTurnFillPolygon(),
+      lTurnFillPolygon()[0]
+    ]), 8831);
+    assert.ok(harness.canvas.getActiveObject(), '먼저 조각이 세워져야 한다');
+
+    assert.equal(harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [sourceId],
+      activeLayerDrawable: true
+    }).accepted, true);
+
+    assert.ok(
+      !harness.canvas.getActiveObject(),
+      '원본이 잠기면 세워 둔 조각을 물린다'
+    );
+    // 물린 뒤에는 삭제를 눌러도 원본이 잘리거나 지워지지 않는다.
+    harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      action: 'delete-selection'
+    });
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '문서는 그대로다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
