@@ -186,3 +186,25 @@ test('강제 덮어쓰기는 레이어도 원격으로 맞춘다', async () => {
   );
   assert.equal(manager._drawingLayersDirty, false, '표시도 함께 내린다');
 });
+
+test('동시 레이어 편집은 서로를 지우지 않는다', async () => {
+  // 두 인스턴스가 같은 기준선에서 각자 레이어를 고치면, 나중에 저장하는 쪽이
+  // 먼저 저장한 쪽의 추가를 통째로 지웠다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  manager._applyData({});
+  const baseline = manager.getDrawingLayers();
+
+  // 이쪽이 레이어를 하나 만든다.
+  manager.setDrawingLayers(layers.addLayer(baseline, { name: '내 레이어' }).state);
+
+  // 그 사이 다른 인스턴스가 같은 기준선에서 다른 레이어를 올렸다.
+  const remote = layers.addLayer(baseline, { name: '남의 레이어' }).state;
+  manager._captureRootEnvelope({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(remote))
+  });
+
+  const names = manager.getDrawingLayers().layers.map(layer => layer.name);
+  assert.ok(names.includes('내 레이어'), '내 추가가 남는다');
+  assert.ok(names.includes('남의 레이어'), '남의 추가도 남는다');
+});

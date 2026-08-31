@@ -352,8 +352,81 @@ function pruneAssignments(state, liveObjectIds) {
   return withLayers(current, current.layers, current.activeLayerId, assignments);
 }
 
+
+/**
+ * 세 갈래 병합. 두 인스턴스가 같은 기준선에서 각자 레이어를 고쳤을 때 쓴다.
+ *
+ * 이게 없으면 나중에 저장한 쪽이 먼저 저장한 쪽의 레이어 추가·이름·배정을
+ * 통째로 지운다 — 레이어 상태는 필드 단위 머지 대상이 아니라 통으로 실려 가기
+ * 때문이다.
+ *
+ * 규칙(다른 필드의 머지와 같은 취지 — "각자 바꾼 것은 둘 다 살린다"):
+ *   - 원격에만 있는 레이어  : 살린다(상대가 추가했다)
+ *   - 로컬에만 있는 레이어  : 기준선에 없었으면 살린다(내가 추가했다),
+ *                            있었으면 내가 지운 것이므로 뺀다
+ *   - 양쪽에 있는 레이어    : 내가 기준선에서 바꿨으면 내 값, 아니면 원격 값
+ *   - 배정                  : 같은 규칙을 키마다 적용한다
+ *   - activeLayerId         : 보기 상태이므로 로컬을 존중한다
+ */
+function mergeDrawingLayers(baseline, local, remote) {
+  const base = normalizeDrawingLayers(baseline);
+  const mine = normalizeDrawingLayers(local);
+  const theirs = normalizeDrawingLayers(remote);
+
+  const baseById = new Map(base.layers.map(layer => [layer.id, layer]));
+  const mineById = new Map(mine.layers.map(layer => [layer.id, layer]));
+  const theirsById = new Map(theirs.layers.map(layer => [layer.id, layer]));
+  const sameLayer = (left, right) => Boolean(left) && Boolean(right) &&
+    Object.keys(left).every(field => left[field] === right[field]);
+
+  const layers = [];
+  const taken = new Set();
+  for (const layer of theirs.layers) {
+    // 내가 지운 레이어는 뺀다. 단 상대가 그 뒤에 고쳤다면 상대 것을 남긴다 —
+    // 남의 편집을 내 삭제로 덮지 않는다.
+    if (!mineById.has(layer.id) && baseById.has(layer.id) && sameLayer(theirsById.get(layer.id), baseById.get(layer.id))) {
+      taken.add(layer.id);
+      continue;
+    }
+    const editedByMe = mineById.has(layer.id) && !sameLayer(mineById.get(layer.id), baseById.get(layer.id));
+    layers.push(editedByMe ? mineById.get(layer.id) : layer);
+    taken.add(layer.id);
+  }
+  // 내가 새로 만든 레이어를 원래 자리에 맞춰 끼운다.
+  mine.layers.forEach((layer, index) => {
+    if (taken.has(layer.id) || baseById.has(layer.id)) return;
+    layers.splice(Math.min(index, layers.length), 0, layer);
+  });
+
+  const liveIds = new Set(layers.map(layer => layer.id));
+  const assignments = {};
+  const assignmentKeys = new Set([
+    ...Object.keys(theirs.assignments),
+    ...Object.keys(mine.assignments),
+    ...Object.keys(base.assignments)
+  ]);
+  for (const objectId of assignmentKeys) {
+    const baseValue = base.assignments[objectId];
+    const myValue = mine.assignments[objectId];
+    const theirValue = theirs.assignments[objectId];
+    const chosen = myValue !== baseValue ? myValue : theirValue;
+    if (chosen !== undefined && liveIds.has(chosen)) {
+      setAssignment(assignments, objectId, chosen);
+    }
+  }
+
+  return normalizeDrawingLayers({
+    version: DRAWING_LAYERS_VERSION,
+    layers,
+    activeLayerId: liveIds.has(mine.activeLayerId) ? mine.activeLayerId : theirs.activeLayerId,
+    baseLayerId: mine.baseLayerId !== base.baseLayerId ? mine.baseLayerId : theirs.baseLayerId,
+    assignments
+  });
+}
+
 export {
   DEFAULT_LAYER_NAME,
+  mergeDrawingLayers,
   addLayer,
   assignObject,
   deleteLayer,

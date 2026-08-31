@@ -25,6 +25,7 @@ import {
 import {
   DRAWING_LAYERS_ROOT_KEY,
   createDefaultDrawingLayers,
+  mergeDrawingLayers,
   normalizeDrawingLayers,
   serializeDrawingLayers
 } from '../../../shared/drawing-layers.js';
@@ -928,6 +929,7 @@ export class ReviewDataManager extends EventTarget {
     this._opaqueRootFields = {};
     this._drawingLayers = createDefaultDrawingLayers();
     this._drawingLayersDirty = false;
+    this._drawingLayersBaseline = createDefaultDrawingLayers();
     this._fabricDrawingPersistenceContext = {};
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
@@ -1581,6 +1583,8 @@ export class ReviewDataManager extends EventTarget {
       // 저장의 새로고침이 방금 쓴 낡은 값으로 되돌린다.
       if (this._drawingLayers === savedDrawingLayers) {
         this._drawingLayersDirty = false;
+        // 저장한 것이 곧 새 기준선이다. 이후 동시 편집은 여기서부터 잰다.
+        this._drawingLayersBaseline = savedDrawingLayers;
       }
 
       log.info('.bframe 파일 저장됨', {
@@ -1908,6 +1912,18 @@ export class ReviewDataManager extends EventTarget {
       // 강제 덮어쓰기는 로컬을 버리고 원격으로 맞추는 경로다. 레이어만 dirty
       // 가드에 걸려 살아남으면, 나머지는 덮였는데 레이어는 로컬 값이 남아
       // 다음 저장에서 원격 레이어를 도로 지운다.
+      //
+      // 다만 **덮어쓰기가 끝나기 전에** 버리면 안 된다. 아래 Fabric 재조정이
+      // 실패하면 재로드는 실패로 보고되는데 사용자의 미저장 레이어는 이미
+      // 사라진 뒤다. 되돌릴 수 있게 들고 있다가 실패 경로에서 복원한다.
+      const stagedLayers = this._drawingLayers;
+      const stagedLayersDirty = this._drawingLayersDirty;
+      const stagedLayersBaseline = this._drawingLayersBaseline;
+      const restoreStagedLayers = () => {
+        this._drawingLayers = stagedLayers;
+        this._drawingLayersDirty = stagedLayersDirty;
+        this._drawingLayersBaseline = stagedLayersBaseline;
+      };
       if (reloadOptions.merge === false) this._drawingLayersDirty = false;
       const rootCaptured = this._captureRootEnvelope(remoteData, {
         retainIdentityWhenMissing,
@@ -1919,9 +1935,11 @@ export class ReviewDataManager extends EventTarget {
           reloadOwner
         );
         if (!this._ownsReviewContext(reloadOwner)) {
+          restoreStagedLayers();
           return { success: false, added: 0, updated: 0, skipped: true };
         }
         if (!reconciled) {
+          restoreStagedLayers();
           this._assertRootEnvelopeWritable();
           throw new Error('외부 Fabric 드로잉 교체를 안전하게 완료하지 못했습니다.');
         }
@@ -2604,9 +2622,20 @@ export class ReviewDataManager extends EventTarget {
     //   - 로컬 변경이 있으면 채택하면 안 된다. 방금 만든 레이어가 되돌아간다.
     //   - 로컬 변경이 없으면 채택해야 한다. 안 하면 다른 인스턴스가 올린 레이어
     //     변경을 무관한 저장이 조용히 지운다.
+    const incomingLayers = normalizeDrawingLayers(
+      this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
+    );
     if (this._drawingLayersDirty !== true) {
-      this._drawingLayers = normalizeDrawingLayers(
-        this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
+      this._drawingLayers = incomingLayers;
+      this._drawingLayersBaseline = incomingLayers;
+    } else {
+      // 로컬 변경이 있는데 디스크도 바뀌었다 — 두 인스턴스가 같은 기준선에서
+      // 각자 레이어를 고친 것이다. 로컬을 그대로 밀면 먼저 저장한 쪽의 추가·
+      // 이름·배정이 통째로 사라진다. 기준선을 놓고 세 갈래로 합친다.
+      this._drawingLayers = mergeDrawingLayers(
+        this._drawingLayersBaseline,
+        this._drawingLayers,
+        incomingLayers
       );
     }
 

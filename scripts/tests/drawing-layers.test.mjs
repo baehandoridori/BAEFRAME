@@ -7,6 +7,8 @@ import * as layers from '../../shared/drawing-layers.js';
 
 const {
   DRAWING_LAYERS_ROOT_KEY,
+  findLayer,
+  mergeDrawingLayers,
   DRAWING_LAYERS_VERSION,
   MAX_DRAWING_LAYERS,
   addLayer,
@@ -266,4 +268,55 @@ test('__proto__ 같은 오브젝트 id 도 배정을 잃지 않는다', () => {
     const round = normalizeDrawingLayers(JSON.parse(JSON.stringify(assigned)));
     assert.equal(layerIdForObject(round, hostile), added.id, `${hostile} 이 왕복해도 남는다`);
   }
+});
+
+test('세 갈래 병합은 양쪽이 각자 바꾼 것을 둘 다 살린다', () => {
+  // 이게 없으면 나중에 저장한 쪽이 먼저 저장한 쪽의 레이어 추가·이름·배정을
+  // 통째로 지운다 — 레이어 상태는 필드 단위 머지 대상이 아니라 통으로 실린다.
+  const base = createDefaultDrawingLayers();
+  const mineAdd = addLayer(base, { name: '내 레이어' });
+  const theirsAdd = addLayer(base, { name: '남의 레이어' });
+
+  const merged = mergeDrawingLayers(base, mineAdd.state, theirsAdd.state);
+  const names = merged.layers.map(layer => layer.name);
+  assert.ok(names.includes('내 레이어'), '내 추가가 남는다');
+  assert.ok(names.includes('남의 레이어'), '남의 추가도 남는다');
+  assert.equal(merged.layers.length, 3, '기준 레이어까지 셋');
+
+  // 내가 고친 레이어는 내 값, 안 고친 것은 원격 값을 쓴다.
+  const baseId = base.layers[0].id;
+  const mineRenamed = normalizeDrawingLayers({
+    ...base,
+    layers: [{ ...base.layers[0], name: '내가 바꾼 이름' }]
+  });
+  const theirsRenamed = normalizeDrawingLayers({
+    ...base,
+    layers: [{ ...base.layers[0], name: '남이 바꾼 이름', color: '#ff4757' }]
+  });
+  const conflict = mergeDrawingLayers(base, mineRenamed, theirsRenamed);
+  assert.equal(
+    findLayer(conflict, baseId).name,
+    '내가 바꾼 이름',
+    '내가 바꾼 필드는 내 값이 이긴다'
+  );
+
+  // 내가 지운 레이어는 빠지되, 상대가 그 뒤에 고쳤으면 남긴다.
+  const twoLayers = mineAdd.state;
+  const addedId = mineAdd.added.id;
+  const iDeleted = deleteLayer(twoLayers, addedId, []).state;
+  const untouched = mergeDrawingLayers(twoLayers, iDeleted, twoLayers);
+  assert.equal(findLayer(untouched, addedId), null, '아무도 안 건드렸으면 내 삭제가 적용된다');
+
+  const theyEdited = normalizeDrawingLayers({
+    ...twoLayers,
+    layers: twoLayers.layers.map(layer => (
+      layer.id === addedId ? { ...layer, name: '남이 살려 쓴 이름' } : layer
+    ))
+  });
+  const rescued = mergeDrawingLayers(twoLayers, iDeleted, theyEdited);
+  assert.equal(
+    findLayer(rescued, addedId)?.name,
+    '남이 살려 쓴 이름',
+    '상대가 고친 레이어는 내 삭제로 덮지 않는다'
+  );
 });
