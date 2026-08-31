@@ -2128,6 +2128,12 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
     block[1].includes('...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS)'),
     '프레임 조작 매핑이 릴레이 우회 목록에 펼쳐져 있어야 한다'
   );
+  // 레이어 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때 릴레이가
+  // 이 키를 에디터로 보내고 handleKeydown 이 먼저 돌아간다.
+  assert.ok(
+    block[1].includes('...FABRIC_PILOT_LAYER_ACTIONS'),
+    '레이어 조작도 릴레이 우회 목록에 펼쳐져 있어야 한다'
+  );
   assert.match(
     appSource,
     /for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) add\(describe\(actionId\)\);/
@@ -2234,4 +2240,45 @@ test('삭제된 획의 레이어 배정은 실행취소가 되살릴 때까지 �
     appSource.slice(seedStart, seedStart + 800).includes('pruneDrawingLayerAssignments'),
     '문서를 새로 심을 때만 걷는다'
   );
+});
+
+test('실행취소로 되살아난 획은 원래 레이어에 남는다', () => {
+  // 배정을 지우지 않는 것만으로는 모자란다 — 되살아난 id 를 "새 것" 으로 보고
+  // 활성 레이어로 덮으면 똑같이 옮겨간다. 배정 유무로는 가릴 수 없다(기준
+  // 레이어의 오브젝트는 원래 배정이 없다). 세션 동안 본 id 를 따로 기억한다.
+  const syncStart = appSource.indexOf('function syncFabricDrawingLayerAssignments() {');
+  const syncEnd = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking', syncStart);
+  const syncSource = appSource.slice(syncStart, syncEnd);
+  assert.ok(
+    syncSource.includes('if (everSeenDrawingObjectIds.has(id)) continue;'),
+    '되살아난 오브젝트는 배정을 덮지 않는다'
+  );
+  assert.ok(
+    syncSource.includes('everSeenDrawingObjectIds.add(id);'),
+    '새 오브젝트는 본 목록에 넣는다'
+  );
+  // seed·reset 이 두 목록을 함께 다룬다.
+  const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking() {');
+  assert.ok(
+    appSource.slice(seedStart, seedStart + 700)
+      .includes('everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);'),
+    'seed 는 본 목록도 함께 심는다'
+  );
+});
+
+test('레이어 헤더 클릭은 레이어 모델의 활성 레이어를 바꾼다', () => {
+  // 파일럿 행은 drawingManager 가 소유하지 않는다. 접두어를 벗겨 모델로 보내지
+  // 않으면 헤더가 눌리는데 아무 일도 일어나지 않는다.
+  const start = appSource.indexOf("timeline.addEventListener('layerSelect'");
+  assert.ok(start > 0, 'layerSelect 핸들러를 찾지 못했다');
+  const handler = appSource.slice(start, start + 900);
+  assert.ok(
+    handler.includes('layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX)'),
+    '파일럿 행을 알아본다'
+  );
+  assert.ok(
+    handler.includes('layerId.slice(FABRIC_PILOT_LAYER_ROW_PREFIX.length)'),
+    '접두어를 벗겨 레이어 id 를 얻는다'
+  );
+  assert.ok(handler.includes('applyDrawingLayerStateChange'), '모델을 갱신한다');
 });

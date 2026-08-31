@@ -2038,7 +2038,18 @@ async function initApp() {
 
   // 레이어 선택
   timeline.addEventListener('layerSelect', (e) => {
-    drawingManager.setActiveLayer(e.detail.layerId);
+    // 파일럿 행은 drawingManager 가 소유하지 않는다. 접두어를 벗겨 레이어 모델의
+    // 활성 레이어를 바꾼다 — 안 그러면 헤더가 눌리는데 아무 일도 안 일어난다.
+    const layerId = String(e.detail.layerId || '');
+    if (layerId.startsWith(FABRIC_PILOT_LAYER_ROW_PREFIX)) {
+      const state = reviewDataManager.getDrawingLayers();
+      const targetId = layerId.slice(FABRIC_PILOT_LAYER_ROW_PREFIX.length);
+      if (state.layers.some(layer => layer.id === targetId)) {
+        applyDrawingLayerStateChange({ ...state, activeLayerId: targetId }, null);
+      }
+      return;
+    }
+    drawingManager.setActiveLayer(layerId);
     renderActiveDrawingLayers();
   });
 
@@ -7884,6 +7895,10 @@ async function initApp() {
   // 전부 "새로" 보이므로, 그때는 붙이지 않고 목록만 seed 한다 — 안 그러면
   // 파일에 저장된 배정이 활성 레이어로 통째로 덮인다.
   let knownDrawingObjectIds = new Set();
+  // **이 세션에서 한 번이라도 본** id. 실행취소로 되살아난 오브젝트를 "새 것" 으로
+  // 오인해 활성 레이어로 옮기지 않으려면, 사라졌던 id 를 기억해 둬야 한다.
+  // 배정 유무로는 가릴 수 없다 — 기준 레이어의 오브젝트는 원래 배정이 없다.
+  let everSeenDrawingObjectIds = new Set();
   let drawingObjectIdsSeeded = false;
 
   function collectFabricDrawingObjectIds() {
@@ -7909,6 +7924,10 @@ async function initApp() {
     let next = reviewDataManager.getDrawingLayers();
     for (const id of live) {
       if (knownDrawingObjectIds.has(id)) continue;
+      // 되살아난 것이면 원래 배정을 그대로 둔다. 덮으면 지우고 → 레이어를 바꾸고
+      // → 되돌렸을 때 그림이 다른 레이어로 옮겨간 채 저장된다.
+      if (everSeenDrawingObjectIds.has(id)) continue;
+      everSeenDrawingObjectIds.add(id);
       next = assignDrawingObjectLayer(next, id, next.activeLayerId);
     }
     // **여기서 걷어내면 안 된다.** 획을 지운 뒤 실행취소로 되살리면, 배정이
@@ -7930,6 +7949,7 @@ async function initApp() {
   function seedFabricDrawingLayerAssignmentTracking() {
     const live = collectFabricDrawingObjectIds();
     knownDrawingObjectIds = live || new Set();
+    everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);
     drawingObjectIdsSeeded = live !== null;
     // 사라진 오브젝트의 배정은 여기서만 걷는다. 실행취소로 되살아날 수 있는
     // 동안에는 남겨 둬야 한다(위 주석 참조).
@@ -7940,6 +7960,7 @@ async function initApp() {
 
   function resetFabricDrawingLayerAssignmentTracking() {
     knownDrawingObjectIds = new Set();
+    everSeenDrawingObjectIds = new Set();
     drawingObjectIdsSeeded = false;
   }
 
@@ -9084,7 +9105,10 @@ async function initApp() {
     // 프레임·키프레임 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때
     // 릴레이가 이 키를 에디터로 보내고, handleKeydown 이 shouldIgnoreGlobalShortcutTarget
     // 에서 먼저 돌아가 조작이 실패한다. 수식키 없는 2·3·4 는 에디터에 글자로 들어간다.
-    ...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS)
+    ...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS),
+    // 레이어 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때
+    // 릴레이가 이 키를 에디터로 보내고 handleKeydown 이 먼저 돌아간다.
+    ...FABRIC_PILOT_LAYER_ACTIONS
   ]);
 
   function getMpvOverlayDrawModeShortcutDescriptor() {
