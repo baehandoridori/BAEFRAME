@@ -18019,7 +18019,7 @@ test('레이어 순서 이동은 키프레임마다 랭크대로 다시 세운�
     sessionId: 'runtime-session',
     actionId: 'layer-reorder-1',
     action: 'layer-objects-reorder',
-    objectRanks: { 'top-24': 0, 'bottom-24': 1, 'top-30': 0, 'bottom-30': 1 },
+    objectRanks: [['top-24', 0], ['bottom-24', 1], ['top-30', 0], ['bottom-30', 1]],
     defaultRank: 0
   });
   // 이미 그 순서면 아무것도 바꾸지 않는다 — 헛된 히스토리 항목을 남기지 않는다.
@@ -18030,7 +18030,7 @@ test('레이어 순서 이동은 키프레임마다 랭크대로 다시 세운�
     sessionId: 'runtime-session',
     actionId: 'layer-reorder-2',
     action: 'layer-objects-reorder',
-    objectRanks: { 'top-24': 1, 'bottom-24': 0, 'top-30': 1, 'bottom-30': 0 },
+    objectRanks: [['top-24', 1], ['bottom-24', 0], ['top-30', 1], ['bottom-30', 0]],
     defaultRank: 0
   });
   assert.equal(flipped.applied, true);
@@ -18086,7 +18086,7 @@ test('새 획은 레이어 랭크가 정한 자리에 들어간다', () => {
     lockedObjectIds: [],
     activeLayerDrawable: true,
     // 이미 있는 두 획은 위 레이어(랭크 1), 앞으로 그릴 획은 아래 레이어(랭크 0).
-    objectRanks: { 'top-24': 1, 'bottom-24': 1 },
+    objectRanks: [['top-24', 1], ['bottom-24', 1]],
     defaultRank: 0,
     activeLayerRank: 0
   }).accepted, true);
@@ -18107,7 +18107,7 @@ test('새 획은 레이어 랭크가 정한 자리에 들어간다', () => {
     hiddenObjectIds: [],
     lockedObjectIds: [],
     activeLayerDrawable: true,
-    objectRanks: { 'top-24': 1, 'bottom-24': 1 },
+    objectRanks: [['top-24', 1], ['bottom-24', 1]],
     defaultRank: 0,
     activeLayerRank: 2
   }).accepted, true);
@@ -18125,5 +18125,75 @@ test('새 획은 레이어 랭크가 정한 자리에 들어간다', () => {
     ids,
     '앞선 순서는 그대로다'
   );
+  runtime.destroy();
+});
+
+test('id 가 __proto__ 인 획도 랭크를 잃지 않는다', () => {
+  // 랭크는 쌍 배열로 오고 스토어는 Map 으로 조회한다. 그래서 이런 id 도
+  // 프로토타입 키와 섞이지 않는다. (객체 리터럴 주입 쪽 위험은 호스트 테스트
+  // '페이로드는 소스에 객체 리터럴로 끼워진다' 가 따로 못박는다.)
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'proto-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('__proto__'), makeHistoryStroke('plain')]
+    }]
+  }));
+  runtime.setDrawingInput(makeInput({ hostGeneration: 3, videoGeneration: 7 }));
+
+  const applied = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-proto-1',
+    action: 'layer-objects-reorder',
+    objectRanks: [['__proto__', 5], ['plain', 0]],
+    defaultRank: 0
+  });
+  assert.equal(applied.applied, true, JSON.stringify(applied));
+  const ids = runtime.exportDrawingVideo(makePersistenceExport())
+    .snapshot.scenes[0].objects.map(object => object.id);
+  assert.deepEqual(ids, ['plain', '__proto__'], '그 id 도 랭크대로 자리를 잡는다');
+  runtime.destroy();
+});
+
+test('레이어 조작은 지속화 재동기를 요청한다', () => {
+  // 씬을 통째로 갈아 끼우므로 전이가 나가지 않는다. 알리지 않으면 렌더러의
+  // 수화 문서가 조작 전 상태로 남아 지운 획이 다시 투영된다.
+  const { runtime } = makeLayerOpsRuntime();
+  const removed = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-resync-1',
+    action: 'layer-objects-remove',
+    objectIds: ['top-24']
+  });
+  assert.equal(removed.applied, true);
+  assert.equal(removed.persistenceResyncRequired, true, '조작은 재동기를 요청한다');
+
+  const undone = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-resync-undo',
+    action: 'undo'
+  });
+  assert.equal(undone.applied, true);
+  assert.equal(undone.persistenceResyncRequired, true, '되돌림도 씬을 갈아 끼운다');
+
+  // 표식은 씬을 건드리지 않으므로 재동기가 필요 없다.
+  const marker = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-resync-marker',
+    action: 'layer-model-marker'
+  });
+  assert.equal(marker.applied, true);
+  assert.notEqual(marker.persistenceResyncRequired, true);
   runtime.destroy();
 });

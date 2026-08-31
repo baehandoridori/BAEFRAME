@@ -3527,15 +3527,18 @@ class MPVOverlayHost {
       return { objectIds: [...ids] };
     }
     if (request.action === 'layer-objects-reorder') {
+      // 랭크는 **쌍 배열**로 온다. 객체로 받으면 페이로드를 소스에 끼울 때
+      // 객체 리터럴이 되어 `"__proto__"` id 의 랭크가 사라진다.
       const ranks = request.objectRanks;
-      if (!ranks || typeof ranks !== 'object' || Array.isArray(ranks)) return null;
-      const entries = Object.entries(ranks);
-      if (entries.length > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) return null;
-      const normalized = Object.create(null);
-      for (const [id, rank] of entries) {
+      if (!Array.isArray(ranks)) return null;
+      if (ranks.length > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) return null;
+      const normalized = [];
+      for (const pair of ranks) {
+        if (!Array.isArray(pair) || pair.length !== 2) return null;
+        const [id, rank] = pair;
         if (typeof id !== 'string' || id.length === 0 || id.length > 512) return null;
         if (!Number.isInteger(rank) || rank < 0 || rank > MAX_LAYER_OBJECT_RANK) return null;
-        normalized[id] = rank;
+        normalized.push([id, rank]);
       }
       if (!Number.isInteger(request.defaultRank) ||
           request.defaultRank < 0 || request.defaultRank > MAX_LAYER_OBJECT_RANK) {
@@ -3659,7 +3662,13 @@ class MPVOverlayHost {
           ? { historyDirection: result.historyDirection }
           : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount))),
-        keyframeSetChanged: result?.keyframeSetChanged === true
+        keyframeSetChanged: result?.keyframeSetChanged === true,
+        // 레이어 조작은 씬을 갈아 끼우고 전이를 내보내지 않는다. 컨트롤러가
+        // 이 신호를 보고 수화 문서를 다시 받아 온다. 응답을 가볍게 유지하려고
+        // 필요할 때만 싣는다(reason·commandId 와 같은 규칙).
+        ...(result?.persistenceResyncRequired === true
+          ? { persistenceResyncRequired: true }
+          : {})
       };
     } catch (error) {
       return { success: false, applied: false, error: error.message };

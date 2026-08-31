@@ -2678,10 +2678,14 @@ test('표시·잠금과 겹침 순서는 오브젝트 id 집합으로 바뀌어 
 
   // 랭크는 겹침 순서다. 타임라인 위쪽(layers[0])이 화면에서도 위 —
   // 캔버스는 나중 오브젝트를 위에 그리므로 인덱스를 뒤집는다.
-  assert.equal(sets.objectRanks['obj-a'], 2, '맨 위 레이어가 가장 큰 랭크');
-  assert.equal(sets.objectRanks['obj-b'], 1);
-  assert.equal(sets.objectRanks['obj-c'], 0, '맨 아래 레이어가 가장 작은 랭크');
+  // 랭크는 **쌍 배열**이다 — 객체로 나르면 소스 주입에서 `__proto__` id 가 사라진다.
+  assert.deepEqual(
+    sets.objectRanks,
+    [['obj-a', 2], ['obj-b', 1], ['obj-c', 0]],
+    '맨 위 레이어가 가장 큰 랭크'
+  );
   assert.equal(sets.defaultRank, 0, '배정 없는 오브젝트는 기준 레이어 랭크');
+  assert.equal(sets.activeLayerRank, 2, '새 획은 활성 레이어 자리로 간다');
 
   // 활성 레이어가 숨겨지거나 잠기면 새 획을 받지 않는다(레거시와 같다).
   const hiddenActive = run({ ...layerState, activeLayerId: 'layer-b' }, new Set(['obj-a']));
@@ -2693,7 +2697,7 @@ test('표시·잠금과 겹침 순서는 오브젝트 id 집합으로 바뀌어 
   const noDocument = run(layerState, null);
   assert.deepEqual(noDocument.hiddenObjectIds, []);
   assert.deepEqual(noDocument.lockedObjectIds, []);
-  assert.deepEqual(Object.keys(noDocument.objectRanks), []);
+  assert.deepEqual(noDocument.objectRanks, []);
 });
 
 test('표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시 보낸다', () => {
@@ -2856,8 +2860,8 @@ test('겹침 순서 랭크는 표시·잠금과 같은 경로로 계속 밀어 �
     '타임라인 위쪽이 화면에서도 위가 되도록 인덱스를 뒤집는다'
   );
   assert.ok(
-    source.includes('Object.create(null)'),
-    '임의의 오브젝트 id 가 키가 되므로 프로토타입 없는 객체에 담는다'
+    source.includes('objectRanks.push([id, rank])'),
+    '임의의 오브젝트 id 가 키가 되므로 객체가 아니라 쌍 배열로 나른다'
   );
 });
 

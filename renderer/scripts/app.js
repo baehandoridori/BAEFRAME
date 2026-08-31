@@ -8092,11 +8092,14 @@ async function initApp() {
     state.layers.forEach((layer, index) => {
       rankByLayerId.set(layer.id, state.layers.length - 1 - index);
     });
-    // 임의의 오브젝트 id 가 키가 되므로 프로토타입 없는 객체에 담는다.
-    const objectRanks = Object.create(null);
+    // 임의의 오브젝트 id 가 키가 되므로 **객체가 아니라 쌍 배열**로 나른다.
+    // 객체로 보내면 호스트가 페이로드를 소스에 끼울 때 객체 리터럴이 되는데,
+    // 리터럴에서 `"__proto__"` 키는 데이터가 아니라 프로토타입 지정 문법이라
+    // 사라진다 — id 가 그 문자열인 획이 랭크를 잃고 엉뚱한 겹침 자리에 남는다.
+    const objectRanks = [];
     for (const id of collectFabricDrawingObjectIds() || []) {
       const rank = rankByLayerId.get(drawingLayerIdForObject(state, id));
-      if (rank !== undefined) objectRanks[id] = rank;
+      if (rank !== undefined) objectRanks.push([id, rank]);
     }
     return {
       objectRanks,

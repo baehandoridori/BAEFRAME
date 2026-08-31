@@ -14987,7 +14987,7 @@ void main() {
         let activeLayerRank = 0;
         function setObjectRanks(next = {}) {
           const ranks = next?.objectRanks;
-          objectRankMap = ranks && typeof ranks === "object" ? ranks : null;
+          objectRankMap = Array.isArray(ranks) ? new Map(ranks.filter((pair) => Array.isArray(pair) && pair.length === 2)) : null;
           defaultObjectRank = Number.isFinite(Number(next?.defaultRank)) ? Number(next.defaultRank) : 0;
           activeLayerRank = Number.isFinite(Number(next?.activeLayerRank)) ? Number(next.activeLayerRank) : defaultObjectRank;
           return { accepted: true };
@@ -14995,9 +14995,9 @@ void main() {
         function rankOfObject(id) {
           if (!objectRankMap) return defaultObjectRank;
           const bodyId = bodyIdFor(id);
-          const raw = Number(objectRankMap[bodyId || id]);
+          const raw = Number(objectRankMap.get(bodyId || id));
           if (Number.isFinite(raw)) return raw;
-          const own = Number(objectRankMap[id]);
+          const own = Number(objectRankMap.get(id));
           return Number.isFinite(own) ? own : defaultObjectRank;
         }
         function insertObjectsByRank(objects, records) {
@@ -15698,6 +15698,9 @@ void main() {
               frame: null,
               changedFrames: entry.structural.frames.length,
               keyframeSetChanged: false,
+              // 되돌림도 씬을 갈아 끼운다 — 같은 이유로 재동기가 필요하다.
+              persistenceResyncRequired: entry.structural.frames.length > 0,
+              // 되돌림도 씬을 갈아 끼운다 — 같은 이유로 재동기가 필요하다.
               ...globalHistoryDepths()
             };
           }
@@ -15830,16 +15833,16 @@ void main() {
             }
             if (removeIds.size === 0) return { applied: false, reason: "no-objects" };
           }
-          const ranks = operation === "layer-objects-reorder" ? command.objectRanks && typeof command.objectRanks === "object" ? command.objectRanks : null : null;
+          const ranks = operation === "layer-objects-reorder" && Array.isArray(command.objectRanks) ? new Map(command.objectRanks.filter((pair) => Array.isArray(pair) && pair.length === 2)) : null;
           if (operation === "layer-objects-reorder" && !ranks) {
             return { applied: false, reason: "no-ranks" };
           }
           const defaultRank = Number.isFinite(Number(command.defaultRank)) ? Number(command.defaultRank) : 0;
           const rankFor = (id) => {
             const bodyId = bodyIdFor(id);
-            const raw = Number(ranks?.[bodyId || id]);
+            const raw = Number(ranks?.get(bodyId || id));
             if (Number.isFinite(raw)) return raw;
-            const own = Number(ranks?.[id]);
+            const own = Number(ranks?.get(id));
             return Number.isFinite(own) ? own : defaultRank;
           };
           if (operation === "layer-model-marker") {
@@ -15896,6 +15899,13 @@ void main() {
             changedFrames: frames.length,
             // 키프레임 집합은 그대로다 — 비게 된 키프레임도 빈 키프레임으로 남는다.
             keyframeSetChanged: false,
+            // 씬을 통째로 갈아 끼웠으므로 **전이가 나가지 않는다.** 알리지 않으면
+            // 렌더러의 수화 문서가 조작 전 상태로 남아, 지운 획이 다시 투영되고
+            // 이어지는 레이어 계산이 낡은 id 를 쓴다.
+            persistenceResyncRequired: true,
+            // 씬을 통째로 갈아 끼웠으므로 **전이가 나가지 않는다.** 알리지 않으면
+            // 렌더러의 수화 문서가 조작 전 상태로 남아, 지운 획이 다시 투영되고
+            // 이어지는 레이어 계산이 낡은 id 를 쓴다.
             ...globalHistoryDepths()
           };
         }

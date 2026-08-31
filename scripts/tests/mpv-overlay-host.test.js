@@ -6092,6 +6092,28 @@ test('passive 레이어 뷰는 영상 정체로 맞추고 리비전을 전진시
   assert.equal((await send(7, { sessionId: 'host-session' })).success, true);
 });
 
+test('페이로드는 소스에 객체 리터럴로 끼워진다 — 그래서 랭크는 쌍 배열이다', () => {
+  // 호스트는 payload 를 JSON.stringify 해 실행할 소스에 그대로 끼운다. 리터럴에서
+  // "__proto__" 키는 데이터가 아니라 **프로토타입 지정 문법**이라 자기 속성이
+  // 되지 못한다. 오브젝트 id 를 키로 쓰는 표현은 그래서 쓸 수 없다.
+  const asSource = value => new Function(`return (${JSON.stringify(value)});`)();
+
+  const asObject = asSource({ objectRanks: { '__proto__': 2, keep: 1 } });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(asObject.objectRanks, '__proto__'),
+    false,
+    '객체로 나르면 그 id 의 랭크가 사라진다'
+  );
+  assert.equal(asObject.objectRanks.keep, 1, '다른 키는 멀쩡해 눈에 띄지도 않는다');
+
+  const asPairs = asSource({ objectRanks: [['__proto__', 2], ['keep', 1]] });
+  assert.deepEqual(
+    asPairs.objectRanks,
+    [['__proto__', 2], ['keep', 1]],
+    '쌍 배열은 재해석되지 않는다'
+  );
+});
+
 test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 필드만 넘긴다', async () => {
   // 이 두 액션만 페이로드를 나른다. 검사 없이 통과시키면 임의의 객체가 런타임의
   // 정렬·삭제 판정에 그대로 들어간다.
@@ -6126,12 +6148,22 @@ test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 �
 
   const reordered = await send('layer-reorder-ok', {
     action: 'layer-objects-reorder',
-    objectRanks: { 'obj-1': 0, 'obj-2': 3 },
+    objectRanks: [['obj-1', 0], ['obj-2', 3]],
     defaultRank: 1
   });
   assert.equal(reordered.success, true);
-  assert.deepEqual(forwarded[1].objectRanks, { 'obj-1': 0, 'obj-2': 3 });
+  assert.deepEqual(forwarded[1].objectRanks, [['obj-1', 0], ['obj-2', 3]]);
   assert.equal(forwarded[1].defaultRank, 1);
+
+  // id 가 '__proto__' 여도 살아남는다. 객체로 날랐다면 소스에 끼우는 순간
+  // 프로토타입 지정 문법이 되어 사라졌을 자리다.
+  const proto = await send('layer-reorder-proto', {
+    action: 'layer-objects-reorder',
+    objectRanks: [['__proto__', 2]],
+    defaultRank: 0
+  });
+  assert.equal(proto.success, true);
+  assert.deepEqual(forwarded[2].objectRanks, [['__proto__', 2]]);
 
   // 형식이 어긋나면 런타임까지 가지 않는다.
   const before = forwarded.length;
@@ -6145,16 +6177,19 @@ test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 �
     action: 'layer-objects-remove'
   })).success, false, '목록 자체가 없음');
   assert.equal((await send('layer-bad-4', {
-    action: 'layer-objects-reorder', objectRanks: { 'obj-1': 1.5 }, defaultRank: 0
+    action: 'layer-objects-reorder', objectRanks: [['obj-1', 1.5]], defaultRank: 0
   })).success, false, '정수가 아닌 랭크');
   assert.equal((await send('layer-bad-5', {
-    action: 'layer-objects-reorder', objectRanks: { 'obj-1': -1 }, defaultRank: 0
+    action: 'layer-objects-reorder', objectRanks: [['obj-1', -1]], defaultRank: 0
   })).success, false, '음수 랭크');
   assert.equal((await send('layer-bad-6', {
-    action: 'layer-objects-reorder', objectRanks: { 'obj-1': 0 }
+    action: 'layer-objects-reorder', objectRanks: [['obj-1', 0]]
   })).success, false, '기본 랭크 없음');
   assert.equal((await send('layer-bad-7', {
-    action: 'layer-objects-reorder', objectRanks: ['obj-1'], defaultRank: 0
-  })).success, false, '배열은 랭크 맵이 아니다');
+    action: 'layer-objects-reorder', objectRanks: { 'obj-1': 0 }, defaultRank: 0
+  })).success, false, '객체는 쌍 배열이 아니다');
+  assert.equal((await send('layer-bad-8', {
+    action: 'layer-objects-reorder', objectRanks: [['obj-1']], defaultRank: 0
+  })).success, false, '쌍이 아닌 항목');
   assert.equal(forwarded.length, before, '거절은 런타임에 닿지 않는다');
 });

@@ -1388,7 +1388,7 @@ export function createFabricDrawingPilotController(options = {}) {
       lockedObjectIds: [...lockedObjectIds],
       activeLayerDrawable: activeLayerDrawable !== false,
       // 겹침 순서 랭크. 새 획이 그리는 순간 제 층에 들어가게 한다.
-      objectRanks: objectRanks || {},
+      objectRanks: Array.isArray(objectRanks) ? objectRanks : [],
       defaultRank: Number.isInteger(defaultRank) ? defaultRank : 0,
       // 새로 그리는 획이 들어갈 자리. 랭크 맵에는 이미 문서에 있는 id 만 있다.
       activeLayerRank: Number.isInteger(activeLayerRank)
@@ -1470,7 +1470,13 @@ export function createFabricDrawingPilotController(options = {}) {
       // 실행취소가 키프레임을 없애거나 되살리면 전이만으로는 스토어의 키프레임 목록을
       // 맞출 수 없다(전이는 객체 단위다). 그대로 두면 타임라인이 다음 저장 주기까지
       // 사라진 키프레임 마커를 들고 있으므로 즉시 재동기한다.
-      if (response.keyframeSetChanged === true) runDetached(requestPersistenceResync());
+      // 레이어 조작은 키프레임 집합을 바꾸지 않지만 씬 내용을 통째로 갈아
+      // 끼우고 전이를 내보내지 않는다. 두 경우 모두 수화 문서를 다시 받아야
+      // 렌더러가 조작 전 그림을 계속 투영하지 않는다.
+      if (response.keyframeSetChanged === true ||
+          response.persistenceResyncRequired === true) {
+        runDetached(requestPersistenceResync());
+      }
       return response;
     } catch {
       return { success: false, applied: false };
