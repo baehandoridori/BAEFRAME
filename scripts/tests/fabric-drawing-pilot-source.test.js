@@ -2830,8 +2830,17 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 두 조작 모두 짝 id 로 레이어 모델의 before/after 를 기억해야 실행취소가
   // 씬과 모델을 함께 되돌린다.
   assert.ok(
-    source.includes('revert: current => insertDrawingLayerAt('),
+    source.includes('revert: current => insertDrawingLayerNear('),
     '삭제는 되돌리기를 **델타**로 기억한다(스냅샷을 통째로 덮지 않는다)'
+  );
+  // 되돌릴 자리는 이웃 정체로 잡는다 — 숫자 인덱스는 그 사이 추가에 흔들린다.
+  assert.ok(
+    source.includes("aboveId: state.layers[removedIndex - 1]?.id || null"),
+    '지운 레이어의 이웃을 기억한다'
+  );
+  assert.ok(
+    source.includes('wasBase: state.baseLayerId === layerId'),
+    '기준 레이어였는지도 기억한다'
   );
   assert.ok(
     source.includes('deleteDrawingLayerState(\n            reviewDataManager.getDrawingLayers(),'),
@@ -2927,7 +2936,7 @@ test('레이어 모델은 짝 id 로 씬과 함께 되돌아가되 그 사이의
   // 사라진다. 델타를 지금 상태 위에 얹는다.
   const declaration = appSource.indexOf('const fabricPilotLayerHistory = new Map();');
   assert.ok(declaration > 0, '히스토리 보관소 선언을 찾지 못했다');
-  const end = appSource.indexOf('function insertDrawingLayerAt(', declaration);
+  const end = appSource.indexOf('function insertDrawingLayerNear(', declaration);
   assert.ok(end > declaration, '히스토리 구간의 끝을 찾지 못했다');
   const source = appSource.slice(declaration, end);
 
@@ -3045,4 +3054,85 @@ test('씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다', () => {
       assert.deepEqual(failed, { ok: false });
       assert.deepEqual(calls, ['layer-objects-reorder']);
     });
+});
+
+test('지운 레이어는 이웃 정체를 기준으로 되돌아온다', () => {
+  // 숫자 인덱스는 그 사이에 레이어가 추가되면 같은 자리를 가리키지 못한다 —
+  // [A,B,C] 에서 B 를 지우고 위에 N 을 더한 뒤 되돌리면 인덱스 1 은 [N,B,A,C]
+  // 가 되어, 오버레이가 되살린 겹침 순서(B 가 A 아래)와 어긋난다.
+  const start = appSource.indexOf('function insertDrawingLayerNear(');
+  assert.ok(start > 0, '되돌려 넣기 함수를 찾지 못했다');
+  const end = appSource.indexOf('function placeDrawingLayerRelativeTo(', start);
+  assert.ok(end > start, '되돌려 넣기 함수의 끝을 찾지 못했다');
+  const source = appSource.slice(start, end);
+
+  const assigned = [];
+  const insertNear = new Function(
+    'normalizeDrawingLayersState',
+    'assignDrawingObjectLayer',
+    source + String.fromCharCode(10) + 'return insertDrawingLayerNear;'
+  )(
+    state => state,
+    (state, objectId, layerId) => {
+      assigned.push([objectId, layerId]);
+      return state;
+    }
+  );
+
+  const layer = { id: 'B', name: 'B' };
+  const ids = layers => layers.map(entry => entry.id);
+
+  // 그 사이에 N 이 위에 끼어도 A 바로 아래(=원래 자리)로 돌아온다.
+  const withInsertion = insertNear(
+    { layers: [{ id: 'N' }, { id: 'A' }, { id: 'C' }], baseLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    ['obj-1']
+  );
+  assert.deepEqual(ids(withInsertion.layers), ['N', 'A', 'B', 'C']);
+  assert.deepEqual(assigned, [['obj-1', 'B']], '배정도 함께 되돌린다');
+
+  // 위 이웃이 사라졌으면 아래 이웃 앞에 넣는다.
+  const belowOnly = insertNear(
+    { layers: [{ id: 'C' }], baseLayerId: 'C' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    []
+  );
+  assert.deepEqual(ids(belowOnly.layers), ['B', 'C']);
+
+  // 둘 다 없으면 끝에 붙인다.
+  const neither = insertNear(
+    { layers: [{ id: 'Z' }], baseLayerId: 'Z' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    []
+  );
+  assert.deepEqual(ids(neither.layers), ['Z', 'B']);
+
+  // 지운 것이 기준 레이어였으면 기준도 되돌린다 — 안 그러면 배정 없는
+  // 오브젝트(레거시·원격 데이터)가 이후 엉뚱한 레이어로 풀린다.
+  const wasBase = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: true },
+    []
+  );
+  assert.equal(wasBase.baseLayerId, 'B');
+  const keepsBase = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    []
+  );
+  assert.equal(keepsBase.baseLayerId, 'A', '기준이 아니었으면 그대로 둔다');
+
+  // 이미 있는 레이어는 다시 넣지 않는다.
+  const duplicate = insertNear(
+    { layers: [{ id: 'B' }], baseLayerId: 'B' },
+    layer,
+    { aboveId: null, belowId: null, wasBase: false },
+    []
+  );
+  assert.deepEqual(ids(duplicate.layers), ['B']);
 });

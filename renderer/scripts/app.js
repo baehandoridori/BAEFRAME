@@ -8176,13 +8176,30 @@ async function initApp() {
     pushFabricPilotLayerView();
   }
 
-  // 레이어를 원래 자리에 되돌려 넣는다. 배정은 shared 의 assignObject 로 하나씩
-  // 넣는다 — 임의의 오브젝트 id 가 키라서 객체 병합으로는 안전하지 않다.
-  function insertDrawingLayerAt(state, layer, index, assignedObjectIds) {
+  // 레이어를 **이웃 기준으로** 되돌려 넣는다. 숫자 인덱스는 그 사이에 레이어가
+  // 추가되면 같은 자리를 가리키지 못한다 — [A,B,C] 에서 B 를 지우고 위에 N 을
+  // 더한 뒤 되돌리면 인덱스 1 은 [N,B,A,C] 가 되어, 오버레이가 되살린 겹침
+  // 순서(B 가 A 아래)와 어긋난다.
+  //
+  // 배정은 shared 의 assignObject 로 하나씩 넣는다 — 임의의 오브젝트 id 가
+  // 키라서 객체 병합으로는 안전하지 않다.
+  function insertDrawingLayerNear(state, layer, anchors, assignedObjectIds) {
     if (!layer || state.layers.some(candidate => candidate.id === layer.id)) return state;
     const layers = [...state.layers];
-    layers.splice(Math.max(0, Math.min(index, layers.length)), 0, layer);
-    let next = normalizeDrawingLayersState({ ...state, layers });
+    const aboveIndex = layers.findIndex(candidate => candidate.id === anchors?.aboveId);
+    const belowIndex = layers.findIndex(candidate => candidate.id === anchors?.belowId);
+    const at = aboveIndex >= 0
+      ? aboveIndex + 1
+      : (belowIndex >= 0 ? belowIndex : layers.length);
+    layers.splice(at, 0, layer);
+    // 지운 레이어가 기준 레이어였으면 삭제가 다른 레이어를 기준으로 올린다.
+    // 되돌릴 때 그것까지 되돌리지 않으면, 배정 없는 오브젝트(레거시·원격 데이터)가
+    // 이후 엉뚱한 레이어로 풀린다.
+    let next = normalizeDrawingLayersState({
+      ...state,
+      layers,
+      ...(anchors?.wasBase === true ? { baseLayerId: layer.id } : null)
+    });
     for (const objectId of assignedObjectIds || []) {
       next = assignDrawingObjectLayer(next, objectId, layer.id);
     }
@@ -14792,9 +14809,16 @@ async function initApp() {
           const removedLayer = layer;
           const removedIds = [...result.removedObjectIds];
           const layerId = state.activeLayerId;
+          // 되돌릴 자리는 **이웃 정체**로 잡는다(숫자 인덱스는 그 사이 추가에
+          // 흔들린다). 기준 레이어였는지도 함께 기억한다.
+          const anchors = {
+            aboveId: state.layers[removedIndex - 1]?.id || null,
+            belowId: state.layers[removedIndex + 1]?.id || null,
+            wasBase: state.baseLayerId === layerId
+          };
           rememberFabricPilotLayerHistory(sent.commandId, {
-            revert: current => insertDrawingLayerAt(
-              current, removedLayer, removedIndex, removedIds
+            revert: current => insertDrawingLayerNear(
+              current, removedLayer, anchors, removedIds
             ),
             apply: current => deleteDrawingLayerState(
               current, layerId, [...(collectFabricDrawingObjectIds() || [])]
