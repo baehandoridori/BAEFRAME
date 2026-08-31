@@ -1930,10 +1930,19 @@ export class ReviewDataManager extends EventTarget {
         allowIdentityReplacement
       });
       if (rootCaptured) {
-        const reconciled = await this._reconcileDrawingsV3DiskState(
-          remoteData,
-          reloadOwner
-        );
+        // 재조정이 **던지면** 바깥 catch 로 바로 빠져 아래 복원이 통째로
+        // 건너뛰어진다. 그 사이 원격 레이어는 이미 설치됐고 표시도 내려가 있어
+        // 사용자의 미저장 레이어가 사라진다.
+        let reconciled;
+        try {
+          reconciled = await this._reconcileDrawingsV3DiskState(
+            remoteData,
+            reloadOwner
+          );
+        } catch (error) {
+          restoreStagedLayers();
+          throw error;
+        }
         if (!this._ownsReviewContext(reloadOwner)) {
           restoreStagedLayers();
           return { success: false, added: 0, updated: 0, skipped: true };
@@ -2096,6 +2105,10 @@ export class ReviewDataManager extends EventTarget {
     this._opaqueRootFields = {};
     this._drawingLayers = createDefaultDrawingLayers();
     this._drawingLayersDirty = false;
+    // 기준선도 함께 되돌린다. 앞 리뷰의 기준선을 들고 있으면 새 리뷰의 첫 저장
+    // 경합에서 무관한 기준으로 세 갈래 병합을 해, 기본 이름을 "내가 바꿨다" 로
+    // 오인하고 원격 레이어 이름을 덮어쓴다.
+    this._drawingLayersBaseline = this._drawingLayers;
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
     this._writeBlockedVersion = null;

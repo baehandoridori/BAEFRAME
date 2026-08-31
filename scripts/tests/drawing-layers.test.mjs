@@ -320,3 +320,31 @@ test('세 갈래 병합은 양쪽이 각자 바꾼 것을 둘 다 살린다', ()
     '상대가 고친 레이어는 내 삭제로 덮지 않는다'
   );
 });
+
+test('병합은 로컬 순서 바꾸기도 지킨다', () => {
+  // 순서만 바꾼 변경은 필드 비교로 아무것도 달라지지 않는다. 원격 순서로 다시
+  // 세우면 사용자의 재배열이 저장 전에 조용히 되돌아간다.
+  const base = addLayer(createDefaultDrawingLayers(), { name: '위' }).state;
+  const [top, bottom] = base.layers;
+
+  // 활성(위) 레이어를 아래로 내린다.
+  const reordered = moveLayerByOffset(base, 1);
+  assert.deepEqual(reordered.layers.map(layer => layer.id), [bottom.id, top.id]);
+
+  // 원격은 그대로다.
+  const merged = mergeDrawingLayers(base, reordered, base);
+  assert.deepEqual(
+    merged.layers.map(layer => layer.id),
+    [bottom.id, top.id],
+    '로컬 재배열이 살아남는다'
+  );
+
+  // 상대가 순서를 바꾸고 나는 안 바꿨으면 상대 순서를 따른다.
+  const theirsReordered = moveLayerByOffset(base, 1);
+  const followed = mergeDrawingLayers(base, base, theirsReordered);
+  assert.deepEqual(
+    followed.layers.map(layer => layer.id),
+    [bottom.id, top.id],
+    '내가 안 바꿨으면 상대 순서를 따른다'
+  );
+});

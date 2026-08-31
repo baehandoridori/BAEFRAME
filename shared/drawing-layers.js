@@ -379,24 +379,48 @@ function mergeDrawingLayers(baseline, local, remote) {
   const sameLayer = (left, right) => Boolean(left) && Boolean(right) &&
     Object.keys(left).every(field => left[field] === right[field]);
 
+  // 순서도 병합 대상이다. 로컬 변경이 **순서 바꾸기뿐**이면 필드 비교로는
+  // 아무것도 달라지지 않아, 원격 순서로 다시 세우면서 사용자의 재배열이
+  // 저장 전에 조용히 되돌아간다.
+  //
+  // 감지는 **양쪽에 다 있는 id 만** 견준다. 삭제까지 섞어 보면 레이어 하나를
+  // 지운 것을 재배열로 오인한다.
+  const sequence = (state, filter) => state.layers
+    .map(layer => layer.id)
+    .filter(filter)
+    .join(' ');
+  const inBoth = id => baseById.has(id) && mineById.has(id);
+  const localReordered = sequence(mine, inBoth) !== sequence(base, inBoth);
+
+  // 결과 순서: 기준이 되는 쪽을 먼저 깔고, 다른 쪽에만 있는 id 를 제자리에 끼운다.
+  // 한쪽 목록만 훑으면 "내가 지웠지만 상대가 고친" 레이어를 아예 만나지 못한다.
+  const orderSource = localReordered ? mine.layers : theirs.layers;
+  const otherSource = localReordered ? theirs.layers : mine.layers;
+  const order = orderSource.map(layer => layer.id);
+  otherSource.forEach((layer, index) => {
+    if (order.includes(layer.id)) return;
+    order.splice(Math.min(index, order.length), 0, layer.id);
+  });
+
   const layers = [];
-  const taken = new Set();
-  for (const layer of theirs.layers) {
-    // 내가 지운 레이어는 뺀다. 단 상대가 그 뒤에 고쳤다면 상대 것을 남긴다 —
-    // 남의 편집을 내 삭제로 덮지 않는다.
-    if (!mineById.has(layer.id) && baseById.has(layer.id) && sameLayer(theirsById.get(layer.id), baseById.get(layer.id))) {
-      taken.add(layer.id);
+  for (const id of order) {
+    const baseLayer = baseById.get(id) || null;
+    const myLayer = mineById.get(id) || null;
+    const theirLayer = theirsById.get(id) || null;
+    // 내가 지웠다 — 상대가 그 뒤에 고쳤으면 남긴다. 남의 편집을 내 삭제로 덮지 않는다.
+    if (!myLayer && baseLayer) {
+      if (theirLayer && !sameLayer(theirLayer, baseLayer)) layers.push(theirLayer);
       continue;
     }
-    const editedByMe = mineById.has(layer.id) && !sameLayer(mineById.get(layer.id), baseById.get(layer.id));
-    layers.push(editedByMe ? mineById.get(layer.id) : layer);
-    taken.add(layer.id);
+    // 상대가 지웠다 — 내가 손대지 않았으면 그 삭제를 따른다.
+    if (!theirLayer && baseLayer) {
+      if (myLayer && !sameLayer(myLayer, baseLayer)) layers.push(myLayer);
+      continue;
+    }
+    // 양쪽에 있거나 어느 한쪽이 새로 만든 것.
+    const editedByMe = myLayer && baseLayer && !sameLayer(myLayer, baseLayer);
+    layers.push(editedByMe ? myLayer : (theirLayer || myLayer));
   }
-  // 내가 새로 만든 레이어를 원래 자리에 맞춰 끼운다.
-  mine.layers.forEach((layer, index) => {
-    if (taken.has(layer.id) || baseById.has(layer.id)) return;
-    layers.splice(Math.min(index, layers.length), 0, layer);
-  });
 
   const liveIds = new Set(layers.map(layer => layer.id));
   const assignments = {};
