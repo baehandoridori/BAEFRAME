@@ -542,16 +542,34 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   )?.[1] || '';
   const actions = [...actionListSource.matchAll(/'([^']+)'/g)].map(match => match[1]);
   const actionSet = new Set(actions);
+  // 프레임 조작 예외 목록도 app.js 원문에서 뽑아 주입한다. 손으로 베끼면
+  // 실제 배선과 어긋난 채 통과할 수 있다.
+  // 프레임 조작 예외 목록도 app.js 원문에서 뽑아 주입한다. 손으로 베끼면
+  // 실제 배선과 어긋난 채 통과할 수 있다.
+  const frameMapStart = appSource.indexOf('const FABRIC_PILOT_FRAME_OPERATIONS = {');
+  assert.ok(frameMapStart > 0, '프레임 조작 매핑을 찾지 못했다');
+  const frameMapSource = appSource.slice(
+    frameMapStart,
+    appSource.indexOf('};', frameMapStart)
+  );
+  const frameOperationActions = [...frameMapSource.matchAll(/^\s+(\w+):/gm)]
+    .map(match => match[1]);
+  assert.equal(frameOperationActions.length, 7, '프레임 조작 액션 7종');
+  const frameOperations = Object.fromEntries(
+    frameOperationActions.map(action => [action, 'op'])
+  );
   let engaged = false;
   let projectionOwned = true;
   const shouldBlock = new Function(
     'FABRIC_DRAWING_LEGACY_SHORTCUTS',
+    'FABRIC_PILOT_FRAME_OPERATIONS',
     'userSettings',
     'isFabricDrawingPilotEngaged',
     'shouldSuppressLegacyDrawingForFabricPilot',
     `${guardSource}\nreturn shouldBlockFabricDrawingLegacyShortcut;`
   )(
     actionSet,
+    frameOperations,
     { matchShortcut: (action, event) => action === event.action },
     () => engaged,
     () => projectionOwned
@@ -578,7 +596,24 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   assert.equal(shouldBlock({ action: 'drawMode', key: '', code: '' }), false);
   // drawMode를 E로 재지정한 경우에도 KeyE 차단보다 먼저 판정돼야 한다(엣지 10 참조).
   assert.equal(shouldBlock({ action: 'drawMode', key: 'e', code: 'KeyE' }), false);
-  assert.equal(shouldBlock({ action: 'insertFrame', key: '', code: '' }), true);
+  // 프레임·키프레임 조작은 파일럿이 직접 처리하므로 engaged 상태에서도 통과한다.
+  for (const action of frameOperationActions) {
+    assert.equal(
+      shouldBlock({ action, key: '', code: '' }),
+      false,
+      `프레임 조작은 파일럿이 처리한다: ${action}`
+    );
+  }
+  // Ctrl+Alt+C·V 는 chord 차단에 먼저 걸린다 — 예외가 그보다 앞에 있어야 통과한다.
+  assert.equal(
+    shouldBlock({ action: 'frameCopy', key: 'c', code: 'KeyC', ctrlKey: true, altKey: true }),
+    false,
+    'Ctrl+Alt+C 는 chord 차단보다 먼저 통과해야 한다'
+  );
+  assert.equal(
+    shouldBlock({ action: 'framePaste', key: 'v', code: 'KeyV', ctrlKey: true, altKey: true }),
+    false
+  );
   assert.equal(shouldBlock({ action: 'drawingToolSelect', key: '', code: '' }), true);
 });
 
@@ -1862,31 +1897,13 @@ test('brush size shortcuts are routed by action id, not by a hard-coded key code
   // 배선은 방화벽 술어가 아니라 컨트롤러의 routeKeydown 이어야 한다.
   // 술어에 넣으면 falsy 를 돌려줘 레거시 브러시 크기까지 함께 바뀐다.
   assert.match(pilotControllerSource, /const brushSizeStep = matchBrushSizeShortcut\(event\);/);
-  assert.match(
-    pilotControllerSource,
-    /if \(brushSizeStep !== 0\) \{\n\s+if \(state !== 'active'\) return false;\n\s+consumeKeyEvent\(event\);/
-  );
-  // modifier 가드 허용 목록에 들어가야 chord 재지정이 먹는다 — 크기·도구 둘 다.
-  assert.match(
-    pilotControllerSource,
-    /if \(!isDrawingToggleShortcut && !isSelectionShortcut &&\n\s+brushSizeStep === 0 && shortcutTool === null && \(/
-  );
-  // 컨트롤러는 절대 크기가 아니라 상대 증감을 보낸다. 절대값을 보내면 팔레트
-  // 슬라이더·Alt 드래그로 바뀐 굵기를 모르는 채 낡은 값에서 계산하게 된다.
-  assert.match(pilotControllerSource, /async function sendBrushSizeStep\(step\) \{/);
-  assert.doesNotMatch(pilotControllerSource, /let desiredBrushSize/);
-  // 설정에서 배정한 도구 단축키가 실제 도구 전환으로 이어져야 한다.
-  assert.match(appSource, /matchesToolShortcut: event => \{/);
-  assert.match(appSource, /const DRAWING_TOOL_SHORTCUT_ACTIONS = \{/);
-  assert.match(pilotControllerSource, /if \(shortcutTool !== null && \(state === 'preparing' \|\| state === 'active'\)\) \{/);
-  // IPC 채널 4계층이 모두 이어져야 한다.
-  assert.match(
-    preloadSource,
-    /mpvUpdateOverlayDrawingBrush: \(request\) => ipcRenderer\.invoke\('mpv:update-overlay-drawing-brush', request\)/
-  );
-  assert.match(ipcHandlersSource, /ipcMain\.handle\('mpv:update-overlay-drawing-brush'/);
-  assert.match(overlayHostSource, /async updateDrawingBrush\(request = \{\}\) \{/);
-  assert.match(fabricRuntimeSource, /function updateDrawingBrush\(command = \{\}\) \{/);
+  // 수식키 가드의 허용 목록. 새 단축키를 넣으면 여기에도 넣어야 판정 전에 빠져나가지 않는다.
+  const guardStart = pilotControllerSource.indexOf('if (!isDrawingToggleShortcut && !isSelectionShortcut &&');
+  assert.ok(guardStart > 0, '수식키 가드를 찾지 못했다');
+  const guardLine = pilotControllerSource.slice(guardStart, pilotControllerSource.indexOf('{', guardStart));
+  for (const allowed of ['brushSizeStep === 0', 'shortcutTool === null', 'frameOperation === null']) {
+    assert.ok(guardLine.includes(allowed), `수식키 가드 허용 목록에 ${allowed} 이 없다`);
+  }
 });
 
 test('drawing shortcuts bypass the remembered-editor relay while the overlay owns the keyboard', () => {

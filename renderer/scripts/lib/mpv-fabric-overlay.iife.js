@@ -13624,6 +13624,15 @@ void main() {
         "undo",
         "redo"
       ]);
+      var FRAME_STRUCTURE_ACTIONS = /* @__PURE__ */ new Map([
+        ["frame-insert-blank-keyframe", "frame-insert-blank-keyframe"],
+        ["frame-insert", "frame-insert"],
+        ["frame-remove", "frame-remove"],
+        ["keyframe-to-frame", "keyframe-to-frame"],
+        ["frame-to-keyframe", "frame-to-keyframe"],
+        ["frame-copy", "frame-copy"],
+        ["frame-paste", "frame-paste"]
+      ]);
       var DRAWING_V3_DIAGNOSTIC_STATUSES = /* @__PURE__ */ new Set([
         "active",
         "degraded",
@@ -15453,6 +15462,266 @@ void main() {
           }
           return snapshotScene({ ...scene, objects: derivedProvisionalObjects(scene) });
         }
+        const FRAME_OPERATIONS = /* @__PURE__ */ new Set([
+          "frame-insert-blank-keyframe",
+          "frame-insert",
+          "frame-remove",
+          "keyframe-to-frame",
+          "frame-to-keyframe",
+          "frame-copy",
+          "frame-paste"
+        ]);
+        let frameClipboard = null;
+        function committedScenesForVideo(stableVideoIdentity) {
+          return [...scenes.values()].filter((scene) => scene.stableVideoIdentity === stableVideoIdentity && scene.provisional !== true).sort((left, right) => left.targetFrame - right.targetFrame);
+        }
+        function dropProvisionalScenes(stableVideoIdentity) {
+          for (const scene of [...scenes.values()]) {
+            if (scene.stableVideoIdentity === stableVideoIdentity && scene.provisional === true) {
+              detachScene(scene);
+            }
+          }
+        }
+        function rebuildActiveProvisionalScene(stableVideoIdentity) {
+          if (activeSession?.stableVideoIdentity !== stableVideoIdentity) return;
+          const frame = activeSession.targetFrame;
+          const key = makeSceneKey(stableVideoIdentity, frame);
+          if (scenes.has(key)) {
+            activeSession.sceneKey = key;
+            activeSession.sourceFrame = null;
+            return;
+          }
+          const held = heldSceneAt(stableVideoIdentity, frame);
+          const scene = materializeSceneAt(stableVideoIdentity, frame, held ? {
+            sourceWidth: held.sourceWidth,
+            sourceHeight: held.sourceHeight,
+            objects: [...held.objects.values()].map(clonePlain)
+          } : { objects: [] });
+          scene.provisional = true;
+          scene.provisionalSourceFrame = held ? held.targetFrame : null;
+          scene.dirty = false;
+          activeSession.sceneKey = scene.key;
+          activeSession.sourceFrame = held ? held.targetFrame : null;
+        }
+        function heldSceneAt(stableVideoIdentity, frame) {
+          let held = null;
+          for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+            if (scene.targetFrame > frame) break;
+            held = scene;
+          }
+          return held;
+        }
+        function rekeyScenes(stableVideoIdentity, nextFrameByKey) {
+          const order = globalOrderFor(stableVideoIdentity);
+          const keyRemap = /* @__PURE__ */ new Map();
+          const moved = [];
+          for (const [key, nextFrame] of nextFrameByKey) {
+            const scene = scenes.get(key);
+            if (!scene) continue;
+            scenes.delete(key);
+            moved.push({ scene, nextFrame });
+          }
+          for (const { scene, nextFrame } of moved) {
+            const nextKey = makeSceneKey(stableVideoIdentity, nextFrame);
+            keyRemap.set(scene.key, nextKey);
+            scene.key = nextKey;
+            scene.targetFrame = nextFrame;
+            scenes.set(nextKey, scene);
+          }
+          if (order) {
+            for (const list of [order.undo, order.redo]) {
+              for (const entry of list) {
+                const nextKey = keyRemap.get(entry.sceneKey);
+                if (nextKey) entry.sceneKey = nextKey;
+              }
+            }
+          }
+          if (activeSession?.stableVideoIdentity === stableVideoIdentity) {
+            const nextKey = keyRemap.get(activeSession.sceneKey);
+            if (nextKey) activeSession.sceneKey = nextKey;
+          }
+          return keyRemap;
+        }
+        function detachScene(scene) {
+          if (!scene) return null;
+          const order = globalOrderFor(scene.stableVideoIdentity);
+          if (order) {
+            order.undo = order.undo.filter((entry) => entry.sceneKey !== scene.key);
+            order.redo = order.redo.filter((entry) => entry.sceneKey !== scene.key);
+          }
+          scenes.delete(scene.key);
+          return {
+            targetFrame: scene.targetFrame,
+            sourceWidth: scene.sourceWidth,
+            sourceHeight: scene.sourceHeight,
+            objects: [...scene.objects.values()].map(clonePlain)
+          };
+        }
+        function materializeSceneAt(stableVideoIdentity, frame, blueprint) {
+          const key = makeSceneKey(stableVideoIdentity, frame);
+          const objects = /* @__PURE__ */ new Map();
+          for (const record of blueprint?.objects || []) {
+            const cloned = clonePlain(record);
+            objects.set(cloned.id, cloned);
+          }
+          const scene = {
+            key,
+            sceneInstanceId: allocateSceneInstanceId(),
+            stableVideoIdentity,
+            targetFrame: frame,
+            sourceWidth: sourceDimension(blueprint?.sourceWidth),
+            sourceHeight: sourceDimension(blueprint?.sourceHeight),
+            objects,
+            selectedObjectIds: /* @__PURE__ */ new Set(),
+            history: createDrawingCommandHistory({
+              maxEntries: maxHistory,
+              maxBytes: maxHistoryBytes,
+              estimateEntryBytes: defaultEstimateObjectBytes
+            }),
+            historyEntries: { undo: [], redo: [] },
+            dirty: true,
+            mutationCount: 0,
+            mutationSequence: 0,
+            estimatedBytes: estimateObjectsBytes(objects),
+            drawingObserverSeeded: false,
+            provisional: false,
+            provisionalSourceFrame: null
+          };
+          scenes.set(key, scene);
+          return scene;
+        }
+        function committedKeyframeFrames(stableVideoIdentity) {
+          return committedScenesForVideo(stableVideoIdentity).map((scene) => scene.targetFrame);
+        }
+        function applyFrameOperation(command = {}) {
+          if (destroyed) return { applied: false, reason: "store-destroyed" };
+          const operation = command.operation;
+          if (!FRAME_OPERATIONS.has(operation)) {
+            return { applied: false, reason: "invalid-frame-operation" };
+          }
+          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
+          const frame = Number(command.frame);
+          if (!Number.isSafeInteger(frame) || frame < 0) {
+            return { applied: false, reason: "invalid-frame" };
+          }
+          const binding = persistenceByVideo.get(stableVideoIdentity);
+          const totalFrames = binding ? binding.totalFrames : null;
+          if (totalFrames !== null && frame >= totalFrames) {
+            return { applied: false, reason: "frame-out-of-range" };
+          }
+          const ordered = committedScenesForVideo(stableVideoIdentity);
+          const committedAtFrame = ordered.find((scene) => scene.targetFrame === frame) || null;
+          const shiftsRight = operation === "frame-insert" || operation === "frame-insert-blank-keyframe";
+          if (shiftsRight && totalFrames !== null) {
+            const last = ordered[ordered.length - 1];
+            if (last && last.targetFrame >= frame && last.targetFrame + 1 >= totalFrames) {
+              return { applied: false, reason: "timeline-full" };
+            }
+          }
+          if (operation === "frame-copy") {
+            const source = heldSceneAt(stableVideoIdentity, frame);
+            if (!source) return { applied: false, reason: "nothing-to-copy" };
+            frameClipboard = {
+              stableVideoIdentity,
+              sourceWidth: source.sourceWidth,
+              sourceHeight: source.sourceHeight,
+              objects: [...source.objects.values()].map(clonePlain)
+            };
+            return {
+              applied: true,
+              operation,
+              frame,
+              keyframeSetChanged: false,
+              copiedCount: frameClipboard.objects.length,
+              keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+            };
+          }
+          if (operation === "frame-paste") {
+            if (!frameClipboard) return { applied: false, reason: "clipboard-empty" };
+            if (frameClipboard.stableVideoIdentity !== stableVideoIdentity) {
+              return { applied: false, reason: "clipboard-other-video" };
+            }
+            dropProvisionalScenes(stableVideoIdentity);
+            detachScene(committedAtFrame);
+            materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            return {
+              applied: true,
+              operation,
+              frame,
+              keyframeSetChanged: true,
+              keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+            };
+          }
+          if (operation === "keyframe-to-frame") {
+            if (!committedAtFrame) return { applied: false, reason: "no-keyframe-here" };
+            dropProvisionalScenes(stableVideoIdentity);
+            detachScene(committedAtFrame);
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            return {
+              applied: true,
+              operation,
+              frame,
+              keyframeSetChanged: true,
+              keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+            };
+          }
+          if (operation === "frame-to-keyframe") {
+            if (committedAtFrame) return { applied: false, reason: "already-keyframe" };
+            const held = heldSceneAt(stableVideoIdentity, frame);
+            dropProvisionalScenes(stableVideoIdentity);
+            materializeSceneAt(stableVideoIdentity, frame, held ? {
+              sourceWidth: held.sourceWidth,
+              sourceHeight: held.sourceHeight,
+              objects: [...held.objects.values()].map(clonePlain)
+            } : { objects: [] });
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            return {
+              applied: true,
+              operation,
+              frame,
+              keyframeSetChanged: true,
+              keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+            };
+          }
+          if (operation === "frame-remove") {
+            dropProvisionalScenes(stableVideoIdentity);
+            detachScene(committedAtFrame);
+            const nextFrameByKey2 = /* @__PURE__ */ new Map();
+            for (const scene of ordered) {
+              if (scene === committedAtFrame) continue;
+              if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
+            }
+            rekeyScenes(stableVideoIdentity, nextFrameByKey2);
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            return {
+              applied: true,
+              operation,
+              frame,
+              keyframeSetChanged: true,
+              keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+            };
+          }
+          dropProvisionalScenes(stableVideoIdentity);
+          const nextFrameByKey = /* @__PURE__ */ new Map();
+          for (let index = ordered.length - 1; index >= 0; index -= 1) {
+            const scene = ordered[index];
+            if (scene.targetFrame >= frame) nextFrameByKey.set(scene.key, scene.targetFrame + 1);
+          }
+          rekeyScenes(stableVideoIdentity, nextFrameByKey);
+          if (operation === "frame-insert-blank-keyframe") {
+            materializeSceneAt(stableVideoIdentity, frame, { objects: [] });
+          }
+          rebuildActiveProvisionalScene(stableVideoIdentity);
+          return {
+            applied: true,
+            operation,
+            frame,
+            keyframeSetChanged: true,
+            keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+          };
+        }
         function hasScene(stableVideoIdentity, targetFrame) {
           return scenes.has(makeSceneKey(stableVideoIdentity, targetFrame));
         }
@@ -15524,6 +15793,7 @@ void main() {
           redo,
           deleteSelection,
           clearSession,
+          applyFrameOperation,
           updateTool,
           setLocalTool,
           getSceneSnapshot,
@@ -21056,6 +21326,27 @@ void main() {
             return { applied: false, reason: "stale-session" };
           }
           const action = command.action || command.type;
+          if (FRAME_STRUCTURE_ACTIONS.has(action)) {
+            if (!actionDeduper.accept(command.actionId)) {
+              metrics.recordDuplicateAction();
+              return { applied: false, duplicate: true };
+            }
+            const frame = command.targetFrame === void 0 ? activeFrameState.targetFrame : Number(command.targetFrame);
+            const result2 = sceneStore.applyFrameOperation({ operation: action, frame });
+            if (!result2.applied) {
+              actionDeduper.release?.(command.actionId);
+              return result2;
+            }
+            if (result2.keyframeSetChanged) {
+              renderActiveScene({ immediate: true });
+              fabricCanvas?.discardActiveObject?.();
+              sceneStore.selectObjects([]);
+              setToolMode(currentSession?.tool || "brush");
+              updateObjectMetric();
+            }
+            settleArmedFramePreview();
+            return { ...result2, repainted: result2.keyframeSetChanged === true };
+          }
           if (!DRAWING_ACTIONS.has(action)) {
             return { applied: false, reason: "invalid-action" };
           }

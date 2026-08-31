@@ -16721,6 +16721,130 @@ test('outline settings are frozen when the gesture starts', async () => {
   }
 });
 
+test('프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바꾼다', async () => {
+  // 레거시 드로잉 모드의 2 / 3 / Shift+2 / Shift+3 / 4 / Ctrl+Alt+C·V 이식분.
+  // 저장 스키마는 건드리지 않고 씬의 targetFrame 집합만 바꾼다.
+  const harness = createRealFabricHarness();
+  let sequence = 0;
+  // inputRevision 은 하이드레이트를 위해 입력을 껐다 켠 뒤의 값(3)이어야 한다.
+  const gotoFrame = frame => harness.runtime.updateDrawingFrame({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 3,
+    sessionId: 'real-fabric-session',
+    frameRevision: (sequence += 1),
+    targetFrame: frame
+  });
+  const op = (action, extra = {}) => {
+    const result = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: `frame-op-${(sequence += 1)}`,
+      action,
+      ...extra
+    });
+    if (Array.isArray(result.keyframeFrames)) lastFrames = result.keyframeFrames;
+    return result;
+  };
+  // 조작 결과가 커밋된 키프레임 집합을 함께 돌려준다 — 앱이 타임라인을 다시
+  // 그릴 때 쓰는 값이자 여기서 관측할 유일한 표면이다.
+  let lastFrames = [];
+  const keyframeFrames = () => lastFrames;
+  try {
+    // 프레임 이동에는 지속화 바인딩이 있어야 한다 — getActiveFrameCandidate 가
+    // persistenceByVideo 에서 totalFrames 를 읽는다. 없으면 stale-active-frame-session.
+    // 하이드레이트는 입력이 켜져 있으면 거절되므로 잠시 껐다 켠다.
+    const setInput = (inputRevision, enabled) => harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision,
+      enabled,
+      ...(enabled
+        ? {
+          session: {
+            sessionId: 'real-fabric-session',
+            stableVideoIdentity: 'real-fabric-video',
+            targetFrame: 0,
+            sourceWidth: 200,
+            sourceHeight: 120,
+            canvasRect: { left: 0, top: 0, width: 200, height: 120 },
+            viewportTransform: { scale: 1, panX: 0, panY: 0 },
+            tool: 'brush'
+          }
+        }
+        : {})
+    });
+    setInput(2, false);
+    assert.equal(harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'frame-op-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: []
+    }).accepted, true, '비디오 하이드레이트');
+    assert.equal(setInput(3, true).accepted, true, '입력 재활성화');
+
+    // 프레임 0 과 4 에 획을 하나씩 둔다.
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7101);
+    assert.equal(gotoFrame(4).accepted, true, '프레임 4 로 이동');
+    harness.drawStroke([{ x: 20, y: 60 }, { x: 80, y: 60 }], 7102);
+    // 시작 상태는 첫 조작의 결과로 확인한다(조작 자체가 집합을 돌려준다).
+    assert.deepEqual(op('frame-copy').keyframeFrames, [0, 4], '키프레임 둘로 시작한다');
+
+    // 3 — 프레임 추가: 프레임 2 부터 한 칸 민다. 키프레임은 생기지 않는다.
+    gotoFrame(2);
+    assert.equal(op('frame-insert').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 5], '뒤쪽 키프레임만 밀린다');
+
+    // 4 — 프레임 제거: 되돌린다.
+    assert.equal(op('frame-remove').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 4]);
+
+    // 경계 — 조작 프레임에 키프레임이 **정확히** 있으면 그 키프레임도 밀려야 한다.
+    // 이걸 빼면 `>= frame` 과 `> frame` 을 구분하지 못한다.
+    gotoFrame(4);
+    assert.equal(op('frame-insert').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 5], '그 자리의 키프레임도 함께 밀린다');
+    assert.equal(op('frame-remove').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 4]);
+    gotoFrame(2);
+
+    // 2 — 빈 키프레임 삽입: 밀고 그 자리에 빈 키프레임을 만든다.
+    assert.equal(op('frame-insert-blank-keyframe').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 2, 5]);
+    gotoFrame(2);
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      [],
+      '삽입된 키프레임은 비어 있다'
+    );
+
+    // Shift+2 — 키프레임을 프레임으로: 마커만 지우고 뒤를 당기지 않는다.
+    assert.equal(op('keyframe-to-frame').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 5], '뒤쪽이 당겨지지 않는다');
+
+    // Shift+3 — 프레임을 키프레임으로: 홀드 내용을 복사하고 뒤를 밀지 않는다.
+    gotoFrame(3);
+    assert.equal(op('frame-to-keyframe').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 3, 5], '뒤쪽이 밀리지 않는다');
+    assert.equal(
+      harness.sceneStore.getActiveSceneSnapshot().objects.length,
+      1,
+      '홀드 중이던 획을 그대로 물려받는다'
+    );
+
+    // Ctrl+Alt+C / V — 프레임 복사·붙여넣기
+    assert.equal(op('frame-copy').applied, true);
+    gotoFrame(7);
+    assert.equal(op('frame-paste').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 3, 5, 7]);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('every record an outlined gesture produces survives persistence validation', async () => {
   // 이 스위트가 16라운드 동안 놓친 검증이다. renderGeometry 는 스키마상
   // fillRule: 'evenodd' 고정 + M/L/Z 다각형만 + 자기교차 불가이고, 어기면

@@ -146,6 +146,13 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.matchesBrushSizeShortcut === 'function'
       ? options.matchesBrushSizeShortcut
       : null;
+  // 프레임·키프레임 구조 조작(레거시 2 / 3 / Shift+2 / Shift+3 / 4 / Ctrl+Alt+C·V).
+  // 이벤트를 오버레이 액션 이름으로 바꿔 주며 해당 없으면 null 이다. app.js 가
+  // 액션 id 로 판정해 주입하므로 사용자가 키를 재지정해도 따라간다.
+  const configuredFrameOperationMatcher =
+    typeof options.matchesFrameOperationShortcut === 'function'
+      ? options.matchesFrameOperationShortcut
+      : null;
   const persistenceStore = options.persistenceStore || null;
   let fallbackId = 0;
   const uuid = typeof options.uuid === 'function'
@@ -879,6 +886,16 @@ export function createFabricDrawingPilotController(options = {}) {
     try {
       const tool = configuredToolShortcutMatcher(event);
       return CONTROLLER_DRAWING_TOOLS.has(tool) ? tool : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function matchFrameOperationShortcut(event = {}) {
+    if (!configuredFrameOperationMatcher) return null;
+    try {
+      const operation = configuredFrameOperationMatcher(event);
+      return typeof operation === 'string' && operation.length > 0 ? operation : null;
     } catch {
       return null;
     }
@@ -2743,8 +2760,11 @@ export function createFabricDrawingPilotController(options = {}) {
     // 사용자가 chord 로 재지정했을 수 있으므로 modifier 가드의 허용 목록에 넣는다.
     const brushSizeStep = matchBrushSizeShortcut(event);
     const shortcutTool = matchToolShortcut(event);
+    // Shift+2·Shift+3·Ctrl+Alt+C·V 는 전부 수식키를 쓴다. 아래 수식키 가드의
+    // 허용 목록에 넣지 않으면 판정 전에 통째로 빠져나간다.
+    const frameOperation = matchFrameOperationShortcut(event);
     if (!isDrawingToggleShortcut && !isSelectionShortcut &&
-      brushSizeStep === 0 && shortcutTool === null && (
+      brushSizeStep === 0 && shortcutTool === null && frameOperation === null && (
       event.ctrlKey === true ||
       event.metaKey === true ||
       event.altKey === true ||
@@ -2757,6 +2777,16 @@ export function createFabricDrawingPilotController(options = {}) {
       consumeKeyEvent(event);
       desiredTool = shortcutTool;
       if (state === 'active') runDetached(sendTool(shortcutTool));
+      return true;
+    }
+    // 구조 조작은 세션이 살아 있을 때만 의미가 있다. 오버레이가 키프레임 집합을
+    // 바꾸고 keyframeSetChanged 로 알리면 sendDrawingActionRequest 가 타임라인을
+    // 재동기한다(실행취소가 키프레임을 되살릴 때와 같은 경로).
+    if (frameOperation !== null) {
+      if (state !== 'active') return false;
+      consumeKeyEvent(event);
+      if (event.repeat === true) return true;
+      runDetached(applyDrawingAction(frameOperation));
       return true;
     }
     if (brushSizeStep !== 0) {

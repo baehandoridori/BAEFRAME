@@ -6296,6 +6296,18 @@ async function initApp() {
     '.drawing-track-row'
   ].join(',');
 
+  // 레거시 드로잉 모드의 프레임·키프레임 단축키를 파일럿 오버레이 액션으로 잇는다.
+  // 키가 아니라 **액션 id** 로 판정한다 — 사용자가 재지정해도 따라가야 한다.
+  const FABRIC_PILOT_FRAME_OPERATIONS = {
+    keyframeAddBlank2: 'frame-insert-blank-keyframe',
+    insertFrame: 'frame-insert',
+    deleteFrame: 'frame-remove',
+    keyframeConvertToFrame: 'keyframe-to-frame',
+    keyframeConvertToKeyframe: 'frame-to-keyframe',
+    frameCopy: 'frame-copy',
+    framePaste: 'frame-paste'
+  };
+
   function shouldBlockFabricDrawingLegacyShortcut(event) {
     const engaged = isFabricDrawingPilotEngaged();
     if (!engaged && !shouldSuppressLegacyDrawingForFabricPilot()) return false;
@@ -6312,6 +6324,12 @@ async function initApp() {
     // 사용자가 drawMode를 E/Ctrl 조합으로 재지정한 경우까지 덮으려면 아래 chord·KeyE
     // 차단보다 반드시 먼저 판정해야 한다.
     if (matchedAction === 'drawMode') return false;
+    // 프레임·키프레임 구조 조작은 파일럿이 직접 처리한다. Ctrl+Alt+C·V 가 아래
+    // chord 차단에 먼저 걸리므로 **반드시 그 앞에서** 통과시켜야 한다
+    // (docs/drawing-keyframe-features.md §4.2 의 drawMode 선례와 같은 이유).
+    if (matchedAction && Object.hasOwn(FABRIC_PILOT_FRAME_OPERATIONS, matchedAction)) {
+      return false;
+    }
     // IME 조합 중에는 event.key가 'Process'가 되어 key 기반 차단이 무력화된다.
     // 단축키로 등록되지 않은 생 Ctrl+C/V/Z/Y(클립보드·브라우저 undo)는 matchedAction으로도
     // 걸리지 않으므로 event.code를 함께 본다(IME 여부와 무관하게 물리 키를 가리킨다).
@@ -7758,6 +7776,12 @@ async function initApp() {
     matchesToolShortcut: event => {
       for (const [actionId, tool] of Object.entries(DRAWING_TOOL_SHORTCUT_ACTIONS)) {
         if (userSettings.matchShortcut(actionId, event)) return tool;
+      }
+      return null;
+    },
+    matchesFrameOperationShortcut: event => {
+      for (const [actionId, operation] of Object.entries(FABRIC_PILOT_FRAME_OPERATIONS)) {
+        if (userSettings.matchShortcut(actionId, event)) return operation;
       }
       return null;
     },

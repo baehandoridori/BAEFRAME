@@ -148,6 +148,17 @@ const DRAWING_ACTIONS = new Set([
   'undo',
   'redo'
 ]);
+// 프레임·키프레임 구조 조작. 획을 건드리지 않고 키프레임 집합만 바꾸므로
+// 선택 해제·재도색 경로가 위와 다르다.
+const FRAME_STRUCTURE_ACTIONS = new Map([
+  ['frame-insert-blank-keyframe', 'frame-insert-blank-keyframe'],
+  ['frame-insert', 'frame-insert'],
+  ['frame-remove', 'frame-remove'],
+  ['keyframe-to-frame', 'keyframe-to-frame'],
+  ['frame-to-keyframe', 'frame-to-keyframe'],
+  ['frame-copy', 'frame-copy'],
+  ['frame-paste', 'frame-paste']
+]);
 const DRAWING_V3_DIAGNOSTIC_STATUSES = new Set([
   'active',
   'degraded',
@@ -2340,6 +2351,321 @@ function createSessionSceneStore(options = {}) {
     return snapshotScene({ ...scene, objects: derivedProvisionalObjects(scene) });
   }
 
+  // ── 프레임·키프레임 구조 조작 ─────────────────────────────────────────────
+  //
+  // 레거시 드로잉 모드의 2 / 3 / Shift+2 / Shift+3 / 4 / Ctrl+Alt+C·V 를 파일럿으로
+  // 옮긴 것이다. 전부 **저장 스키마를 그대로 두고** 씬의 targetFrame 집합만 바꾼다.
+  //
+  // 재키잉이 이 코드의 핵심 위험이다. 씬 맵의 키가 makeSceneKey(비디오, 프레임)이라
+  // 프레임을 옮기면 키가 바뀌고, 그 키를 들고 있는 곳이 셋 더 있다:
+  //   - activeSession.sceneKey
+  //   - 전역 히스토리 order.undo / order.redo 의 각 항목
+  //   - provisional 씬의 provisionalSourceFrame
+  // 하나라도 빠뜨리면 Ctrl+Z 가 유령 키를 따라가 조용히 죽는다.
+  const FRAME_OPERATIONS = new Set([
+    'frame-insert-blank-keyframe',
+    'frame-insert',
+    'frame-remove',
+    'keyframe-to-frame',
+    'frame-to-keyframe',
+    'frame-copy',
+    'frame-paste'
+  ]);
+
+  // 프레임 복사는 비디오 사이를 넘지 않는다. 소스 크기가 다르면 좌표가 어긋난다.
+  let frameClipboard = null;
+
+  // 구조 조작은 **커밋된 씬만** 다룬다. 임시(provisional) 씬은 홀드 내용을 베낀
+  // 파생물이라 함께 밀면 활성 씬이 엉뚱한 프레임을 가리키게 된다. 조작이 끝난 뒤
+  // rebuildActiveProvisionalScene 이 새 상태에서 다시 만든다.
+  function committedScenesForVideo(stableVideoIdentity) {
+    return [...scenes.values()]
+      .filter(scene =>
+        scene.stableVideoIdentity === stableVideoIdentity &&
+        scene.provisional !== true)
+      .sort((left, right) => left.targetFrame - right.targetFrame);
+  }
+
+  function dropProvisionalScenes(stableVideoIdentity) {
+    for (const scene of [...scenes.values()]) {
+      if (scene.stableVideoIdentity === stableVideoIdentity && scene.provisional === true) {
+        detachScene(scene);
+      }
+    }
+  }
+
+  // 조작 후 활성 프레임의 화면을 새 키프레임 집합에 맞춘다. 커밋된 씬이 있으면
+  // 거기를 가리키고, 없으면 홀드 내용을 베낀 임시 씬을 다시 만든다.
+  function rebuildActiveProvisionalScene(stableVideoIdentity) {
+    if (activeSession?.stableVideoIdentity !== stableVideoIdentity) return;
+    const frame = activeSession.targetFrame;
+    const key = makeSceneKey(stableVideoIdentity, frame);
+    if (scenes.has(key)) {
+      activeSession.sceneKey = key;
+      activeSession.sourceFrame = null;
+      return;
+    }
+    const held = heldSceneAt(stableVideoIdentity, frame);
+    const scene = materializeSceneAt(stableVideoIdentity, frame, held
+      ? {
+        sourceWidth: held.sourceWidth,
+        sourceHeight: held.sourceHeight,
+        objects: [...held.objects.values()].map(clonePlain)
+      }
+      : { objects: [] });
+    scene.provisional = true;
+    scene.provisionalSourceFrame = held ? held.targetFrame : null;
+    scene.dirty = false;
+    activeSession.sceneKey = scene.key;
+    activeSession.sourceFrame = held ? held.targetFrame : null;
+  }
+
+  // 프레임 F 에서 실제로 보이는 씬. 키프레임이 없으면 홀드 중인 직전 키프레임이다.
+  function heldSceneAt(stableVideoIdentity, frame) {
+    let held = null;
+    for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+      if (scene.targetFrame > frame) break;
+      held = scene;
+    }
+    return held;
+  }
+
+  // 씬을 새 프레임으로 옮기고 그 키를 들고 있던 곳을 **함께** 갱신한다.
+  function rekeyScenes(stableVideoIdentity, nextFrameByKey) {
+    const order = globalOrderFor(stableVideoIdentity);
+    const keyRemap = new Map();
+    const moved = [];
+    for (const [key, nextFrame] of nextFrameByKey) {
+      const scene = scenes.get(key);
+      if (!scene) continue;
+      scenes.delete(key);
+      moved.push({ scene, nextFrame });
+    }
+    for (const { scene, nextFrame } of moved) {
+      const nextKey = makeSceneKey(stableVideoIdentity, nextFrame);
+      keyRemap.set(scene.key, nextKey);
+      scene.key = nextKey;
+      scene.targetFrame = nextFrame;
+      scenes.set(nextKey, scene);
+    }
+    if (order) {
+      for (const list of [order.undo, order.redo]) {
+        for (const entry of list) {
+          const nextKey = keyRemap.get(entry.sceneKey);
+          if (nextKey) entry.sceneKey = nextKey;
+        }
+      }
+    }
+    if (activeSession?.stableVideoIdentity === stableVideoIdentity) {
+      const nextKey = keyRemap.get(activeSession.sceneKey);
+      if (nextKey) activeSession.sceneKey = nextKey;
+    }
+    return keyRemap;
+  }
+
+  function detachScene(scene) {
+    if (!scene) return null;
+    const order = globalOrderFor(scene.stableVideoIdentity);
+    if (order) {
+      order.undo = order.undo.filter(entry => entry.sceneKey !== scene.key);
+      order.redo = order.redo.filter(entry => entry.sceneKey !== scene.key);
+    }
+    scenes.delete(scene.key);
+    return {
+      targetFrame: scene.targetFrame,
+      sourceWidth: scene.sourceWidth,
+      sourceHeight: scene.sourceHeight,
+      objects: [...scene.objects.values()].map(clonePlain)
+    };
+  }
+
+  // 저장된 오브젝트 목록으로 커밋된 씬을 만든다. 히스토리는 새로 시작한다 —
+  // 옮겨 온 씬의 예전 커맨드는 이 프레임에서 의미가 없다.
+  function materializeSceneAt(stableVideoIdentity, frame, blueprint) {
+    const key = makeSceneKey(stableVideoIdentity, frame);
+    const objects = new Map();
+    for (const record of blueprint?.objects || []) {
+      const cloned = clonePlain(record);
+      objects.set(cloned.id, cloned);
+    }
+    const scene = {
+      key,
+      sceneInstanceId: allocateSceneInstanceId(),
+      stableVideoIdentity,
+      targetFrame: frame,
+      sourceWidth: sourceDimension(blueprint?.sourceWidth),
+      sourceHeight: sourceDimension(blueprint?.sourceHeight),
+      objects,
+      selectedObjectIds: new Set(),
+      history: createDrawingCommandHistory({
+        maxEntries: maxHistory,
+        maxBytes: maxHistoryBytes,
+        estimateEntryBytes: defaultEstimateObjectBytes
+      }),
+      historyEntries: { undo: [], redo: [] },
+      dirty: true,
+      mutationCount: 0,
+      mutationSequence: 0,
+      estimatedBytes: estimateObjectsBytes(objects),
+      drawingObserverSeeded: false,
+      provisional: false,
+      provisionalSourceFrame: null
+    };
+    scenes.set(key, scene);
+    return scene;
+  }
+
+  // 커밋된 키프레임이 놓인 프레임 번호. 앱이 타임라인 마커를 다시 그리려면
+  // 어차피 필요하고, 테스트가 결과를 관측할 유일한 표면이기도 하다.
+  function committedKeyframeFrames(stableVideoIdentity) {
+    return committedScenesForVideo(stableVideoIdentity).map(scene => scene.targetFrame);
+  }
+
+  function applyFrameOperation(command = {}) {
+    if (destroyed) return { applied: false, reason: 'store-destroyed' };
+    const operation = command.operation;
+    if (!FRAME_OPERATIONS.has(operation)) {
+      return { applied: false, reason: 'invalid-frame-operation' };
+    }
+    const stableVideoIdentity = activeSession?.stableVideoIdentity;
+    if (!stableVideoIdentity) return { applied: false, reason: 'no-active-session' };
+    const frame = Number(command.frame);
+    if (!Number.isSafeInteger(frame) || frame < 0) {
+      return { applied: false, reason: 'invalid-frame' };
+    }
+    const binding = persistenceByVideo.get(stableVideoIdentity);
+    const totalFrames = binding ? binding.totalFrames : null;
+    if (totalFrames !== null && frame >= totalFrames) {
+      return { applied: false, reason: 'frame-out-of-range' };
+    }
+
+    const ordered = committedScenesForVideo(stableVideoIdentity);
+    const committedAtFrame = ordered.find(scene => scene.targetFrame === frame) || null;
+
+    // 오른쪽으로 미는 조작은 마지막 프레임 밖으로 밀려나는 키프레임이 하나라도
+    // 있으면 **거절한다.** 조용히 버리면 그림이 사라진다.
+    const shiftsRight = operation === 'frame-insert' || operation === 'frame-insert-blank-keyframe';
+    if (shiftsRight && totalFrames !== null) {
+      const last = ordered[ordered.length - 1];
+      if (last && last.targetFrame >= frame && last.targetFrame + 1 >= totalFrames) {
+        return { applied: false, reason: 'timeline-full' };
+      }
+    }
+
+    if (operation === 'frame-copy') {
+      const source = heldSceneAt(stableVideoIdentity, frame);
+      if (!source) return { applied: false, reason: 'nothing-to-copy' };
+      frameClipboard = {
+        stableVideoIdentity,
+        sourceWidth: source.sourceWidth,
+        sourceHeight: source.sourceHeight,
+        objects: [...source.objects.values()].map(clonePlain)
+      };
+      return {
+        applied: true,
+        operation,
+        frame,
+        keyframeSetChanged: false,
+        copiedCount: frameClipboard.objects.length,
+        keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+      };
+    }
+
+    if (operation === 'frame-paste') {
+      if (!frameClipboard) return { applied: false, reason: 'clipboard-empty' };
+      if (frameClipboard.stableVideoIdentity !== stableVideoIdentity) {
+        return { applied: false, reason: 'clipboard-other-video' };
+      }
+      dropProvisionalScenes(stableVideoIdentity);
+      detachScene(committedAtFrame);
+      materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      return {
+        applied: true,
+        operation,
+        frame,
+        keyframeSetChanged: true,
+        keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+      };
+    }
+
+    if (operation === 'keyframe-to-frame') {
+      if (!committedAtFrame) return { applied: false, reason: 'no-keyframe-here' };
+      dropProvisionalScenes(stableVideoIdentity);
+      detachScene(committedAtFrame);
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      return {
+        applied: true,
+        operation,
+        frame,
+        keyframeSetChanged: true,
+        keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+      };
+    }
+
+    if (operation === 'frame-to-keyframe') {
+      if (committedAtFrame) return { applied: false, reason: 'already-keyframe' };
+      // 홀드 중인 내용을 복사해 정식 키프레임으로 만든다(애니메이트 F6 과 같다).
+      const held = heldSceneAt(stableVideoIdentity, frame);
+      dropProvisionalScenes(stableVideoIdentity);
+      materializeSceneAt(stableVideoIdentity, frame, held
+        ? {
+          sourceWidth: held.sourceWidth,
+          sourceHeight: held.sourceHeight,
+          objects: [...held.objects.values()].map(clonePlain)
+        }
+        : { objects: [] });
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      return {
+        applied: true,
+        operation,
+        frame,
+        keyframeSetChanged: true,
+        keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+      };
+    }
+
+    if (operation === 'frame-remove') {
+      dropProvisionalScenes(stableVideoIdentity);
+      detachScene(committedAtFrame);
+      const nextFrameByKey = new Map();
+      for (const scene of ordered) {
+        if (scene === committedAtFrame) continue;
+        if (scene.targetFrame > frame) nextFrameByKey.set(scene.key, scene.targetFrame - 1);
+      }
+      rekeyScenes(stableVideoIdentity, nextFrameByKey);
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      return {
+        applied: true,
+        operation,
+        frame,
+        keyframeSetChanged: true,
+        keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+      };
+    }
+
+    // frame-insert / frame-insert-blank-keyframe — 프레임 F 부터 한 칸 민다.
+    // 뒤에서 앞으로 옮겨야 중간에 키가 겹치지 않는다.
+    dropProvisionalScenes(stableVideoIdentity);
+    const nextFrameByKey = new Map();
+    for (let index = ordered.length - 1; index >= 0; index -= 1) {
+      const scene = ordered[index];
+      if (scene.targetFrame >= frame) nextFrameByKey.set(scene.key, scene.targetFrame + 1);
+    }
+    rekeyScenes(stableVideoIdentity, nextFrameByKey);
+    if (operation === 'frame-insert-blank-keyframe') {
+      materializeSceneAt(stableVideoIdentity, frame, { objects: [] });
+    }
+    rebuildActiveProvisionalScene(stableVideoIdentity);
+    return {
+      applied: true,
+      operation,
+      frame,
+      keyframeSetChanged: true,
+      keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
+    };
+  }
+
   function hasScene(stableVideoIdentity, targetFrame) {
     return scenes.has(makeSceneKey(stableVideoIdentity, targetFrame));
   }
@@ -2414,6 +2740,7 @@ function createSessionSceneStore(options = {}) {
     redo,
     deleteSelection,
     clearSession,
+    applyFrameOperation,
     updateTool,
     setLocalTool,
     getSceneSnapshot,
@@ -8879,6 +9206,34 @@ function createFabricOverlayRuntime(options = {}) {
       return { applied: false, reason: 'stale-session' };
     }
     const action = command.action || command.type;
+    // 구조 조작은 획 편집 경로(선택·되돌리기·라쏘 정리)를 타지 않는다.
+    // 대상 프레임이 키프레임이 아니어도 되고, 임시 씬을 정식화해서도 안 된다 —
+    // `3`(프레임 추가)은 키프레임을 만들지 않는 것이 정의다.
+    if (FRAME_STRUCTURE_ACTIONS.has(action)) {
+      if (!actionDeduper.accept(command.actionId)) {
+        metrics.recordDuplicateAction();
+        return { applied: false, duplicate: true };
+      }
+      const frame = command.targetFrame === undefined
+        ? activeFrameState.targetFrame
+        : Number(command.targetFrame);
+      const result = sceneStore.applyFrameOperation({ operation: action, frame });
+      if (!result.applied) {
+        actionDeduper.release?.(command.actionId);
+        return result;
+      }
+      // 키프레임 집합이 바뀌면 화면에 떠 있던 씬이 다른 프레임의 것이 됐을 수
+      // 있다. 동기로 다시 그리고 합성을 강제한다(applyDrawingAction 의 repainted 규약).
+      if (result.keyframeSetChanged) {
+        renderActiveScene({ immediate: true });
+        fabricCanvas?.discardActiveObject?.();
+        sceneStore.selectObjects([]);
+        setToolMode(currentSession?.tool || 'brush');
+        updateObjectMetric();
+      }
+      settleArmedFramePreview();
+      return { ...result, repainted: result.keyframeSetChanged === true };
+    }
     if (!DRAWING_ACTIONS.has(action)) {
       return { applied: false, reason: 'invalid-action' };
     }
