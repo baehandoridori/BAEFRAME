@@ -3472,6 +3472,19 @@ function createFabricOverlayRuntime(options = {}) {
   let prepared = false;
   let destroyed = false;
   let inputEnabled = false;
+  // ── 레이어 표시·잠금은 **뷰 상태**다 ─────────────────────────────────────
+  //
+  // 레코드 키 집합이 고정이라(validatePersistedRecord 의 hasExactKeys) 숨김·잠금을
+  // 문서에 쓸 수 없다. 렌더러가 레이어 모델에서 계산한 **id 집합**을 밀어 넣고,
+  // 여기서는 그리기만 바꾼다. 저장 스냅샷은 이 값을 읽지 않는다.
+  //
+  // 토글이 아니라 집합으로 들고 있어야 한다 — 프레임 전환·실행취소·재수화가
+  // 캔버스를 통째로 다시 만들기 때문이다. 한 번만 적용하는 방식이면 그때 숨긴
+  // 획이 다음 프레임에서 되살아난다.
+  let hiddenObjectIds = new Set();
+  let lockedObjectIds = new Set();
+  // 활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다(레거시와 같다).
+  let activeLayerDrawable = true;
   let currentSession = null;
   let passiveDisplaySession = null;
   let lastPaintedScene = null;
@@ -4474,6 +4487,11 @@ function createFabricOverlayRuntime(options = {}) {
     object.setCoords?.();
   }
 
+  function isLayerRestricted(objectId) {
+    return typeof objectId === 'string' &&
+      (hiddenObjectIds.has(objectId) || lockedObjectIds.has(objectId));
+  }
+
   function makeFabricPath(record, transient = false) {
     const { Path } = resolveFabric();
     const path = new Path(record.renderGeometry?.pathData || record.pathData, {
@@ -4488,9 +4506,14 @@ function createFabricOverlayRuntime(options = {}) {
       // evented 까지 끄면 눈에 보이는 그 픽셀을 클릭해도 그냥 빠져 버린다.
       // 클릭이 들어오면 onCanvasMouseDown 이 짝인 본체로 돌린다.
       // 짝을 잃은 고아는 평범한 획으로 되돌아간다.
-      selectable: !transient && !sceneStore.isDerivedOutline(record.id) &&
+      // 숨기거나 잠근 레이어의 획은 잡히지 않는다. 여기서 막지 않으면 보이지도
+      // 않는 획이 라쏘·클릭에 걸려 옮겨진다.
+      selectable: !transient && !isLayerRestricted(record.id) &&
+        !sceneStore.isDerivedOutline(record.id) &&
         sceneStore.getDiagnostics().tool === 'select',
-      evented: !transient && sceneStore.getDiagnostics().tool === 'select',
+      evented: !transient && !isLayerRestricted(record.id) &&
+        sceneStore.getDiagnostics().tool === 'select',
+      visible: transient || !hiddenObjectIds.has(record.id),
       objectCaching: !transient,
       perPixelTargetFind: !transient,
       padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
@@ -6455,7 +6478,11 @@ function createFabricOverlayRuntime(options = {}) {
       const targetId = sceneStore.isDerivedOutline(record.id)
         ? bodyIdFor(record.id)
         : record.id;
-      if (!targetId || selectedIdSet.has(targetId)) continue;
+      // 숨기거나 잠근 레이어의 획은 후보에서 뺀다. 이 경로는 씬 스냅샷을 직접
+      // 훑으므로 fabric 의 selectable·evented 를 거치지 않는다 — 여기서 막지
+      // 않으면 보이지도 않는 획이 라쏘에 걸려 함께 옮겨진다.
+      if (!targetId || selectedIdSet.has(targetId) ||
+          isLayerRestricted(targetId) || isLayerRestricted(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -6575,7 +6602,9 @@ function createFabricOverlayRuntime(options = {}) {
       // 외곽선은 본체보다 굵어 같은 폴리곤으로 잘라도 조각 수가 어긋난다.
       // 후보에서 빼고, 본체가 잘릴 때 조각마다 다시 만든다.
       // 짝을 잃은 고아는 평범한 획이므로 그대로 잘릴 수 있어야 한다.
-      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id)) continue;
+      // 숨기거나 잠근 레이어의 획은 자르지 않는다(위 라쏘와 같은 이유).
+      if (record.type !== 'stroke' || sceneStore.isDerivedOutline(record.id) ||
+          isLayerRestricted(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -7441,7 +7470,10 @@ function createFabricOverlayRuntime(options = {}) {
       const derivedOutline = sceneStore.isDerivedOutline(record.id);
       if (derivedOutline && gesture.mode === 'pixel') continue;
       const targetId = derivedOutline ? bodyIdFor(record.id) : record.id;
-      if (!targetId || gesture.erasedIds.has(targetId)) continue;
+      // 숨기거나 잠근 레이어의 획은 지우지 않는다. 미리보기가 visible 을 직접
+      // 만지므로, 통과시키면 복원에서 숨긴 획이 다시 보이기까지 한다.
+      if (!targetId || gesture.erasedIds.has(targetId) ||
+          isLayerRestricted(targetId) || isLayerRestricted(record.id)) continue;
       const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
       const object = context.canvasObjects.get(record.id);
       if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -8094,6 +8126,13 @@ function createFabricOverlayRuntime(options = {}) {
         activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
       return;
     }
+    // 활성 레이어가 숨겨졌거나 잠겼으면 새 획·지우기를 받지 않는다(레거시 parity).
+    // 선택 도구는 통과시킨다 — 다른 레이어의 획은 여전히 다룰 수 있어야 한다.
+    if (!activeLayerDrawable && sceneStore.getDiagnostics().tool !== 'select') {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     if (!requestPointerdownFrame) {
       beginPointerDown(event, true);
       return;
@@ -8680,8 +8719,12 @@ function createFabricOverlayRuntime(options = {}) {
         !nativeSelection &&
         activeIds.has(object.__baeframeObjectId);
       // 외곽선은 본체의 짝이라 어떤 선택 방식에서도 따로 잡히지 않는다.
-      const interactive = nativeSelection || activeInCustomSelection;
+      // 숨기거나 잠근 레이어의 획도 마찬가지다 — 여기서 함께 걸러야 토글만
+      // 들어왔을 때(캔버스 재구성 없이) 곧바로 반영된다.
+      const restricted = isLayerRestricted(object.__baeframeObjectId);
+      const interactive = !restricted && (nativeSelection || activeInCustomSelection);
       object.set({
+        visible: !hiddenObjectIds.has(object.__baeframeObjectId),
         selectable: interactive && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
         // 외곽선도 이벤트는 받는다 — 그 위 클릭을 짝인 본체로 돌리기 위해서다.
         evented: interactive
@@ -8697,7 +8740,12 @@ function createFabricOverlayRuntime(options = {}) {
     const isPermanentActiveSelection = activeChildren.length > 0 && activeChildren.every(
       object => !!object?.__baeframeObjectId && !object.__baeframeTransient
     );
-    if (isPermanentPath || isPermanentActiveSelection) {
+    // 선택 중이던 것이 숨겨지거나 잠기면 여기서 되살리면 안 된다 — 위 루프가
+    // 막아 둔 것을 이 한 줄이 통째로 풀어 버린다.
+    const activeRestricted = isPermanentPath
+      ? isLayerRestricted(activeObject.__baeframeObjectId)
+      : activeChildren.some(object => isLayerRestricted(object.__baeframeObjectId));
+    if ((isPermanentPath || isPermanentActiveSelection) && !activeRestricted) {
       applyMoveOnlyConstraints(activeObject);
       applySelectedActivePolicy(activeObject);
       activeObject.set?.({ selectable: true, evented: true });
@@ -9194,6 +9242,21 @@ function createFabricOverlayRuntime(options = {}) {
     try {
       const result = sceneStore.hydrateVideo(clonePlain(request));
       if (result?.accepted === true) {
+        // 표시·잠금 집합은 **그 영상의 오브젝트 id** 로 되어 있다. 다른 영상을
+        // 수화하면서 들고 있으면, 렌더러가 다시 밀어 넣기 전까지 새 영상이
+        // 이전 영상의 제한을 쓴다 — 특히 activeLayerDrawable=false 가 남으면
+        // 그리기 모드를 켠 직후 첫 획이 조용히 무시된다. 가장 안전한 쪽으로
+        // 되돌린다(아무것도 숨기지 않고 그릴 수 있다).
+        // 수화는 입력이 꺼져 있을 때만 온다 — currentSession 은 대개 null 이다.
+        // passive 표시 세션의 정체와도 비교해야 같은 영상 재수화에서 헛되이
+        // 집합을 버리지 않는다.
+        const hydratingIdentity = String(request?.stableVideoIdentity || '');
+        if (hydratingIdentity !== String(currentSession?.stableVideoIdentity || '') &&
+            hydratingIdentity !== String(passiveDisplaySession?.stableVideoIdentity || '')) {
+          hiddenObjectIds = new Set();
+          lockedObjectIds = new Set();
+          activeLayerDrawable = true;
+        }
         if (passiveDisplaySession &&
             passiveDisplaySession.stableVideoIdentity !==
               String(request?.stableVideoIdentity || '')) {
@@ -9453,6 +9516,102 @@ function createFabricOverlayRuntime(options = {}) {
     return { accepted: true, size };
   }
 
+  // 렌더러가 레이어 모델에서 계산한 집합을 통째로 받는다. 델타가 아니라 **전체**라
+  // 순서가 어긋나도 마지막 것이 옳다. 호스트가 이미 검증하지만 런타임도 자기
+  // 입력을 믿지 않는다(레코드 검증과 같은 규약).
+  function toLayerViewObjectIds(value) {
+    const ids = new Set();
+    if (!Array.isArray(value)) return ids;
+    for (const id of value) {
+      if (ids.size >= MAX_PERSISTED_OBJECTS_TOTAL) break;
+      if (typeof id === 'string' && id.length > 0 && id.length <= 512) ids.add(id);
+    }
+    return ids;
+  }
+
+  function updateDrawingLayerView(command = {}) {
+    // passive 투영에서도 받아야 한다. 저장된 레이어 모델이 숨겨 둔 획은 **보기만
+    // 하는 동안에도** 숨겨져 있어야 하는데, 그리기 모드에서만 받으면 그리기를
+    // 켤 때까지 다 보인다. passive 에는 세션 id 가 없으므로 영상 정체로 맞춘다.
+    const activeMatch = inputEnabled && command.sessionId === currentSession?.sessionId;
+    const passiveMatch = !inputEnabled && !!passiveDisplaySession &&
+      String(command.stableVideoIdentity || '') ===
+        String(passiveDisplaySession.stableVideoIdentity || '');
+    if (!activeMatch && !passiveMatch) {
+      return { accepted: false, reason: inputEnabled ? 'stale-session' : 'input-disabled' };
+    }
+    hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
+    lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
+    activeLayerDrawable = command.activeLayerDrawable !== false;
+    if (passiveMatch) {
+      // 보는 중에는 제스처가 없다. 지금 그려 둔 화면만 새 집합으로 다시 칠한다.
+      repaintLastPaintedScene({ force: true });
+      return {
+        accepted: true,
+        hiddenCount: hiddenObjectIds.size,
+        lockedCount: lockedObjectIds.size
+      };
+    }
+    // ── 이미 시작한 작업은 자기 목록을 들고 간다 ─────────────────────────
+    //
+    // 집합을 바꾸는 것만으로는 **앞으로의 판정**만 달라진다. 진행 중이거나
+    // 세워 둔 작업은 각자 대상 목록을 이미 쥐고 있어 그대로 커밋된다.
+    // 아래 네 가지를 모두 물려야 "잠갔는데 바뀌었다" 가 없어진다.
+
+    // (1) 그리는 중. 손을 뗄 때 finalizeActiveStroke·commitShapeGesture 가
+    // 그대로 커밋한다(확정된 pointerdown 재생은 시작 가드도 우회한다).
+    if (!activeLayerDrawable) {
+      cancelPendingPointerdownFrame();
+      if (activeStroke) cancelActiveStroke();
+      if (shapeGesture) cancelShapeGesture();
+    }
+    // (2) 선택을 끄는 중. 선택에서 빼기만 하면 오브젝트가 끌던 자리에 남고,
+    // 뒤이어 오는 object:modified 가 그 이동을 저장한다.
+    if ((selectGesture || transformStart) && (
+      selectionIds().some(id => isLayerRestricted(id)) ||
+      isLayerRestricted(transformStart?.target?.__baeframeObjectId)
+    )) {
+      cancelSelectInteraction();
+    }
+    // (3) 세워 둔 조각. 부분 선택은 조각을 **새 id 의 프록시**로 세운다. 제한 집합은 원본
+    // id 로 되어 있어 아래 selectionIds() 필터를 그대로 빠져나간다. 그대로 두면
+    // 잠긴 뒤에도 커밋이 원본을 자르거나 지운다 — 통째로 물린다.
+    const pendingRestricted = pendingLassoSelection && (
+      (pendingLassoSelection.replacements || [])
+        .some(entry => isLayerRestricted(entry.removeId)) ||
+      [...(pendingLassoSelection.selectedPersistedIds || [])]
+        .some(id => isLayerRestricted(id))
+    );
+    if (pendingRestricted) abortPendingLassoSelection();
+    // (4) 지우는 중. 이미 erasedIds 에 들어간 id 는 새 집합이
+    // 막지 못하고, 손을 뗄 때 finalizeStrokeEraseGesture 가 그대로 지운다 —
+    // 드래그 도중에 그 레이어를 숨기거나 잠갔는데도 지워진다.
+    // 제스처를 물리면 미리보기로 감춘 획도 함께 되살아난다.
+    // 활성 레이어가 제한되면 큐가 비었든 다른 레이어를 담았든 물린다 —
+    // pointerdown 가드가 "그릴 수 없으면 지울 수도 없다" 로 잡고 있는데,
+    // 드래그 도중 잠긴 경우만 예외로 두면 규칙이 어긋난다.
+    if (strokeEraseGesture && (
+      !activeLayerDrawable ||
+      [...strokeEraseGesture.erasedIds].some(id => isLayerRestricted(id))
+    )) {
+      cancelStrokeEraseGesture();
+    }
+    // 이미 선택돼 있던 획이 숨겨지거나 잠기면 **선택에서 뺀다.** 남겨 두면
+    // 보이지도 않는 것이 함께 옮겨지거나 지워진다.
+    const selected = selectionIds();
+    const kept = selected.filter(id => !isLayerRestricted(id));
+    if (kept.length !== selected.length) activateObjectIds(kept);
+    // 캔버스를 다시 만들지 않고 지금 붙어 있는 오브젝트에 바로 반영한다.
+    // 재구성 경로(renderActiveScene 등)는 makeFabricPath 에서 같은 값을 읽는다.
+    refreshSelectionInteractionPolicy();
+    fabricCanvas?.requestRenderAll?.();
+    return {
+      accepted: true,
+      hiddenCount: hiddenObjectIds.size,
+      lockedCount: lockedObjectIds.size
+    };
+  }
+
   function updateLocalDrawingTool(tool) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
     const result = sceneStore.setLocalTool({ sessionId: currentSession?.sessionId, tool });
@@ -9527,10 +9686,26 @@ function createFabricOverlayRuntime(options = {}) {
       cancelSelectInteraction();
     }
 
+    // 전체 지우기는 숨기거나 잠근 레이어의 획을 **남긴다.** clearSession() 은 씬을
+    // 통째로 비우므로, 제한된 것이 하나라도 있으면 선택 삭제 경로로 돌린다 —
+    // 짝인 외곽선 처리와 히스토리가 이미 그 경로에 있다.
+    let preservedRestrictedOnClear = false;
+    const clearSessionPreservingRestricted = () => {
+      const snapshot = sceneStore.getActiveSceneSnapshot();
+      const ids = (snapshot?.objects || []).map(record => record.id).filter(Boolean);
+      const restricted = id => isLayerRestricted(id) ||
+        (sceneStore.isDerivedOutline(id) && isLayerRestricted(bodyIdFor(id)));
+      if (!ids.some(restricted)) return sceneStore.clearSession();
+      preservedRestrictedOnClear = true;
+      const removable = ids.filter(id => !restricted(id));
+      if (removable.length === 0) return { applied: false, reason: 'all-objects-restricted' };
+      sceneStore.selectObjects(removable);
+      return sceneStore.deleteSelection();
+    };
     const result = action === 'delete-selection'
       ? sceneStore.deleteSelection()
       : action === 'clear-session'
-        ? sceneStore.clearSession()
+        ? clearSessionPreservingRestricted()
         : action === 'undo'
           ? sceneStore.undo()
           : sceneStore.redo();
@@ -9557,7 +9732,10 @@ function createFabricOverlayRuntime(options = {}) {
       }
       const deletedIds = new Set(result.deletedIds);
       for (const object of fabricCanvas.getObjects()) {
-        if (action === 'clear-session' || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
+        // 제한된 획을 남긴 경우에는 **지운 것만** 걷는다. 통째로 비우면 화면에서만
+        // 사라지고 문서에는 남아, 다음 재도색에서 되살아난다.
+        if ((action === 'clear-session' && !preservedRestrictedOnClear) ||
+            deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
       }
       fabricCanvas.discardActiveObject();
       refreshSelectionInteractionPolicy();
@@ -9700,6 +9878,7 @@ function createFabricOverlayRuntime(options = {}) {
     exportDrawingVideo,
     updateDrawingTool,
     updateDrawingBrush,
+    updateDrawingLayerView,
     updateViewport,
     applyDrawingAction,
     getDiagnostics,

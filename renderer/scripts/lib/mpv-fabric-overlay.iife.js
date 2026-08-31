@@ -16318,6 +16318,9 @@ void main() {
         let prepared = false;
         let destroyed = false;
         let inputEnabled = false;
+        let hiddenObjectIds = /* @__PURE__ */ new Set();
+        let lockedObjectIds = /* @__PURE__ */ new Set();
+        let activeLayerDrawable = true;
         let currentSession = null;
         let passiveDisplaySession = null;
         let lastPaintedScene = null;
@@ -17175,6 +17178,9 @@ void main() {
           applyMoveOnlyConstraints(object);
           object.setCoords?.();
         }
+        function isLayerRestricted(objectId) {
+          return typeof objectId === "string" && (hiddenObjectIds.has(objectId) || lockedObjectIds.has(objectId));
+        }
         function makeFabricPath(record, transient = false) {
           const { Path } = resolveFabric();
           const path = new Path(record.renderGeometry?.pathData || record.pathData, {
@@ -17189,8 +17195,11 @@ void main() {
             // evented 까지 끄면 눈에 보이는 그 픽셀을 클릭해도 그냥 빠져 버린다.
             // 클릭이 들어오면 onCanvasMouseDown 이 짝인 본체로 돌린다.
             // 짝을 잃은 고아는 평범한 획으로 되돌아간다.
-            selectable: !transient && !sceneStore.isDerivedOutline(record.id) && sceneStore.getDiagnostics().tool === "select",
-            evented: !transient && sceneStore.getDiagnostics().tool === "select",
+            // 숨기거나 잠근 레이어의 획은 잡히지 않는다. 여기서 막지 않으면 보이지도
+            // 않는 획이 라쏘·클릭에 걸려 옮겨진다.
+            selectable: !transient && !isLayerRestricted(record.id) && !sceneStore.isDerivedOutline(record.id) && sceneStore.getDiagnostics().tool === "select",
+            evented: !transient && !isLayerRestricted(record.id) && sceneStore.getDiagnostics().tool === "select",
+            visible: transient || !hiddenObjectIds.has(record.id),
             objectCaching: !transient,
             perPixelTargetFind: !transient,
             padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
@@ -18862,7 +18871,7 @@ void main() {
           for (const record of snapshot?.objects || []) {
             if (record.type !== "stroke") continue;
             const targetId = sceneStore.isDerivedOutline(record.id) ? bodyIdFor(record.id) : record.id;
-            if (!targetId || selectedIdSet.has(targetId)) continue;
+            if (!targetId || selectedIdSet.has(targetId) || isLayerRestricted(targetId) || isLayerRestricted(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -18953,7 +18962,7 @@ void main() {
             return fail(geometryBudget.limitExceeded ? "selection-complexity-limit-exceeded" : "selection-geometry-unavailable");
           }
           for (const record of snapshot?.objects || []) {
-            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id)) continue;
+            if (record.type !== "stroke" || sceneStore.isDerivedOutline(record.id) || isLayerRestricted(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -19703,7 +19712,7 @@ void main() {
             const derivedOutline = sceneStore.isDerivedOutline(record.id);
             if (derivedOutline && gesture.mode === "pixel") continue;
             const targetId = derivedOutline ? bodyIdFor(record.id) : record.id;
-            if (!targetId || gesture.erasedIds.has(targetId)) continue;
+            if (!targetId || gesture.erasedIds.has(targetId) || isLayerRestricted(targetId) || isLayerRestricted(record.id)) continue;
             const maximumRadius = Math.max(1, finiteNumber(record.style?.size, 1)) * 0.825;
             const object = context.canvasObjects.get(record.id);
             if (!boundsIntersect(strokeObjectSceneBounds(record, object, maximumRadius), polygonBounds)) {
@@ -20261,6 +20270,11 @@ void main() {
           if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
             return;
           }
+          if (!activeLayerDrawable && sceneStore.getDiagnostics().tool !== "select") {
+            event.preventDefault?.();
+            event.stopImmediatePropagation?.();
+            return;
+          }
           if (!requestPointerdownFrame) {
             beginPointerDown(event, true);
             return;
@@ -20784,8 +20798,10 @@ void main() {
             applyMoveOnlyConstraints(object);
             applyUnselectedPermanentPathPolicy(object, tolerance);
             const activeInCustomSelection = selectTool && !nativeSelection && activeIds.has(object.__baeframeObjectId);
-            const interactive = nativeSelection || activeInCustomSelection;
+            const restricted = isLayerRestricted(object.__baeframeObjectId);
+            const interactive = !restricted && (nativeSelection || activeInCustomSelection);
             object.set({
+              visible: !hiddenObjectIds.has(object.__baeframeObjectId),
               selectable: interactive && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
               // 외곽선도 이벤트는 받는다 — 그 위 클릭을 짝인 본체로 돌리기 위해서다.
               evented: interactive
@@ -20798,7 +20814,8 @@ void main() {
           const isPermanentActiveSelection = activeChildren.length > 0 && activeChildren.every(
             (object) => !!object?.__baeframeObjectId && !object.__baeframeTransient
           );
-          if (isPermanentPath || isPermanentActiveSelection) {
+          const activeRestricted = isPermanentPath ? isLayerRestricted(activeObject.__baeframeObjectId) : activeChildren.some((object) => isLayerRestricted(object.__baeframeObjectId));
+          if ((isPermanentPath || isPermanentActiveSelection) && !activeRestricted) {
             applyMoveOnlyConstraints(activeObject);
             applySelectedActivePolicy(activeObject);
             activeObject.set?.({ selectable: true, evented: true });
@@ -21265,6 +21282,12 @@ void main() {
           try {
             const result = sceneStore.hydrateVideo(clonePlain(request));
             if (result?.accepted === true) {
+              const hydratingIdentity = String(request?.stableVideoIdentity || "");
+              if (hydratingIdentity !== String(currentSession?.stableVideoIdentity || "") && hydratingIdentity !== String(passiveDisplaySession?.stableVideoIdentity || "")) {
+                hiddenObjectIds = /* @__PURE__ */ new Set();
+                lockedObjectIds = /* @__PURE__ */ new Set();
+                activeLayerDrawable = true;
+              }
               if (passiveDisplaySession && passiveDisplaySession.stableVideoIdentity !== String(request?.stableVideoIdentity || "")) {
                 resetPassivePresentationState();
               }
@@ -21482,6 +21505,56 @@ void main() {
           flashSizeAdjustHudAtViewportCenter(size);
           return { accepted: true, size };
         }
+        function toLayerViewObjectIds(value) {
+          const ids = /* @__PURE__ */ new Set();
+          if (!Array.isArray(value)) return ids;
+          for (const id of value) {
+            if (ids.size >= MAX_PERSISTED_OBJECTS_TOTAL) break;
+            if (typeof id === "string" && id.length > 0 && id.length <= 512) ids.add(id);
+          }
+          return ids;
+        }
+        function updateDrawingLayerView(command = {}) {
+          const activeMatch = inputEnabled && command.sessionId === currentSession?.sessionId;
+          const passiveMatch = !inputEnabled && !!passiveDisplaySession && String(command.stableVideoIdentity || "") === String(passiveDisplaySession.stableVideoIdentity || "");
+          if (!activeMatch && !passiveMatch) {
+            return { accepted: false, reason: inputEnabled ? "stale-session" : "input-disabled" };
+          }
+          hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
+          lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
+          activeLayerDrawable = command.activeLayerDrawable !== false;
+          if (passiveMatch) {
+            repaintLastPaintedScene({ force: true });
+            return {
+              accepted: true,
+              hiddenCount: hiddenObjectIds.size,
+              lockedCount: lockedObjectIds.size
+            };
+          }
+          if (!activeLayerDrawable) {
+            cancelPendingPointerdownFrame();
+            if (activeStroke) cancelActiveStroke();
+            if (shapeGesture) cancelShapeGesture();
+          }
+          if ((selectGesture || transformStart) && (selectionIds().some((id) => isLayerRestricted(id)) || isLayerRestricted(transformStart?.target?.__baeframeObjectId))) {
+            cancelSelectInteraction();
+          }
+          const pendingRestricted = pendingLassoSelection && ((pendingLassoSelection.replacements || []).some((entry) => isLayerRestricted(entry.removeId)) || [...pendingLassoSelection.selectedPersistedIds || []].some((id) => isLayerRestricted(id)));
+          if (pendingRestricted) abortPendingLassoSelection();
+          if (strokeEraseGesture && (!activeLayerDrawable || [...strokeEraseGesture.erasedIds].some((id) => isLayerRestricted(id)))) {
+            cancelStrokeEraseGesture();
+          }
+          const selected = selectionIds();
+          const kept = selected.filter((id) => !isLayerRestricted(id));
+          if (kept.length !== selected.length) activateObjectIds(kept);
+          refreshSelectionInteractionPolicy();
+          fabricCanvas?.requestRenderAll?.();
+          return {
+            accepted: true,
+            hiddenCount: hiddenObjectIds.size,
+            lockedCount: lockedObjectIds.size
+          };
+        }
         function updateLocalDrawingTool(tool) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
           const result = sceneStore.setLocalTool({ sessionId: currentSession?.sessionId, tool });
@@ -21545,7 +21618,19 @@ void main() {
             ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
             cancelSelectInteraction();
           }
-          const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? sceneStore.clearSession() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
+          let preservedRestrictedOnClear = false;
+          const clearSessionPreservingRestricted = () => {
+            const snapshot = sceneStore.getActiveSceneSnapshot();
+            const ids = (snapshot?.objects || []).map((record) => record.id).filter(Boolean);
+            const restricted = (id) => isLayerRestricted(id) || sceneStore.isDerivedOutline(id) && isLayerRestricted(bodyIdFor(id));
+            if (!ids.some(restricted)) return sceneStore.clearSession();
+            preservedRestrictedOnClear = true;
+            const removable = ids.filter((id) => !restricted(id));
+            if (removable.length === 0) return { applied: false, reason: "all-objects-restricted" };
+            sceneStore.selectObjects(removable);
+            return sceneStore.deleteSelection();
+          };
+          const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? clearSessionPreservingRestricted() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
           if (result.applied) {
             if (action === "undo" || action === "redo") {
               let repainted = false;
@@ -21562,7 +21647,7 @@ void main() {
             }
             const deletedIds = new Set(result.deletedIds);
             for (const object of fabricCanvas.getObjects()) {
-              if (action === "clear-session" || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
+              if (action === "clear-session" && !preservedRestrictedOnClear || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
             }
             fabricCanvas.discardActiveObject();
             refreshSelectionInteractionPolicy();
@@ -21691,6 +21776,7 @@ void main() {
           exportDrawingVideo,
           updateDrawingTool,
           updateDrawingBrush,
+          updateDrawingLayerView,
           updateViewport,
           applyDrawingAction,
           getDiagnostics,

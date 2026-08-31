@@ -426,6 +426,8 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingTool(request)));
   ipcMain.handle('mpv:update-overlay-drawing-brush', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingBrush(request)));
+  ipcMain.handle('mpv:update-overlay-drawing-layer-view', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingLayerView(request)));
   ipcMain.handle('mpv:update-overlay-drawing-frame', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingFrame(request)));
   ipcMain.handle('mpv:apply-overlay-drawing-action', (event, request) =>

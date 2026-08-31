@@ -19,9 +19,14 @@ import { ReviewDataManager, getBframePath } from './modules/review-data-manager.
 import {
   addLayer as addDrawingLayerState,
   assignObject as assignDrawingObjectLayer,
+  findLayer as findDrawingLayer,
+  isObjectEditable as isDrawingObjectEditable,
+  isObjectVisible as isDrawingObjectVisible,
   layerIdForObject as drawingLayerIdForObject,
   pruneAssignments as pruneDrawingLayerAssignments,
-  selectLayerByOffset as selectDrawingLayerState
+  selectLayerByOffset as selectDrawingLayerState,
+  toggleLayerLock as toggleDrawingLayerLockState,
+  toggleLayerVisibility as toggleDrawingLayerVisibilityState
 } from '../../shared/drawing-layers.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
@@ -6350,7 +6355,11 @@ async function initApp() {
   const FABRIC_PILOT_LAYER_ACTIONS = new Set([
     'drawingLayerAdd',
     'drawingLayerSelectUp',
-    'drawingLayerSelectDown'
+    'drawingLayerSelectDown',
+    // 표시·잠금은 문서를 바꾸지 않는 **뷰 상태**다. 레이어 모델의 플래그를
+    // 뒤집고, 거기서 계산한 id 집합을 오버레이로 밀어 넣는다.
+    'drawingLayerVisibilityToggle',
+    'drawingLayerLockToggle'
   ]);
 
   function shouldBlockFabricDrawingLegacyShortcut(event) {
@@ -6635,8 +6644,11 @@ async function initApp() {
           name: layer.name,
           color: layer.color,
           visible: layer.visible !== false,
-          // 타임라인에서 마커를 직접 편집하는 경로는 아직 열지 않는다.
-          locked: true,
+          // **레이어 모델의 실제 잠금 상태**다. 고정값을 넣으면 Ctrl+2 로 풀어도
+          // 헤더가 계속 잠긴 것으로 보여 화면과 모델이 어긋난다.
+          // 마커를 옮길 수 있는지는 timelineKeyframesMovable 이 따로 정한다
+          // (timeline.js 의 _isKeyframeLayerMovable) — 두 개념은 다르다.
+          locked: layer.locked === true,
           timelineKeyframesMovable: true,
           active: layer.id === layerState.activeLayerId,
           opacity: 1,
@@ -7837,9 +7849,20 @@ async function initApp() {
   let fabricDrawingViewportRevision = 0;
   let fabricDrawingViewportSignature = '';
   let resetMpvOverlayCollaborationDrag = () => {};
+  // 표시 프레임을 세우는 약속을 돌려준다. passive 레이어 뷰 전송이 **표시 세션이
+  // 선 뒤**에 가야 해서 필요하다 — 먼저 보내면 오버레이가 거절하고 다시 시도하지
+  // 않는다. 기존 호출부는 반환값을 쓰지 않는다.
   function syncCurrentFabricDrawingDisplayFrame(options) {
     const currentFrame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
-    void fabricDrawingPilotController.syncDisplayFrame(currentFrame, options);
+    return Promise.resolve(
+      fabricDrawingPilotController.syncDisplayFrame(currentFrame, options)
+    ).catch(() => false);
+  }
+
+  // 표시 프레임이 선 뒤에 집합을 보낸다.
+  function pushFabricPilotLayerViewAfterDisplay(options) {
+    return syncCurrentFabricDrawingDisplayFrame(options)
+      .then(() => pushFabricPilotLayerView());
   }
   const mpvOverlayLifecycle = createMpvOverlayLifecycle({
     onWarning: (error) => {
@@ -8026,9 +8049,44 @@ async function initApp() {
     );
   }
 
+  // 레이어의 표시·잠금을 **오브젝트 id 집합**으로 바꿔 오버레이에 밀어 넣는다.
+  // 오버레이는 레이어를 모른다 — 그릴 때 이 집합만 본다. 문서에는 쓰지 않는다
+  // (레코드 키 집합이 고정이라 쓸 자리가 없다).
+  function fabricPilotLayerViewSets() {
+    const state = reviewDataManager.getDrawingLayers();
+    const hiddenObjectIds = [];
+    const lockedObjectIds = [];
+    const live = collectFabricDrawingObjectIds();
+    for (const id of live || []) {
+      if (!isDrawingObjectVisible(state, id)) hiddenObjectIds.push(id);
+      else if (!isDrawingObjectEditable(state, id)) lockedObjectIds.push(id);
+    }
+    const active = findDrawingLayer(state, state.activeLayerId);
+    return {
+      hiddenObjectIds,
+      lockedObjectIds,
+      // 활성 레이어가 숨겨졌거나 잠겼으면 오버레이가 새 획을 받지 않는다(레거시와 같다).
+      activeLayerDrawable: !(active?.visible === false || active?.locked === true)
+    };
+  }
+
+  // 오버레이는 세션이 새로 살아나면 빈 집합으로 시작한다. 레이어 모델이 바뀔 때와
+  // 문서가 바뀔 때, 그리고 세션이 active 가 될 때 모두 다시 밀어 넣어야 숨긴
+  // 레이어가 되살아나지 않는다.
+  function pushFabricPilotLayerView() {
+    // passive 투영에서도 보낸다. 저장된 레이어 모델이 숨겨 둔 획은 **보기만 하는
+    // 동안에도** 숨겨져 있어야 하는데, 그리기 모드일 때만 보내면 그리기를 켤
+    // 때까지 다 보인다. 토글 자체는 여전히 그리기 모드에서만 받는다 — passive
+    // 는 저장된 상태를 **적용만** 한다.
+    if (!shouldSuppressLegacyDrawingForFabricPilot()) return;
+    Promise.resolve(fabricDrawingPilotController.sendLayerView(fabricPilotLayerViewSets()))
+      .catch(() => {});
+  }
+
   function applyDrawingLayerStateChange(nextState, message) {
     if (!reviewDataManager.setDrawingLayers(nextState)) return false;
     renderActiveDrawingLayers();
+    pushFabricPilotLayerView();
     if (message) showToast(message, 'info');
     return true;
   }
@@ -8041,7 +8099,9 @@ async function initApp() {
       fabricPilotTimelineRenderQueued = false;
       syncFabricDrawingLayerAssignments();
       renderActiveDrawingLayers();
-      syncCurrentFabricDrawingDisplayFrame();
+      // 새로 생긴 오브젝트도 자기 레이어의 숨김·잠금을 따라야 한다.
+      // 보는 중(passive)에는 표시 세션이 선 뒤에 보내야 오버레이가 받는다.
+      void pushFabricPilotLayerViewAfterDisplay();
     });
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
@@ -11052,9 +11112,17 @@ async function initApp() {
     // 늦다 — importRootValue·reset 은 구독자를 부르지 않으므로, 사용자가 새
     // 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어 그 획이 배정을 받지
     // 못하고 기준 레이어로 떨어진다.
-    if (nextState === 'active') seedFabricDrawingLayerAssignmentTracking();
+    if (nextState === 'active') {
+      seedFabricDrawingLayerAssignmentTracking();
+      // 오버레이의 집합은 세션과 함께 비워졌다. 다시 밀어 넣지 않으면 숨긴
+      // 레이어가 그리기 모드를 껐다 켤 때마다 되살아난다.
+      pushFabricPilotLayerView();
+    }
     if (nextState === 'passive') {
-      syncCurrentFabricDrawingDisplayFrame();
+      // 그리기 모드를 끄면 오버레이가 투영으로 넘어간다. 그때 집합을 다시 심지
+      // 않으면 숨긴 레이어가 되살아난다. 다만 **표시 세션이 선 뒤**에 보내야
+      // 한다 — passive 수신은 그 세션으로 요청을 맞추기 때문이다.
+      void pushFabricPilotLayerViewAfterDisplay();
     }
     // persistence 우회/차단 사유가 바뀌는 순간을 파일 로그로 남긴다(이어붙이기 정지 진단용).
     const fabricPersistenceReason = snapshot?.persistenceFailureReason || null;
@@ -14511,6 +14579,36 @@ async function initApp() {
         } else {
           applyDrawingLayerStateChange(added.state, `레이어 추가: ${added.added.name}`);
         }
+        return;
+      }
+      // 표시·잠금은 레이어 모델의 플래그만 뒤집는다. 문서는 그대로다 —
+      // applyDrawingLayerStateChange 가 계산한 id 집합을 오버레이로 밀어 넣는다.
+      //
+      // **그리기 모드일 때만 받는다.** passive 투영에는 집합을 보낼 경로가 없어
+      // (오버레이 입력이 꺼져 있다) 모델만 바뀌고 그림은 그대로다. 그 상태로
+      // 토스트까지 띄우면 "숨김" 이라고 말해 놓고 화면은 그대로인 거짓말이 된다.
+      if (isFabricDrawingPilotEngaged() &&
+          userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = toggleDrawingLayerVisibilityState(state, state.activeLayerId);
+        const layer = findDrawingLayer(next, state.activeLayerId);
+        applyDrawingLayerStateChange(
+          next,
+          layer ? `${layer.name}: ${layer.visible === false ? '숨김' : '표시'}` : null
+        );
+        return;
+      }
+      if (isFabricDrawingPilotEngaged() &&
+          userSettings.matchShortcut('drawingLayerLockToggle', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = toggleDrawingLayerLockState(state, state.activeLayerId);
+        const layer = findDrawingLayer(next, state.activeLayerId);
+        applyDrawingLayerStateChange(
+          next,
+          layer ? `${layer.name}: ${layer.locked === true ? '잠금' : '잠금 해제'}` : null
+        );
         return;
       }
       const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)

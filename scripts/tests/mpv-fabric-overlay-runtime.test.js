@@ -8314,6 +8314,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'setDrawingInput',
     'updateDrawingBrush',
     'updateDrawingFrame',
+    'updateDrawingLayerView',
     'updateDrawingTool',
     'updateViewport'
   ]);
@@ -17237,4 +17238,698 @@ test('every record an outlined gesture produces survives persistence validation'
   } finally {
     await harness.destroy();
   }
+});
+
+// ── 레이어 표시·잠금(뷰 상태) ───────────────────────────────────────────────
+//
+// 레코드 키 집합이 고정이라 숨김·잠금을 문서에 쓸 수 없다. 렌더러가 계산한
+// id 집합을 받아 **그리기만** 바꾸고, 저장 문서는 손대지 않는다.
+
+function makeLayerViewRuntime() {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'layer-view-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('layer-view-stroke')]
+    }]
+  }));
+  // 수화한 영상과 세션의 세대가 맞아야 그 씬이 캔버스에 올라온다.
+  runtime.setDrawingInput(makeInput({ hostGeneration: 3, videoGeneration: 7 }));
+  return { runtime, canvas: FakeCanvas.instances[0] };
+}
+
+test('레이어 숨김은 캔버스에만 반영되고 저장 문서는 그대로다', () => {
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const target = () => canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+  assert.ok(target(), '수화한 획이 캔버스에 올라와야 한다');
+
+  const before = runtime.exportDrawingVideo(makePersistenceExport());
+  assert.equal(before.accepted, true);
+
+  const applied = runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  });
+  assert.deepEqual(applied, { accepted: true, hiddenCount: 1, lockedCount: 0 });
+  assert.equal(target().visible, false);
+  // 보이지 않는 획이 라쏘·클릭에 걸리면 사용자가 모르는 채로 옮겨진다.
+  assert.equal(target().selectable, false);
+  assert.equal(target().evented, false);
+
+  // 저장 문서는 한 글자도 달라지지 않는다 — 숨김은 레코드가 아니다.
+  const after = runtime.exportDrawingVideo(makePersistenceExport());
+  assert.deepEqual(after.snapshot, before.snapshot);
+  runtime.destroy();
+});
+
+test('레이어 잠금은 선택만 막고 화면에는 그대로 보인다', () => {
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const target = () => canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: ['layer-view-stroke'],
+    activeLayerDrawable: true
+  }).accepted, true);
+  assert.equal(target().visible, true, '잠금은 숨김이 아니다');
+  assert.equal(target().selectable, false);
+  assert.equal(target().evented, false);
+  runtime.destroy();
+});
+
+test('숨김은 캔버스를 다시 만들어도 유지된다', () => {
+  // 프레임 전환·실행취소는 캔버스를 통째로 다시 만든다. 집합을 들고 있지 않으면
+  // 그때 숨긴 획이 되살아난다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'runtime-session',
+    frameRevision: 1,
+    targetFrame: 30
+  });
+  runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'runtime-session',
+    frameRevision: 2,
+    targetFrame: 24
+  });
+
+  const target = canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+  assert.ok(target, '프레임을 돌아오면 획이 다시 올라온다');
+  assert.equal(target.visible, false, '다시 그려도 숨김이 유지된다');
+  runtime.destroy();
+});
+
+test('활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다', () => {
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const mutations = () => runtime.getDiagnostics().mutationCount;
+  const baseline = mutations();
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: false
+  }).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 811);
+  assert.equal(mutations(), baseline, '잠긴 레이어에는 그려지지 않는다');
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 812);
+  assert.equal(mutations(), baseline + 1, '풀면 다시 그려진다');
+  runtime.destroy();
+});
+
+test('레이어 뷰 갱신은 낡은 세션이면 거절한다', () => {
+  const { runtime } = makeLayerViewRuntime();
+  assert.deepEqual(
+    runtime.updateDrawingLayerView({
+      sessionId: 'other-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [],
+      activeLayerDrawable: true
+    }),
+    { accepted: false, reason: 'stale-session' }
+  );
+  runtime.destroy();
+});
+
+// ── 숨김·잠금은 기하 판정 경로에서도 지켜져야 한다 ─────────────────────────
+//
+// 라쏘·부분 선택·획 지우개는 fabric 의 히트테스트를 쓰지 않고 **씬 스냅샷을
+// 직접 훑는다.** visible/selectable/evented 만 끄면 이 경로들이 그대로 통과해,
+// 보이지도 않는 획이 선택·분할·이동·삭제된다.
+
+function applyRealFabricLayerView(harness, overrides = {}) {
+  return harness.runtime.updateDrawingLayerView({
+    sessionId: 'real-fabric-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    ...overrides
+  });
+}
+
+test('라쏘는 숨긴 레이어의 획을 잡지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(crossingStrokePoints(80), 8790);
+    harness.drawStroke(crossingStrokePoints(120), 8791);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [hiddenId, visibleId] = before.objects.map(object => object.id);
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      hiddenObjectIds: [hiddenId]
+    }).accepted, true);
+    enableRealFabricWholeStrokeLasso(harness);
+    harness.dragLasso(middleLassoPoints(91, 109), 8792);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(after.selectedObjectIds, [visibleId], '숨긴 획은 선택에서 빠진다');
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [visibleId]
+    );
+    assert.deepEqual(after.objects, before.objects, '문서는 그대로다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('라쏘는 잠근 레이어의 획을 잡지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '24';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(crossingStrokePoints(80), 8795);
+    harness.drawStroke(crossingStrokePoints(120), 8796);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [lockedId, freeId] = before.objects.map(object => object.id);
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      lockedObjectIds: [lockedId]
+    }).accepted, true);
+    enableRealFabricWholeStrokeLasso(harness);
+    harness.dragLasso(middleLassoPoints(91, 109), 8797);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().selectedObjectIds,
+      [freeId],
+      '잠근 획은 선택에서 빠진다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('부분 선택 라쏘는 잠근 레이어의 획을 자르지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 8800);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [lockedId] = before.objects.map(object => object.id);
+    const sourceObject = harness.canvas.getObjects()[0];
+    const lassoPolygon = () => sourcePolygonInRealFabricScene(sourceObject, [
+      ...lTurnFillPolygon(),
+      lTurnFillPolygon()[0]
+    ]);
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      lockedObjectIds: [lockedId]
+    }).accepted, true);
+    enableRealFabricLasso(harness);
+    harness.dragLasso(lassoPolygon(), 8801);
+
+    assert.ok(
+      !harness.canvas.getActiveObject(),
+      '잠근 획은 조각으로 갈리지 않는다'
+    );
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '문서는 그대로다'
+    );
+
+    // 잠금을 풀면 같은 드래그가 조각을 만든다 — 위 단언이 우연이 아님을 못박는다.
+    assert.equal(applyRealFabricLayerView(harness).accepted, true);
+    harness.dragLasso(lassoPolygon(), 8802);
+    assert.ok(
+      harness.canvas.getActiveObject(),
+      '풀면 조각이 만들어진다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('획 지우개는 숨긴 레이어의 획을 지우지 않는다', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8810);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [hiddenId] = before.objects.map(object => object.id);
+    assert.equal(applyRealFabricLayerView(harness, {
+      hiddenObjectIds: [hiddenId]
+    }).accepted, true);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 8811;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    const after = harness.sceneStore.getActiveSceneSnapshot();
+    assert.deepEqual(after.objects, before.objects, '숨긴 획은 지워지지 않는다');
+    // 미리보기가 visible 을 직접 만지므로, 통과시켰다면 복원에서 다시 보이기까지 한다.
+    const object = harness.canvas.getObjects()
+      .find(candidate => candidate.__baeframeObjectId === hiddenId);
+    assert.equal(object.visible, false, '숨김이 그대로 유지된다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('선택 중이던 획이 잠기면 선택에서 빠진다', async () => {
+  // refreshSelectionInteractionPolicy 의 마지막이 활성 선택을 통째로 다시
+  // 켠다. 거기서 걸러 내지 않으면 앞선 루프가 막아 둔 것이 한 줄에 풀린다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8820);
+    const [objectId] = harness.sceneStore.getActiveSceneSnapshot().objects
+      .map(object => object.id);
+    activateRealFabricSelection(harness, [objectId]);
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [objectId]
+    );
+
+    assert.equal(applyRealFabricLayerView(harness, {
+      lockedObjectIds: [objectId]
+    }).accepted, true);
+
+    assert.deepEqual(
+      harness.canvas.getActiveObjects().map(object => object.__baeframeObjectId),
+      [],
+      '잠긴 획은 활성 선택에서 빠진다'
+    );
+    const object = harness.canvas.getObjects()
+      .find(candidate => candidate.__baeframeObjectId === objectId);
+    assert.equal(object.selectable, false);
+    assert.equal(object.evented, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('다른 영상을 수화하면 표시·잠금 집합을 버린다', () => {
+  // 집합은 그 영상의 오브젝트 id 로 되어 있다. 들고 있으면 렌더러가 다시 밀어
+  // 넣기 전까지 새 영상이 이전 영상의 제한을 쓴다 — 특히 activeLayerDrawable
+  // 이 false 로 남으면 그리기 모드를 켠 직후 첫 획이 조용히 무시된다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: false
+  }).accepted, true);
+
+  // 입력을 끄고 다른 영상을 수화한다(수화는 입력이 꺼져 있을 때만 받는다).
+  runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: false
+  }));
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    persistenceSessionId: 'runtime-persistence-session-other',
+    stableVideoIdentity: 'runtime-video-other',
+    keyframes: [{
+      id: 'other-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('other-video-stroke')]
+    }]
+  })).accepted, true);
+
+  // 새 영상으로 세션을 열면 아무것도 숨겨져 있지 않고 그릴 수 있어야 한다.
+  runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 3,
+    session: {
+      sessionId: 'runtime-session-other',
+      stableVideoIdentity: 'runtime-video-other',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+      tool: 'brush'
+    }
+  }));
+  const target = canvas.objects.find(
+    object => object.__baeframeObjectId === 'other-video-stroke'
+  );
+  assert.ok(target, '새 영상의 획이 올라와야 한다');
+  assert.equal(target.visible, true, '이전 영상의 숨김이 남지 않는다');
+
+  const baseline = runtime.getDiagnostics().mutationCount;
+  drawStroke(canvas.upperCanvasEl, 821);
+  assert.equal(
+    runtime.getDiagnostics().mutationCount,
+    baseline + 1,
+    '이전 영상의 그리기 차단이 남지 않는다'
+  );
+  runtime.destroy();
+});
+
+test('스테이징된 조각은 원본 레이어가 잠기면 취소된다', async () => {
+  // 부분 선택은 조각을 **새 id 의 프록시**로 먼저 세운다. 제한 집합은 원본 id 로
+  // 되어 있어 선택 id 필터를 그대로 빠져나간다 — 그대로 두면 잠긴 뒤에도 커밋이
+  // 원본을 자르거나 지운다.
+  const harness = createRealFabricHarness();
+  try {
+    const sizeInput = findOne(
+      harness.root,
+      node => node.dataset?.fabricPilotSetting === 'size'
+    );
+    sizeInput.value = '20';
+    sizeInput.dispatchEvent(new harness.environment.window.Event('input'));
+    harness.drawStroke(lTurnStrokePoints(), 8830);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [sourceId] = before.objects.map(object => object.id);
+    const sourceObject = harness.canvas.getObjects()[0];
+
+    enableRealFabricLasso(harness);
+    harness.dragLasso(sourcePolygonInRealFabricScene(sourceObject, [
+      ...lTurnFillPolygon(),
+      lTurnFillPolygon()[0]
+    ]), 8831);
+    assert.ok(harness.canvas.getActiveObject(), '먼저 조각이 세워져야 한다');
+
+    assert.equal(harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [sourceId],
+      activeLayerDrawable: true
+    }).accepted, true);
+
+    assert.ok(
+      !harness.canvas.getActiveObject(),
+      '원본이 잠기면 세워 둔 조각을 물린다'
+    );
+    // 물린 뒤에는 삭제를 눌러도 원본이 잘리거나 지워지지 않는다.
+    harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      action: 'delete-selection'
+    });
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '문서는 그대로다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('드래그 중인 지우개는 그 레이어가 잠기면 물린다', async () => {
+  // 이미 erasedIds 에 들어간 id 는 새 제한 집합이 막지 못한다. 손을 뗄 때
+  // finalize 가 그대로 지우므로, 드래그 도중에 숨기거나 잠갔는데도 지워진다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8840);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [sourceId] = before.objects.map(object => object.id);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 8841;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+    // 여기서 이미 지울 대상으로 큐에 들어가 미리보기로 감춰져 있다.
+    const target = harness.canvas.getObjects()
+      .find(candidate => candidate.__baeframeObjectId === sourceId);
+    assert.equal(target.visible, false, '드래그 중에는 미리보기로 감춰진다');
+
+    assert.equal(harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [sourceId],
+      activeLayerDrawable: true
+    }).accepted, true);
+
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '잠근 뒤에는 손을 떼도 지워지지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('그리는 도중 활성 레이어를 잠그면 그 획은 커밋되지 않는다', () => {
+  // activeLayerDrawable 을 내려도 **이미 시작한** 획은 손을 뗄 때 그대로
+  // 커밋된다. 그러면 방금 잠근 레이어에 새 오브젝트가 들어간다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const baseline = runtime.getDiagnostics().mutationCount;
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 8850,
+    pointerType: 'pen',
+    button: 0,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.2,
+    timeStamp: 1
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 8850,
+    pointerType: 'pen',
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.8,
+    timeStamp: 2
+  });
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: false
+  }).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 8850,
+    pointerType: 'pen',
+    clientX: 50,
+    clientY: 60,
+    pressure: 0.6,
+    timeStamp: 3
+  });
+
+  assert.equal(
+    runtime.getDiagnostics().mutationCount,
+    baseline,
+    '그리던 획이 커밋되지 않는다'
+  );
+  runtime.destroy();
+});
+
+test('선택을 끄는 도중 그 레이어를 잠그면 이동을 되돌린다', () => {
+  // 선택에서 빼기만 하면 오브젝트가 끌던 자리에 남고, 뒤이어 오는
+  // object:modified 가 그 이동을 저장한다 — 잠근 뒤에 옮겨진 채로 저장된다.
+  const harness = createHistoryHarness();
+  const { canvas, runtime, sceneStore } = harness;
+  drawStroke(canvas.upperCanvasEl, 8860);
+  assert.equal(runtime.updateDrawingTool({
+    sessionId: 'runtime-session',
+    toolRevision: 1,
+    tool: 'select'
+  }).accepted, true);
+
+  const path = canvas.getObjects()[0];
+  const objectId = path.__baeframeObjectId;
+  canvas.activeObject = path;
+  canvas.activeObjects = [path];
+  canvas.emit('selection:created', { selected: [path] });
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 8861,
+    pointerType: 'mouse',
+    button: 0,
+    clientX: 10,
+    clientY: 10
+  });
+  canvas.emit('before:transform', { transform: { target: path } });
+  path.left = 25;
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [objectId],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  assert.equal(path.left, 0, '끌던 오브젝트가 시작 위치로 돌아온다');
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+
+  // 늦게 도착한 modified 이벤트도 이동을 저장하지 않는다.
+  canvas.emit('object:modified', { target: path });
+  assert.equal(
+    sceneStore.getActiveSceneSnapshot().objects[0].transform.left,
+    0,
+    '잠근 뒤의 이동은 저장되지 않는다'
+  );
+  runtime.destroy();
+});
+
+test('활성 레이어가 잠기면 다른 레이어를 담은 지우개도 물린다', async () => {
+  // pointerdown 가드가 "그릴 수 없으면 지울 수도 없다" 로 잡는다. 드래그 도중
+  // 잠긴 경우만 예외로 두면, 큐가 다른(제한되지 않은) 레이어의 획만 담았을 때
+  // 손을 떼면서 그대로 지워져 규칙이 어긋난다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8870);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 8871;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+
+    // 지울 대상은 제한하지 않는다 — 활성 레이어만 잠근다.
+    assert.equal(harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [],
+      activeLayerDrawable: false
+    }).accepted, true);
+
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '활성 레이어가 잠기면 큐에 있던 것도 지워지지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('전체 지우기는 숨기거나 잠근 레이어의 획을 남긴다', () => {
+  // clearSession() 은 씬을 통째로 비운다. 제한된 것을 그대로 지우면 보이지도
+  // 않는 작업이 조용히 사라진다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  drawStroke(canvas.upperCanvasEl, 8880);
+  const drawnId = canvas.objects
+    .filter(object => !object.__baeframeTransient)
+    .map(object => object.__baeframeObjectId)
+    .find(id => id && id !== 'layer-view-stroke');
+  assert.ok(drawnId, '새로 그린 획이 있어야 한다');
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  const cleared = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'clear-preserving-restricted',
+    action: 'clear-session'
+  });
+  assert.equal(cleared.applied, true, JSON.stringify(cleared));
+
+  const remaining = runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes
+    .flatMap(scene => scene.objects.map(object => object.id));
+  assert.deepEqual(remaining, ['layer-view-stroke'], '숨긴 획만 남는다');
+  // 화면에서도 남아 있어야 한다 — 통째로 걷으면 다음 재도색에서 되살아난다.
+  assert.ok(
+    canvas.objects.some(object => object.__baeframeObjectId === 'layer-view-stroke'),
+    '숨긴 획은 캔버스에도 남는다'
+  );
+  runtime.destroy();
+});
+
+test('보는 중(passive)에도 저장된 숨김이 적용된다', () => {
+  // 저장된 레이어 모델이 숨겨 둔 획은 그리기를 켜기 전에도 숨겨져 있어야 한다.
+  // passive 에는 세션 id 가 없으므로 영상 정체로 맞춘다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  // 그리기 모드를 끄면 passive 투영으로 내려간다.
+  runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: false
+  }));
+
+  // 세션 id 로는 받지 않는다.
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, false);
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: null,
+    stableVideoIdentity: 'runtime-video',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  const target = canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+  assert.ok(target, '투영 중에도 획은 캔버스에 있다');
+  assert.equal(target.visible, false, '보는 중에도 숨김이 적용된다');
+
+  // 다른 영상이면 받지 않는다.
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: null,
+    stableVideoIdentity: 'runtime-video-other',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, false);
+  runtime.destroy();
 });

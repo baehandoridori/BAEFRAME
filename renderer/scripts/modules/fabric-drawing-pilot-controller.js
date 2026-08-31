@@ -217,6 +217,10 @@ export function createFabricDrawingPilotController(options = {}) {
   let videoChangeRollback = null;
   let inFlightReadyReconciliation = null;
   let confirmedVideoIdentity = null;
+  // 레이어 뷰 리비전은 **세션보다 오래 산다.** passive 에서도 보내야 하는데
+  // 그때는 세션이 없다. 세션별로 세면 그리기 모드를 껐다 켜는 사이에 리비전이
+  // 되감겨 호스트가 새 갱신을 낡은 것으로 보고 버린다.
+  let passiveLayerViewRevision = 0;
   let confirmedLoadToken = null;
   let resumeRequested = false;
   let lastError = null;
@@ -1314,7 +1318,8 @@ export function createFabricDrawingPilotController(options = {}) {
       viewportTransform: copyViewportTransform(context.viewportTransform),
       tool: desiredTool,
       toolRevision: 0,
-      brushRevision: 0
+      brushRevision: 0,
+      layerViewRevision: 0
     };
   }
 
@@ -1341,6 +1346,42 @@ export function createFabricDrawingPilotController(options = {}) {
         currentSession.tool = tool;
       }
       return accepted;
+    } catch {
+      return false;
+    }
+  }
+
+  // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 씬·프레임 왕복이
+  // 없고, 델타가 아니라 **전체 집합**을 보낸다 — 늦게 도착한 것은 리비전으로
+  // 버리면 되고, 순서가 어긋나도 마지막 것이 옳다.
+  //
+  // 세션이 새로 살아나면 오버레이의 집합은 비어 있다. 렌더러가 active 전이에서
+  // 다시 불러 줘야 숨긴 레이어가 되살아나지 않는다.
+  async function sendLayerView({ hiddenObjectIds, lockedObjectIds, activeLayerDrawable }) {
+    // passive 투영에서도 보낸다 — 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
+    // 동안에도 숨겨져 있어야 한다. 그때는 세션이 없으므로 영상 정체로 맞춘다.
+    if (state !== 'active' && state !== 'passive') return false;
+    if (!confirmedVideoIdentity) return false;
+    passiveLayerViewRevision += 1;
+    if (currentSession) currentSession.layerViewRevision = passiveLayerViewRevision;
+    const request = {
+      ...makeEnvelope('layer-view-update', {}),
+      hostGeneration,
+      videoGeneration,
+      inputRevision,
+      sessionId: currentSession?.sessionId ?? null,
+      stableVideoIdentity: confirmedVideoIdentity,
+      layerViewRevision: passiveLayerViewRevision,
+      hiddenObjectIds: [...hiddenObjectIds],
+      lockedObjectIds: [...lockedObjectIds],
+      activeLayerDrawable: activeLayerDrawable !== false
+    };
+    try {
+      const response = await withPersistenceIpcDeadline(
+        electronAPI.mpvUpdateOverlayDrawingLayerView(request),
+        { success: false, accepted: false, error: 'persistence-ipc-timeout' }
+      );
+      return response?.success === true && response.accepted === true;
     } catch {
       return false;
     }
@@ -2908,6 +2949,7 @@ export function createFabricDrawingPilotController(options = {}) {
     cancelVideoChange,
     toggle,
     applyDrawingAction,
+    sendLayerView,
     routeKeydown,
     disable,
     preparePersistenceSnapshotForSave,

@@ -2924,6 +2924,7 @@ class MPVOverlayHost {
     this.activeSessionId = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
+    this.currentLayerViewRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -3150,6 +3151,7 @@ class MPVOverlayHost {
     this.activeSessionId = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
+    this.currentLayerViewRevision = -1;
     if (!request.enabled) {
       this.suppressedOverlayHistoryKeys.clear();
     }
@@ -3200,6 +3202,7 @@ class MPVOverlayHost {
       this.activeSessionId = request.session?.sessionId || null;
       this.currentToolRevision = 0;
       this.currentBrushRevision = 0;
+      this.currentLayerViewRevision = 0;
       this._setNativeDrawingInput(hostWindow, true);
     } else if (request.enabled && runtimeResult?.accepted === true && !stillCurrent) {
       await this._compensateStaleDrawingEnable(hostWindow, hostGeneration);
@@ -3292,6 +3295,54 @@ class MPVOverlayHost {
       // updateDrawingTool 과 달리 오버레이에 포커스를 주지 않는다. 크기 변경은
       // [ / ] 연타로 오는데 매번 포커스를 옮기면 화면이 튄다.
       return { success: true, accepted: true, size: Math.trunc(Number(result.size)) };
+    } catch (error) {
+      return { success: false, accepted: false, error: error.message };
+    }
+  }
+
+  // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 프레임 왕복이나
+  // 재동기가 필요 없고, 렌더러가 계산한 id 집합을 그대로 전달하기만 한다.
+  // 델타가 아니라 전체 집합이라 리비전으로 늦게 온 것만 버리면 된다.
+  async updateDrawingLayerView(request = {}) {
+    const layerViewRevision = Number(request.layerViewRevision);
+    // passive 투영에서도 받는다. 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
+    // 동안에도 숨겨져 있어야 한다. 그때는 세션 id 가 없으므로 영상 정체로 맞춘다.
+    // 문서를 나르지 않는 메시지라 실패해도 그림이 아니라 표시만 어긋난다.
+    const tokensMatch = () => request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      (this.desiredInputEnabled
+        ? request.sessionId === this.activeSessionId
+        : this.currentStableVideoIdentity !== null &&
+          request.stableVideoIdentity === this.currentStableVideoIdentity);
+    const currentTokensMatch = tokensMatch();
+    const validIds = value =>
+      Array.isArray(value) &&
+      value.length <= FABRIC_DRAWING_MAX_OBJECTS_TOTAL &&
+      value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 512);
+    if (this.fabricReadyGeneration !== this.hostGeneration ||
+        !currentTokensMatch ||
+        !Number.isInteger(layerViewRevision) ||
+        layerViewRevision <= this.currentLayerViewRevision ||
+        !validIds(request.hiddenObjectIds) ||
+        !validIds(request.lockedObjectIds) ||
+        typeof request.activeLayerDrawable !== 'boolean') {
+      return { success: false, accepted: false, error: 'stale or invalid layer view request' };
+    }
+
+    try {
+      const result = await this._executeFabricMethod('updateDrawingLayerView', request);
+      if (result?.accepted !== true) {
+        return { success: false, accepted: false, error: result?.reason || 'layer view update rejected' };
+      }
+      // **응답 검사도 같은 술어로 한다.** _drawingTokensMatch 는 활성 세션을
+      // 요구하므로, passive 갱신은 적용해 놓고 거절로 보고돼 리비전이 전진하지
+      // 않는다. 그러면 늦게 도착한 옛 갱신이 다시 통과해 지금 집합을 덮는다.
+      if (!tokensMatch() || layerViewRevision <= this.currentLayerViewRevision) {
+        return { success: false, accepted: false, error: 'stale layer view response' };
+      }
+      this.currentLayerViewRevision = layerViewRevision;
+      return { success: true, accepted: true };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
@@ -4494,6 +4545,7 @@ class MPVOverlayHost {
     this.activeSessionId = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
+    this.currentLayerViewRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -4563,6 +4615,7 @@ class MPVOverlayHost {
     this.activeSessionId = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
+    this.currentLayerViewRevision = -1;
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
@@ -4691,6 +4744,7 @@ class MPVOverlayHost {
       this.activeSessionId = null;
       this.currentToolRevision = -1;
       this.currentBrushRevision = -1;
+      this.currentLayerViewRevision = -1;
       this.keyboardRelayCount = 0;
       this.lastKeyboardRelayCode = null;
       this.drawModeShortcutDescriptor = null;

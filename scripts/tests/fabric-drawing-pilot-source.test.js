@@ -655,9 +655,17 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   const layerActionNames = [...appSource
     .slice(layerSetStart, appSource.indexOf(']);', layerSetStart))
     .matchAll(/'([^']+)'/g)].map(match => match[1]);
-  // 이동은 오버레이가 오브젝트 순서를 바꿔야 의미가 있어 여기 없다 —
-  // 메타데이터만 바꾸면 타임라인 행만 움직이고 화면의 겹침 순서는 그대로다.
-  assert.equal(layerActionNames.length, 3, '오버레이 없이 완결되는 레이어 액션 3종');
+  // 추가·선택은 메타데이터만으로 완결되고, 표시·잠금은 오버레이에 id 집합을
+  // 밀어 넣어 그리기만 바꾼다(문서는 그대로). 이동은 오버레이가 오브젝트 순서를
+  // 바꿔야 의미가 있어 여기 없다 — 메타데이터만 바꾸면 타임라인 행만 움직이고
+  // 화면의 겹침 순서는 그대로다.
+  assert.deepEqual(layerActionNames.sort(), [
+    'drawingLayerAdd',
+    'drawingLayerLockToggle',
+    'drawingLayerSelectDown',
+    'drawingLayerSelectUp',
+    'drawingLayerVisibilityToggle'
+  ]);
   assert.equal(
     layerActionNames.some(action => action.startsWith('drawingLayerMove')),
     false,
@@ -876,8 +884,22 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
   );
   assert.equal(layer.keyframes[0].isEmpty, false);
   assert.equal(layer.keyframes[1].isEmpty, true);
-  assert.equal(layer.locked, true);
+  // 행의 잠금은 **레이어 모델의 실제 값**이다. 고정값을 넣으면 Ctrl+2 로 풀어도
+  // 헤더가 계속 잠긴 것으로 보인다. 마커를 옮길 수 있는지는 별개다.
+  assert.equal(layer.locked, false, '모델이 안 잠겼으면 행도 안 잠긴다');
   assert.equal(layer.timelineKeyframesMovable, true);
+
+  projectionLayerState.layers[0].locked = true;
+  try {
+    assert.equal(getProjection()[0].locked, true, '모델이 잠기면 행도 잠긴다');
+    assert.equal(
+      getProjection()[0].timelineKeyframesMovable,
+      true,
+      '잠금과 마커 이동 가능 여부는 따로 간다'
+    );
+  } finally {
+    projectionLayerState.layers[0].locked = false;
+  }
 });
 
 test('Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸고 선택과 전역 undo를 갱신한다', async () => {
@@ -1384,13 +1406,20 @@ test('playback frame consumers and passive landings request the current Fabric d
     playbackSyncSource,
     /if \(shouldSyncFrameConsumers\) \{[\s\S]*?fabricDrawingPilotController\.syncDisplayFrame\(currentFrame\)/
   );
+  // 두 자리 모두 표시 프레임을 요청한다. 지금은 레이어 뷰 전송과 순서를 맞추려고
+  // pushFabricPilotLayerViewAfterDisplay() 를 거치는데, 그 안이 곧
+  // syncCurrentFabricDrawingDisplayFrame() 이다.
   assert.match(
     appSource,
-    /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{[\s\S]*?syncCurrentFabricDrawingDisplayFrame\(\)/
+    /function pushFabricPilotLayerViewAfterDisplay\(options\) \{[\s\S]{0,120}?return syncCurrentFabricDrawingDisplayFrame\(options\)/
   );
   assert.match(
     appSource,
-    /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*?if \(nextState === 'passive'\)[\s\S]*?syncCurrentFabricDrawingDisplayFrame\(\)/
+    /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{[\s\S]*?pushFabricPilotLayerViewAfterDisplay\(\)/
+  );
+  assert.match(
+    appSource,
+    /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*?if \(nextState === 'passive'\)[\s\S]*?pushFabricPilotLayerViewAfterDisplay\(\)/
   );
 });
 
@@ -2153,8 +2182,15 @@ test('오브젝트 추적은 세션이 살아나는 순간 심는다', () => {
   assert.ok(start > 0, '상태 변경 핸들러를 찾지 못했다');
   const head = appSource.slice(start, start + 900);
   assert.ok(
-    head.includes("if (nextState === 'active') seedFabricDrawingLayerAssignmentTracking();"),
+    head.includes("if (nextState === 'active') {") &&
+      head.includes('seedFabricDrawingLayerAssignmentTracking();'),
     '세션이 active 가 되는 순간 추적을 심어야 한다'
+  );
+  // 오버레이의 표시·잠금 집합도 세션과 함께 비워졌다. 다시 밀어 넣지 않으면
+  // 그리기 모드를 껐다 켤 때마다 숨긴 레이어가 되살아난다.
+  assert.ok(
+    head.includes('pushFabricPilotLayerView();'),
+    '세션이 active 가 되면 표시·잠금 집합을 다시 보내야 한다'
   );
   // 영상이 바뀌면 처음부터 다시 센다.
   const renderStart = appSource.indexOf('function renderActiveDrawingLayers() {');
@@ -2567,4 +2603,176 @@ test('잘린 획의 조각은 원본 레이어를 물려받는다', () => {
   liveIds = new Set(['frag-1']);
   build(['obj-base'], ['obj-base'])();
   assert.deepEqual(assigned, [['frag-1', 'layer-base']], '기준 레이어 원본의 조각은 기준에 남는다');
+});
+
+test('표시·잠금 단축키는 레이어 모델의 플래그만 뒤집는다', () => {
+  // 문서(drawingsV3)는 손대지 않는다 — 레코드 키 집합이 고정이라 숨김·잠금을
+  // 쓸 자리가 없다. 플래그를 뒤집고 거기서 계산한 id 집합을 오버레이로 보낸다.
+  const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerVisibilityToggle', e)");
+  assert.ok(start > 0, '표시 토글 단축키를 찾지 못했다');
+  const source = appSource.slice(start, start + 1400);
+  assert.ok(
+    source.includes('toggleDrawingLayerVisibilityState(state, state.activeLayerId)'),
+    '표시 토글은 활성 레이어를 대상으로 한다'
+  );
+  assert.ok(
+    source.includes('toggleDrawingLayerLockState(state, state.activeLayerId)'),
+    '잠금 토글은 활성 레이어를 대상으로 한다'
+  );
+  // 두 토글 모두 레거시 drawingManager 가 아니라 레이어 모델 경로로 간다.
+  assert.equal(
+    source.includes('drawingManager.toggleLayer'),
+    false,
+    '파일럿 분기는 레거시 매니저를 부르지 않는다'
+  );
+});
+
+test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 간다', () => {
+  const start = appSource.indexOf('function fabricPilotLayerViewSets() {');
+  assert.ok(start > 0, '집합 계산 함수를 찾지 못했다');
+  const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
+  assert.ok(end > start, '집합 계산 함수의 끝을 찾지 못했다');
+  const source = appSource.slice(start, end);
+
+  const buildSets = new Function(
+    'reviewDataManager',
+    'collectFabricDrawingObjectIds',
+    'isDrawingObjectVisible',
+    'isDrawingObjectEditable',
+    'findDrawingLayer',
+    `${source}\nreturn fabricPilotLayerViewSets;`
+  );
+
+  const layerState = {
+    activeLayerId: 'layer-a',
+    layers: [
+      { id: 'layer-a', name: 'A', visible: true, locked: false },
+      { id: 'layer-b', name: 'B', visible: false, locked: false },
+      { id: 'layer-c', name: 'C', visible: true, locked: true }
+    ]
+  };
+  const layerOf = { 'obj-a': 'layer-a', 'obj-b': 'layer-b', 'obj-c': 'layer-c' };
+  const visible = (state, id) =>
+    state.layers.find(layer => layer.id === layerOf[id])?.visible !== false;
+  const editable = (state, id) => {
+    const layer = state.layers.find(candidate => candidate.id === layerOf[id]);
+    return layer ? layer.visible !== false && layer.locked !== true : true;
+  };
+  const run = (state, live) => buildSets(
+    { getDrawingLayers: () => state },
+    () => live,
+    visible,
+    editable,
+    (current, id) => current.layers.find(layer => layer.id === id) || null
+  )();
+
+  const sets = run(layerState, new Set(['obj-a', 'obj-b', 'obj-c']));
+  assert.deepEqual(sets.hiddenObjectIds, ['obj-b'], '숨긴 레이어의 획만 숨긴다');
+  assert.deepEqual(sets.lockedObjectIds, ['obj-c'], '잠근 레이어의 획만 잠근다');
+  assert.equal(sets.activeLayerDrawable, true, '활성 레이어가 멀쩡하면 그릴 수 있다');
+
+  // 활성 레이어가 숨겨지면 새 획을 받지 않는다(레거시와 같다).
+  const hiddenActive = run({ ...layerState, activeLayerId: 'layer-b' }, new Set(['obj-a']));
+  assert.equal(hiddenActive.activeLayerDrawable, false);
+  const lockedActive = run({ ...layerState, activeLayerId: 'layer-c' }, new Set(['obj-a']));
+  assert.equal(lockedActive.activeLayerDrawable, false);
+
+  // 문서가 아직 없으면 빈 집합이다 — 아무것도 숨기지 않는다.
+  const noDocument = run(layerState, null);
+  assert.deepEqual(noDocument.hiddenObjectIds, []);
+  assert.deepEqual(noDocument.lockedObjectIds, []);
+});
+
+test('표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시 보낸다', () => {
+  // 오버레이는 레이어를 모르고 세션이 새로 살아나면 집합이 비어 있다. 세 곳
+  // 중 하나라도 빠지면 숨긴 레이어가 되살아나거나 새 획이 숨김을 따르지 않는다.
+  assert.ok(
+    appSource.includes('fabricDrawingPilotController.sendLayerView(fabricPilotLayerViewSets())'),
+    '집합은 컨트롤러를 통해 오버레이로 간다'
+  );
+  const applyStart = appSource.indexOf('function applyDrawingLayerStateChange(nextState, message) {');
+  assert.ok(
+    appSource.slice(applyStart, applyStart + 400).includes('pushFabricPilotLayerView();'),
+    '레이어 모델이 바뀌면 다시 보낸다'
+  );
+  const subscribeStart = appSource.indexOf('syncFabricDrawingLayerAssignments();');
+  assert.ok(
+    appSource.slice(subscribeStart, subscribeStart + 500)
+      .includes('pushFabricPilotLayerViewAfterDisplay();'),
+    '문서가 바뀌면 표시 프레임을 세운 뒤 다시 보낸다'
+  );
+  const stateStart = appSource.indexOf('function handleFabricDrawingPilotStateChange(');
+  const stateHead = appSource.slice(stateStart, stateStart + 1200);
+  assert.ok(
+    stateHead.includes('pushFabricPilotLayerView();'),
+    '세션이 살아나면 다시 보낸다'
+  );
+  // passive 로 내려갈 때는 표시 세션이 선 뒤에 보낸다 — 먼저 보내면 오버레이가
+  // 거절하고 다시 시도하지 않는다.
+  assert.ok(
+    stateHead.includes('pushFabricPilotLayerViewAfterDisplay();'),
+    'passive 로 내려가도 표시 프레임 뒤에 다시 보낸다'
+  );
+});
+
+test('표시·잠금 토글은 그리기 모드일 때만 받는다', () => {
+  // passive 투영에는 집합을 보낼 경로가 없다(오버레이 입력이 꺼져 있다).
+  // 그 상태에서 받으면 모델만 바뀌고 그림은 그대로인데 토스트는 "숨김" 이라고
+  // 말한다 — 화면과 말이 어긋난다.
+  const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerVisibilityToggle', e)");
+  assert.ok(start > 0, '표시 토글 단축키를 찾지 못했다');
+  const head = appSource.slice(Math.max(0, start - 200), start);
+  assert.ok(
+    head.includes('isFabricDrawingPilotEngaged() &&'),
+    '표시 토글은 그리기 모드 조건과 함께 판정한다'
+  );
+  const lockStart = appSource.indexOf("userSettings.matchShortcut('drawingLayerLockToggle', e)");
+  assert.ok(lockStart > 0, '잠금 토글 단축키를 찾지 못했다');
+  assert.ok(
+    appSource.slice(Math.max(0, lockStart - 200), lockStart).includes('isFabricDrawingPilotEngaged() &&'),
+    '잠금 토글도 그리기 모드 조건과 함께 판정한다'
+  );
+  // 추가·선택은 메타데이터만 바꾸므로 passive 에서도 거짓말이 아니다 — 그대로 둔다.
+  const addStart = appSource.indexOf("userSettings.matchShortcut('drawingLayerAdd', e)");
+  assert.equal(
+    appSource.slice(Math.max(0, addStart - 120), addStart).includes('isFabricDrawingPilotEngaged() &&'),
+    false,
+    '추가는 그리기 모드가 아니어도 의미가 있다'
+  );
+});
+
+test('체크인된 오버레이 번들은 런타임 API 를 모두 담고 있다', () => {
+  // 오버레이 창은 모듈이 아니라 이 IIFE 번들을 읽는다. 릴리스 빌드는 prebuild 가
+  // 다시 만들지만 `npm start`·`npm run dev` 는 **체크인된 파일을 그대로 쓴다.**
+  // 런타임에 메서드를 더하고 번들을 안 만들면, 호스트의 호출이 던지고 그 실패가
+  // 조용히 삼켜져 화면은 그대로인데 모델과 토스트만 성공한 것처럼 군다.
+  const runtimeSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-overlay-runtime.js'),
+    'utf8'
+  ));
+  const bundleSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/lib/mpv-fabric-overlay.iife.js'),
+    'utf8'
+  ));
+
+  // 런타임 팩토리가 돌려주는 공개 API 목록을 원문에서 뽑는다.
+  const marker = '  return {\n    prepare,';
+  const start = runtimeSource.indexOf(marker);
+  assert.ok(start > 0, '런타임 공개 API 목록을 찾지 못했다');
+  const end = runtimeSource.indexOf('  };', start);
+  assert.ok(end > start, '공개 API 목록의 끝을 찾지 못했다');
+  const methods = runtimeSource
+    .slice(start + '  return {'.length, end)
+    .split(',')
+    .map(entry => entry.trim())
+    .filter(entry => /^[A-Za-z_$][\w$]*$/.test(entry));
+  assert.ok(methods.length >= 10, `공개 API 를 제대로 뽑지 못했다: ${methods.length}`);
+
+  const missing = methods.filter(method => !bundleSource.includes(`${method},`) &&
+    !bundleSource.includes(`${method}:`));
+  assert.deepEqual(
+    missing,
+    [],
+    `번들에 없는 런타임 API: ${missing.join(', ')} — npm run bundle:mpv-fabric-overlay 를 돌리고 함께 커밋할 것`
+  );
 });
