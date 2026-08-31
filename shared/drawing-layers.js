@@ -56,6 +56,18 @@ function isLayerId(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_LAYER_ID_LENGTH;
 }
 
+// `{}` 에 그냥 대입하면 `__proto__` 같은 키가 프로토타입 설정자로 흘러 자기
+// 속성이 되지 않는다. 드로잉 레코드 id 는 512자 이하 아무 문자열이나 될 수 있으므로
+// 실제로 그런 id 가 올 수 있고, 그러면 그 오브젝트의 레이어 배정이 조용히 사라진다.
+function setAssignment(map, objectId, layerId) {
+  Object.defineProperty(map, objectId, {
+    value: layerId,
+    enumerable: true,
+    writable: true,
+    configurable: true
+  });
+}
+
 function isObjectId(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_OBJECT_ID_LENGTH;
 }
@@ -124,7 +136,7 @@ function normalizeDrawingLayers(value) {
     for (const [objectId, layerId] of Object.entries(value.assignments)) {
       // 사라진 레이어를 가리키는 배정은 버린다 — 그러면 그 오브젝트는 규칙대로
       // 첫 레이어로 돌아간다. 남겨 두면 어느 레이어에도 없는 유령이 된다.
-      if (isObjectId(objectId) && seenIds.has(layerId)) assignments[objectId] = layerId;
+      if (isObjectId(objectId) && seenIds.has(layerId)) setAssignment(assignments, objectId, layerId);
     }
   }
   return {
@@ -255,7 +267,7 @@ function deleteLayer(state, layerId, allObjectIds = []) {
   const layers = current.layers.filter(layer => layer.id !== layerId);
   const assignments = {};
   for (const [objectId, assigned] of Object.entries(current.assignments)) {
-    if (assigned !== layerId) assignments[objectId] = assigned;
+    if (assigned !== layerId) setAssignment(assignments, objectId, assigned);
   }
   const activeLayerId = current.activeLayerId === layerId
     ? layers[0].id
@@ -320,9 +332,12 @@ function toggleLayerLock(state, layerId) {
 function assignObject(state, objectId, layerId) {
   const current = normalizeDrawingLayers(state);
   if (!isObjectId(objectId) || !findLayer(current, layerId)) return current;
-  const assignments = { ...current.assignments };
+  const assignments = {};
+  for (const [id, assigned] of Object.entries(current.assignments)) {
+    setAssignment(assignments, id, assigned);
+  }
   if (layerId === current.baseLayerId) delete assignments[objectId];
-  else assignments[objectId] = layerId;
+  else setAssignment(assignments, objectId, layerId);
   return withLayers(current, current.layers, current.activeLayerId, assignments);
 }
 
@@ -332,7 +347,7 @@ function pruneAssignments(state, liveObjectIds) {
   const live = new Set(liveObjectIds);
   const assignments = {};
   for (const [objectId, layerId] of Object.entries(current.assignments)) {
-    if (live.has(objectId)) assignments[objectId] = layerId;
+    if (live.has(objectId)) setAssignment(assignments, objectId, layerId);
   }
   return withLayers(current, current.layers, current.activeLayerId, assignments);
 }

@@ -133,3 +133,33 @@ test('로컬 변경이 없으면 다른 인스턴스의 레이어 변경을 채�
     '로컬 변경이 없으면 디스크 값을 채택한다'
   );
 });
+
+test('저장 중에 들어온 레이어 변경은 살아남는다', async () => {
+  // 저장이 IPC 를 기다리는 사이 사용자가 레이어를 또 바꾸면, 그 변경은 아직
+  // 디스크에 없다. 저장 완료 때 플래그를 무조건 내리면 다음 저장의 새로고침이
+  // 방금 쓴 낡은 값으로 되돌린다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  manager._applyData({});
+
+  // 저장이 담아 간 상태.
+  const collected = layers.addLayer(manager.getDrawingLayers()).state;
+  manager.setDrawingLayers(collected);
+  const savedDrawingLayers = manager.getDrawingLayers();
+
+  // IPC 를 기다리는 사이 사용자가 하나 더 만든다.
+  manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers()).state);
+  assert.equal(manager.getDrawingLayers().layers.length, 3);
+
+  // 저장 완료 처리: 담아 간 상태가 더는 최신이 아니므로 플래그를 내리면 안 된다.
+  if (manager._drawingLayers === savedDrawingLayers) {
+    manager._drawingLayersDirty = false;
+  }
+  assert.equal(manager._drawingLayersDirty, true, '더 새 변경이 있으면 표시를 유지한다');
+
+  // 그래서 다음 새로고침이 낡은 디스크 값으로 되돌리지 못한다.
+  manager._captureRootEnvelope({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(collected))
+  });
+  assert.equal(manager.getDrawingLayers().layers.length, 3, '저장 중 변경이 살아남는다');
+});

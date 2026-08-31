@@ -247,3 +247,23 @@ test('호출자가 준 중복 id 는 새 id 로 갈아 끼운다', () => {
     '기존 레이어가 그대로 남는다'
   );
 });
+
+test('__proto__ 같은 오브젝트 id 도 배정을 잃지 않는다', () => {
+  // 드로잉 레코드 id 는 512자 이하 아무 문자열이나 될 수 있다. `{}` 에 그냥
+  // 대입하면 `__proto__` 는 프로토타입 설정자로 흘러 자기 속성이 되지 않고,
+  // 그 오브젝트의 레이어 배정이 조용히 사라진다.
+  const { state: two, added } = addLayer(createDefaultDrawingLayers());
+  for (const hostile of ['__proto__', 'constructor', 'toString']) {
+    const assigned = assignObject(two, hostile, added.id);
+    assert.equal(
+      Object.hasOwn(assigned.assignments, hostile),
+      true,
+      `${hostile} 이 자기 속성으로 들어간다`
+    );
+    assert.equal(layerIdForObject(assigned, hostile), added.id, `${hostile} 배정이 유지된다`);
+
+    // 저장·로드를 거쳐도 유지된다.
+    const round = normalizeDrawingLayers(JSON.parse(JSON.stringify(assigned)));
+    assert.equal(layerIdForObject(round, hostile), added.id, `${hostile} 이 왕복해도 남는다`);
+  }
+});

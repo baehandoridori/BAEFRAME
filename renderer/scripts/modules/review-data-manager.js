@@ -1351,6 +1351,7 @@ export class ReviewDataManager extends EventTarget {
       this._assertSaveOwner(saveOwner);
       let savedData = null;
       let savedChangeRevision = null;
+      let savedDrawingLayers = null;
       let savedFabricDrawingRevision = null;
       let savedReviewMergeBase = null;
       let lastConflictResult = null;
@@ -1420,6 +1421,9 @@ export class ReviewDataManager extends EventTarget {
         const attemptReviewMergeBase = captureReviewMergeBase(localData);
         const data = this._mergeBeforeSave(localData, latestRoot);
         const attemptChangeRevision = this._changeRevision;
+        // 이 시도가 담아 간 레이어 상태. setDrawingLayers 는 항상 새 객체를
+        // 만들므로 참조 비교로 "그 사이에 또 바뀌었는가" 를 알 수 있다.
+        const attemptDrawingLayers = this._drawingLayers;
         const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
         const attemptObservationEpoch = this._reviewFileObservationEpoch;
 
@@ -1554,6 +1558,7 @@ export class ReviewDataManager extends EventTarget {
         }
         savedData = data;
         savedChangeRevision = attemptChangeRevision;
+        savedDrawingLayers = attemptDrawingLayers;
         savedFabricDrawingRevision = attemptFabricDrawingRevision;
         savedReviewMergeBase = attemptReviewMergeBase;
         break;
@@ -1570,9 +1575,13 @@ export class ReviewDataManager extends EventTarget {
       this._reviewMergeBase = savedReviewMergeBase ||
         captureReviewMergeBase(savedData);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
-      // 저장이 끝났으므로 로컬 레이어 변경은 더 이상 없다. 이제부터는 디스크
-      // 값(다른 인스턴스의 변경 포함)을 다시 채택해도 된다.
-      this._drawingLayersDirty = false;
+      // 저장이 끝났으므로 로컬 레이어 변경은 더 이상 없다 — **이 저장이 담아 간
+      // 상태가 아직 최신일 때만** 그렇다. IPC 를 기다리는 사이 사용자가 레이어를
+      // 또 바꿨다면 그 변경은 아직 디스크에 없다. 여기서 플래그를 내리면 다음
+      // 저장의 새로고침이 방금 쓴 낡은 값으로 되돌린다.
+      if (this._drawingLayers === savedDrawingLayers) {
+        this._drawingLayersDirty = false;
+      }
 
       log.info('.bframe 파일 저장됨', {
         path: saveOwner.bframePath,
