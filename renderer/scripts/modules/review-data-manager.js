@@ -2654,6 +2654,10 @@ export class ReviewDataManager extends EventTarget {
         this._drawingLayers,
         incomingLayers
       );
+      // 병합으로 원격 값을 **흡수했으므로** 그것이 새 기준선이다. 그대로 두면
+      // 저장이 지연·실패한 뒤 다음 병합이 흡수한 원격 값을 "내 편집" 으로 오인해,
+      // 그 사이 올라온 더 새 원격 변경을 덮어쓴다.
+      this._drawingLayersBaseline = incomingLayers;
     }
 
     const dataVersion = getDataVersion(data);

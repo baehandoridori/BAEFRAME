@@ -213,3 +213,44 @@ test('동시 레이어 편집은 서로를 지우지 않는다', async () => {
   assert.ok(names.includes('내 레이어'), '내 추가가 남는다');
   assert.ok(names.includes('남의 레이어'), '남의 추가도 남는다');
 });
+
+test('병합으로 흡수한 원격 값이 새 기준선이 된다', async () => {
+  // 저장이 지연·실패한 뒤 다음 병합이 흡수한 원격 값을 "내 편집" 으로 오인하면,
+  // 그 사이 올라온 더 새 원격 변경을 덮어쓴다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  manager._applyData({});
+  const baseline = manager.getDrawingLayers();
+  const baseId = baseline.layers[0].id;
+
+  // 이쪽은 레이어를 하나 추가한다(= dirty).
+  manager.setDrawingLayers(layers.addLayer(baseline, { name: '내 레이어' }).state);
+
+  // 원격 R1: 기준 레이어의 이름을 바꿨다.
+  const r1 = layers.normalizeDrawingLayers({
+    ...baseline,
+    layers: [{ ...baseline.layers[0], name: 'R1' }]
+  });
+  manager._captureRootEnvelope({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(r1))
+  });
+  assert.equal(layers.findLayer(manager.getDrawingLayers(), baseId).name, 'R1');
+
+  // 저장이 지연됐고, 그 사이 원격 R2 가 같은 레이어를 또 바꿨다.
+  const r2 = layers.normalizeDrawingLayers({
+    ...baseline,
+    layers: [{ ...baseline.layers[0], name: 'R2' }]
+  });
+  manager._captureRootEnvelope({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(r2))
+  });
+  assert.equal(
+    layers.findLayer(manager.getDrawingLayers(), baseId).name,
+    'R2',
+    '더 새 원격 변경을 덮어쓰지 않는다'
+  );
+  assert.ok(
+    manager.getDrawingLayers().layers.some(layer => layer.name === '내 레이어'),
+    '내 추가는 그대로 남는다'
+  );
+});
