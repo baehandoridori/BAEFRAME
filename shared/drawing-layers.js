@@ -371,9 +371,55 @@ function pruneAssignments(state, liveObjectIds) {
 function mergeDrawingLayers(baseline, local, remote) {
   const base = normalizeDrawingLayers(baseline);
   const mine = normalizeDrawingLayers(local);
-  const theirs = normalizeDrawingLayers(remote);
+  let theirs = normalizeDrawingLayers(remote);
 
   const baseById = new Map(base.layers.map(layer => [layer.id, layer]));
+
+  // 양쪽이 **각자** 같은 id 로 서로 다른 레이어를 만들 수 있다(호출자가 id 를
+  // 직접 준 경우). 그대로 합치면 한 레이어로 뭉뚱그려져 한쪽이 통째로 사라진다.
+  // 기준선에 없던 id 가 양쪽에 다 있으면 충돌이므로, 원격 쪽에 새 id 를 주고
+  // 그 배정도 함께 옮긴다.
+  // 같은 id 가 양쪽에 있다고 곧 충돌은 아니다 — 한쪽이 추가한 레이어가 이미
+  // 디스크에 반영돼 양쪽에서 보이는 경우가 훨씬 흔하고, 그건 **같은 레이어**다.
+  // 내용까지 다를 때만 "각자 만든 다른 레이어" 로 본다.
+  const sameFields = (left, right) => Boolean(left) && Boolean(right) &&
+    Object.keys(left).every(field => left[field] === right[field]);
+  const collisions = theirs.layers
+    .filter(layer => {
+      if (baseById.has(layer.id)) return false;
+      const mineLayer = mine.layers.find(candidate => candidate.id === layer.id);
+      return Boolean(mineLayer) && !sameFields(mineLayer, layer);
+    })
+    .map(layer => layer.id);
+  if (collisions.length > 0) {
+    const used = new Set([
+      ...base.layers.map(layer => layer.id),
+      ...mine.layers.map(layer => layer.id),
+      ...theirs.layers.map(layer => layer.id)
+    ]);
+    const remap = new Map();
+    for (const id of collisions) {
+      let ordinal = used.size + 1;
+      while (used.has(`drawing-layer-${ordinal}`)) ordinal += 1;
+      const nextId = `drawing-layer-${ordinal}`;
+      used.add(nextId);
+      remap.set(id, nextId);
+    }
+    const remappedAssignments = {};
+    for (const [objectId, layerId] of Object.entries(theirs.assignments)) {
+      setAssignment(remappedAssignments, objectId, remap.get(layerId) || layerId);
+    }
+    theirs = normalizeDrawingLayers({
+      ...theirs,
+      layers: theirs.layers.map(layer => (
+        remap.has(layer.id) ? { ...layer, id: remap.get(layer.id) } : layer
+      )),
+      activeLayerId: remap.get(theirs.activeLayerId) || theirs.activeLayerId,
+      baseLayerId: remap.get(theirs.baseLayerId) || theirs.baseLayerId,
+      assignments: remappedAssignments
+    });
+  }
+
   const mineById = new Map(mine.layers.map(layer => [layer.id, layer]));
   const theirsById = new Map(theirs.layers.map(layer => [layer.id, layer]));
   const sameLayer = (left, right) => Boolean(left) && Boolean(right) &&

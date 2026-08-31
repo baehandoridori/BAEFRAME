@@ -494,3 +494,25 @@ test('상한을 넘겨도 기존 레이어와 그 배정을 지키다', () => {
   }
   assert.equal(merged.assignments['obj-1'], 'base-0', '기존 배정이 살아남는다');
 });
+
+test('양쪽이 같은 id 로 각자 만든 레이어를 둘 다 살린다', () => {
+  // 그대로 합치면 한 레이어로 뭉뚱그려져 한쪽이 통째로 사라진다.
+  const base = createDefaultDrawingLayers();
+  const mine = addLayer(base, { id: 'shared-id', name: '내 것' }).state;
+  const theirs = addLayer(base, { id: 'shared-id', name: '남의 것' }).state;
+  const theirsWithArt = assignObject(theirs, 'obj-1', 'shared-id');
+
+  const merged = mergeDrawingLayers(base, mine, theirsWithArt);
+  const names = merged.layers.map(layer => layer.name);
+  assert.ok(names.includes('내 것'), '내 레이어가 남는다');
+  assert.ok(names.includes('남의 것'), '남의 레이어도 남는다');
+  assert.equal(merged.layers.length, 3, '기준 레이어까지 셋');
+
+  // 원격 배정은 새로 받은 id 를 따라간다.
+  const theirLayer = merged.layers.find(layer => layer.name === '남의 것');
+  assert.equal(
+    merged.assignments['obj-1'],
+    theirLayer.id,
+    '옮겨간 레이어로 배정도 함께 간다'
+  );
+});
