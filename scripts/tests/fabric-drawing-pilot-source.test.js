@@ -3259,8 +3259,8 @@ test('랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다', () => {
 });
 
 test('정규화 랭크는 같은 층 안에서 새 획을 위로 보낸다', () => {
-  const start = appSource.indexOf('function fabricPilotHealingRanks(state, recentIds) {');
-  assert.ok(start > 0, '정규화 랭크 함수를 찾지 못했다');
+  const start = appSource.indexOf('const fabricPilotPlacedByRankIds = new Set();');
+  assert.ok(start > 0, '세션 목록 선언을 찾지 못했다');
   const end = appSource.indexOf('function fabricPilotLayerOrderInverted(', start);
   const build = new Function(
     'fabricPilotObjectRanks',
@@ -3271,9 +3271,15 @@ test('정규화 랭크는 같은 층 안에서 새 획을 위로 보낸다', () 
     objectRanks: [['a', 0], ['b', 3]],
     defaultRank: 0
   });
+  // **세션 동안 기억한다.** 되돌리기·다시하기가 옛 순서를 되살렸을 때 판정
+  // 근거가 사라지면 정규화가 두 번 다시 돌지 않는다.
+  assert.deepEqual(build({}, []), {
+    objectRanks: [['a', 0], ['b', 3]],
+    defaultRank: 0
+  }, '한 번 붙인 id 는 계속 기억한다');
   // 층 사이 간격은 2 라, +1 을 받아도 다음 층을 넘지 않는다.
   assert.deepEqual(build({}, ['a']), {
-    objectRanks: [['a', 1], ['b', 2]],
+    objectRanks: [['a', 1], ['b', 3]],
     defaultRank: 0
   });
 });
@@ -3368,5 +3374,23 @@ test('정규화 재정렬은 그림자 관찰자를 다시 심는다', () => {
   assert.ok(
     source.includes('notifyScenesDropped(reseededSceneInstanceIds);'),
     '그 씬들을 떨어뜨려 다시 심게 한다'
+  );
+});
+
+test('정규화는 손댄 씬을 그림자에서 다시 심게 한다', () => {
+  // 떨어뜨린 씬에 "심었다" 표시가 남아 있으면, 다음 활성화가 값이 빈 지도를
+  // 만들어 보내고 어댑터가 invalid-seed 로 격리한다.
+  const start = fabricRuntimeSource.indexOf(
+    "if (operation === 'layer-objects-reorder' && command.silent === true) {"
+  );
+  assert.ok(start > 0, '정규화 분기를 찾지 못했다');
+  const source = fabricRuntimeSource.slice(start, start + 1600);
+  assert.ok(
+    source.includes('scene.drawingObserverSeeded = false;'),
+    '심었다는 표시를 되돌린다'
+  );
+  assert.ok(
+    source.includes('notifyScenesDropped(reseededSceneInstanceIds);'),
+    '그 씬들을 떨어뜨린다'
   );
 });

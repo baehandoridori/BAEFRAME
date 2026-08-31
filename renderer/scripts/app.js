@@ -8195,9 +8195,15 @@ async function initApp() {
   // 새 획이 옛 획들보다 뒤(=위)로 간다 — 층이 바뀌지는 않는다(다음 층은 +2).
   // 랭크만 보면 `0,1,1` 처럼 오름차순이라, 층은 맞는데 **제 층 안에서 아래에**
   // 깔린 새 획을 놓친다.
+  // **이 세션에서 새로 붙인 id 는 계속 기억한다.** 되돌리기·다시하기가 저장된
+  // 스냅샷으로 옛 순서를 되살릴 수 있는데, 그때 이 목록이 비어 있으면 같은 층
+  // 안의 자리를 판정할 근거가 사라져 정규화가 두 번 다시 돌지 않는다.
+  const fabricPilotPlacedByRankIds = new Set();
+
   function fabricPilotHealingRanks(state, recentIds) {
     const base = fabricPilotObjectRanks(state);
-    const recent = new Set(recentIds || []);
+    for (const id of recentIds || []) fabricPilotPlacedByRankIds.add(id);
+    const recent = fabricPilotPlacedByRankIds;
     return {
       objectRanks: base.objectRanks.map(([id, rank]) => [id, rank * 2 + (recent.has(id) ? 1 : 0)]),
       defaultRank: base.defaultRank * 2

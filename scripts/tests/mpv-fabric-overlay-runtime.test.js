@@ -18239,32 +18239,3 @@ test('정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지�
   runtime.destroy();
 });
 
-test('정규화는 손댄 씬의 다시하기를 버린다', () => {
-  // 저장된 다시하기 스냅샷은 고치기 전 순서를 들고 있다. 되돌린 뒤 다시 하면
-  // 그 잘못된 순서가 되살아나고, 그 id 는 이미 "본" 것이라 정규화가 두 번
-  // 다시 돌지 않는다.
-  const { runtime, canvas } = makeLayerOpsRuntime();
-  drawStroke(canvas.upperCanvasEl, 8910);
-  assert.equal(runtime.applyDrawingAction({
-    sessionId: 'runtime-session',
-    actionId: 'heal-redo-undo',
-    action: 'undo'
-  }).applied, true);
-  assert.ok(runtime.getDiagnostics().globalRedoDepth > 0, '먼저 다시하기가 쌓여야 한다');
-
-  const healed = runtime.applyDrawingAction({
-    sessionId: 'runtime-session',
-    actionId: 'heal-redo-1',
-    action: 'layer-objects-reorder',
-    objectRanks: [['top-24', 1], ['bottom-24', 0], ['top-30', 1], ['bottom-30', 0]],
-    defaultRank: 0,
-    silent: true
-  });
-  assert.equal(healed.applied, true, JSON.stringify(healed));
-  assert.equal(
-    runtime.getDiagnostics().globalRedoDepth,
-    0,
-    '손댄 씬의 다시하기는 버린다'
-  );
-  runtime.destroy();
-});

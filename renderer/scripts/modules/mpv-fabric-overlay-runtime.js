@@ -2955,7 +2955,6 @@ function createSessionSceneStore(options = {}) {
       // 받아 sequence-gap 으로 거절하고, 그 씬의 그림자가 영구히 저하된다.
       // 바꾼 씬은 **떨어뜨려** 다음 투영에서 다시 심게 한다.
       const reseededSceneInstanceIds = [];
-      const changedSceneKeys = new Set();
       for (const scene of committedScenesForVideo(stableVideoIdentity)) {
         const current = [...scene.objects.values()];
         const next = [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
@@ -2968,22 +2967,14 @@ function createSessionSceneStore(options = {}) {
         scene.dirty = true;
         scene.mutationCount += 1;
         scene.mutationSequence += 1;
-        // 저장된 다시하기 스냅샷은 **고치기 전 순서**를 들고 있다. 되돌린 뒤
-        // 다시 하면 그 잘못된 순서가 되살아나고, 그 id 는 이미 "본" 것이라
-        // 정규화가 두 번 다시 돌지 않는다. 손댄 씬의 다시하기는 버린다 —
-        // 자동 정리 뒤 다시하기를 잃는 편이 틀린 순서로 되살아나는 것보다 낫다.
-        scene.history.clearRedo();
-        scene.historyEntries = { undo: scene.historyEntries.undo, redo: [] };
+        // 그림자(Drawing V3)는 이 씬을 떨어뜨린 뒤 **처음부터 다시 심는다.**
+        // 심었다는 표시를 남겨 두면 다음 활성화가 값이 빈 지도를 만들어 보내고,
+        // 어댑터가 invalid-seed 로 격리한다.
+        scene.drawingObserverSeeded = false;
         reseededSceneInstanceIds.push(scene.sceneInstanceId);
-        changedSceneKeys.add(scene.key);
         changed += 1;
       }
       notifyScenesDropped(reseededSceneInstanceIds);
-      // 전역 순서에서도 그 씬의 다시하기 항목을 걷는다.
-      const order = globalOrderFor(stableVideoIdentity);
-      if (order) {
-        order.redo = order.redo.filter(entry => !changedSceneKeys.has(entry.sceneKey));
-      }
       rebuildActiveProvisionalScene(stableVideoIdentity);
       if (changed === 0) return { applied: false, reason: 'no-change' };
       return {
