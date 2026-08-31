@@ -424,7 +424,7 @@ test('HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레�
     'FABRIC_PILOT_LAYER_ROW_PREFIX',
     'reviewDataManager',
     'activeFabricPilotLayerRowId',
-    'resetFabricDrawingLayerAssignmentTracking',
+    'seedFabricDrawingLayerAssignmentTracking',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
     () => null,
@@ -496,7 +496,7 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
     'FABRIC_PILOT_LAYER_ROW_PREFIX',
     'reviewDataManager',
     'activeFabricPilotLayerRowId',
-    'resetFabricDrawingLayerAssignmentTracking',
+    'seedFabricDrawingLayerAssignmentTracking',
     `${renderSource}\nreturn renderActiveDrawingLayers;`
   )(
     () => [{ id: 'fabric-pilot-layer-drawing-layer-1' }],
@@ -548,6 +548,72 @@ test('동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만
   assert.match(appSource, /let lastFabricPilotTimelineVideoGeneration = null;/);
   assert.match(appSource, /let lastFabricPilotTimelineStableVideoIdentity = null;/);
 });
+
+test('영상이 바뀌면 배정 추적을 초기화가 아니라 재시딩한다', () => {
+  // 세션이 active 로 바뀌며 심은 직후, 이 렌더가 새 영상 정체를 처음 본다.
+  // 여기서 초기화해 버리면 그 seed 가 지워져 다음 첫 획이 seed 단계로 흘러
+  // 활성 레이어 배정을 받지 못한다. 걷어내기는 꺼야 한다 — 전환 순간에는
+  // 레이어 상태가 새 파일인데 스토어가 아직 이전 문서를 들고 있을 수 있다.
+  const renderSource = appSource.match(
+    /function renderActiveDrawingLayers\(\) \{[\s\S]*?\n  \}\n\n  function requiresMpvReviewFreeze/
+  )?.[0]?.replace(/\n\n  function requiresMpvReviewFreeze$/, '');
+  assert.ok(renderSource, 'renderActiveDrawingLayers source should be extractable');
+
+  const seedCalls = [];
+  const videoPlayerHarness = { filePath: 'C:/videos/a.mp4' };
+  const timelineHarness = {
+    selectedKeyframes: [],
+    clearSelection() { this.selectedKeyframes = []; },
+    renderDrawingLayers() {}
+  };
+  const renderActiveDrawingLayers = new Function(
+    'getFabricPilotTimelineLayers',
+    'timeline',
+    'drawingManager',
+    'fabricDrawingPersistenceStore',
+    'lastFabricPilotTimelineSourceEpoch',
+    'fabricDrawingPilotStatusSnapshot',
+    'lastFabricPilotTimelineVideoGeneration',
+    'lastFabricPilotTimelineStableVideoIdentity',
+    'videoPlayer',
+    'state',
+    'normalizeComparableFilePath',
+    'FABRIC_PILOT_LAYER_ROW_PREFIX',
+    'reviewDataManager',
+    'activeFabricPilotLayerRowId',
+    'seedFabricDrawingLayerAssignmentTracking',
+    `${renderSource}\nreturn renderActiveDrawingLayers;`
+  )(
+    () => [{ id: 'fabric-pilot-layer-drawing-layer-1' }],
+    timelineHarness,
+    { layers: [], activeLayerId: null },
+    { getSourceEpoch: () => 1 },
+    null,
+    { videoGeneration: 1 },
+    null,
+    null,
+    videoPlayerHarness,
+    { currentFile: videoPlayerHarness.filePath },
+    value => String(value || '').toLowerCase(),
+    'fabric-pilot-layer-',
+    { getDrawingLayers: () => projectionLayerState },
+    () => 'fabric-pilot-layer-drawing-layer-1',
+    options => { seedCalls.push(options); }
+  );
+
+  // 첫 렌더는 기준을 심을 뿐이라 소스가 바뀐 것이 아니다.
+  renderActiveDrawingLayers();
+  assert.deepEqual(seedCalls, []);
+
+  videoPlayerHarness.filePath = 'C:/videos/b.mp4';
+  renderActiveDrawingLayers();
+  assert.deepEqual(seedCalls, [{ prune: false }], '전환 렌더는 걷어내기 없이 다시 심는다');
+
+  // 같은 영상에서 다시 렌더하면 또 심지 않는다.
+  renderActiveDrawingLayers();
+  assert.equal(seedCalls.length, 1);
+});
+
 
 test('읽기 전용 합성 행과 투영 행의 가시성·잠금 버튼은 숨긴다', () => {
   assert.match(
@@ -2038,12 +2104,19 @@ test('새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을
     syncSource.includes('assignDrawingObjectLayer(next, id, next.activeLayerId)'),
     '새 오브젝트는 활성 레이어에 붙는다'
   );
+  const seedStart1 = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking(');
+  assert.ok(seedStart1 > 0, 'seed 소스를 찾지 못했다');
   assert.ok(
-    appSource.slice(syncStart, syncStart + 1600).includes('pruneDrawingLayerAssignments'),
+    appSource.slice(seedStart1, appSource.indexOf('function applyDrawingLayerStateChange(', seedStart1))
+      .includes('pruneDrawingLayerAssignments'),
     '사라진 오브젝트의 배정을 걷는다'
   );
-  // 영상이 바뀌면 추적을 처음부터 다시 한다.
-  assert.ok(appSource.includes('function resetFabricDrawingLayerAssignmentTracking() {'));
+  // 영상이 바뀌면 지금 문서로 다시 심는다. 걷어내기는 옵션으로 끌 수 있어야 한다 —
+  // 전환 순간에는 레이어 상태가 새 파일인데 스토어가 아직 이전 문서를 들고 있을 수 있다.
+  assert.ok(appSource.includes(
+    'function seedFabricDrawingLayerAssignmentTracking({ prune = true } = {}) {'
+  ));
+  assert.ok(appSource.includes('if (live && prune) {reviewDataManager.setDrawingLayers('));
 });
 
 test('키프레임 이동 라우터는 레이어별 행 id 를 알아본다', () => {
@@ -2083,10 +2156,13 @@ test('오브젝트 추적은 세션이 살아나는 순간 심는다', () => {
   );
   // 영상이 바뀌면 처음부터 다시 센다.
   const renderStart = appSource.indexOf('function renderActiveDrawingLayers() {');
+  // **초기화가 아니라 재시딩**이어야 한다. active 로 바뀌며 심은 직후 이 렌더가
+  // 새 영상 정체를 처음 보면, 초기화는 그 seed 를 지워 다음 첫 획이 배정을 잃는다.
+  // 걷어내기(prune)는 끈다 — 전환 순간에는 레이어 상태와 문서가 서로 다른 영상일 수 있다.
   assert.ok(
-    appSource.slice(renderStart, renderStart + 1400)
-      .includes('if (sourceChanged) resetFabricDrawingLayerAssignmentTracking();'),
-    '소스가 바뀌면 추적을 초기화해야 한다'
+    appSource.slice(renderStart, renderStart + 1800)
+      .includes('if (sourceChanged) seedFabricDrawingLayerAssignmentTracking({ prune: false });'),
+    '소스가 바뀌면 걷어내기 없이 지금 문서로 다시 심어야 한다'
   );
 });
 
@@ -2235,9 +2311,11 @@ test('삭제된 획의 레이어 배정은 실행취소가 되살릴 때까지 �
     false,
     '변이 알림에서는 걷지 않는다'
   );
-  const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking() {');
+  const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking(');
+  assert.ok(seedStart > 0, 'seed 소스를 찾지 못했다');
   assert.ok(
-    appSource.slice(seedStart, seedStart + 800).includes('pruneDrawingLayerAssignments'),
+    appSource.slice(seedStart, appSource.indexOf('function applyDrawingLayerStateChange(', seedStart))
+      .includes('pruneDrawingLayerAssignments'),
     '문서를 새로 심을 때만 걷는다'
   );
 });
@@ -2257,10 +2335,11 @@ test('실행취소로 되살아난 획은 원래 레이어에 남는다', () => 
     syncSource.includes('everSeenDrawingObjectIds.add(id);'),
     '새 오브젝트는 본 목록에 넣는다'
   );
-  // seed·reset 이 두 목록을 함께 다룬다.
-  const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking() {');
+  // seed 가 두 목록을 함께 다룬다.
+  const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking(');
+  assert.ok(seedStart > 0, 'seed 소스를 찾지 못했다');
   assert.ok(
-    appSource.slice(seedStart, seedStart + 700)
+    appSource.slice(seedStart, appSource.indexOf('function applyDrawingLayerStateChange(', seedStart))
       .includes('everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);'),
     'seed 는 본 목록도 함께 심는다'
   );

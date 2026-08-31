@@ -6697,7 +6697,11 @@ async function initApp() {
             hasFabricPilotSelection) {
           timeline.clearSelection();
         }
-        if (sourceChanged) resetFabricDrawingLayerAssignmentTracking();
+        // **초기화가 아니라 재시딩이다.** 세션이 active 가 되며 심은 직후 이 렌더가
+        // 새 영상 정체를 처음 보면, 초기화해 버리면 그 seed 가 지워진다. 그러면
+        // 다음 첫 획이 seed 단계로 흘러 활성 레이어 배정을 받지 못한다.
+        // 지금 문서로 다시 심으면 순서에 관계없이 옳다.
+        if (sourceChanged) seedFabricDrawingLayerAssignmentTracking({ prune: false });
         lastFabricPilotTimelineVideoGeneration = videoGeneration;
         lastFabricPilotTimelineStableVideoIdentity = stableVideoIdentity;
         // 활성 레이어를 넘기지 않으면 헤더에 selected 가 붙지 않아, 다음 획이
@@ -7946,22 +7950,21 @@ async function initApp() {
    * 않으므로, 사용자가 새 레이어를 고르고 첫 획을 그은 **그 알림**이 첫 seed 가
    * 된다. 그러면 그 획은 배정을 받지 못하고 기준 레이어로 떨어진다.
    */
-  function seedFabricDrawingLayerAssignmentTracking() {
+  function seedFabricDrawingLayerAssignmentTracking({ prune = true } = {}) {
     const live = collectFabricDrawingObjectIds();
     knownDrawingObjectIds = live || new Set();
     everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);
     drawingObjectIdsSeeded = live !== null;
     // 사라진 오브젝트의 배정은 여기서만 걷는다. 실행취소로 되살아날 수 있는
     // 동안에는 남겨 둬야 한다(위 주석 참조).
-    if (live) {reviewDataManager.setDrawingLayers(
+    //
+    // 영상 전환 중에는 걷지 않는다(prune: false). 리뷰 파일은 영상당 하나라
+    // 전환 순간에 레이어 상태는 **새 파일**로 바뀌었는데 스토어는 아직 이전
+    // 문서를 들고 ready 일 수 있다. 그때 걷으면 새 파일의 배정이 전부 사라진
+    // 채 저장된다 — 고치려는 버그보다 피해가 크다.
+    if (live && prune) {reviewDataManager.setDrawingLayers(
       pruneDrawingLayerAssignments(reviewDataManager.getDrawingLayers(), [...live])
     );}
-  }
-
-  function resetFabricDrawingLayerAssignmentTracking() {
-    knownDrawingObjectIds = new Set();
-    everSeenDrawingObjectIds = new Set();
-    drawingObjectIdsSeeded = false;
   }
 
   function applyDrawingLayerStateChange(nextState, message) {
