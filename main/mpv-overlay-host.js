@@ -3539,7 +3539,20 @@ class MPVOverlayHost {
           request.defaultRank < 0 || request.defaultRank > MAX_LAYER_OBJECT_RANK) {
         return null;
       }
-      return { objectRanks: normalized, defaultRank: request.defaultRank };
+      // 새로 그리는 획이 들어갈 자리(활성 레이어의 랭크). 없으면 기본 랭크를 쓴다.
+      if (request.activeLayerRank !== undefined &&
+          (!Number.isInteger(request.activeLayerRank) ||
+           request.activeLayerRank < 0 ||
+           request.activeLayerRank > MAX_LAYER_OBJECT_RANK)) {
+        return null;
+      }
+      return {
+        objectRanks: normalized,
+        defaultRank: request.defaultRank,
+        ...(request.activeLayerRank === undefined
+          ? {}
+          : { activeLayerRank: request.activeLayerRank })
+      };
     }
     return {};
   }
@@ -3635,6 +3648,14 @@ class MPVOverlayHost {
         applied: result?.applied === true,
         duplicate: result?.duplicate === true,
         ...(typeof result?.reason === 'string' ? { reason: result.reason } : {}),
+        // 레이어 조작만 짝 id 를 돌려준다. 렌더러가 레이어 **모델**의 before/after
+        // 를 이 id 로 찾아 함께 되돌린다 — 오버레이는 씬만 되돌릴 수 있다.
+        ...(typeof result?.commandId === 'string' && result.commandId.length <= 256
+          ? { commandId: result.commandId }
+          : {}),
+        ...(result?.historyDirection === 'undo' || result?.historyDirection === 'redo'
+          ? { historyDirection: result.historyDirection }
+          : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount))),
         keyframeSetChanged: result?.keyframeSetChanged === true
       };

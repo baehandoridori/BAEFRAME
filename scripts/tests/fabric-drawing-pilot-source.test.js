@@ -2813,11 +2813,21 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   const modelCall = source.indexOf('applyDrawingLayerStateChange(');
   assert.ok(removeCall > 0 && modelCall > removeCall, '문서를 먼저 바꾼다');
 
+  // 두 조작 모두 짝 id 로 레이어 모델의 before/after 를 기억해야 실행취소가
+  // 씬과 모델을 함께 되돌린다.
+  assert.ok(
+    source.includes('rememberFabricPilotLayerHistory(response.commandId, state, result.state)'),
+    '삭제는 모델의 before/after 를 짝 id 로 기억한다'
+  );
   const reorderCall = source.indexOf("'layer-objects-reorder'");
   assert.ok(reorderCall > modelCall, '이동도 같은 분기 안에 있다');
   assert.ok(
     source.includes('fabricPilotObjectRanks(next)'),
     '이동은 옮긴 뒤의 랭크를 보낸다'
+  );
+  assert.ok(
+    source.includes('rememberFabricPilotLayerHistory(response.commandId, state, next)'),
+    '이동도 모델의 before/after 를 짝 id 로 기억한다'
   );
 });
 
@@ -2838,5 +2848,112 @@ test('겹침 순서 랭크는 표시·잠금과 같은 경로로 계속 밀어 �
   assert.ok(
     source.includes('Object.create(null)'),
     '임의의 오브젝트 id 가 키가 되므로 프로토타입 없는 객체에 담는다'
+  );
+});
+
+test('레이어 히스토리 예산은 프레임마다의 스냅샷을 모두 센다', () => {
+  // 레이어 조작 항목은 프레임마다 before/after 를 든다. 위 두 자리만 보면
+  // 통째로 0바이트로 세어져, 큰 문서에서 순서를 반복해 옮기면 문서 크기의
+  // 스냅샷 쌍이 상한까지 그대로 남는다.
+  const start = fabricRuntimeSource.indexOf('function structuralEntryBytes(entry) {');
+  assert.ok(start > 0, '예산 계산 함수를 찾지 못했다');
+  const end = fabricRuntimeSource.indexOf('function trimStructuralOrder(', start);
+  assert.ok(end > start, '예산 계산 함수의 끝을 찾지 못했다');
+  const source = fabricRuntimeSource.slice(start, end);
+
+  const estimate = new Function(
+    'defaultEstimateObjectBytes',
+    source + String.fromCharCode(10) + 'return structuralEntryBytes;'
+  )(record => Number(record?.bytes) || 0);
+
+  const singleFrame = estimate({
+    structural: {
+      before: { objects: [{ bytes: 10 }] },
+      after: { objects: [{ bytes: 5 }] }
+    }
+  });
+  assert.equal(singleFrame, 15, '한 프레임 항목은 그대로 센다');
+
+  const multiFrame = estimate({
+    structural: {
+      frames: [
+        { before: { objects: [{ bytes: 100 }] }, after: { objects: [{ bytes: 100 }] } },
+        { before: { objects: [{ bytes: 40 }] }, after: { objects: [{ bytes: 40 }] } }
+      ]
+    }
+  });
+  assert.equal(multiFrame, 280, '프레임마다의 스냅샷을 모두 센다');
+});
+
+test('레이어 모델은 짝 id 로 씬과 함께 되돌아간다', () => {
+  // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 렌더러 쪽에 있어서, 짝을 짓지
+  // 않으면 삭제를 되돌렸을 때 그림만 살아나 기준 레이어로 떨어지고, 이동을
+  // 되돌렸을 때 겹침 순서만 돌아오고 목록은 옮긴 채로 남는다.
+  const start = appSource.indexOf('function rememberFabricPilotLayerHistory(');
+  assert.ok(start > 0, '레이어 히스토리 기억 함수를 찾지 못했다');
+  const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
+  assert.ok(end > start, '레이어 히스토리 구간의 끝을 찾지 못했다');
+  const declaration = appSource.indexOf('const fabricPilotLayerHistory = new Map();');
+  assert.ok(declaration > 0 && declaration < start, '히스토리 보관소 선언을 찾지 못했다');
+  const source = appSource.slice(declaration, end);
+
+  let layerState = { id: 'after' };
+  let rendered = 0;
+  let pushed = 0;
+  const harness = new Function(
+    'reviewDataManager',
+    'renderActiveDrawingLayers',
+    'pushFabricPilotLayerView',
+    source + String.fromCharCode(10) +
+      'return { remember: rememberFabricPilotLayerHistory, apply: applyFabricPilotLayerHistory };'
+  )(
+    {
+      setDrawingLayers: next => { layerState = next; return true; }
+    },
+    () => { rendered += 1; },
+    () => { pushed += 1; }
+  );
+
+  harness.remember('layer-op:v:1', { id: 'before' }, { id: 'after' });
+  harness.apply({ commandId: 'layer-op:v:1', direction: 'undo' });
+  assert.deepEqual(layerState, { id: 'before' }, '실행취소는 조작 전 모델로 돌린다');
+  assert.equal(rendered, 1);
+  assert.equal(pushed, 1, '되돌린 모델로 집합·랭크도 다시 보낸다');
+
+  harness.apply({ commandId: 'layer-op:v:1', direction: 'redo' });
+  assert.deepEqual(layerState, { id: 'after' }, '재실행은 조작 후 모델로 돌린다');
+
+  // 모르는 짝 id 는 아무것도 하지 않는다.
+  const beforeUnknown = rendered;
+  harness.apply({ commandId: 'layer-op:v:999', direction: 'undo' });
+  assert.equal(rendered, beforeUnknown, '짝이 없으면 건드리지 않는다');
+
+  // 오래된 항목은 상한에서 버린다.
+  for (let index = 0; index < 70; index += 1) {
+    harness.remember(`layer-op:v:bulk-${index}`, { id: 'b' }, { id: 'a' });
+  }
+  layerState = { id: 'after' };
+  harness.apply({ commandId: 'layer-op:v:1', direction: 'undo' });
+  assert.deepEqual(layerState, { id: 'after' }, '상한을 넘은 옛 항목은 버려진다');
+});
+
+test('레이어 순서 이동은 전송 실패와 no-change 를 가른다', () => {
+  // 둘 다 "적용 안 됨" 이지만 뜻이 다르다. 전송 실패까지 반영하면 타임라인
+  // 순서만 바뀌고 캔버스 겹침은 그대로인 어긋난 상태가 저장된다.
+  const start = appSource.indexOf("'layer-objects-reorder',");
+  assert.ok(start > 0, '재정렬 호출을 찾지 못했다');
+  const source = appSource.slice(start, start + 900);
+  assert.ok(
+    source.includes('applyDrawingActionDetailed') ||
+      appSource.slice(Math.max(0, start - 300), start).includes('applyDrawingActionDetailed'),
+    '응답 원문을 받는 API 를 쓴다'
+  );
+  assert.ok(
+    source.includes("response?.success === true || response?.reason === 'no-change'"),
+    'no-change 만 성공으로 친다'
+  );
+  assert.ok(
+    source.includes("showToast('레이어 순서를 바꾸지 못했습니다', 'error')"),
+    '전송 실패는 되돌리고 알린다'
   );
 });

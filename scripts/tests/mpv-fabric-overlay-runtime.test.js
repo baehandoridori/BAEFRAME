@@ -18087,7 +18087,8 @@ test('새 획은 레이어 랭크가 정한 자리에 들어간다', () => {
     activeLayerDrawable: true,
     // 이미 있는 두 획은 위 레이어(랭크 1), 앞으로 그릴 획은 아래 레이어(랭크 0).
     objectRanks: { 'top-24': 1, 'bottom-24': 1 },
-    defaultRank: 0
+    defaultRank: 0,
+    activeLayerRank: 0
   }).accepted, true);
 
   drawStroke(canvas.upperCanvasEl, 8890);
@@ -18097,6 +18098,32 @@ test('새 획은 레이어 랭크가 정한 자리에 들어간다', () => {
     ids.slice(1),
     ['top-24', 'bottom-24'],
     '아래 레이어의 새 획은 위 레이어 그림들보다 앞(=아래)에 들어간다'
+  );
+
+  // **활성 레이어의 자리**로 들어가야 한다. 랭크 맵에는 방금 그은 획이 없으므로
+  // 맵 조회로 떨어뜨리면 기준 레이어 자리에 꽂힌다 — 활성 레이어가 위쪽이어도.
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    objectRanks: { 'top-24': 1, 'bottom-24': 1 },
+    defaultRank: 0,
+    activeLayerRank: 2
+  }).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 8891);
+  const after = idsByFrame()[24];
+  assert.equal(after.length, 4);
+  assert.equal(
+    after.indexOf('top-24') < after.length - 1 &&
+      after[after.length - 1] !== ids[0],
+    true,
+    '위 레이어가 활성이면 새 획이 맨 뒤(=맨 위)로 간다'
+  );
+  assert.deepEqual(
+    after.slice(0, 3),
+    ids,
+    '앞선 순서는 그대로다'
   );
   runtime.destroy();
 });

@@ -14983,10 +14983,12 @@ void main() {
         }
         let objectRankMap = null;
         let defaultObjectRank = 0;
+        let activeLayerRank = 0;
         function setObjectRanks(next = {}) {
           const ranks = next?.objectRanks;
           objectRankMap = ranks && typeof ranks === "object" ? ranks : null;
           defaultObjectRank = Number.isFinite(Number(next?.defaultRank)) ? Number(next.defaultRank) : 0;
+          activeLayerRank = Number.isFinite(Number(next?.activeLayerRank)) ? Number(next.activeLayerRank) : defaultObjectRank;
           return { accepted: true };
         }
         function rankOfObject(id) {
@@ -15003,7 +15005,7 @@ void main() {
             for (const record of records) appended.set(record.id, record);
             return appended;
           }
-          const rank = rankOfObject(records[records.length - 1].id);
+          const rank = activeLayerRank;
           const next = /* @__PURE__ */ new Map();
           let inserted = false;
           for (const [id, record] of objects) {
@@ -15689,6 +15691,9 @@ void main() {
               applied: true,
               structural: true,
               operation: entry.structural.operation,
+              // 렌더러가 이 id 로 레이어 모델의 짝을 찾아 함께 되돌린다.
+              commandId: entry.commandId,
+              historyDirection: direction,
               frame: null,
               changedFrames: entry.structural.frames.length,
               keyframeSetChanged: false,
@@ -15743,6 +15748,9 @@ void main() {
         }
         function structuralEntryBytes(entry) {
           const blueprints = [entry?.structural?.before, entry?.structural?.after];
+          for (const target of entry?.structural?.frames || []) {
+            blueprints.push(target.before, target.after);
+          }
           let bytes = 0;
           for (const blueprint of blueprints) {
             for (const record of blueprint?.objects || []) {
@@ -15851,8 +15859,9 @@ void main() {
             materializeSceneAt(stableVideoIdentity, entry.frame, entry.after);
           }
           rebuildActiveProvisionalScene(stableVideoIdentity);
+          const commandId = `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
           appendStructuralOrder(stableVideoIdentity, {
-            commandId: `layer-op:${stableVideoIdentity}:${commandSequence += 1}`,
+            commandId,
             sceneKey: null,
             structural: { stableVideoIdentity, operation, frames }
           });
@@ -15860,6 +15869,7 @@ void main() {
             applied: true,
             structural: true,
             operation,
+            commandId,
             changedFrames: frames.length,
             // 키프레임 집합은 그대로다 — 비게 된 키프레임도 빈 키프레임으로 남는다.
             keyframeSetChanged: false,
@@ -21661,7 +21671,8 @@ void main() {
           if (command.objectRanks !== void 0) {
             sceneStore.setObjectRanks?.({
               objectRanks: command.objectRanks,
-              defaultRank: command.defaultRank
+              defaultRank: command.defaultRank,
+              activeLayerRank: command.activeLayerRank
             });
           }
           if (passiveMatch) {

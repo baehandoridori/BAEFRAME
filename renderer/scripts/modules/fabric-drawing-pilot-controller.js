@@ -138,6 +138,11 @@ export function createFabricDrawingPilotController(options = {}) {
   const electronAPI = options.electronAPI || {};
   const getContext = typeof options.getContext === 'function' ? options.getContext : () => ({});
   const onStateChange = typeof options.onStateChange === 'function' ? options.onStateChange : () => {};
+  // 구조 실행취소가 레이어 조작을 되돌리면 알린다. 레이어 목록·배정은 렌더러
+  // 쪽에 있어서 오버레이 혼자서는 되돌릴 수 없다.
+  const onLayerHistoryApplied = typeof options.onLayerHistoryApplied === 'function'
+    ? options.onLayerHistoryApplied
+    : () => {};
   const onHistoryFallback = typeof options.onHistoryFallback === 'function'
     ? options.onHistoryFallback
     : () => {};
@@ -1361,7 +1366,8 @@ export function createFabricDrawingPilotController(options = {}) {
   // 세션이 새로 살아나면 오버레이의 집합은 비어 있다. 렌더러가 active 전이에서
   // 다시 불러 줘야 숨긴 레이어가 되살아나지 않는다.
   async function sendLayerView({
-    hiddenObjectIds, lockedObjectIds, activeLayerDrawable, objectRanks, defaultRank
+    hiddenObjectIds, lockedObjectIds, activeLayerDrawable,
+    objectRanks, defaultRank, activeLayerRank
   }) {
     // passive 투영에서도 보낸다 — 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
     // 동안에도 숨겨져 있어야 한다. 그때는 세션이 없으므로 영상 정체로 맞춘다.
@@ -1382,7 +1388,11 @@ export function createFabricDrawingPilotController(options = {}) {
       activeLayerDrawable: activeLayerDrawable !== false,
       // 겹침 순서 랭크. 새 획이 그리는 순간 제 층에 들어가게 한다.
       objectRanks: objectRanks || {},
-      defaultRank: Number.isInteger(defaultRank) ? defaultRank : 0
+      defaultRank: Number.isInteger(defaultRank) ? defaultRank : 0,
+      // 새로 그리는 획이 들어갈 자리. 랭크 맵에는 이미 문서에 있는 id 만 있다.
+      activeLayerRank: Number.isInteger(activeLayerRank)
+        ? activeLayerRank
+        : (Number.isInteger(defaultRank) ? defaultRank : 0)
     };
     try {
       const response = await withPersistenceIpcDeadline(
@@ -1467,11 +1477,21 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function applyDrawingAction(action, payload = null) {
+    return applyDrawingActionDetailed(action, payload)
+      .then(response => response?.success === true);
+  }
+
+  // 응답 원문이 필요한 호출부용. 성공 여부만으로는 **의도한 no-change** 와
+  // 전송 실패(낡은 토큰·타임아웃)를 가릴 수 없다 — 레이어 순서 이동은 그 둘을
+  // 다르게 다뤄야 한다(전자는 모델을 반영, 후자는 되돌린다).
+  function applyDrawingActionDetailed(action, payload = null) {
     const request = makeDrawingActionRequest(action, payload);
-    if (!request) return Promise.resolve(false);
+    if (!request) {
+      return Promise.resolve({ success: false, applied: false, reason: 'invalid-request' });
+    }
     const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
-    return operation.then(r => r?.success === true);
+    return operation.then(r => r || { success: false, applied: false });
   }
 
   function enqueueHistoryFallback(historyAction, historyRevision) {
@@ -1490,6 +1510,14 @@ export function createFabricDrawingPilotController(options = {}) {
     }
     const operation = drawingActionQueue.then(async () => {
       const result = await sendDrawingActionRequest(request);
+      if (result?.applied === true &&
+          typeof result.commandId === 'string' &&
+          (result.historyDirection === 'undo' || result.historyDirection === 'redo')) {
+        onLayerHistoryApplied({
+          commandId: result.commandId,
+          direction: result.historyDirection
+        });
+      }
       if (result?.applied === true || result?.duplicate === true) return result;
       if (result?.reason === 'history-empty' &&
           historyRevision === readHistoryRevision()) {
@@ -2959,6 +2987,7 @@ export function createFabricDrawingPilotController(options = {}) {
     cancelVideoChange,
     toggle,
     applyDrawingAction,
+    applyDrawingActionDetailed,
     sendLayerView,
     routeKeydown,
     disable,

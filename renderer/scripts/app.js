@@ -7919,6 +7919,7 @@ async function initApp() {
     onStateChange: handleFabricDrawingPilotStateChange,
     getHistoryRevision: () => globalHistoryRevision,
     // fabric 히스토리가 비어 있으면 전역 undo/redo로 폴백한다
+    onLayerHistoryApplied: applyFabricPilotLayerHistory,
     onHistoryFallback: (action) => {
       if (action === 'undo') {
         return globalUndo({ fromFabricFallback: true }).then(done => {
@@ -8099,8 +8100,42 @@ async function initApp() {
     }
     return {
       objectRanks,
-      defaultRank: rankByLayerId.get(state.baseLayerId) ?? 0
+      defaultRank: rankByLayerId.get(state.baseLayerId) ?? 0,
+      // **새로 그리는 획이 들어갈 자리.** 랭크 맵에는 이미 문서에 있는 id 만
+      // 들어 있어 방금 그은 획은 언제나 빠져 있다. 기준 레이어 랭크로 떨어뜨리면
+      // 활성 레이어가 무엇이든 늘 기준 레이어 자리에 꽂힌다.
+      activeLayerRank: rankByLayerId.get(state.activeLayerId)
+        ?? rankByLayerId.get(state.baseLayerId)
+        ?? 0
     };
+  }
+
+  // ── 레이어 모델의 실행취소 ───────────────────────────────────────────────
+  //
+  // 오버레이의 구조 실행취소는 **씬만** 되돌린다. 레이어 목록과 배정은 렌더러
+  // 쪽(.bframe 루트)에 있으므로, 조작할 때 모델의 before/after 를 짝 id 로
+  // 기억해 두었다가 함께 되돌린다. 짝을 안 지으면 삭제를 되돌렸을 때 그림만
+  // 살아나 기준 레이어로 떨어지고, 이동을 되돌렸을 때 겹침 순서만 돌아오고
+  // 레이어 목록은 옮긴 채로 남는다.
+  const fabricPilotLayerHistory = new Map();
+  const FABRIC_PILOT_LAYER_HISTORY_LIMIT = 64;
+
+  function rememberFabricPilotLayerHistory(commandId, before, after) {
+    if (typeof commandId !== 'string' || commandId.length === 0) return;
+    fabricPilotLayerHistory.set(commandId, { before, after });
+    while (fabricPilotLayerHistory.size > FABRIC_PILOT_LAYER_HISTORY_LIMIT) {
+      const oldest = fabricPilotLayerHistory.keys().next().value;
+      fabricPilotLayerHistory.delete(oldest);
+    }
+  }
+
+  function applyFabricPilotLayerHistory({ commandId, direction } = {}) {
+    const entry = fabricPilotLayerHistory.get(commandId);
+    if (!entry) return;
+    const next = direction === 'undo' ? entry.before : entry.after;
+    if (!next || !reviewDataManager.setDrawingLayers(next)) return;
+    renderActiveDrawingLayers();
+    pushFabricPilotLayerView();
   }
 
   function pushFabricPilotLayerView() {
@@ -14661,14 +14696,16 @@ async function initApp() {
         if (result.reason) return;
         void (async () => {
           if (result.removedObjectIds.length > 0) {
-            const applied = await fabricDrawingPilotController.applyDrawingAction(
+            const response = await fabricDrawingPilotController.applyDrawingActionDetailed(
               'layer-objects-remove',
               { objectIds: result.removedObjectIds }
             );
-            if (!applied) {
+            if (response?.success !== true) {
               showToast('레이어의 그림을 지우지 못했습니다', 'error');
               return;
             }
+            // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌린다.
+            rememberFabricPilotLayerHistory(response.commandId, state, result.state);
           }
           applyDrawingLayerStateChange(
             result.state,
@@ -14688,14 +14725,19 @@ async function initApp() {
         if (!moved) return;
         const layer = findDrawingLayer(next, next.activeLayerId);
         void (async () => {
-          const applied = await fabricDrawingPilotController.applyDrawingAction(
+          const response = await fabricDrawingPilotController.applyDrawingActionDetailed(
             'layer-objects-reorder',
             fabricPilotObjectRanks(next)
           );
-          // 겹칠 그림이 없거나 이미 순서가 맞으면 오버레이가 'no-change' 로
-          // 돌려준다. 레이어 순서 자체는 모델의 진실이므로 그대로 반영한다 —
-          // 겹침 순서는 다음 재정렬이나 다음 획 삽입에서 다시 맞는다.
-          if (!applied) log.debug('레이어 순서 재정렬이 적용되지 않았습니다');
+          // 겹칠 그림이 없거나 이미 순서가 맞으면 'no-change' 다 — 그건 성공으로
+          // 친다. 그러나 **전송 실패**(낡은 토큰·타임아웃)까지 같이 넘기면,
+          // 타임라인 순서만 바뀌고 캔버스 겹침은 그대로인 어긋난 상태가 저장된다.
+          const reordered = response?.success === true || response?.reason === 'no-change';
+          if (!reordered) {
+            showToast('레이어 순서를 바꾸지 못했습니다', 'error');
+            return;
+          }
+          rememberFabricPilotLayerHistory(response.commandId, state, next);
           applyDrawingLayerStateChange(
             next,
             layer ? `레이어 이동: ${layer.name}` : null

@@ -1802,6 +1802,11 @@ function createSessionSceneStore(options = {}) {
   // 그 순서를 지킨다. 랭크가 없으면 지금까지처럼 맨 뒤에 붙는다.
   let objectRankMap = null;
   let defaultObjectRank = 0;
+  // **새로 그리는 획의 자리.** 랭크 맵에는 이미 문서에 있는 id 만 들어 있으므로,
+  // 방금 그은 획은 언제나 맵에 없다. 기준 레이어 랭크로 떨어뜨리면 활성 레이어가
+  // 무엇이든 늘 기준 레이어 자리에 꽂힌다 — 뒤늦은 배정 갱신은 랭크 맵만 바꿀 뿐
+  // 이미 커밋된 씬의 순서를 다시 세우지 않는다.
+  let activeLayerRank = 0;
 
   function setObjectRanks(next = {}) {
     const ranks = next?.objectRanks;
@@ -1809,6 +1814,9 @@ function createSessionSceneStore(options = {}) {
     defaultObjectRank = Number.isFinite(Number(next?.defaultRank))
       ? Number(next.defaultRank)
       : 0;
+    activeLayerRank = Number.isFinite(Number(next?.activeLayerRank))
+      ? Number(next.activeLayerRank)
+      : defaultObjectRank;
     return { accepted: true };
   }
 
@@ -1828,7 +1836,8 @@ function createSessionSceneStore(options = {}) {
       for (const record of records) appended.set(record.id, record);
       return appended;
     }
-    const rank = rankOfObject(records[records.length - 1].id);
+    // 방금 그은 획은 랭크 맵에 없다. 활성 레이어의 자리로 넣는다.
+    const rank = activeLayerRank;
     const next = new Map();
     let inserted = false;
     for (const [id, record] of objects) {
@@ -2675,6 +2684,9 @@ function createSessionSceneStore(options = {}) {
         applied: true,
         structural: true,
         operation: entry.structural.operation,
+        // 렌더러가 이 id 로 레이어 모델의 짝을 찾아 함께 되돌린다.
+        commandId: entry.commandId,
+        historyDirection: direction,
         frame: null,
         changedFrames: entry.structural.frames.length,
         keyframeSetChanged: false,
@@ -2745,7 +2757,13 @@ function createSessionSceneStore(options = {}) {
   // 붙여넣으면 문서 자체는 한도 안에 있어도 이 스택만 수백 MB 로 불어난다.
   // 씬 히스토리와 같은 기준(개수·바이트)으로 오래된 것부터 버린다.
   function structuralEntryBytes(entry) {
+    // 레이어 조작 항목은 **프레임마다** before/after 를 든다. 위 두 자리만 보면
+    // 통째로 0바이트로 세어져, 큰 문서에서 순서를 반복해 옮기면 문서 크기의
+    // 스냅샷 쌍이 상한(32개)까지 그대로 남는다.
     const blueprints = [entry?.structural?.before, entry?.structural?.after];
+    for (const target of entry?.structural?.frames || []) {
+      blueprints.push(target.before, target.after);
+    }
     let bytes = 0;
     for (const blueprint of blueprints) {
       for (const record of blueprint?.objects || []) {
@@ -2900,8 +2918,11 @@ function createSessionSceneStore(options = {}) {
       materializeSceneAt(stableVideoIdentity, entry.frame, entry.after);
     }
     rebuildActiveProvisionalScene(stableVideoIdentity);
+    // 렌더러가 레이어 **모델**의 before/after 를 이 id 로 짝지어 둔다. 오버레이는
+    // 씬만 되돌릴 수 있고 레이어 목록·배정은 렌더러 쪽에 있기 때문이다.
+    const commandId = `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`;
     appendStructuralOrder(stableVideoIdentity, {
-      commandId: `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`,
+      commandId,
       sceneKey: null,
       structural: { stableVideoIdentity, operation, frames }
     });
@@ -2909,6 +2930,7 @@ function createSessionSceneStore(options = {}) {
       applied: true,
       structural: true,
       operation,
+      commandId,
       changedFrames: frames.length,
       // 키프레임 집합은 그대로다 — 비게 된 키프레임도 빈 키프레임으로 남는다.
       keyframeSetChanged: false,
@@ -9736,7 +9758,8 @@ function createFabricOverlayRuntime(options = {}) {
     if (command.objectRanks !== undefined) {
       sceneStore.setObjectRanks?.({
         objectRanks: command.objectRanks,
-        defaultRank: command.defaultRank
+        defaultRank: command.defaultRank,
+        activeLayerRank: command.activeLayerRank
       });
     }
     if (passiveMatch) {
