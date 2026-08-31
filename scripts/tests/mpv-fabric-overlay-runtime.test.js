@@ -16938,6 +16938,174 @@ test('파괴적인 프레임 조작은 Ctrl+Z 로 되돌아온다', async () => 
   }
 });
 
+test('구조 조작은 지속화 한도와 그림자 수명주기를 지킨다', async () => {
+  // 코덱스 2차 지적 3건. 셋 다 화면에서는 성공한 것처럼 보이지만 저장이나
+  // 진단이 뒤에서 망가지는 유형이다.
+  const dropped = [];
+  // 하네스는 씬 스토어를 따로 만든다 — 스토어 옵션은 sceneStoreOptions 로 가야 한다.
+  const harness = createRealFabricHarness({
+    sceneStoreOptions: {
+      // 몇 프레임만 복제해도 한도에 닿도록 좁힌다.
+      maxBytes: 24_000,
+      drawingEngineObserver: {
+        dropScenes(ids) { dropped.push(...ids); }
+      }
+    }
+  });
+  let sequence = 0;
+  const setInput = (inputRevision, enabled) => harness.runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision,
+    enabled,
+    ...(enabled
+      ? {
+        session: {
+          sessionId: 'real-fabric-session',
+          stableVideoIdentity: 'real-fabric-video',
+          targetFrame: 0,
+          sourceWidth: 200,
+          sourceHeight: 120,
+          canvasRect: { left: 0, top: 0, width: 200, height: 120 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 },
+          tool: 'brush'
+        }
+      }
+      : {})
+  });
+  const gotoFrame = frame => harness.runtime.updateDrawingFrame({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 3,
+    sessionId: 'real-fabric-session',
+    frameRevision: (sequence += 1),
+    targetFrame: frame
+  });
+  const act = (action) => harness.runtime.applyDrawingAction({
+    sessionId: 'real-fabric-session',
+    actionId: `guard-${(sequence += 1)}`,
+    action
+  });
+  try {
+    setInput(2, false);
+    harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'guard-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: []
+    });
+    setInput(3, true);
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7301);
+
+    // ── 그림자 수명주기 ──
+    // 프레임을 밀면 씬의 targetFrame 이 바뀐다. sceneInstanceId 를 그대로 두면
+    // 다음 활성화에서 seed-signature-changed 로 격리된다. 버리고 새로 심어야 한다.
+    dropped.length = 0;
+    assert.equal(act('frame-insert').applied, true);
+    assert.ok(harness.sceneStore.getSceneSnapshot('real-fabric-video', 1), '씬이 한 칸 밀렸다');
+    assert.equal(dropped.length, 1, '옮긴 씬의 옛 인스턴스를 그림자에서 버린다');
+    const firstDrop = dropped[0];
+
+    // 한 번 더 밀면 **새로 받은** 인스턴스가 버려져야 한다. 같은 id 가 다시
+    // 나오면 재등록이 아니라 그냥 알림만 보낸 것이다.
+    dropped.length = 0;
+    assert.equal(act('frame-insert').applied, true);
+    assert.equal(dropped.length, 1);
+    assert.notEqual(dropped[0], firstDrop, '옮긴 씬은 새 인스턴스 id 로 다시 심는다');
+
+    // ── 복제 한도 ──
+    // Shift+3 은 홀드 내용을 통째로 복제한다. 여러 프레임에 반복하면 문서가
+    // 지속화 한도를 넘는데, 오버레이가 받아 주면 직후 재동기에서 스냅샷이
+    // 거부돼 **화면에 보이는 편집이 저장되지 않고** 이후 저장까지 막힌다.
+    // 만들기 전에 막아야 한다 — 한도 없이 자라지 않는 것이 이 단언의 요지다.
+    let refusal = null;
+    for (let frame = 10; frame < 60 && !refusal; frame += 1) {
+      gotoFrame(frame);
+      const result = act('frame-to-keyframe');
+      if (!result.applied) refusal = result;
+    }
+    assert.ok(refusal, '복제가 한도 없이 자라면 안 된다');
+    assert.equal(refusal.reason, 'scene-capacity-exceeded');
+
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('구조 히스토리는 한도 없이 쌓이지 않는다', async () => {
+  // 구조 항목은 before/after 청사진을 통째로 들고 있다. 큰 프레임을 반복해서
+  // 붙여넣으면 문서는 지속화 한도 안에 있어도 이 스택만 수백 MB 로 불어나
+  // 렌더러가 멎는다. 씬 히스토리와 같은 기준으로 오래된 것부터 버려야 한다.
+  const harness = createRealFabricHarness({
+    sceneStoreOptions: { maxHistory: 4 }
+  });
+  let sequence = 0;
+  const setInput = (inputRevision, enabled) => harness.runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision,
+    enabled,
+    ...(enabled
+      ? {
+        session: {
+          sessionId: 'real-fabric-session',
+          stableVideoIdentity: 'real-fabric-video',
+          targetFrame: 0,
+          sourceWidth: 200,
+          sourceHeight: 120,
+          canvasRect: { left: 0, top: 0, width: 200, height: 120 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 },
+          tool: 'brush'
+        }
+      }
+      : {})
+  });
+  const gotoFrame = frame => harness.runtime.updateDrawingFrame({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 3,
+    sessionId: 'real-fabric-session',
+    frameRevision: (sequence += 1),
+    targetFrame: frame
+  });
+  const act = action => harness.runtime.applyDrawingAction({
+    sessionId: 'real-fabric-session',
+    actionId: `hist-${(sequence += 1)}`,
+    action
+  });
+  try {
+    setInput(2, false);
+    harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'hist-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: []
+    });
+    setInput(3, true);
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7401);
+
+    // 구조 조작만 30번 — 전부 성공하는 조작이어야 항목이 실제로 쌓인다.
+    let applied = 0;
+    for (let round = 0; round < 30; round += 1) {
+      gotoFrame(20 + round);
+      if (act('frame-to-keyframe').applied) applied += 1;
+    }
+    assert.ok(applied >= 20, `구조 조작이 충분히 성공해야 한다: ${applied}`);
+    assert.ok(
+      harness.runtime.getDiagnostics().globalUndoDepth <= 8,
+      `구조 히스토리가 한도(maxHistory 4) 없이 쌓인다: ${harness.runtime.getDiagnostics().globalUndoDepth}`
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('every record an outlined gesture produces survives persistence validation', async () => {
   // 이 스위트가 16라운드 동안 놓친 검증이다. renderGeometry 는 스키마상
   // fillRule: 'evenodd' 고정 + M/L/Z 다각형만 + 자기교차 불가이고, 어기면

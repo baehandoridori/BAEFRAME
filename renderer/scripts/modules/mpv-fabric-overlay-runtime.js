@@ -2450,13 +2450,22 @@ function createSessionSceneStore(options = {}) {
       scenes.delete(key);
       moved.push({ scene, nextFrame });
     }
+    const droppedInstanceIds = [];
     for (const { scene, nextFrame } of moved) {
       const nextKey = makeSceneKey(stableVideoIdentity, nextFrame);
       keyRemap.set(scene.key, nextKey);
       scene.key = nextKey;
       scene.targetFrame = nextFrame;
+      // Drawing V3 그림자는 sceneInstanceId 로 씬을 알아본다. 같은 id 인데
+      // targetFrame 이 달라지면 다음 활성화에서 seed-signature-changed 로 격리돼
+      // 그림자 패리티와 롤아웃 진단이 통째로 어긋난다. 옮긴 씬은 **버리고 새
+      // 인스턴스로 다시 심는다.**
+      droppedInstanceIds.push(scene.sceneInstanceId);
+      scene.sceneInstanceId = allocateSceneInstanceId();
+      scene.drawingObserverSeeded = false;
       scenes.set(nextKey, scene);
     }
+    notifyScenesDropped(droppedInstanceIds);
     if (order) {
       for (const list of [order.undo, order.redo]) {
         for (const entry of list) {
@@ -2573,6 +2582,7 @@ function createSessionSceneStore(options = {}) {
     }
     order.redo = [];
     order.undo.push(entry);
+    trimStructuralOrder(order);
   }
 
   function applyStructuralHistory(entry, order, direction) {
@@ -2601,6 +2611,59 @@ function createSessionSceneStore(options = {}) {
       keyframeFrames: committedKeyframeFrames(stableVideoIdentity),
       ...globalHistoryDepths()
     };
+  }
+
+  // 구조 조작이 만들 문서가 지속화 한도를 넘는지 **미리** 본다.
+  //
+  // materializeSceneAt 은 홀드 내용을 통째로 복제한다. Shift+3 을 여러 프레임에
+  // 반복하면 오버레이는 다 받아 주지만, 직후 재동기에서 내보낸 스냅샷이
+  // document-too-large / invalid-overlay-snapshot 으로 거부돼 **화면에 보이는 편집이
+  // 저장되지 않고** 이후 저장까지 막힌다. 하이드레이션이 거는 것과 같은 한도로 막는다.
+  function canMaterializeScene(stableVideoIdentity, blueprint, replacingFrame = null) {
+    const ordered = committedScenesForVideo(stableVideoIdentity);
+    let objectCount = 0;
+    let bytes = 0;
+    let keyframeCount = 0;
+    for (const scene of ordered) {
+      if (replacingFrame !== null && scene.targetFrame === replacingFrame) continue;
+      objectCount += scene.objects.size;
+      bytes += scene.estimatedBytes;
+      keyframeCount += 1;
+    }
+    const incoming = new Map();
+    for (const record of blueprint?.objects || []) incoming.set(record.id, record);
+    const incomingBytes = estimateObjectsBytes(incoming);
+    if (!Number.isFinite(incomingBytes)) return false;
+    return incoming.size <= maxObjects &&
+      keyframeCount + 1 <= MAX_PERSISTED_KEYFRAMES &&
+      objectCount + incoming.size <= MAX_PERSISTED_OBJECTS_TOTAL &&
+      bytes + incomingBytes <= maxBytes;
+  }
+
+  // 구조 히스토리는 before/after 청사진을 통째로 들고 있다. 큰 프레임을 반복해서
+  // 붙여넣으면 문서 자체는 한도 안에 있어도 이 스택만 수백 MB 로 불어난다.
+  // 씬 히스토리와 같은 기준(개수·바이트)으로 오래된 것부터 버린다.
+  function structuralEntryBytes(entry) {
+    const blueprints = [entry?.structural?.before, entry?.structural?.after];
+    let bytes = 0;
+    for (const blueprint of blueprints) {
+      for (const record of blueprint?.objects || []) {
+        bytes += defaultEstimateObjectBytes(record);
+      }
+    }
+    return bytes;
+  }
+
+  function trimStructuralOrder(order) {
+    const structuralOf = list => list.filter(entry => entry.structural);
+    const totalBytes = () => [...structuralOf(order.undo), ...structuralOf(order.redo)]
+      .reduce((sum, entry) => sum + structuralEntryBytes(entry), 0);
+    // 오래된 undo 항목부터 버린다. redo 는 이미 새 편집에서 비워지므로 undo 만 본다.
+    while (structuralOf(order.undo).length > maxHistory || totalBytes() > maxHistoryBytes) {
+      const index = order.undo.findIndex(entry => entry.structural);
+      if (index < 0) break;
+      order.undo.splice(index, 1);
+    }
   }
 
   function sceneBlueprint(scene) {
@@ -2643,6 +2706,10 @@ function createSessionSceneStore(options = {}) {
     // 오른쪽으로 미는 조작은 마지막 프레임 밖으로 밀려나는 키프레임이 하나라도
     // 있으면 **거절한다.** 조용히 버리면 그림이 사라진다.
     const shiftsRight = operation === 'frame-insert' || operation === 'frame-insert-blank-keyframe';
+    if (operation === 'frame-insert-blank-keyframe' &&
+        !canMaterializeScene(stableVideoIdentity, { objects: [] })) {
+      return { applied: false, reason: 'scene-capacity-exceeded' };
+    }
     if (shiftsRight && totalFrames !== null) {
       const last = ordered[ordered.length - 1];
       if (last && last.targetFrame >= frame && last.targetFrame + 1 >= totalFrames) {
@@ -2673,6 +2740,9 @@ function createSessionSceneStore(options = {}) {
       if (!frameClipboard) return { applied: false, reason: 'clipboard-empty' };
       if (frameClipboard.stableVideoIdentity !== stableVideoIdentity) {
         return { applied: false, reason: 'clipboard-other-video' };
+      }
+      if (!canMaterializeScene(stableVideoIdentity, frameClipboard, frame)) {
+        return { applied: false, reason: 'scene-capacity-exceeded' };
       }
       const replaced = sceneBlueprint(committedAtFrame);
       dropProvisionalScenes(stableVideoIdentity);
@@ -2709,6 +2779,10 @@ function createSessionSceneStore(options = {}) {
       if (committedAtFrame) return { applied: false, reason: 'already-keyframe' };
       // 홀드 중인 내용을 복사해 정식 키프레임으로 만든다(애니메이트 F6 과 같다).
       const held = heldSceneAt(stableVideoIdentity, frame);
+      const heldBlueprint = held ? sceneBlueprint(held) : { objects: [] };
+      if (!canMaterializeScene(stableVideoIdentity, heldBlueprint)) {
+        return { applied: false, reason: 'scene-capacity-exceeded' };
+      }
       dropProvisionalScenes(stableVideoIdentity);
       const created = materializeSceneAt(stableVideoIdentity, frame, held
         ? {
