@@ -439,6 +439,15 @@ function mergeDrawingLayers(baseline, local, remote) {
     layers.push(mergeLayerFields(baseLayer, myLayer, theirLayer));
   }
 
+  // 둘이 **서로 다른** 레이어를 지우면 결과가 빈다. 그대로 두면 정규화가 기본
+  // 레이어를 지어내 양쪽의 진짜 레이어가 메타데이터째 사라지고 배정도 전부
+  // 버려진다. 실제로 살아 있는 것 하나를 남긴다 — 디스크에 있는 원격 쪽을
+  // 우선하고, 없으면 내 쪽이다.
+  if (layers.length === 0) {
+    const survivor = theirs.layers[0] || mine.layers[0] || base.layers[0];
+    if (survivor) layers.push(survivor);
+  }
+
   const liveIds = new Set(layers.map(layer => layer.id));
   const assignments = {};
   const assignmentKeys = new Set([

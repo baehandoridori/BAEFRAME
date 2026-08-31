@@ -397,3 +397,39 @@ test('순서 비교는 id 에 든 구분자에 속지 않는다', () => {
     '재배열을 놓치지 않는다'
   );
 });
+
+test('서로 다른 레이어를 지워도 진짜 레이어가 남는다', () => {
+  // 결과가 비면 정규화가 기본 레이어를 지어내, 양쪽의 진짜 레이어가
+  // 메타데이터째 사라지고 배정도 전부 버려진다.
+  //
+  // id 는 기본값(drawing-layer-1)과 겹치지 않게 잡는다. 겹치면 지어낸 레이어가
+  // 우연히 같은 id 를 받아 이 검사가 통과해 버린다.
+  const base = normalizeDrawingLayers({
+    version: 1,
+    layers: [
+      { id: 'custom-top', name: '윗장', color: '#ff4757' },
+      { id: 'custom-bottom', name: '아랫장', color: '#2ed573' }
+    ],
+    activeLayerId: 'custom-top',
+    baseLayerId: 'custom-bottom',
+    assignments: {}
+  });
+  const withArt = assignObject(base, 'obj-1', 'custom-top');
+
+  // 나는 위를 지우고, 상대는 아래를 지웠다.
+  const mine = deleteLayer(withArt, 'custom-top', ['obj-1']).state;
+  const theirs = deleteLayer(withArt, 'custom-bottom', []).state;
+
+  const merged = mergeDrawingLayers(withArt, mine, theirs);
+  assert.equal(merged.layers.length, 1, '한 장은 남는다');
+  assert.ok(
+    ['custom-top', 'custom-bottom'].includes(merged.layers[0].id),
+    '지어낸 기본 레이어가 아니라 진짜 레이어가 남는다'
+  );
+  assert.ok(
+    ['윗장', '아랫장'].includes(merged.layers[0].name),
+    '이름·색 같은 메타데이터도 함께 남는다'
+  );
+  assert.equal(merged.activeLayerId, merged.layers[0].id);
+  assert.equal(merged.baseLayerId, merged.layers[0].id);
+});
