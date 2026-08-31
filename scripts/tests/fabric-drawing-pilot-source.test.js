@@ -2808,7 +2808,17 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     source.includes("showToast('마지막 레이어는 지울 수 없습니다', 'warning')"),
     '마지막 레이어는 지울 수 없다'
   );
-  // 문서 → 모델 순서. applyDrawingAction 이 먼저 나와야 한다.
+  // 읽기·계산·반영이 한 덩어리로 줄을 서야 한다. 오버레이 요청만 줄을 세우면
+  // 두 단축키가 같은 옛 상태를 읽고 나중 것이 앞선 것의 결과를 덮는다.
+  assert.ok(
+    source.includes('queueFabricPilotLayerOperation(async () => {'),
+    '조작 전체를 큐에 넣는다'
+  );
+  const queueStart = source.indexOf('queueFabricPilotLayerOperation(async () => {');
+  const stateRead = source.indexOf('reviewDataManager.getDrawingLayers()');
+  assert.ok(stateRead > queueStart, '상태는 큐 안에서 읽는다');
+
+  // 문서 → 모델 순서. 오버레이 조작이 먼저 나와야 한다.
   const removeCall = source.indexOf("'layer-objects-remove'");
   const modelCall = source.indexOf('applyDrawingLayerStateChange(');
   assert.ok(removeCall > 0 && modelCall > removeCall, '문서를 먼저 바꾼다');
@@ -2816,7 +2826,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 두 조작 모두 짝 id 로 레이어 모델의 before/after 를 기억해야 실행취소가
   // 씬과 모델을 함께 되돌린다.
   assert.ok(
-    source.includes('rememberFabricPilotLayerHistory(response.commandId, state, result.state)'),
+    source.includes('rememberFabricPilotLayerHistory(sent.commandId, state, result.state)'),
     '삭제는 모델의 before/after 를 짝 id 로 기억한다'
   );
   const reorderCall = source.indexOf("'layer-objects-reorder'");
@@ -2826,7 +2836,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     '이동은 옮긴 뒤의 랭크를 보낸다'
   );
   assert.ok(
-    source.includes('rememberFabricPilotLayerHistory(response.commandId, state, next)'),
+    source.includes('rememberFabricPilotLayerHistory(sent.commandId, state, next)'),
     '이동도 모델의 before/after 를 짝 id 로 기억한다'
   );
 });
@@ -2937,23 +2947,62 @@ test('레이어 모델은 짝 id 로 씬과 함께 되돌아간다', () => {
   assert.deepEqual(layerState, { id: 'after' }, '상한을 넘은 옛 항목은 버려진다');
 });
 
-test('레이어 순서 이동은 전송 실패와 no-change 를 가른다', () => {
-  // 둘 다 "적용 안 됨" 이지만 뜻이 다르다. 전송 실패까지 반영하면 타임라인
-  // 순서만 바뀌고 캔버스 겹침은 그대로인 어긋난 상태가 저장된다.
-  const start = appSource.indexOf("'layer-objects-reorder',");
-  assert.ok(start > 0, '재정렬 호출을 찾지 못했다');
-  const source = appSource.slice(start, start + 900);
-  assert.ok(
-    source.includes('applyDrawingActionDetailed') ||
-      appSource.slice(Math.max(0, start - 300), start).includes('applyDrawingActionDetailed'),
-    '응답 원문을 받는 API 를 쓴다'
-  );
-  assert.ok(
-    source.includes("response?.success === true || response?.reason === 'no-change'"),
-    'no-change 만 성공으로 친다'
-  );
-  assert.ok(
-    source.includes("showToast('레이어 순서를 바꾸지 못했습니다', 'error')"),
-    '전송 실패는 되돌리고 알린다'
-  );
+test('씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다', () => {
+  // 빈 레이어를 지우거나 이미 순서가 맞으면 씬이 바뀌지 않는다. 그래도 실행취소는
+  // 레이어 모델을 되돌려야 하는데, 짝지을 id 가 없으면 Ctrl+Z 가 엉뚱한 앞
+  // 커맨드를 되돌린다. 전송 실패(낡은 토큰·타임아웃)와는 구분해야 한다.
+  const start = appSource.indexOf('async function sendFabricPilotLayerOperation(');
+  assert.ok(start > 0, '조작 전송 헬퍼를 찾지 못했다');
+  const end = appSource.indexOf('const fabricPilotLayerHistory = new Map();', start);
+  assert.ok(end > start, '헬퍼의 끝을 찾지 못했다');
+  const source = appSource.slice(start, end);
+
+  const calls = [];
+  const build = responses => new Function(
+    'fabricDrawingPilotController',
+    source + String.fromCharCode(10) + 'return sendFabricPilotLayerOperation;'
+  )({
+    applyDrawingActionDetailed: (action, payload) => {
+      calls.push(action);
+      return Promise.resolve(responses[calls.length - 1]);
+    }
+  });
+
+  return Promise.resolve()
+    .then(async () => {
+      calls.length = 0;
+      const ok = await build([{ success: true, commandId: 'cmd-1' }])(
+        'layer-objects-remove', { objectIds: ['a'] }
+      );
+      assert.deepEqual(ok, { ok: true, commandId: 'cmd-1' });
+      assert.deepEqual(calls, ['layer-objects-remove']);
+    })
+    .then(async () => {
+      // 씬이 안 바뀌면 표식을 하나 더 보내 짝 id 를 받는다.
+      calls.length = 0;
+      const marked = await build([
+        { success: false, reason: 'no-change' },
+        { success: true, commandId: 'cmd-marker' }
+      ])('layer-objects-reorder', {});
+      assert.deepEqual(marked, { ok: true, commandId: 'cmd-marker' });
+      assert.deepEqual(calls, ['layer-objects-reorder', 'layer-model-marker']);
+    })
+    .then(async () => {
+      // 보낼 조작 자체가 없을 때(빈 레이어 삭제)도 표식만 보낸다.
+      calls.length = 0;
+      const emptyLayer = await build([{ success: true, commandId: 'cmd-marker-2' }])(
+        null, { objectIds: [] }
+      );
+      assert.deepEqual(emptyLayer, { ok: true, commandId: 'cmd-marker-2' });
+      assert.deepEqual(calls, ['layer-model-marker']);
+    })
+    .then(async () => {
+      // 전송 실패는 표식을 남기지 않고 실패로 돌려준다.
+      calls.length = 0;
+      const failed = await build([{ success: false, error: 'stale' }])(
+        'layer-objects-reorder', {}
+      );
+      assert.deepEqual(failed, { ok: false });
+      assert.deepEqual(calls, ['layer-objects-reorder']);
+    });
 });

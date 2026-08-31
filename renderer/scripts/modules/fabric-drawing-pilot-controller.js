@@ -16,7 +16,8 @@ const CONTROLLER_DRAWING_ACTIONS = new Set([
   'frame-paste',
   // 레이어 단위 오브젝트 조작(레거시 Shift+` / Ctrl+Shift+X·C). 페이로드를 나른다.
   'layer-objects-remove',
-  'layer-objects-reorder'
+  'layer-objects-reorder',
+  'layer-model-marker'
 ]);
 // shared/fabric-drawing-tools.js 의 FABRIC_DRAWING_TOOLS 와 같아야 한다.
 // 이 파일은 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다

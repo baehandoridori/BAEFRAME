@@ -76,7 +76,9 @@ const HOST_DRAWING_ACTIONS = new Set([
   // 레이어 단위 오브젝트 조작(레거시 Shift+` / Ctrl+Shift+X·C). 이것만 **페이로드**를
   // 나른다 — 지울 id 목록이나 오브젝트별 랭크다. 아래에서 형식을 따로 검사한다.
   'layer-objects-remove',
-  'layer-objects-reorder'
+  'layer-objects-reorder',
+  // 씬은 그대로 두고 짝 id 만 만드는 표식(페이로드 없음).
+  'layer-model-marker'
 ]);
 // 랭크는 레이어 순서 인덱스다. 레이어 상한이 훨씬 낮으므로 넉넉히 잡아도 충분하다.
 const MAX_LAYER_OBJECT_RANK = 4096;

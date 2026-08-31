@@ -8117,6 +8117,34 @@ async function initApp() {
   // 기억해 두었다가 함께 되돌린다. 짝을 안 지으면 삭제를 되돌렸을 때 그림만
   // 살아나 기준 레이어로 떨어지고, 이동을 되돌렸을 때 겹침 순서만 돌아오고
   // 레이어 목록은 옮긴 채로 남는다.
+  // 레이어 조작은 **읽기 → 오버레이 왕복 → 모델 반영**이 한 덩어리여야 한다.
+  // 오버레이 요청만 줄을 세우면 두 단축키가 같은 옛 상태를 읽고 각자 계산해,
+  // 나중 것의 반영이 앞선 것의 결과를 덮는다 — 지운 레이어가 그림 없이
+  // 되살아난다.
+  let fabricPilotLayerOperationQueue = Promise.resolve();
+
+  function queueFabricPilotLayerOperation(task) {
+    const operation = fabricPilotLayerOperationQueue.then(task, task);
+    fabricPilotLayerOperationQueue = operation.then(() => {}, () => {});
+    return operation;
+  }
+
+  // 오버레이 조작을 보내고 **짝 id** 를 돌려준다. 씬이 바뀌지 않는 경우(빈
+  // 레이어 삭제·이미 맞는 순서)에도 표식을 남겨야 실행취소가 레이어 모델을
+  // 되돌린다 — 짝지을 id 가 없으면 Ctrl+Z 가 엉뚱한 앞 커맨드를 되돌린다.
+  async function sendFabricPilotLayerOperation(action, payload) {
+    const response = action === null
+      ? { reason: 'no-change' }
+      : await fabricDrawingPilotController.applyDrawingActionDetailed(action, payload);
+    if (response?.success === true) {
+      return { ok: true, commandId: response.commandId };
+    }
+    if (response?.reason !== 'no-change') return { ok: false };
+    const marker = await fabricDrawingPilotController
+      .applyDrawingActionDetailed('layer-model-marker', {});
+    return { ok: marker?.success === true, commandId: marker?.commandId };
+  }
+
   const fabricPilotLayerHistory = new Map();
   const FABRIC_PILOT_LAYER_HISTORY_LIMIT = 64;
 
@@ -14680,38 +14708,46 @@ async function initApp() {
       // 키프레임에서 오브젝트를 지우거나 순서를 갈아야 한다. 그래서 문서를 먼저
       // 바꾸고 **성공했을 때만** 모델을 바꾼다 — 반대로 하면 모델에는 없는데
       // 그림은 남는 상태가 저장된다.
+      // 삭제와 순서 이동은 **문서를 바꾼다.** 앞의 넷과 달리 오버레이가 모든
+      // 키프레임에서 오브젝트를 지우거나 순서를 갈아야 한다. 그래서 문서를 먼저
+      // 바꾸고 **성공했을 때만** 모델을 바꾼다 — 반대로 하면 모델에는 없는데
+      // 그림은 남는 상태가 저장된다.
+      //
+      // 상태 읽기부터 모델 반영까지를 한 덩어리로 줄 세운다. 오버레이 요청만
+      // 줄을 세우면 두 단축키가 같은 옛 상태를 읽고 각자 계산해, 나중 것의
+      // 반영이 앞선 것의 결과를 덮는다.
       if (isFabricDrawingPilotEngaged() &&
           userSettings.matchShortcut('drawingLayerDelete', e)) {
         e.preventDefault();
-        const state = reviewDataManager.getDrawingLayers();
-        const live = collectFabricDrawingObjectIds();
-        const layer = findDrawingLayer(state, state.activeLayerId);
-        const result = deleteDrawingLayerState(
-          state, state.activeLayerId, [...(live || [])]
-        );
-        if (result.reason === 'last-layer') {
-          showToast('마지막 레이어는 지울 수 없습니다', 'warning');
-          return;
-        }
-        if (result.reason) return;
-        void (async () => {
-          if (result.removedObjectIds.length > 0) {
-            const response = await fabricDrawingPilotController.applyDrawingActionDetailed(
-              'layer-objects-remove',
-              { objectIds: result.removedObjectIds }
-            );
-            if (response?.success !== true) {
-              showToast('레이어의 그림을 지우지 못했습니다', 'error');
-              return;
-            }
-            // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌린다.
-            rememberFabricPilotLayerHistory(response.commandId, state, result.state);
+        void queueFabricPilotLayerOperation(async () => {
+          const state = reviewDataManager.getDrawingLayers();
+          const live = collectFabricDrawingObjectIds();
+          const layer = findDrawingLayer(state, state.activeLayerId);
+          const result = deleteDrawingLayerState(
+            state, state.activeLayerId, [...(live || [])]
+          );
+          if (result.reason === 'last-layer') {
+            showToast('마지막 레이어는 지울 수 없습니다', 'warning');
+            return;
           }
+          if (result.reason) return;
+          // 빈 레이어면 지울 오브젝트가 없다. 그래도 표식을 남겨야 실행취소가
+          // 이 삭제를 되돌린다(null 은 "보낼 조작이 없다" 는 뜻이다).
+          const sent = await sendFabricPilotLayerOperation(
+            result.removedObjectIds.length > 0 ? 'layer-objects-remove' : null,
+            { objectIds: result.removedObjectIds }
+          );
+          if (!sent.ok) {
+            showToast('레이어의 그림을 지우지 못했습니다', 'error');
+            return;
+          }
+          // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌린다.
+          rememberFabricPilotLayerHistory(sent.commandId, state, result.state);
           applyDrawingLayerStateChange(
             result.state,
             layer ? `레이어 삭제: ${layer.name}` : null
           );
-        })();
+        });
         return;
       }
       const moveOffset = userSettings.matchShortcut('drawingLayerMoveUp', e)
@@ -14719,30 +14755,30 @@ async function initApp() {
         : (userSettings.matchShortcut('drawingLayerMoveDown', e) ? 1 : 0);
       if (isFabricDrawingPilotEngaged() && moveOffset !== 0) {
         e.preventDefault();
-        const state = reviewDataManager.getDrawingLayers();
-        const next = moveDrawingLayerState(state, moveOffset);
-        const moved = next.layers.some((layer, index) => layer.id !== state.layers[index]?.id);
-        if (!moved) return;
-        const layer = findDrawingLayer(next, next.activeLayerId);
-        void (async () => {
-          const response = await fabricDrawingPilotController.applyDrawingActionDetailed(
+        void queueFabricPilotLayerOperation(async () => {
+          const state = reviewDataManager.getDrawingLayers();
+          const next = moveDrawingLayerState(state, moveOffset);
+          const moved = next.layers.some((layer, index) => layer.id !== state.layers[index]?.id);
+          if (!moved) return;
+          const layer = findDrawingLayer(next, next.activeLayerId);
+          // 겹칠 그림이 없거나 이미 순서가 맞으면 'no-change' 다 — 그건 성공으로
+          // 치되 표식을 남긴다. 그러나 **전송 실패**(낡은 토큰·타임아웃)까지 같이
+          // 넘기면, 타임라인 순서만 바뀌고 캔버스 겹침은 그대로인 어긋난 상태가
+          // 저장된다.
+          const sent = await sendFabricPilotLayerOperation(
             'layer-objects-reorder',
             fabricPilotObjectRanks(next)
           );
-          // 겹칠 그림이 없거나 이미 순서가 맞으면 'no-change' 다 — 그건 성공으로
-          // 친다. 그러나 **전송 실패**(낡은 토큰·타임아웃)까지 같이 넘기면,
-          // 타임라인 순서만 바뀌고 캔버스 겹침은 그대로인 어긋난 상태가 저장된다.
-          const reordered = response?.success === true || response?.reason === 'no-change';
-          if (!reordered) {
+          if (!sent.ok) {
             showToast('레이어 순서를 바꾸지 못했습니다', 'error');
             return;
           }
-          rememberFabricPilotLayerHistory(response.commandId, state, next);
+          rememberFabricPilotLayerHistory(sent.commandId, state, next);
           applyDrawingLayerStateChange(
             next,
             layer ? `레이어 이동: ${layer.name}` : null
           );
-        })();
+        });
         return;
       }
       const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)

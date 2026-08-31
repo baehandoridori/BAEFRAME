@@ -13635,7 +13635,8 @@ void main() {
       ]);
       var LAYER_OBJECT_ACTIONS = /* @__PURE__ */ new Set([
         "layer-objects-remove",
-        "layer-objects-reorder"
+        "layer-objects-reorder",
+        "layer-model-marker"
       ]);
       var DRAWING_V3_DIAGNOSTIC_STATUSES = /* @__PURE__ */ new Set([
         "active",
@@ -15804,7 +15805,12 @@ void main() {
         }
         const LAYER_OBJECT_OPERATIONS = /* @__PURE__ */ new Set([
           "layer-objects-remove",
-          "layer-objects-reorder"
+          "layer-objects-reorder",
+          // 씬은 그대로 두고 **짝 id 만** 만드는 표식. 빈 레이어를 지우거나 겹칠 그림이
+          // 없어 순서가 그대로일 때도 실행취소는 레이어 모델을 되돌려야 하는데,
+          // 씬 변경이 없으면 짝지을 id 가 없다. 그러면 Ctrl+Z 가 엉뚱한 앞 커맨드를
+          // 되돌린다.
+          "layer-model-marker"
         ]);
         function applyLayerObjectsOperation(command = {}) {
           if (destroyed) return { applied: false, reason: "store-destroyed" };
@@ -15836,6 +15842,23 @@ void main() {
             const own = Number(ranks?.[id]);
             return Number.isFinite(own) ? own : defaultRank;
           };
+          if (operation === "layer-model-marker") {
+            const markerId = `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
+            appendStructuralOrder(stableVideoIdentity, {
+              commandId: markerId,
+              sceneKey: null,
+              structural: { stableVideoIdentity, operation, frames: [] }
+            });
+            return {
+              applied: true,
+              structural: true,
+              operation,
+              commandId: markerId,
+              changedFrames: 0,
+              keyframeSetChanged: false,
+              ...globalHistoryDepths()
+            };
+          }
           dropProvisionalScenes(stableVideoIdentity);
           const frames = [];
           for (const scene of committedScenesForVideo(stableVideoIdentity)) {
