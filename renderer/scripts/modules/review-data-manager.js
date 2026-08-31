@@ -927,6 +927,7 @@ export class ReviewDataManager extends EventTarget {
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
     this._drawingLayers = createDefaultDrawingLayers();
+    this._drawingLayersDirty = false;
     this._fabricDrawingPersistenceContext = {};
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
@@ -1569,6 +1570,9 @@ export class ReviewDataManager extends EventTarget {
       this._reviewMergeBase = savedReviewMergeBase ||
         captureReviewMergeBase(savedData);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
+      // 저장이 끝났으므로 로컬 레이어 변경은 더 이상 없다. 이제부터는 디스크
+      // 값(다른 인스턴스의 변경 포함)을 다시 채택해도 된다.
+      this._drawingLayersDirty = false;
 
       log.info('.bframe 파일 저장됨', {
         path: saveOwner.bframePath,
@@ -2060,6 +2064,7 @@ export class ReviewDataManager extends EventTarget {
   _resetRootEnvelopeState() {
     this._opaqueRootFields = {};
     this._drawingLayers = createDefaultDrawingLayers();
+    this._drawingLayersDirty = false;
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
     this._writeBlockedVersion = null;
@@ -2579,6 +2584,18 @@ export class ReviewDataManager extends EventTarget {
     }
 
     this._opaqueRootFields = extractOpaqueBframeRoot(data);
+    // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다.
+    //
+    // **로컬 변경이 없을 때만** 디스크 값을 채택한다. 이 메서드는 로드뿐 아니라
+    // 저장 직전 새로고침에서도 불리므로:
+    //   - 로컬 변경이 있으면 채택하면 안 된다. 방금 만든 레이어가 되돌아간다.
+    //   - 로컬 변경이 없으면 채택해야 한다. 안 하면 다른 인스턴스가 올린 레이어
+    //     변경을 무관한 저장이 조용히 지운다.
+    if (this._drawingLayersDirty !== true) {
+      this._drawingLayers = normalizeDrawingLayers(
+        this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
+      );
+    }
 
     const dataVersion = getDataVersion(data);
     const unsupportedMajor = getUnsupportedBframeMajor(
@@ -2825,6 +2842,12 @@ export class ReviewDataManager extends EventTarget {
     const next = normalizeDrawingLayers(state);
     const changed = JSON.stringify(next) !== JSON.stringify(this._drawingLayers);
     this._drawingLayers = next;
+    if (changed) {
+      // 표시하지 않으면 자동 저장이 잡히지 않고 hasUnsavedChanges 가 false 로 남아,
+      // 닫기·영상 전환 경로가 레이어 변경을 그냥 버린다.
+      this._drawingLayersDirty = true;
+      this._markDirty();
+    }
     return changed;
   }
 
@@ -2842,13 +2865,6 @@ export class ReviewDataManager extends EventTarget {
    */
   _applyData(data, options = {}) {
     this._captureRootEnvelope(data, options);
-    // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다. 다만 채택은 **로드
-    // 경로에서만** 한다 — _captureRootEnvelope 는 저장 직전 새로고침
-    // (_refreshRootEnvelopeBeforeSave)에서도 불리므로, 거기서 갈아 끼우면 방금
-    // 사용자가 만든 레이어 변경이 디스크 값으로 조용히 되돌아간다.
-    this._drawingLayers = normalizeDrawingLayers(
-      this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
-    );
     if (!options.skipFabricDrawingImport) {
       this._importFabricDrawingPersistenceRoot(data);
     }

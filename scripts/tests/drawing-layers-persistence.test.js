@@ -98,3 +98,38 @@ test('저장 직전 새로고침이 로컬 레이어 변경을 되돌리지 않�
     '새로고침이 로컬 변경을 덮지 않는다'
   );
 });
+
+test('레이어 변경은 저장 대상으로 표시된다', async () => {
+  // 표시하지 않으면 자동 저장이 잡히지 않고 hasUnsavedChanges 가 false 로 남아,
+  // 닫기·영상 전환 경로가 레이어 변경을 그냥 버린다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  const before = manager._changeRevision;
+
+  manager.setDrawingLayers(manager.getDrawingLayers());
+  assert.equal(manager._changeRevision, before, '같은 값은 표시하지 않는다');
+
+  manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers()).state);
+  assert.notEqual(manager._changeRevision, before, '달라지면 변경으로 표시한다');
+  assert.equal(manager.isDirty, true);
+});
+
+test('로컬 변경이 없으면 다른 인스턴스의 레이어 변경을 채택한다', async () => {
+  // 저장 직전 새로고침이 디스크에서 새 레이어를 읽어도, 낡은 메모리 값으로
+  // 덮어쓰면 다른 인스턴스의 변경이 무관한 저장에 조용히 지워진다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  manager._applyData({});
+  assert.equal(manager.getDrawingLayers().layers.length, 1);
+
+  // 다른 인스턴스가 레이어를 하나 올렸다. 이쪽은 레이어를 건드리지 않았다.
+  const remote = layers.addLayer(layers.createDefaultDrawingLayers()).state;
+  manager._captureRootEnvelope({
+    [layers.DRAWING_LAYERS_ROOT_KEY]: JSON.parse(JSON.stringify(remote))
+  });
+  assert.equal(
+    manager.getDrawingLayers().layers.length,
+    2,
+    '로컬 변경이 없으면 디스크 값을 채택한다'
+  );
+});

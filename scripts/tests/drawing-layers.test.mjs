@@ -216,3 +216,34 @@ test('이름·색만 다른 한 장짜리 상태도 저장한다', () => {
   // 진짜 기본 상태는 여전히 저장하지 않는다.
   assert.equal(serializeDrawingLayers(base), undefined);
 });
+
+test('오브젝트 id 는 레이어 id 한도로 재지 않는다', () => {
+  // 드로잉 레코드 id 는 512자까지 허용된다. 레이어 id 한도(128)로 재면 긴 id 를
+  // 가진 정상 오브젝트의 배정이 정규화에서 버려져, 다시 열 때 기준 레이어로
+  // 되돌아간다 — 사용자가 나눠 둔 레이어가 조용히 풀린다.
+  const { state: two, added } = addLayer(createDefaultDrawingLayers());
+  const longId = 'o'.repeat(400);
+  const assigned = assignObject(two, longId, added.id);
+  assert.equal(assigned.assignments[longId], added.id, '400자 id 도 배정된다');
+  assert.equal(layerIdForObject(assigned, longId), added.id);
+
+  // JSON 왕복 후에도 유지된다.
+  const round = normalizeDrawingLayers(JSON.parse(JSON.stringify(assigned)));
+  assert.equal(layerIdForObject(round, longId), added.id, '다시 열어도 그 레이어에 남는다');
+});
+
+test('호출자가 준 중복 id 는 새 id 로 갈아 끼운다', () => {
+  // 그대로 받으면 정규화가 기존 레이어를 버리고 새 것을 남기면서도 "추가됨" 으로
+  // 보고해, 멀쩡한 레이어가 메타데이터째 사라진다.
+  const base = createDefaultDrawingLayers();
+  const existingId = base.layers[0].id;
+  const result = addLayer(base, { id: existingId, name: '중복 시도' });
+
+  assert.ok(result.added, '추가에 성공한다');
+  assert.equal(result.state.layers.length, 2, '기존 레이어를 잡아먹지 않는다');
+  assert.notEqual(result.added.id, existingId, '새 id 를 받는다');
+  assert.ok(
+    result.state.layers.some(layer => layer.id === existingId),
+    '기존 레이어가 그대로 남는다'
+  );
+});

@@ -37,6 +37,10 @@ const DRAWING_LAYERS_VERSION = 1;
 const MAX_DRAWING_LAYERS = 64;
 const MAX_LAYER_NAME_LENGTH = 120;
 const MAX_LAYER_ID_LENGTH = 128;
+// 드로잉 레코드 id 는 최대 512자다(mpv-fabric-overlay-runtime.js 의
+// validatePersistedRecord). 레이어 id 한도로 재면 긴 id 를 가진 정상 오브젝트의
+// 배정이 정규화에서 버려져, 다시 열 때 기준 레이어로 되돌아간다.
+const MAX_OBJECT_ID_LENGTH = 512;
 // 레이어마다 다른 색을 돌려 쓴다. 타임라인 행을 눈으로 구분하는 유일한 단서다.
 const LAYER_COLORS = Object.freeze([
   '#4f8ef7', '#ff4757', '#ffa502', '#2ed573',
@@ -50,6 +54,10 @@ function isPlainRecord(value) {
 
 function isLayerId(value) {
   return typeof value === 'string' && value.length > 0 && value.length <= MAX_LAYER_ID_LENGTH;
+}
+
+function isObjectId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_OBJECT_ID_LENGTH;
 }
 
 function normalizeName(value, fallback) {
@@ -116,7 +124,7 @@ function normalizeDrawingLayers(value) {
     for (const [objectId, layerId] of Object.entries(value.assignments)) {
       // 사라진 레이어를 가리키는 배정은 버린다 — 그러면 그 오브젝트는 규칙대로
       // 첫 레이어로 돌아간다. 남겨 두면 어느 레이어에도 없는 유령이 된다.
-      if (isLayerId(objectId) && seenIds.has(layerId)) assignments[objectId] = layerId;
+      if (isObjectId(objectId) && seenIds.has(layerId)) assignments[objectId] = layerId;
     }
   }
   return {
@@ -214,7 +222,12 @@ function addLayer(state, options = {}) {
     // 살아남은 레이어와 같은 id 가 나오고, 정규화가 중복을 버려 개수가 늘지
     // 않으면서 기존 레이어의 메타데이터만 덮어쓴다. 그런데도 "추가됨" 으로
     // 보고된다. 쓰이지 않는 id 를 찾을 때까지 센다.
-    id: isLayerId(options.id) ? options.id : allocateLayerId(current),
+    // 호출자가 준 id 라도 **이미 쓰이고 있으면 새로 뽑는다** — 그대로 받으면
+    // 정규화가 기존 레이어를 버리고 새 것을 남기면서도 "추가됨" 으로 보고해,
+    // 멀쩡한 레이어가 메타데이터째 사라진다.
+    id: isLayerId(options.id) && !current.layers.some(layer => layer.id === options.id)
+      ? options.id
+      : allocateLayerId(current),
     name: normalizeName(options.name, `드로잉 ${ordinal + 1}`)
   }, ordinal);
   const layers = [...current.layers];
@@ -306,7 +319,7 @@ function toggleLayerLock(state, layerId) {
 /** 새 획을 활성 레이어에 붙인다. 첫 레이어면 배정을 남기지 않는다(기본값이므로). */
 function assignObject(state, objectId, layerId) {
   const current = normalizeDrawingLayers(state);
-  if (!isLayerId(objectId) || !findLayer(current, layerId)) return current;
+  if (!isObjectId(objectId) || !findLayer(current, layerId)) return current;
   const assignments = { ...current.assignments };
   if (layerId === current.baseLayerId) delete assignments[objectId];
   else assignments[objectId] = layerId;
