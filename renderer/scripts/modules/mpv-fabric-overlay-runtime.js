@@ -9247,8 +9247,12 @@ function createFabricOverlayRuntime(options = {}) {
         // 이전 영상의 제한을 쓴다 — 특히 activeLayerDrawable=false 가 남으면
         // 그리기 모드를 켠 직후 첫 획이 조용히 무시된다. 가장 안전한 쪽으로
         // 되돌린다(아무것도 숨기지 않고 그릴 수 있다).
-        if (String(request?.stableVideoIdentity || '') !==
-            String(currentSession?.stableVideoIdentity || '')) {
+        // 수화는 입력이 꺼져 있을 때만 온다 — currentSession 은 대개 null 이다.
+        // passive 표시 세션의 정체와도 비교해야 같은 영상 재수화에서 헛되이
+        // 집합을 버리지 않는다.
+        const hydratingIdentity = String(request?.stableVideoIdentity || '');
+        if (hydratingIdentity !== String(currentSession?.stableVideoIdentity || '') &&
+            hydratingIdentity !== String(passiveDisplaySession?.stableVideoIdentity || '')) {
           hiddenObjectIds = new Set();
           lockedObjectIds = new Set();
           activeLayerDrawable = true;
@@ -9526,13 +9530,28 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function updateDrawingLayerView(command = {}) {
-    if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
-    if (command.sessionId !== currentSession?.sessionId) {
-      return { accepted: false, reason: 'stale-session' };
+    // passive 투영에서도 받아야 한다. 저장된 레이어 모델이 숨겨 둔 획은 **보기만
+    // 하는 동안에도** 숨겨져 있어야 하는데, 그리기 모드에서만 받으면 그리기를
+    // 켤 때까지 다 보인다. passive 에는 세션 id 가 없으므로 영상 정체로 맞춘다.
+    const activeMatch = inputEnabled && command.sessionId === currentSession?.sessionId;
+    const passiveMatch = !inputEnabled && !!passiveDisplaySession &&
+      String(command.stableVideoIdentity || '') ===
+        String(passiveDisplaySession.stableVideoIdentity || '');
+    if (!activeMatch && !passiveMatch) {
+      return { accepted: false, reason: inputEnabled ? 'stale-session' : 'input-disabled' };
     }
     hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
+    if (passiveMatch) {
+      // 보는 중에는 제스처가 없다. 지금 그려 둔 화면만 새 집합으로 다시 칠한다.
+      repaintLastPaintedScene({ force: true });
+      return {
+        accepted: true,
+        hiddenCount: hiddenObjectIds.size,
+        lockedCount: lockedObjectIds.size
+      };
+    }
     // ── 이미 시작한 작업은 자기 목록을 들고 간다 ─────────────────────────
     //
     // 집합을 바꾸는 것만으로는 **앞으로의 판정**만 달라진다. 진행 중이거나
@@ -9667,10 +9686,26 @@ function createFabricOverlayRuntime(options = {}) {
       cancelSelectInteraction();
     }
 
+    // 전체 지우기는 숨기거나 잠근 레이어의 획을 **남긴다.** clearSession() 은 씬을
+    // 통째로 비우므로, 제한된 것이 하나라도 있으면 선택 삭제 경로로 돌린다 —
+    // 짝인 외곽선 처리와 히스토리가 이미 그 경로에 있다.
+    let preservedRestrictedOnClear = false;
+    const clearSessionPreservingRestricted = () => {
+      const snapshot = sceneStore.getActiveSceneSnapshot();
+      const ids = (snapshot?.objects || []).map(record => record.id).filter(Boolean);
+      const restricted = id => isLayerRestricted(id) ||
+        (sceneStore.isDerivedOutline(id) && isLayerRestricted(bodyIdFor(id)));
+      if (!ids.some(restricted)) return sceneStore.clearSession();
+      preservedRestrictedOnClear = true;
+      const removable = ids.filter(id => !restricted(id));
+      if (removable.length === 0) return { applied: false, reason: 'all-objects-restricted' };
+      sceneStore.selectObjects(removable);
+      return sceneStore.deleteSelection();
+    };
     const result = action === 'delete-selection'
       ? sceneStore.deleteSelection()
       : action === 'clear-session'
-        ? sceneStore.clearSession()
+        ? clearSessionPreservingRestricted()
         : action === 'undo'
           ? sceneStore.undo()
           : sceneStore.redo();
@@ -9697,7 +9732,10 @@ function createFabricOverlayRuntime(options = {}) {
       }
       const deletedIds = new Set(result.deletedIds);
       for (const object of fabricCanvas.getObjects()) {
-        if (action === 'clear-session' || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
+        // 제한된 획을 남긴 경우에는 **지운 것만** 걷는다. 통째로 비우면 화면에서만
+        // 사라지고 문서에는 남아, 다음 재도색에서 되살아난다.
+        if ((action === 'clear-session' && !preservedRestrictedOnClear) ||
+            deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
       }
       fabricCanvas.discardActiveObject();
       refreshSelectionInteractionPolicy();

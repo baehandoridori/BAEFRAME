@@ -8063,7 +8063,11 @@ async function initApp() {
   // 문서가 바뀔 때, 그리고 세션이 active 가 될 때 모두 다시 밀어 넣어야 숨긴
   // 레이어가 되살아나지 않는다.
   function pushFabricPilotLayerView() {
-    if (!isFabricDrawingPilotEngaged()) return;
+    // passive 투영에서도 보낸다. 저장된 레이어 모델이 숨겨 둔 획은 **보기만 하는
+    // 동안에도** 숨겨져 있어야 하는데, 그리기 모드일 때만 보내면 그리기를 켤
+    // 때까지 다 보인다. 토글 자체는 여전히 그리기 모드에서만 받는다 — passive
+    // 는 저장된 상태를 **적용만** 한다.
+    if (!shouldSuppressLegacyDrawingForFabricPilot()) return;
     Promise.resolve(fabricDrawingPilotController.sendLayerView(fabricPilotLayerViewSets()))
       .catch(() => {});
   }
@@ -11097,6 +11101,9 @@ async function initApp() {
     // 늦다 — importRootValue·reset 은 구독자를 부르지 않으므로, 사용자가 새
     // 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어 그 획이 배정을 받지
     // 못하고 기준 레이어로 떨어진다.
+    // passive 로 내려갈 때도 보낸다 — 그리기 모드를 끄면 오버레이가 투영으로
+    // 넘어가는데, 그때 집합을 다시 심지 않으면 숨긴 레이어가 되살아난다.
+    if (nextState === 'passive') pushFabricPilotLayerView();
     if (nextState === 'active') {
       seedFabricDrawingLayerAssignmentTracking();
       // 오버레이의 집합은 세션과 함께 비워졌다. 다시 밀어 넣지 않으면 숨긴

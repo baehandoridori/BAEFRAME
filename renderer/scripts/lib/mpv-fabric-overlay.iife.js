@@ -21282,7 +21282,8 @@ void main() {
           try {
             const result = sceneStore.hydrateVideo(clonePlain(request));
             if (result?.accepted === true) {
-              if (String(request?.stableVideoIdentity || "") !== String(currentSession?.stableVideoIdentity || "")) {
+              const hydratingIdentity = String(request?.stableVideoIdentity || "");
+              if (hydratingIdentity !== String(currentSession?.stableVideoIdentity || "") && hydratingIdentity !== String(passiveDisplaySession?.stableVideoIdentity || "")) {
                 hiddenObjectIds = /* @__PURE__ */ new Set();
                 lockedObjectIds = /* @__PURE__ */ new Set();
                 activeLayerDrawable = true;
@@ -21514,13 +21515,22 @@ void main() {
           return ids;
         }
         function updateDrawingLayerView(command = {}) {
-          if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
-          if (command.sessionId !== currentSession?.sessionId) {
-            return { accepted: false, reason: "stale-session" };
+          const activeMatch = inputEnabled && command.sessionId === currentSession?.sessionId;
+          const passiveMatch = !inputEnabled && !!passiveDisplaySession && String(command.stableVideoIdentity || "") === String(passiveDisplaySession.stableVideoIdentity || "");
+          if (!activeMatch && !passiveMatch) {
+            return { accepted: false, reason: inputEnabled ? "stale-session" : "input-disabled" };
           }
           hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
+          if (passiveMatch) {
+            repaintLastPaintedScene({ force: true });
+            return {
+              accepted: true,
+              hiddenCount: hiddenObjectIds.size,
+              lockedCount: lockedObjectIds.size
+            };
+          }
           if (!activeLayerDrawable) {
             cancelPendingPointerdownFrame();
             if (activeStroke) cancelActiveStroke();
@@ -21608,7 +21618,19 @@ void main() {
             ignoreLateModifiedEvents(transformStart?.target || fabricCanvas?.getActiveObject?.());
             cancelSelectInteraction();
           }
-          const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? sceneStore.clearSession() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
+          let preservedRestrictedOnClear = false;
+          const clearSessionPreservingRestricted = () => {
+            const snapshot = sceneStore.getActiveSceneSnapshot();
+            const ids = (snapshot?.objects || []).map((record) => record.id).filter(Boolean);
+            const restricted = (id) => isLayerRestricted(id) || sceneStore.isDerivedOutline(id) && isLayerRestricted(bodyIdFor(id));
+            if (!ids.some(restricted)) return sceneStore.clearSession();
+            preservedRestrictedOnClear = true;
+            const removable = ids.filter((id) => !restricted(id));
+            if (removable.length === 0) return { applied: false, reason: "all-objects-restricted" };
+            sceneStore.selectObjects(removable);
+            return sceneStore.deleteSelection();
+          };
+          const result = action === "delete-selection" ? sceneStore.deleteSelection() : action === "clear-session" ? clearSessionPreservingRestricted() : action === "undo" ? sceneStore.undo() : sceneStore.redo();
           if (result.applied) {
             if (action === "undo" || action === "redo") {
               let repainted = false;
@@ -21625,7 +21647,7 @@ void main() {
             }
             const deletedIds = new Set(result.deletedIds);
             for (const object of fabricCanvas.getObjects()) {
-              if (action === "clear-session" || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
+              if (action === "clear-session" && !preservedRestrictedOnClear || deletedIds.has(object.__baeframeObjectId)) fabricCanvas.remove(object);
             }
             fabricCanvas.discardActiveObject();
             refreshSelectionInteractionPolicy();

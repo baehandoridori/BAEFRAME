@@ -17852,3 +17852,84 @@ test('활성 레이어가 잠기면 다른 레이어를 담은 지우개도 물�
     await harness.destroy();
   }
 });
+
+test('전체 지우기는 숨기거나 잠근 레이어의 획을 남긴다', () => {
+  // clearSession() 은 씬을 통째로 비운다. 제한된 것을 그대로 지우면 보이지도
+  // 않는 작업이 조용히 사라진다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  drawStroke(canvas.upperCanvasEl, 8880);
+  const drawnId = canvas.objects
+    .filter(object => !object.__baeframeTransient)
+    .map(object => object.__baeframeObjectId)
+    .find(id => id && id !== 'layer-view-stroke');
+  assert.ok(drawnId, '새로 그린 획이 있어야 한다');
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  const cleared = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'clear-preserving-restricted',
+    action: 'clear-session'
+  });
+  assert.equal(cleared.applied, true, JSON.stringify(cleared));
+
+  const remaining = runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes
+    .flatMap(scene => scene.objects.map(object => object.id));
+  assert.deepEqual(remaining, ['layer-view-stroke'], '숨긴 획만 남는다');
+  // 화면에서도 남아 있어야 한다 — 통째로 걷으면 다음 재도색에서 되살아난다.
+  assert.ok(
+    canvas.objects.some(object => object.__baeframeObjectId === 'layer-view-stroke'),
+    '숨긴 획은 캔버스에도 남는다'
+  );
+  runtime.destroy();
+});
+
+test('보는 중(passive)에도 저장된 숨김이 적용된다', () => {
+  // 저장된 레이어 모델이 숨겨 둔 획은 그리기를 켜기 전에도 숨겨져 있어야 한다.
+  // passive 에는 세션 id 가 없으므로 영상 정체로 맞춘다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  // 그리기 모드를 끄면 passive 투영으로 내려간다.
+  runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: false
+  }));
+
+  // 세션 id 로는 받지 않는다.
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, false);
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: null,
+    stableVideoIdentity: 'runtime-video',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  const target = canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+  assert.ok(target, '투영 중에도 획은 캔버스에 있다');
+  assert.equal(target.visible, false, '보는 중에도 숨김이 적용된다');
+
+  // 다른 영상이면 받지 않는다.
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: null,
+    stableVideoIdentity: 'runtime-video-other',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, false);
+  runtime.destroy();
+});

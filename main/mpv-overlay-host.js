@@ -3305,16 +3305,21 @@ class MPVOverlayHost {
   // 델타가 아니라 전체 집합이라 리비전으로 늦게 온 것만 버리면 된다.
   async updateDrawingLayerView(request = {}) {
     const layerViewRevision = Number(request.layerViewRevision);
+    // passive 투영에서도 받는다. 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
+    // 동안에도 숨겨져 있어야 한다. 그때는 세션 id 가 없으므로 영상 정체로 맞춘다.
+    // 문서를 나르지 않는 메시지라 실패해도 그림이 아니라 표시만 어긋난다.
     const currentTokensMatch = request.hostGeneration === this.hostGeneration &&
       request.videoGeneration === this.currentVideoGeneration &&
       request.inputRevision === this.currentInputRevision &&
-      request.sessionId === this.activeSessionId;
+      (this.desiredInputEnabled
+        ? request.sessionId === this.activeSessionId
+        : this.currentStableVideoIdentity !== null &&
+          request.stableVideoIdentity === this.currentStableVideoIdentity);
     const validIds = value =>
       Array.isArray(value) &&
       value.length <= FABRIC_DRAWING_MAX_OBJECTS_TOTAL &&
       value.every(id => typeof id === 'string' && id.length > 0 && id.length <= 512);
-    if (!this.desiredInputEnabled ||
-        this.fabricReadyGeneration !== this.hostGeneration ||
+    if (this.fabricReadyGeneration !== this.hostGeneration ||
         !currentTokensMatch ||
         !Number.isInteger(layerViewRevision) ||
         layerViewRevision <= this.currentLayerViewRevision ||
