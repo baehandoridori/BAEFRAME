@@ -3550,6 +3550,14 @@ class MPVOverlayHost {
   // 레이어 조작의 페이로드를 검사해 **새 객체로** 돌려준다. 원본을 그대로 넘기면
   // 프로토타입 오염 키가 런타임의 조회에 섞일 수 있다.
   _normalizeLayerObjectsPayload(request) {
+    // 짝 id 는 렌더러가 정해 보낼 수 있다(보내기 전에 모델 델타를 등록하려고).
+    const commandId = request.commandId === undefined
+      ? {}
+      : (isBoundedPersistenceString(request.commandId, 256)
+        ? { commandId: request.commandId }
+        : null);
+    if (commandId === null) return null;
+    if (request.action === 'layer-model-marker') return { ...commandId };
     if (request.action === 'layer-objects-remove') {
       const ids = request.objectIds;
       if (!Array.isArray(ids) || ids.length === 0 ||
@@ -3557,7 +3565,7 @@ class MPVOverlayHost {
           !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 512)) {
         return null;
       }
-      return { objectIds: [...ids] };
+      return { ...commandId, objectIds: [...ids] };
     }
     if (request.action === 'layer-objects-reorder' && request.silent !== undefined &&
         typeof request.silent !== 'boolean') {
@@ -3589,6 +3597,7 @@ class MPVOverlayHost {
         return null;
       }
       return {
+        ...commandId,
         objectRanks: normalized,
         defaultRank: request.defaultRank,
         // 정규화(silent)는 히스토리를 남기지 않는다.

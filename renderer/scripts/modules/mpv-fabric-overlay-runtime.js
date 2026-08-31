@@ -2913,8 +2913,17 @@ function createSessionSceneStore(options = {}) {
       return Number.isFinite(own) ? own : defaultRank;
     };
 
+    // 짝 id 는 렌더러가 정해 보낼 수 있다. 그래야 렌더러가 **보내기 전에** 모델
+    // 델타를 등록해 둘 수 있고, 그 사이에 끼어든 Ctrl+Z 가 짝을 못 찾는 일이 없다.
+    const requestedCommandId =
+      typeof command.commandId === 'string' &&
+      command.commandId.length > 0 &&
+      command.commandId.length <= 256
+        ? command.commandId
+        : null;
     if (operation === 'layer-model-marker') {
-      const markerId = `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`;
+      const markerId = requestedCommandId ||
+        `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`;
       appendStructuralOrder(stableVideoIdentity, {
         commandId: markerId,
         sceneKey: null,
@@ -3005,7 +3014,8 @@ function createSessionSceneStore(options = {}) {
     rebuildActiveProvisionalScene(stableVideoIdentity);
     // 렌더러가 레이어 **모델**의 before/after 를 이 id 로 짝지어 둔다. 오버레이는
     // 씬만 되돌릴 수 있고 레이어 목록·배정은 렌더러 쪽에 있기 때문이다.
-    const commandId = `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`;
+    const commandId = requestedCommandId ||
+      `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`;
     appendStructuralOrder(stableVideoIdentity, {
       commandId,
       sceneKey: null,
@@ -9988,7 +9998,8 @@ function createFabricOverlayRuntime(options = {}) {
         objectRanks: command.objectRanks,
         defaultRank: command.defaultRank,
         // 정규화는 히스토리를 남기지 않는다(사용자 조작이 아니다).
-        silent: command.silent === true
+        silent: command.silent === true,
+        commandId: command.commandId
       });
       if (!result.applied) {
         actionDeduper.release?.(command.actionId);

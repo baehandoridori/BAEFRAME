@@ -15857,8 +15857,9 @@ void main() {
             const own = Number(ranks?.get(id));
             return Number.isFinite(own) ? own : defaultRank;
           };
+          const requestedCommandId = typeof command.commandId === "string" && command.commandId.length > 0 && command.commandId.length <= 256 ? command.commandId : null;
           if (operation === "layer-model-marker") {
-            const markerId = `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
+            const markerId = requestedCommandId || `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
             appendStructuralOrder(stableVideoIdentity, {
               commandId: markerId,
               sceneKey: null,
@@ -15926,7 +15927,7 @@ void main() {
             materializeSceneAt(stableVideoIdentity, entry.frame, entry.after);
           }
           rebuildActiveProvisionalScene(stableVideoIdentity);
-          const commandId = `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
+          const commandId = requestedCommandId || `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
           appendStructuralOrder(stableVideoIdentity, {
             commandId,
             sceneKey: null,
@@ -21830,7 +21831,8 @@ void main() {
               objectRanks: command.objectRanks,
               defaultRank: command.defaultRank,
               // 정규화는 히스토리를 남기지 않는다(사용자 조작이 아니다).
-              silent: command.silent === true
+              silent: command.silent === true,
+              commandId: command.commandId
             });
             if (!result2.applied) {
               actionDeduper.release?.(command.actionId);

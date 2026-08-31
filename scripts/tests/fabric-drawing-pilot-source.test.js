@@ -2798,7 +2798,11 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 반대로 하면 모델에는 없는데 그림은 남는 상태가 저장된다.
   const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerDelete', e)");
   assert.ok(start > 0, '삭제 단축키를 찾지 못했다');
-  const source = appSource.slice(start, start + 5600);
+  // 두 분기(삭제·이동)를 함께 본다. 분기가 길어지면 이 창도 함께 늘려야 한다.
+  const source = appSource.slice(start, appSource.indexOf(
+    "const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)",
+    start
+  ));
 
   assert.ok(
     source.includes('isFabricDrawingPilotEngaged() &&'),
@@ -2833,6 +2837,11 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     source.includes('revert: current => insertDrawingLayerNear('),
     '삭제는 되돌리기를 **델타**로 기억한다(스냅샷을 통째로 덮지 않는다)'
   );
+  // 짝 id 등록은 **보내기 전에** 한다 — 응답을 기다렸다 등록하면 그 사이에
+  // 끼어든 Ctrl+Z 가 씬을 먼저 되돌리고 짝을 못 찾는다.
+  const registerAt = source.indexOf('rememberFabricPilotLayerHistory(commandId, {');
+  const sendAt = source.indexOf('const sent = await sendFabricPilotLayerOperation(');
+  assert.ok(registerAt > 0 && sendAt > registerAt, '등록이 전송보다 앞선다');
   // 되돌릴 자리는 이웃 정체로 잡는다 — 숫자 인덱스는 그 사이 추가에 흔들린다.
   assert.ok(
     source.includes("aboveId: state.layers[removedIndex - 1]?.id || null"),
@@ -3022,7 +3031,7 @@ test('씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다', () => {
     source + String.fromCharCode(10) + 'return sendFabricPilotLayerOperation;'
   )({
     applyDrawingActionDetailed: (action, payload) => {
-      calls.push(action);
+      calls.push([action, payload.commandId]);
       return Promise.resolve(responses[calls.length - 1]);
     }
   });
@@ -3030,39 +3039,40 @@ test('씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다', () => {
   return Promise.resolve()
     .then(async () => {
       calls.length = 0;
-      const ok = await build([{ success: true, commandId: 'cmd-1' }])(
-        'layer-objects-remove', { objectIds: ['a'] }
+      const ok = await build([{ success: true }])(
+        'layer-objects-remove', { objectIds: ['a'] }, 'cmd-1'
       );
-      assert.deepEqual(ok, { ok: true, commandId: 'cmd-1' });
-      assert.deepEqual(calls, ['layer-objects-remove']);
+      assert.deepEqual(ok, { ok: true });
+      assert.deepEqual(calls, [['layer-objects-remove', 'cmd-1']], '짝 id 를 함께 보낸다');
     })
     .then(async () => {
-      // 씬이 안 바뀌면 표식을 하나 더 보내 짝 id 를 받는다.
+      // 씬이 안 바뀌면 표식을 **같은 짝 id 로** 하나 더 보낸다.
       calls.length = 0;
       const marked = await build([
         { success: false, reason: 'no-change' },
-        { success: true, commandId: 'cmd-marker' }
-      ])('layer-objects-reorder', {});
-      assert.deepEqual(marked, { ok: true, commandId: 'cmd-marker' });
-      assert.deepEqual(calls, ['layer-objects-reorder', 'layer-model-marker']);
+        { success: true }
+      ])('layer-objects-reorder', {}, 'cmd-2');
+      assert.deepEqual(marked, { ok: true });
+      assert.deepEqual(calls, [
+        ['layer-objects-reorder', 'cmd-2'],
+        ['layer-model-marker', 'cmd-2']
+      ]);
     })
     .then(async () => {
       // 보낼 조작 자체가 없을 때(빈 레이어 삭제)도 표식만 보낸다.
       calls.length = 0;
-      const emptyLayer = await build([{ success: true, commandId: 'cmd-marker-2' }])(
-        null, { objectIds: [] }
-      );
-      assert.deepEqual(emptyLayer, { ok: true, commandId: 'cmd-marker-2' });
-      assert.deepEqual(calls, ['layer-model-marker']);
+      const emptyLayer = await build([{ success: true }])(null, { objectIds: [] }, 'cmd-3');
+      assert.deepEqual(emptyLayer, { ok: true });
+      assert.deepEqual(calls, [['layer-model-marker', 'cmd-3']]);
     })
     .then(async () => {
       // 전송 실패는 표식을 남기지 않고 실패로 돌려준다.
       calls.length = 0;
       const failed = await build([{ success: false, error: 'stale' }])(
-        'layer-objects-reorder', {}
+        'layer-objects-reorder', {}, 'cmd-4'
       );
       assert.deepEqual(failed, { ok: false });
-      assert.deepEqual(calls, ['layer-objects-reorder']);
+      assert.deepEqual(calls, [['layer-objects-reorder', 'cmd-4']]);
     });
 });
 
@@ -3172,7 +3182,7 @@ test('랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다', () => {
   // 않으므로, 문서 순서가 랭크와 어긋나면 재정렬을 한 번 보낸다.
   const start = appSource.indexOf('function fabricPilotLayerOrderInverted(');
   assert.ok(start > 0, '역전 판정 함수를 찾지 못했다');
-  const end = appSource.indexOf('function healFabricPilotLayerOrder()', start);
+  const end = appSource.indexOf('function healFabricPilotLayerOrder(', start);
   assert.ok(end > start, '역전 판정 함수의 끝을 찾지 못했다');
   const inverted = new Function(
     appSource.slice(start, end) + String.fromCharCode(10) +
@@ -3209,6 +3219,39 @@ test('랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다', () => {
     true
   );
   assert.equal(inverted(null, ranks), false, '문서가 없으면 손대지 않는다');
+
+  // 같은 층 안의 자리도 본다. 랭크에 2를 곱하고 방금 붙인 획에 +1 을 주면,
+  // 층은 맞는데 제 층 안에서 아래에 깔린 새 획도 역전으로 잡힌다.
+  const scaled = { objectRanks: [['older', 2], ['newer', 3]], defaultRank: 0 };
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'newer' }, { id: 'older' }] }] }, scaled),
+    true,
+    '새 획이 같은 층의 옛 획보다 아래면 바로잡는다'
+  );
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'older' }, { id: 'newer' }] }] }, scaled),
+    false
+  );
+});
+
+test('정규화 랭크는 같은 층 안에서 새 획을 위로 보낸다', () => {
+  const start = appSource.indexOf('function fabricPilotHealingRanks(state, recentIds) {');
+  assert.ok(start > 0, '정규화 랭크 함수를 찾지 못했다');
+  const end = appSource.indexOf('function fabricPilotLayerOrderInverted(', start);
+  const build = new Function(
+    'fabricPilotObjectRanks',
+    appSource.slice(start, end) + String.fromCharCode(10) + 'return fabricPilotHealingRanks;'
+  )(() => ({ objectRanks: [['a', 0], ['b', 1]], defaultRank: 0 }));
+
+  assert.deepEqual(build({}, ['b']), {
+    objectRanks: [['a', 0], ['b', 3]],
+    defaultRank: 0
+  });
+  // 층 사이 간격은 2 라, +1 을 받아도 다음 층을 넘지 않는다.
+  assert.deepEqual(build({}, ['a']), {
+    objectRanks: [['a', 1], ['b', 2]],
+    defaultRank: 0
+  });
 });
 
 test('팔레트 버튼으로 되돌린 레이어 조작도 모델을 함께 되돌린다', () => {
@@ -3276,7 +3319,7 @@ test('레이어 조작이 도는 동안 팔레트 되돌리기를 잠근다', ()
 });
 
 test('정규화는 사용자 히스토리에 남기지 않는다', () => {
-  const start = appSource.indexOf('function healFabricPilotLayerOrder() {');
+  const start = appSource.indexOf('function healFabricPilotLayerOrder(recentIds) {');
   assert.ok(start > 0, '정규화 함수를 찾지 못했다');
   const source = appSource.slice(start, start + 900);
   assert.ok(

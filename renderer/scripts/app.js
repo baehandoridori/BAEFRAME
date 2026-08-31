@@ -7980,11 +7980,11 @@ async function initApp() {
 
   function syncFabricDrawingLayerAssignments() {
     const live = collectFabricDrawingObjectIds();
-    if (!live) return;
+    if (!live) return [];
     if (!drawingObjectIdsSeeded) {
       knownDrawingObjectIds = live;
       drawingObjectIdsSeeded = true;
-      return;
+      return [];
     }
     let next = reviewDataManager.getDrawingLayers();
     // 획을 자르면(지우개 부분 지우기·올가미 이동) 런타임이 원본을 지우고 **새 id** 의
@@ -7994,14 +7994,18 @@ async function initApp() {
     // 여러 레이어가 섞이면 어느 조각이 어디서 왔는지 알 수 없어 활성 레이어로 둔다
     // (저장 레코드에 부모 링크가 없다 — 스키마 불가침).
     const inheritedLayerId = inheritedDrawingLayerForReplacements(next, live);
+    const assignedNow = [];
     for (const id of live) {
       if (knownDrawingObjectIds.has(id)) continue;
       // 되살아난 것이면 원래 배정을 그대로 둔다. 덮으면 지우고 → 레이어를 바꾸고
       // → 되돌렸을 때 그림이 다른 레이어로 옮겨간 채 저장된다.
       if (everSeenDrawingObjectIds.has(id)) continue;
       everSeenDrawingObjectIds.add(id);
+      assignedNow.push(id);
       next = assignDrawingObjectLayer(next, id, inheritedLayerId || next.activeLayerId);
     }
+    // 이번에 붙인 id 를 돌려준다 — 정규화가 "이 획이 제 층의 맨 위인가" 를
+    // 봐야 하는데, 랭크만으로는 같은 층 안의 자리를 알 수 없다.
     // **여기서 걷어내면 안 된다.** 획을 지운 뒤 실행취소로 되살리면, 배정이
     // 이미 사라져 그 획이 "새 오브젝트" 로 보이고 그때의 활성 레이어로 옮겨간다.
     // 사용자가 지우고 → 레이어를 바꾸고 → 되돌리면 그림이 다른 레이어로 이동한
@@ -8009,6 +8013,7 @@ async function initApp() {
     // 그 영상의 실행취소 이력도 이미 사라진 뒤다.
     knownDrawingObjectIds = live;
     reviewDataManager.setDrawingLayers(next);
+    return assignedNow;
   }
 
   /**
@@ -8148,17 +8153,28 @@ async function initApp() {
   // 오버레이 조작을 보내고 **짝 id** 를 돌려준다. 씬이 바뀌지 않는 경우(빈
   // 레이어 삭제·이미 맞는 순서)에도 표식을 남겨야 실행취소가 레이어 모델을
   // 되돌린다 — 짝지을 id 가 없으면 Ctrl+Z 가 엉뚱한 앞 커맨드를 되돌린다.
-  async function sendFabricPilotLayerOperation(action, payload) {
+  let fabricPilotLayerCommandSequence = 0;
+
+  function nextFabricPilotLayerCommandId() {
+    fabricPilotLayerCommandSequence += 1;
+    return `layer-op:renderer:${fabricPilotLayerCommandSequence}`;
+  }
+
+  // **짝 id 를 먼저 정한다.** 응답을 기다렸다가 등록하면, 그 사이에 끼어든
+  // Ctrl+Z 가 씬을 먼저 되돌리고 짝을 못 찾는다 — 그 뒤 늦은 커밋이 이미
+  // 되돌린 씬 위에 모델을 얹는다. 부르는 쪽이 델타를 등록한 뒤 이 id 로 보낸다.
+  async function sendFabricPilotLayerOperation(action, payload, commandId) {
     const response = action === null
       ? { reason: 'no-change' }
-      : await fabricDrawingPilotController.applyDrawingActionDetailed(action, payload);
-    if (response?.success === true) {
-      return { ok: true, commandId: response.commandId };
-    }
+      : await fabricDrawingPilotController.applyDrawingActionDetailed(
+        action,
+        { ...payload, commandId }
+      );
+    if (response?.success === true) return { ok: true };
     if (response?.reason !== 'no-change') return { ok: false };
     const marker = await fabricDrawingPilotController
-      .applyDrawingActionDetailed('layer-model-marker', {});
-    return { ok: marker?.success === true, commandId: marker?.commandId };
+      .applyDrawingActionDetailed('layer-model-marker', { commandId });
+    return { ok: marker?.success === true };
   }
 
   // 레이어를 바꾼 직후에는 랭크 갱신이 오버레이에 닿기 **전에** 획이 커밋될 수
@@ -8168,6 +8184,19 @@ async function initApp() {
   //
   // 그래서 문서 순서가 랭크와 어긋나면 한 번 바로잡는다. 랭크 맵에 없는 id
   // (짝인 외곽선 등)는 건너뛴다 — 본체들의 상대 순서만 본다.
+  // 랭크에 **2를 곱하고**, 방금 붙인 획에는 +1 을 준다. 그러면 같은 층 안에서도
+  // 새 획이 옛 획들보다 뒤(=위)로 간다 — 층이 바뀌지는 않는다(다음 층은 +2).
+  // 랭크만 보면 `0,1,1` 처럼 오름차순이라, 층은 맞는데 **제 층 안에서 아래에**
+  // 깔린 새 획을 놓친다.
+  function fabricPilotHealingRanks(state, recentIds) {
+    const base = fabricPilotObjectRanks(state);
+    const recent = new Set(recentIds || []);
+    return {
+      objectRanks: base.objectRanks.map(([id, rank]) => [id, rank * 2 + (recent.has(id) ? 1 : 0)]),
+      defaultRank: base.defaultRank * 2
+    };
+  }
+
   function fabricPilotLayerOrderInverted(document, ranks) {
     const rankOf = new Map(ranks.objectRanks);
     for (const keyframe of document?.keyframes || []) {
@@ -8182,11 +8211,11 @@ async function initApp() {
     return false;
   }
 
-  function healFabricPilotLayerOrder() {
+  function healFabricPilotLayerOrder(recentIds) {
     if (!isFabricDrawingPilotEngaged()) return;
     const state = reviewDataManager.getDrawingLayers();
     if (state.layers.length < 2) return;
-    const ranks = fabricPilotObjectRanks(state);
+    const ranks = fabricPilotHealingRanks(state, recentIds);
     const document = fabricDrawingPersistenceStore.getHydrationDocument?.();
     if (!fabricPilotLayerOrderInverted(document, ranks)) return;
     // **정규화는 사용자 조작이 아니다.** 히스토리에 남기면 다음 Ctrl+Z 가 방금
@@ -8300,13 +8329,13 @@ async function initApp() {
     fabricPilotTimelineRenderQueued = true;
     requestAnimationFrame(() => {
       fabricPilotTimelineRenderQueued = false;
-      syncFabricDrawingLayerAssignments();
+      const assignedNow = syncFabricDrawingLayerAssignments();
       renderActiveDrawingLayers();
       // 새로 생긴 오브젝트도 자기 레이어의 숨김·잠금을 따라야 한다.
       // 보는 중(passive)에는 표시 세션이 선 뒤에 보내야 오버레이가 받는다.
       void pushFabricPilotLayerViewAfterDisplay();
       // 랭크가 닿기 전에 커밋된 획은 엉뚱한 층에 꽂혀 있다. 한 번 바로잡는다.
-      healFabricPilotLayerOrder();
+      healFabricPilotLayerOrder(assignedNow);
     });
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
@@ -14848,19 +14877,6 @@ async function initApp() {
             return;
           }
           if (result.reason) return;
-          // 빈 레이어면 지울 오브젝트가 없다. 그래도 표식을 남겨야 실행취소가
-          // 이 삭제를 되돌린다(null 은 "보낼 조작이 없다" 는 뜻이다).
-          const sent = await sendFabricPilotLayerOperation(
-            result.removedObjectIds.length > 0 ? 'layer-objects-remove' : null,
-            { objectIds: result.removedObjectIds }
-          );
-          if (!sent.ok) {
-            showToast('레이어의 그림을 지우지 못했습니다', 'error');
-            return;
-          }
-          // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌리되
-          // **델타로** 기억한다 — 스냅샷을 통째로 덮으면 그 사이의 다른 편집이
-          // 사라진다.
           const removedIndex = state.layers.findIndex(
             candidate => candidate.id === state.activeLayerId
           );
@@ -14875,7 +14891,7 @@ async function initApp() {
           const removedIds = [...new Set([...result.removedObjectIds, ...retainedIds])];
           const layerId = state.activeLayerId;
           // 되돌릴 자리는 **이웃 정체**로 잡는다(숫자 인덱스는 그 사이 추가에
-          // 흔들린다). 기준 레이어였는지도 함께 기억한다.
+          // 흔들린다). 기준 레이어였는지·활성이었는지도 함께 기억한다.
           const anchors = {
             aboveId: state.layers[removedIndex - 1]?.id || null,
             belowId: state.layers[removedIndex + 1]?.id || null,
@@ -14883,7 +14899,12 @@ async function initApp() {
             wasActive: state.activeLayerId === layerId,
             replacementActiveId: result.state.activeLayerId
           };
-          rememberFabricPilotLayerHistory(sent.commandId, {
+          // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌리되
+          // **델타로** 기억한다 — 스냅샷을 통째로 덮으면 그 사이의 다른 편집이
+          // 사라진다. 등록은 **보내기 전에** 한다: 응답을 기다렸다 등록하면 그
+          // 사이에 끼어든 Ctrl+Z 가 씬을 먼저 되돌리고 짝을 못 찾는다.
+          const commandId = nextFabricPilotLayerCommandId();
+          rememberFabricPilotLayerHistory(commandId, {
             revert: current => insertDrawingLayerNear(
               current, removedLayer, anchors, removedIds
             ),
@@ -14891,6 +14912,17 @@ async function initApp() {
               current, layerId, [...(collectFabricDrawingObjectIds() || [])]
             ).state
           });
+          // 빈 레이어면 지울 오브젝트가 없다. 그래도 표식을 남겨야 실행취소가
+          // 이 삭제를 되돌린다(null 은 "보낼 조작이 없다" 는 뜻이다).
+          const sent = await sendFabricPilotLayerOperation(
+            result.removedObjectIds.length > 0 ? 'layer-objects-remove' : null,
+            { objectIds: result.removedObjectIds },
+            commandId
+          );
+          if (!sent.ok) {
+            showToast('레이어의 그림을 지우지 못했습니다', 'error');
+            return;
+          }
           // 커밋도 **지금** 상태 위에서 다시 계산한다. 기다리는 동안 다른 편집이
           // 들어왔을 수 있다.
           const committed = deleteDrawingLayerState(
@@ -14918,30 +14950,37 @@ async function initApp() {
           const moved = next.layers.some((layer, index) => layer.id !== state.layers[index]?.id);
           if (!moved) return;
           const layer = findDrawingLayer(next, next.activeLayerId);
+          const movedId = next.activeLayerId;
+          // 넘어간 짝 레이어. 위로면 바로 위, 아래로면 바로 아래 레이어다.
+          // 인덱스도 상대 칸 수도 그 사이에 레이어가 끼면 같은 이동을 재현하지
+          // 못한다 — "A 를 B 의 반대편으로" 가 이 조작의 실제 뜻이다.
+          const movedFrom = state.layers.findIndex(candidate => candidate.id === movedId);
+          const neighborId = state.layers[movedFrom + moveOffset]?.id || null;
+          const movedSide = moveOffset < 0 ? 'before' : 'after';
+          const revertSide = moveOffset < 0 ? 'after' : 'before';
+          // 오버레이는 씬만 되돌린다. 짝 id 로 모델 델타를 **보내기 전에**
+          // 등록한다 — 응답을 기다렸다 등록하면 그 사이에 끼어든 Ctrl+Z 가 씬을
+          // 먼저 되돌리고 짝을 못 찾는다.
+          const commandId = nextFabricPilotLayerCommandId();
+          rememberFabricPilotLayerHistory(commandId, {
+            revert: current =>
+              placeDrawingLayerRelativeTo(current, movedId, neighborId, revertSide),
+            apply: current =>
+              placeDrawingLayerRelativeTo(current, movedId, neighborId, movedSide)
+          });
           // 겹칠 그림이 없거나 이미 순서가 맞으면 'no-change' 다 — 그건 성공으로
           // 치되 표식을 남긴다. 그러나 **전송 실패**(낡은 토큰·타임아웃)까지 같이
           // 넘기면, 타임라인 순서만 바뀌고 캔버스 겹침은 그대로인 어긋난 상태가
           // 저장된다.
           const sent = await sendFabricPilotLayerOperation(
             'layer-objects-reorder',
-            fabricPilotObjectRanks(next)
+            fabricPilotObjectRanks(next),
+            commandId
           );
           if (!sent.ok) {
             showToast('레이어 순서를 바꾸지 못했습니다', 'error');
             return;
           }
-          const movedId = next.activeLayerId;
-          // 넘어간 짝 레이어. 위로면 바로 위, 아래로면 바로 아래 레이어다.
-          const movedFrom = state.layers.findIndex(candidate => candidate.id === movedId);
-          const neighborId = state.layers[movedFrom + moveOffset]?.id || null;
-          const movedSide = moveOffset < 0 ? 'before' : 'after';
-          const revertSide = moveOffset < 0 ? 'after' : 'before';
-          rememberFabricPilotLayerHistory(sent.commandId, {
-            revert: current =>
-              placeDrawingLayerRelativeTo(current, movedId, neighborId, revertSide),
-            apply: current =>
-              placeDrawingLayerRelativeTo(current, movedId, neighborId, movedSide)
-          });
           // 커밋도 지금 상태 위에서 **같은 짝 기준 이동**을 다시 한다.
           applyDrawingLayerStateChange(
             placeDrawingLayerRelativeTo(
