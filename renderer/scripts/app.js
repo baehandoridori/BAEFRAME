@@ -7972,14 +7972,26 @@ async function initApp() {
   // 잊혀서, 실행취소로 되살렸을 때 "새 오브젝트" 로 보여 그때의 활성 레이어로
   // 옮겨간 채 저장된다.
   let lastPrunedDrawingDocumentId = null;
+  // 마지막으로 심은 문서. 걷어낸 문서와 따로 센다 — 걷어내기를 끈 재시딩도
+  // 여기는 갱신해야 "같은 문서인가" 를 옳게 판정한다.
+  let lastSeededDrawingDocumentId = null;
 
   function seedFabricDrawingLayerAssignmentTracking({ prune = true } = {}) {
     const snapshot = readFabricDrawingDocument();
     const live = snapshot?.ids || null;
-    knownDrawingObjectIds = live || new Set();
-    everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);
-    drawingObjectIdsSeeded = live !== null;
     const documentId = snapshot?.documentId || null;
+    // 같은 문서로 다시 심을 때는 **본 목록을 지우지 않는다.** 지운 획의 id 는
+    // 지금 문서에 없으므로 다시 심으면 잊혀지는데, 배정은(걷지 않으므로) 남아
+    // 있다. 그 상태에서 실행취소로 되살리면 "새 오브젝트" 로 보여 그때의 활성
+    // 레이어로 덮인다. 문서가 바뀌었을 때만 새로 센다 — 그때는 이전 문서의
+    // 실행취소 이력도 함께 사라진 뒤다.
+    const sameDocument = documentId === null || documentId === lastSeededDrawingDocumentId;
+    knownDrawingObjectIds = live || new Set();
+    everSeenDrawingObjectIds = sameDocument
+      ? new Set([...everSeenDrawingObjectIds, ...knownDrawingObjectIds])
+      : new Set(knownDrawingObjectIds);
+    drawingObjectIdsSeeded = live !== null;
+    if (documentId !== null) lastSeededDrawingDocumentId = documentId;
     // 사라진 오브젝트의 배정은 **문서를 처음 심을 때 한 번만** 걷는다. 그 시점에는
     // 그 문서의 실행취소 이력도 아직 없다. 이후 같은 문서에서는 남겨 둔다.
     //

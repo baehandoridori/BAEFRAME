@@ -2337,13 +2337,19 @@ test('실행취소로 되살아난 획은 원래 레이어에 남는다', () => 
     syncSource.includes('everSeenDrawingObjectIds.add(id);'),
     '새 오브젝트는 본 목록에 넣는다'
   );
-  // seed 가 두 목록을 함께 다룬다.
+  // seed 가 두 목록을 함께 다룬다. 같은 문서로 다시 심을 때는 본 목록을 **합친다** —
+  // 지운 획의 id 를 잊으면 실행취소가 되살릴 때 그 획이 활성 레이어로 덮인다.
   const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking(');
   assert.ok(seedStart > 0, 'seed 소스를 찾지 못했다');
+  const seedSource = appSource
+    .slice(seedStart, appSource.indexOf('function applyDrawingLayerStateChange(', seedStart));
   assert.ok(
-    appSource.slice(seedStart, appSource.indexOf('function applyDrawingLayerStateChange(', seedStart))
-      .includes('everSeenDrawingObjectIds = new Set(knownDrawingObjectIds);'),
-    'seed 는 본 목록도 함께 심는다'
+    seedSource.includes('new Set([...everSeenDrawingObjectIds, ...knownDrawingObjectIds])'),
+    '같은 문서 재시딩은 본 목록을 합친다'
+  );
+  assert.ok(
+    seedSource.includes(': new Set(knownDrawingObjectIds);'),
+    '문서가 바뀌면 본 목록을 새로 센다'
   );
 });
 
@@ -2364,27 +2370,32 @@ test('레이어 헤더 클릭은 레이어 모델의 활성 레이어를 바꾼�
   assert.ok(handler.includes('applyDrawingLayerStateChange'), '모델을 갱신한다');
 });
 
-test('배정 걷어내기는 문서마다 한 번만 한다', () => {
+test('배정 걷어내기는 문서마다 한 번만 하고 본 목록은 같은 문서에서 유지한다', () => {
   // 그리기 모드를 껐다 켜면 seed 가 다시 돈다. 오버레이는 그동안 씬 이력을 그대로
-  // 들고 있으므로, 그때 걷으면 지운 획의 배정이 사라지고 본 목록에서도 잊혀서
-  // 실행취소로 되살렸을 때 그때의 활성 레이어로 옮겨간 채 저장된다.
+  // 들고 있으므로, 그때 걷거나 본 목록을 새로 심으면 지운 획이 실행취소로 되살아날 때
+  // "새 오브젝트" 로 보여 그때의 활성 레이어로 옮겨간 채 저장된다.
   const seedStart = appSource.indexOf('  let lastPrunedDrawingDocumentId = null;');
   assert.ok(seedStart > 0, 'seed 소스를 찾지 못했다');
   const seedEnd = appSource.indexOf('function applyDrawingLayerStateChange(', seedStart);
   assert.ok(seedEnd > seedStart, 'seed 소스의 끝을 찾지 못했다');
   const seedSource = appSource.slice(seedStart, seedEnd);
 
-  let documentSnapshot = { documentId: 'doc-a', ids: new Set(['obj-1']) };
+  let documentSnapshot = { documentId: 'doc-a', ids: new Set(['obj-1', 'obj-2']) };
   const pruned = [];
   const layerState = { activeLayerId: 'layer-1', layers: [], assignments: {} };
-  const seed = new Function(
+  const harness = new Function(
     'knownDrawingObjectIds',
     'everSeenDrawingObjectIds',
     'drawingObjectIdsSeeded',
     'readFabricDrawingDocument',
     'reviewDataManager',
     'pruneDrawingLayerAssignments',
-    `${seedSource}\nreturn seedFabricDrawingLayerAssignmentTracking;`
+    `${seedSource}
+    return {
+      seed: seedFabricDrawingLayerAssignmentTracking,
+      seen: () => [...everSeenDrawingObjectIds].sort(),
+      known: () => [...knownDrawingObjectIds].sort()
+    };`
   )(
     new Set(),
     new Set(),
@@ -2394,30 +2405,35 @@ test('배정 걷어내기는 문서마다 한 번만 한다', () => {
       getDrawingLayers: () => layerState,
       setDrawingLayers: () => true
     },
-    (state, ids) => { pruned.push(ids.slice()); return state; }
+    (state, ids) => { pruned.push(ids.slice().sort()); return state; }
   );
 
-  seed();
-  assert.deepEqual(pruned, [['obj-1']], '문서를 처음 심을 때는 걷는다');
+  harness.seed();
+  assert.deepEqual(pruned, [['obj-1', 'obj-2']], '문서를 처음 심을 때는 걷는다');
+  assert.deepEqual(harness.seen(), ['obj-1', 'obj-2']);
 
-  // 같은 문서에서 다시 켜면 걷지 않는다 — 실행취소가 아직 되살릴 수 있다.
+  // obj-2 를 지우고 그리기 모드를 껐다 켠다 — 실행취소가 아직 되살릴 수 있다.
   documentSnapshot = { documentId: 'doc-a', ids: new Set(['obj-1']) };
-  seed();
+  harness.seed();
   assert.equal(pruned.length, 1, '같은 문서에서는 두 번 걷지 않는다');
+  assert.deepEqual(harness.seen(), ['obj-1', 'obj-2'], '지운 획의 id 를 잊지 않는다');
+  assert.deepEqual(harness.known(), ['obj-1'], '지금 살아 있는 것만 known 이다');
 
-  // 걷어내기를 끈 재시딩(영상 전환 렌더)도 걷지 않는다.
-  documentSnapshot = { documentId: 'doc-b', ids: new Set(['obj-2']) };
-  seed({ prune: false });
+  // 걷어내기를 끈 재시딩(영상 전환 렌더)도 걷지 않는다. 문서가 바뀌면 새로 센다.
+  documentSnapshot = { documentId: 'doc-b', ids: new Set(['obj-3']) };
+  harness.seed({ prune: false });
   assert.equal(pruned.length, 1, 'prune: false 는 걷지 않는다');
+  assert.deepEqual(harness.seen(), ['obj-3'], '문서가 바뀌면 본 목록을 새로 센다');
 
   // 아직 걷지 않은 문서이므로 다음 활성화에서 걷는다.
-  seed();
-  assert.deepEqual(pruned[1], ['obj-2'], '새 문서는 한 번 걷는다');
+  harness.seed();
+  assert.deepEqual(pruned[1], ['obj-3'], '새 문서는 한 번 걷는다');
 
-  // 문서가 없으면(스토어 미준비) 걷지 않는다.
+  // 문서가 없으면(스토어 미준비) 걷지도, 본 목록을 지우지도 않는다.
   documentSnapshot = null;
-  seed();
+  harness.seed();
   assert.equal(pruned.length, 2, '문서가 없으면 걷지 않는다');
+  assert.deepEqual(harness.seen(), ['obj-3'], '문서가 없으면 본 목록을 지우지 않는다');
 });
 
 test('파일럿 레이어 헤더 클릭은 캡처 방화벽을 통과한다', () => {
