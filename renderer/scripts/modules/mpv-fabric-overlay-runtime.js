@@ -9242,6 +9242,17 @@ function createFabricOverlayRuntime(options = {}) {
     try {
       const result = sceneStore.hydrateVideo(clonePlain(request));
       if (result?.accepted === true) {
+        // 표시·잠금 집합은 **그 영상의 오브젝트 id** 로 되어 있다. 다른 영상을
+        // 수화하면서 들고 있으면, 렌더러가 다시 밀어 넣기 전까지 새 영상이
+        // 이전 영상의 제한을 쓴다 — 특히 activeLayerDrawable=false 가 남으면
+        // 그리기 모드를 켠 직후 첫 획이 조용히 무시된다. 가장 안전한 쪽으로
+        // 되돌린다(아무것도 숨기지 않고 그릴 수 있다).
+        if (String(request?.stableVideoIdentity || '') !==
+            String(currentSession?.stableVideoIdentity || '')) {
+          hiddenObjectIds = new Set();
+          lockedObjectIds = new Set();
+          activeLayerDrawable = true;
+        }
         if (passiveDisplaySession &&
             passiveDisplaySession.stableVideoIdentity !==
               String(request?.stableVideoIdentity || '')) {

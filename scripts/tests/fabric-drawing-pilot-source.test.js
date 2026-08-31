@@ -2587,7 +2587,7 @@ test('잘린 획의 조각은 원본 레이어를 물려받는다', () => {
 test('표시·잠금 단축키는 레이어 모델의 플래그만 뒤집는다', () => {
   // 문서(drawingsV3)는 손대지 않는다 — 레코드 키 집합이 고정이라 숨김·잠금을
   // 쓸 자리가 없다. 플래그를 뒤집고 거기서 계산한 id 집합을 오버레이로 보낸다.
-  const start = appSource.indexOf("if (userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {");
+  const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerVisibilityToggle', e)");
   assert.ok(start > 0, '표시 토글 단축키를 찾지 못했다');
   const source = appSource.slice(start, start + 1400);
   assert.ok(
@@ -2683,5 +2683,31 @@ test('표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시
   assert.ok(
     appSource.slice(stateStart, stateStart + 900).includes('pushFabricPilotLayerView();'),
     '세션이 살아나면 다시 보낸다'
+  );
+});
+
+test('표시·잠금 토글은 그리기 모드일 때만 받는다', () => {
+  // passive 투영에는 집합을 보낼 경로가 없다(오버레이 입력이 꺼져 있다).
+  // 그 상태에서 받으면 모델만 바뀌고 그림은 그대로인데 토스트는 "숨김" 이라고
+  // 말한다 — 화면과 말이 어긋난다.
+  const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerVisibilityToggle', e)");
+  assert.ok(start > 0, '표시 토글 단축키를 찾지 못했다');
+  const head = appSource.slice(Math.max(0, start - 200), start);
+  assert.ok(
+    head.includes('isFabricDrawingPilotEngaged() &&'),
+    '표시 토글은 그리기 모드 조건과 함께 판정한다'
+  );
+  const lockStart = appSource.indexOf("userSettings.matchShortcut('drawingLayerLockToggle', e)");
+  assert.ok(lockStart > 0, '잠금 토글 단축키를 찾지 못했다');
+  assert.ok(
+    appSource.slice(Math.max(0, lockStart - 200), lockStart).includes('isFabricDrawingPilotEngaged() &&'),
+    '잠금 토글도 그리기 모드 조건과 함께 판정한다'
+  );
+  // 추가·선택은 메타데이터만 바꾸므로 passive 에서도 거짓말이 아니다 — 그대로 둔다.
+  const addStart = appSource.indexOf("userSettings.matchShortcut('drawingLayerAdd', e)");
+  assert.equal(
+    appSource.slice(Math.max(0, addStart - 120), addStart).includes('isFabricDrawingPilotEngaged() &&'),
+    false,
+    '추가는 그리기 모드가 아니어도 의미가 있다'
   );
 });

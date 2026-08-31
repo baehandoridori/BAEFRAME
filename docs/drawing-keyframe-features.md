@@ -51,7 +51,7 @@
 |---|---|---|---|
 | `drawingLayerAdd` | `Shift+F1` | 드로잉 레이어 추가 | ✅ 동작 (v2.6.4-beta) — 루트 `drawingLayers` 에 저장 |
 | `drawingLayerDelete` | ``Shift+` `` | 드로잉 레이어 삭제 | **A. 차단** — 오버레이가 그 레이어의 오브젝트를 지워야 의미가 있다 |
-| `drawingLayerVisibilityToggle` | `` ` `` | 활성 레이어 표시 토글 | ✅ 동작 (v2.8.0-beta) — 렌더러가 숨길 오브젝트 id 집합을 오버레이로 밀어 넣는다. **문서는 그대로다**(뷰 상태) |
+| `drawingLayerVisibilityToggle` | `` ` `` | 활성 레이어 표시 토글 | ✅ 동작 (v2.8.0-beta) — 렌더러가 숨길 오브젝트 id 집합을 오버레이로 밀어 넣는다. **문서는 그대로다**(뷰 상태). **그리기 모드일 때만 받는다** — passive 투영에는 집합을 보낼 경로가 없어 모델만 바뀌고 화면은 그대로가 된다 |
 | `drawingLayerLockToggle` | `Ctrl+2` | 활성 레이어 잠금 토글 | ✅ 동작 (v2.8.0-beta) — 잠근 획은 선택·이벤트에서 빠진다. 활성 레이어가 잠기거나 숨겨지면 새 획도 받지 않는다 |
 | `drawingLayerSelectUp` / `Down` | `Shift+X` / `Shift+C` | 위/아래 레이어 선택 | ✅ 동작 (v2.6.4-beta) — 헤더 클릭으로도 바뀐다 |
 | `drawingLayerMoveUp` / `Down` | `Ctrl+Shift+X` / `Ctrl+Shift+C` | 레이어 위/아래 이동 | **A. 차단** — 오버레이가 오브젝트 순서를 바꿔야 의미가 있다. 메타데이터만 바꾸면 타임라인 행만 움직이고 화면의 겹침 순서는 그대로다 |

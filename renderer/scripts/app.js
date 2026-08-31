@@ -14562,7 +14562,12 @@ async function initApp() {
       }
       // 표시·잠금은 레이어 모델의 플래그만 뒤집는다. 문서는 그대로다 —
       // applyDrawingLayerStateChange 가 계산한 id 집합을 오버레이로 밀어 넣는다.
-      if (userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {
+      //
+      // **그리기 모드일 때만 받는다.** passive 투영에는 집합을 보낼 경로가 없어
+      // (오버레이 입력이 꺼져 있다) 모델만 바뀌고 그림은 그대로다. 그 상태로
+      // 토스트까지 띄우면 "숨김" 이라고 말해 놓고 화면은 그대로인 거짓말이 된다.
+      if (isFabricDrawingPilotEngaged() &&
+          userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {
         e.preventDefault();
         const state = reviewDataManager.getDrawingLayers();
         const next = toggleDrawingLayerVisibilityState(state, state.activeLayerId);
@@ -14573,7 +14578,8 @@ async function initApp() {
         );
         return;
       }
-      if (userSettings.matchShortcut('drawingLayerLockToggle', e)) {
+      if (isFabricDrawingPilotEngaged() &&
+          userSettings.matchShortcut('drawingLayerLockToggle', e)) {
         e.preventDefault();
         const state = reviewDataManager.getDrawingLayers();
         const next = toggleDrawingLayerLockState(state, state.activeLayerId);

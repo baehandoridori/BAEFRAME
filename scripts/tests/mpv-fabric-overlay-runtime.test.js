@@ -17572,3 +17572,66 @@ test('선택 중이던 획이 잠기면 선택에서 빠진다', async () => {
     await harness.destroy();
   }
 });
+
+test('다른 영상을 수화하면 표시·잠금 집합을 버린다', () => {
+  // 집합은 그 영상의 오브젝트 id 로 되어 있다. 들고 있으면 렌더러가 다시 밀어
+  // 넣기 전까지 새 영상이 이전 영상의 제한을 쓴다 — 특히 activeLayerDrawable
+  // 이 false 로 남으면 그리기 모드를 켠 직후 첫 획이 조용히 무시된다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: false
+  }).accepted, true);
+
+  // 입력을 끄고 다른 영상을 수화한다(수화는 입력이 꺼져 있을 때만 받는다).
+  runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: false
+  }));
+  assert.equal(runtime.hydrateDrawingVideo(makePersistenceHydration({
+    persistenceSessionId: 'runtime-persistence-session-other',
+    stableVideoIdentity: 'runtime-video-other',
+    keyframes: [{
+      id: 'other-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('other-video-stroke')]
+    }]
+  })).accepted, true);
+
+  // 새 영상으로 세션을 열면 아무것도 숨겨져 있지 않고 그릴 수 있어야 한다.
+  runtime.setDrawingInput(makeInput({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 3,
+    session: {
+      sessionId: 'runtime-session-other',
+      stableVideoIdentity: 'runtime-video-other',
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 960, height: 540 },
+      tool: 'brush'
+    }
+  }));
+  const target = canvas.objects.find(
+    object => object.__baeframeObjectId === 'other-video-stroke'
+  );
+  assert.ok(target, '새 영상의 획이 올라와야 한다');
+  assert.equal(target.visible, true, '이전 영상의 숨김이 남지 않는다');
+
+  const baseline = runtime.getDiagnostics().mutationCount;
+  drawStroke(canvas.upperCanvasEl, 821);
+  assert.equal(
+    runtime.getDiagnostics().mutationCount,
+    baseline + 1,
+    '이전 영상의 그리기 차단이 남지 않는다'
+  );
+  runtime.destroy();
+});
