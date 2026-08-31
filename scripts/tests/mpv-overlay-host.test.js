@@ -6091,3 +6091,70 @@ test('passive 레이어 뷰는 영상 정체로 맞추고 리비전을 전진시
   // 세션 id 로는 맞출 수 없다 — 보는 중에는 활성 세션이 없다.
   assert.equal((await send(7, { sessionId: 'host-session' })).success, true);
 });
+
+test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 필드만 넘긴다', async () => {
+  // 이 두 액션만 페이로드를 나른다. 검사 없이 통과시키면 임의의 객체가 런타임의
+  // 정렬·삭제 판정에 그대로 들어간다.
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.applyDrawingAction(')) {
+        forwarded.push(readFabricMethodPayload(script, 'applyDrawingAction'));
+        return { applied: true, repainted: true, deletedCount: 0 };
+      }
+      return undefined;
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-layer-ops' });
+  const send = (actionId, overrides) => harness.host.applyDrawingAction({
+    hostGeneration: harness.host.hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-layer-ops',
+    actionId,
+    ...overrides
+  });
+
+  const removed = await send('layer-remove-ok', {
+    action: 'layer-objects-remove',
+    objectIds: ['obj-1', 'obj-2'],
+    secret: 'must-not-reach-runtime'
+  });
+  assert.equal(removed.success, true);
+  assert.deepEqual(forwarded[0].objectIds, ['obj-1', 'obj-2']);
+  assert.equal(forwarded[0].secret, undefined, '허용 목록 밖 필드는 넘기지 않는다');
+
+  const reordered = await send('layer-reorder-ok', {
+    action: 'layer-objects-reorder',
+    objectRanks: { 'obj-1': 0, 'obj-2': 3 },
+    defaultRank: 1
+  });
+  assert.equal(reordered.success, true);
+  assert.deepEqual(forwarded[1].objectRanks, { 'obj-1': 0, 'obj-2': 3 });
+  assert.equal(forwarded[1].defaultRank, 1);
+
+  // 형식이 어긋나면 런타임까지 가지 않는다.
+  const before = forwarded.length;
+  assert.equal((await send('layer-bad-1', {
+    action: 'layer-objects-remove', objectIds: []
+  })).success, false, '빈 목록');
+  assert.equal((await send('layer-bad-2', {
+    action: 'layer-objects-remove', objectIds: ['ok', 7]
+  })).success, false, '문자열이 아닌 id');
+  assert.equal((await send('layer-bad-3', {
+    action: 'layer-objects-remove'
+  })).success, false, '목록 자체가 없음');
+  assert.equal((await send('layer-bad-4', {
+    action: 'layer-objects-reorder', objectRanks: { 'obj-1': 1.5 }, defaultRank: 0
+  })).success, false, '정수가 아닌 랭크');
+  assert.equal((await send('layer-bad-5', {
+    action: 'layer-objects-reorder', objectRanks: { 'obj-1': -1 }, defaultRank: 0
+  })).success, false, '음수 랭크');
+  assert.equal((await send('layer-bad-6', {
+    action: 'layer-objects-reorder', objectRanks: { 'obj-1': 0 }
+  })).success, false, '기본 랭크 없음');
+  assert.equal((await send('layer-bad-7', {
+    action: 'layer-objects-reorder', objectRanks: ['obj-1'], defaultRank: 0
+  })).success, false, '배열은 랭크 맵이 아니다');
+  assert.equal(forwarded.length, before, '거절은 런타임에 닿지 않는다');
+});

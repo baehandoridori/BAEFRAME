@@ -159,6 +159,12 @@ const FRAME_STRUCTURE_ACTIONS = new Map([
   ['frame-copy', 'frame-copy'],
   ['frame-paste', 'frame-paste']
 ]);
+// 레이어 단위 오브젝트 조작. 씬의 오브젝트 자체를 바꾸므로 프레임 조작과 달리
+// 활성 씬을 항상 다시 그린다.
+const LAYER_OBJECT_ACTIONS = new Set([
+  'layer-objects-remove',
+  'layer-objects-reorder'
+]);
 const DRAWING_V3_DIAGNOSTIC_STATUSES = new Set([
   'active',
   'degraded',
@@ -1758,9 +1764,14 @@ function createSessionSceneStore(options = {}) {
     const outline = outlineRecord && !scene.objects.has(outlineRecord.id)
       ? clonePlain(outlineRecord)
       : null;
-    const nextObjects = new Map(scene.objects);
-    if (outline) nextObjects.set(outline.id, outline);
-    nextObjects.set(record.id, record);
+    // 새 획도 **레이어 순서**를 지켜 들어간다. 그냥 맨 뒤에 붙이면 아래 레이어에
+    // 그린 획이 위 레이어의 그림 위로 올라온다 — 레이어를 옮겨 순서를 맞춰 놔도
+    // 다음 획 하나에 다시 어긋난다. 랭크는 렌더러가 레이어 모델에서 계산해
+    // 표시·잠금 집합과 같은 경로로 밀어 넣는다.
+    const nextObjects = insertObjectsByRank(
+      scene.objects,
+      outline ? [outline, record] : [record]
+    );
     const touchedIds = outline ? [outline.id, record.id] : [record.id];
     const baseTransforms = new Map([[record.id, clonePlain(record.transform || {})]]);
     if (outline) baseTransforms.set(outline.id, clonePlain(outline.transform || {}));
@@ -1783,6 +1794,54 @@ function createSessionSceneStore(options = {}) {
     if (!objects || !isOutlineId(id)) return false;
     const bodyId = bodyIdFor(id);
     return bodyId !== null && objects.has(bodyId);
+  }
+
+  // ── 레이어 겹침 순서 ─────────────────────────────────────────────────────
+  //
+  // 스토어는 레이어를 모른다. 오브젝트별 **랭크**(레이어 순서 인덱스)만 받아
+  // 그 순서를 지킨다. 랭크가 없으면 지금까지처럼 맨 뒤에 붙는다.
+  let objectRankMap = null;
+  let defaultObjectRank = 0;
+
+  function setObjectRanks(next = {}) {
+    const ranks = next?.objectRanks;
+    objectRankMap = ranks && typeof ranks === 'object' ? ranks : null;
+    defaultObjectRank = Number.isFinite(Number(next?.defaultRank))
+      ? Number(next.defaultRank)
+      : 0;
+    return { accepted: true };
+  }
+
+  function rankOfObject(id) {
+    if (!objectRankMap) return defaultObjectRank;
+    // 짝인 외곽선은 본체의 랭크를 쓴다 — 따로 흩어지면 테두리만 다른 층에 남는다.
+    const bodyId = bodyIdFor(id);
+    const raw = Number(objectRankMap[bodyId || id]);
+    if (Number.isFinite(raw)) return raw;
+    const own = Number(objectRankMap[id]);
+    return Number.isFinite(own) ? own : defaultObjectRank;
+  }
+
+  function insertObjectsByRank(objects, records) {
+    if (!objectRankMap) {
+      const appended = new Map(objects);
+      for (const record of records) appended.set(record.id, record);
+      return appended;
+    }
+    const rank = rankOfObject(records[records.length - 1].id);
+    const next = new Map();
+    let inserted = false;
+    for (const [id, record] of objects) {
+      if (!inserted && rankOfObject(id) > rank) {
+        for (const incoming of records) next.set(incoming.id, incoming);
+        inserted = true;
+      }
+      next.set(id, record);
+    }
+    if (!inserted) {
+      for (const incoming of records) next.set(incoming.id, incoming);
+    }
+    return next;
   }
 
   function selectObjects(objectIds = []) {
@@ -2601,6 +2660,27 @@ function createSessionSceneStore(options = {}) {
 
   function applyStructuralHistory(entry, order, direction) {
     const { stableVideoIdentity, frame, shift, tailBlankFrame } = entry.structural;
+    // 레이어 단위 조작은 **여러 키프레임**의 before/after 를 함께 든다. 키프레임
+    // 집합은 바뀌지 않고 각 프레임의 오브젝트 목록만 갈아 끼운다.
+    if (Array.isArray(entry.structural.frames)) {
+      dropProvisionalScenes(stableVideoIdentity);
+      for (const target of entry.structural.frames) {
+        const blueprint = direction === 'undo' ? target.before : target.after;
+        detachScene(scenes.get(makeSceneKey(stableVideoIdentity, target.frame)) || null);
+        materializeSceneAt(stableVideoIdentity, target.frame, blueprint);
+      }
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      moveGlobalOrderEntry(order, direction, entry.commandId);
+      return {
+        applied: true,
+        structural: true,
+        operation: entry.structural.operation,
+        frame: null,
+        changedFrames: entry.structural.frames.length,
+        keyframeSetChanged: false,
+        ...globalHistoryDepths()
+      };
+    }
     const before = direction === 'undo' ? entry.structural.after : entry.structural.before;
     const after = direction === 'undo' ? entry.structural.before : entry.structural.after;
     // undo 는 민 방향을 뒤집고, redo 는 원래대로 민다. inclusive 경계가 방향마다
@@ -2728,6 +2808,112 @@ function createSessionSceneStore(options = {}) {
         stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame
       }
     });
+  }
+
+  // ── 레이어 단위 오브젝트 조작 ─────────────────────────────────────────────
+  //
+  // 삭제(``Shift+` ``)와 순서 이동(`Ctrl+Shift+X`·`C`)은 앞의 조작들과 달리
+  // **오브젝트 자체**를 바꾼다. 그리고 현재 프레임이 아니라 그 영상의 **모든
+  // 키프레임**에 걸린다 — 레이어는 프레임을 가로지르는 개념이기 때문이다.
+  //
+  // 오버레이는 레이어를 모른다. 렌더러가 지울 id 목록이나 오브젝트별 랭크
+  // (레이어 순서 인덱스)를 계산해 넘기고, 여기서는 그대로 적용한다.
+  //
+  // 한계(구조 히스토리와 같다): 손댄 키프레임의 **획 단위 이력은 사라진다.**
+  // detachScene 이 그 씬의 커맨드를 전역 인덱스에서 걷기 때문이다. 조작 자체는
+  // 한 번에 되돌아가지만, 되돌린 뒤 그 프레임 안에서의 획 되돌리기는 거기서
+  // 다시 시작한다.
+  const LAYER_OBJECT_OPERATIONS = new Set([
+    'layer-objects-remove',
+    'layer-objects-reorder'
+  ]);
+
+  function applyLayerObjectsOperation(command = {}) {
+    if (destroyed) return { applied: false, reason: 'store-destroyed' };
+    const operation = command.operation;
+    if (!LAYER_OBJECT_OPERATIONS.has(operation)) {
+      return { applied: false, reason: 'invalid-layer-objects-operation' };
+    }
+    const stableVideoIdentity = activeSession?.stableVideoIdentity;
+    if (!stableVideoIdentity) return { applied: false, reason: 'no-active-session' };
+
+    // 짝인 외곽선은 본체를 따라간다. 삭제에서는 함께 걷고, 순서에서는 본체의
+    // 랭크를 쓴다 — 안 그러면 고아가 남거나 짝이 서로 다른 자리로 흩어진다.
+    const removeIds = new Set();
+    if (operation === 'layer-objects-remove') {
+      for (const id of command.objectIds || []) {
+        if (typeof id !== 'string' || id.length === 0) continue;
+        removeIds.add(id);
+        const outlineId = outlineIdFor(id);
+        if (outlineId) removeIds.add(outlineId);
+      }
+      if (removeIds.size === 0) return { applied: false, reason: 'no-objects' };
+    }
+
+    const ranks = operation === 'layer-objects-reorder'
+      ? (command.objectRanks && typeof command.objectRanks === 'object'
+        ? command.objectRanks
+        : null)
+      : null;
+    if (operation === 'layer-objects-reorder' && !ranks) {
+      return { applied: false, reason: 'no-ranks' };
+    }
+    const defaultRank = Number.isFinite(Number(command.defaultRank))
+      ? Number(command.defaultRank)
+      : 0;
+    const rankFor = id => {
+      const bodyId = bodyIdFor(id);
+      const raw = Number(ranks?.[bodyId || id]);
+      if (Number.isFinite(raw)) return raw;
+      const own = Number(ranks?.[id]);
+      return Number.isFinite(own) ? own : defaultRank;
+    };
+
+    // 홀드 씬은 커밋 씬에서 파생된 사본이라 먼저 걷고 마지막에 다시 만든다.
+    dropProvisionalScenes(stableVideoIdentity);
+
+    const frames = [];
+    for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+      const current = [...scene.objects.values()];
+      const next = operation === 'layer-objects-remove'
+        ? current.filter(record => !removeIds.has(record.id))
+        // 같은 랭크 안에서는 원래 순서를 지킨다(안정 정렬). 짝인 외곽선이 본체
+        // 바로 앞에 남아야 겹침 순서가 유지된다.
+        : [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
+      const dimensions = { sourceWidth: scene.sourceWidth, sourceHeight: scene.sourceHeight };
+      const changed = next.length !== current.length ||
+        next.some((record, index) => record.id !== current[index].id);
+      if (!changed) continue;
+      frames.push({
+        frame: scene.targetFrame,
+        before: { ...dimensions, objects: current.map(clonePlain) },
+        after: { ...dimensions, objects: next.map(clonePlain) }
+      });
+    }
+    if (frames.length === 0) {
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      return { applied: false, reason: 'no-change' };
+    }
+
+    for (const entry of frames) {
+      detachScene(scenes.get(makeSceneKey(stableVideoIdentity, entry.frame)) || null);
+      materializeSceneAt(stableVideoIdentity, entry.frame, entry.after);
+    }
+    rebuildActiveProvisionalScene(stableVideoIdentity);
+    appendStructuralOrder(stableVideoIdentity, {
+      commandId: `layer-op:${stableVideoIdentity}:${(commandSequence += 1)}`,
+      sceneKey: null,
+      structural: { stableVideoIdentity, operation, frames }
+    });
+    return {
+      applied: true,
+      structural: true,
+      operation,
+      changedFrames: frames.length,
+      // 키프레임 집합은 그대로다 — 비게 된 키프레임도 빈 키프레임으로 남는다.
+      keyframeSetChanged: false,
+      ...globalHistoryDepths()
+    };
   }
 
   function applyFrameOperation(command = {}) {
@@ -3002,6 +3188,8 @@ function createSessionSceneStore(options = {}) {
     deleteSelection,
     clearSession,
     applyFrameOperation,
+    applyLayerObjectsOperation,
+    setObjectRanks,
     updateTool,
     setLocalTool,
     getSceneSnapshot,
@@ -9543,6 +9731,14 @@ function createFabricOverlayRuntime(options = {}) {
     hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
+    // 겹침 순서 랭크도 같은 경로로 온다. 새 획이 **그리는 순간** 제 층에 들어가야
+    // 레이어를 옮겨 맞춰 놓은 순서가 다음 획 하나에 어긋나지 않는다.
+    if (command.objectRanks !== undefined) {
+      sceneStore.setObjectRanks?.({
+        objectRanks: command.objectRanks,
+        defaultRank: command.defaultRank
+      });
+    }
     if (passiveMatch) {
       // 보는 중에는 제스처가 없다. 지금 그려 둔 화면만 새 집합으로 다시 칠한다.
       repaintLastPaintedScene({ force: true });
@@ -9629,6 +9825,38 @@ function createFabricOverlayRuntime(options = {}) {
     // 구조 조작은 획 편집 경로(선택·되돌리기·라쏘 정리)를 타지 않는다.
     // 대상 프레임이 키프레임이 아니어도 되고, 임시 씬을 정식화해서도 안 된다 —
     // `3`(프레임 추가)은 키프레임을 만들지 않는 것이 정의다.
+    if (LAYER_OBJECT_ACTIONS.has(action)) {
+      if (!actionDeduper.accept(command.actionId)) {
+        metrics.recordDuplicateAction();
+        return { applied: false, duplicate: true };
+      }
+      // 진행 중이거나 세워 둔 작업은 자기 대상 목록을 들고 간다(표시·잠금에서
+      // 배운 것). 오브젝트가 사라지거나 순서가 바뀌기 **전에** 모두 물린다.
+      if (pendingLassoSelection) abortPendingLassoSelection({ authoritative: true });
+      if (strokeEraseGesture) cancelStrokeEraseGesture();
+      if (activeStroke) cancelActiveStroke();
+      if (shapeGesture) cancelShapeGesture();
+      if (selectGesture || transformStart) cancelSelectInteraction();
+      const result = sceneStore.applyLayerObjectsOperation({
+        operation: action,
+        objectIds: command.objectIds,
+        objectRanks: command.objectRanks,
+        defaultRank: command.defaultRank
+      });
+      if (!result.applied) {
+        actionDeduper.release?.(command.actionId);
+        return result;
+      }
+      // 오브젝트가 바뀌었으니 활성 씬을 동기로 다시 그린다(투명 창이라 다음
+      // 프레임을 기다리면 지워진 획이 잠깐 남아 보인다).
+      renderActiveScene({ immediate: true });
+      fabricCanvas?.discardActiveObject?.();
+      sceneStore.selectObjects([]);
+      setToolMode(currentSession?.tool || 'brush');
+      updateObjectMetric();
+      settleArmedFramePreview();
+      return { ...result, repainted: true };
+    }
     if (FRAME_STRUCTURE_ACTIONS.has(action)) {
       if (!actionDeduper.accept(command.actionId)) {
         metrics.recordDuplicateAction();

@@ -13,7 +13,10 @@ const CONTROLLER_DRAWING_ACTIONS = new Set([
   'keyframe-to-frame',
   'frame-to-keyframe',
   'frame-copy',
-  'frame-paste'
+  'frame-paste',
+  // 레이어 단위 오브젝트 조작(레거시 Shift+` / Ctrl+Shift+X·C). 페이로드를 나른다.
+  'layer-objects-remove',
+  'layer-objects-reorder'
 ]);
 // shared/fabric-drawing-tools.js 의 FABRIC_DRAWING_TOOLS 와 같아야 한다.
 // 이 파일은 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다
@@ -1357,7 +1360,9 @@ export function createFabricDrawingPilotController(options = {}) {
   //
   // 세션이 새로 살아나면 오버레이의 집합은 비어 있다. 렌더러가 active 전이에서
   // 다시 불러 줘야 숨긴 레이어가 되살아나지 않는다.
-  async function sendLayerView({ hiddenObjectIds, lockedObjectIds, activeLayerDrawable }) {
+  async function sendLayerView({
+    hiddenObjectIds, lockedObjectIds, activeLayerDrawable, objectRanks, defaultRank
+  }) {
     // passive 투영에서도 보낸다 — 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
     // 동안에도 숨겨져 있어야 한다. 그때는 세션이 없으므로 영상 정체로 맞춘다.
     if (state !== 'active' && state !== 'passive') return false;
@@ -1374,7 +1379,10 @@ export function createFabricDrawingPilotController(options = {}) {
       layerViewRevision: passiveLayerViewRevision,
       hiddenObjectIds: [...hiddenObjectIds],
       lockedObjectIds: [...lockedObjectIds],
-      activeLayerDrawable: activeLayerDrawable !== false
+      activeLayerDrawable: activeLayerDrawable !== false,
+      // 겹침 순서 랭크. 새 획이 그리는 순간 제 층에 들어가게 한다.
+      objectRanks: objectRanks || {},
+      defaultRank: Number.isInteger(defaultRank) ? defaultRank : 0
     };
     try {
       const response = await withPersistenceIpcDeadline(
@@ -1415,7 +1423,7 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
-  function makeDrawingActionRequest(action) {
+  function makeDrawingActionRequest(action, payload = null) {
     if (state !== 'active' || !currentSession || !CONTROLLER_DRAWING_ACTIONS.has(action)) {
       return null;
     }
@@ -1435,7 +1443,9 @@ export function createFabricDrawingPilotController(options = {}) {
       sessionId,
       actionId: uuid(),
       action,
-      targetFrame
+      targetFrame,
+      // 레이어 조작만 페이로드를 나른다. 호스트가 형식을 다시 검사한다.
+      ...(payload || null)
     };
     return { ...request };
   }
@@ -1456,8 +1466,8 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
-  function applyDrawingAction(action) {
-    const request = makeDrawingActionRequest(action);
+  function applyDrawingAction(action, payload = null) {
+    const request = makeDrawingActionRequest(action, payload);
     if (!request) return Promise.resolve(false);
     const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
     drawingActionQueue = operation.then(r => r?.success === true, () => false);

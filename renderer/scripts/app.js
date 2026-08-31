@@ -19,11 +19,13 @@ import { ReviewDataManager, getBframePath } from './modules/review-data-manager.
 import {
   addLayer as addDrawingLayerState,
   assignObject as assignDrawingObjectLayer,
+  deleteLayer as deleteDrawingLayerState,
   findLayer as findDrawingLayer,
   isObjectEditable as isDrawingObjectEditable,
   isObjectVisible as isDrawingObjectVisible,
   layerIdForObject as drawingLayerIdForObject,
   pruneAssignments as pruneDrawingLayerAssignments,
+  moveLayerByOffset as moveDrawingLayerState,
   selectLayerByOffset as selectDrawingLayerState,
   toggleLayerLock as toggleDrawingLayerLockState,
   toggleLayerVisibility as toggleDrawingLayerVisibilityState
@@ -6359,7 +6361,12 @@ async function initApp() {
     // 표시·잠금은 문서를 바꾸지 않는 **뷰 상태**다. 레이어 모델의 플래그를
     // 뒤집고, 거기서 계산한 id 집합을 오버레이로 밀어 넣는다.
     'drawingLayerVisibilityToggle',
-    'drawingLayerLockToggle'
+    'drawingLayerLockToggle',
+    // 삭제·순서는 문서를 바꾼다. 오버레이가 모든 키프레임에서 오브젝트를 지우거나
+    // 순서를 갈아 준다.
+    'drawingLayerDelete',
+    'drawingLayerMoveUp',
+    'drawingLayerMoveDown'
   ]);
 
   function shouldBlockFabricDrawingLegacyShortcut(event) {
@@ -8066,13 +8073,36 @@ async function initApp() {
       hiddenObjectIds,
       lockedObjectIds,
       // 활성 레이어가 숨겨졌거나 잠겼으면 오버레이가 새 획을 받지 않는다(레거시와 같다).
-      activeLayerDrawable: !(active?.visible === false || active?.locked === true)
+      activeLayerDrawable: !(active?.visible === false || active?.locked === true),
+      // 겹침 순서 랭크를 함께 보낸다 — 새 획이 그리는 순간 제 층에 들어가야
+      // 레이어를 옮겨 맞춰 놓은 순서가 다음 획 하나에 어긋나지 않는다.
+      ...fabricPilotObjectRanks(state)
     };
   }
 
   // 오버레이는 세션이 새로 살아나면 빈 집합으로 시작한다. 레이어 모델이 바뀔 때와
   // 문서가 바뀔 때, 그리고 세션이 active 가 될 때 모두 다시 밀어 넣어야 숨긴
   // 레이어가 되살아나지 않는다.
+  // 랭크는 **겹침 순서**다. 타임라인 위쪽(layers[0])이 화면에서도 위로 와야 하는데
+  // 캔버스는 나중 오브젝트를 위에 그리므로 배열 인덱스를 뒤집는다.
+  // 오버레이는 레이어를 모른다 — 이 숫자만 받아 정렬한다.
+  function fabricPilotObjectRanks(state) {
+    const rankByLayerId = new Map();
+    state.layers.forEach((layer, index) => {
+      rankByLayerId.set(layer.id, state.layers.length - 1 - index);
+    });
+    // 임의의 오브젝트 id 가 키가 되므로 프로토타입 없는 객체에 담는다.
+    const objectRanks = Object.create(null);
+    for (const id of collectFabricDrawingObjectIds() || []) {
+      const rank = rankByLayerId.get(drawingLayerIdForObject(state, id));
+      if (rank !== undefined) objectRanks[id] = rank;
+    }
+    return {
+      objectRanks,
+      defaultRank: rankByLayerId.get(state.baseLayerId) ?? 0
+    };
+  }
+
   function pushFabricPilotLayerView() {
     // passive 투영에서도 보낸다. 저장된 레이어 모델이 숨겨 둔 획은 **보기만 하는
     // 동안에도** 숨겨져 있어야 하는데, 그리기 모드일 때만 보내면 그리기를 켤
@@ -14609,6 +14639,68 @@ async function initApp() {
           next,
           layer ? `${layer.name}: ${layer.locked === true ? '잠금' : '잠금 해제'}` : null
         );
+        return;
+      }
+      // 삭제와 순서 이동은 **문서를 바꾼다.** 앞의 넷과 달리 오버레이가 모든
+      // 키프레임에서 오브젝트를 지우거나 순서를 갈아야 한다. 그래서 문서를 먼저
+      // 바꾸고 **성공했을 때만** 모델을 바꾼다 — 반대로 하면 모델에는 없는데
+      // 그림은 남는 상태가 저장된다.
+      if (isFabricDrawingPilotEngaged() &&
+          userSettings.matchShortcut('drawingLayerDelete', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const live = collectFabricDrawingObjectIds();
+        const layer = findDrawingLayer(state, state.activeLayerId);
+        const result = deleteDrawingLayerState(
+          state, state.activeLayerId, [...(live || [])]
+        );
+        if (result.reason === 'last-layer') {
+          showToast('마지막 레이어는 지울 수 없습니다', 'warning');
+          return;
+        }
+        if (result.reason) return;
+        void (async () => {
+          if (result.removedObjectIds.length > 0) {
+            const applied = await fabricDrawingPilotController.applyDrawingAction(
+              'layer-objects-remove',
+              { objectIds: result.removedObjectIds }
+            );
+            if (!applied) {
+              showToast('레이어의 그림을 지우지 못했습니다', 'error');
+              return;
+            }
+          }
+          applyDrawingLayerStateChange(
+            result.state,
+            layer ? `레이어 삭제: ${layer.name}` : null
+          );
+        })();
+        return;
+      }
+      const moveOffset = userSettings.matchShortcut('drawingLayerMoveUp', e)
+        ? -1
+        : (userSettings.matchShortcut('drawingLayerMoveDown', e) ? 1 : 0);
+      if (isFabricDrawingPilotEngaged() && moveOffset !== 0) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = moveDrawingLayerState(state, moveOffset);
+        const moved = next.layers.some((layer, index) => layer.id !== state.layers[index]?.id);
+        if (!moved) return;
+        const layer = findDrawingLayer(next, next.activeLayerId);
+        void (async () => {
+          const applied = await fabricDrawingPilotController.applyDrawingAction(
+            'layer-objects-reorder',
+            fabricPilotObjectRanks(next)
+          );
+          // 겹칠 그림이 없거나 이미 순서가 맞으면 오버레이가 'no-change' 로
+          // 돌려준다. 레이어 순서 자체는 모델의 진실이므로 그대로 반영한다 —
+          // 겹침 순서는 다음 재정렬이나 다음 획 삽입에서 다시 맞는다.
+          if (!applied) log.debug('레이어 순서 재정렬이 적용되지 않았습니다');
+          applyDrawingLayerStateChange(
+            next,
+            layer ? `레이어 이동: ${layer.name}` : null
+          );
+        })();
         return;
       }
       const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)

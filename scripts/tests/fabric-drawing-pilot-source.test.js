@@ -655,21 +655,23 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   const layerActionNames = [...appSource
     .slice(layerSetStart, appSource.indexOf(']);', layerSetStart))
     .matchAll(/'([^']+)'/g)].map(match => match[1]);
-  // 추가·선택은 메타데이터만으로 완결되고, 표시·잠금은 오버레이에 id 집합을
-  // 밀어 넣어 그리기만 바꾼다(문서는 그대로). 이동은 오버레이가 오브젝트 순서를
-  // 바꿔야 의미가 있어 여기 없다 — 메타데이터만 바꾸면 타임라인 행만 움직이고
-  // 화면의 겹침 순서는 그대로다.
+  // 추가·선택은 메타데이터만으로 완결되고, 표시·잠금은 id 집합을 밀어 넣어
+  // 그리기만 바꾼다(문서는 그대로). 삭제·이동은 오버레이가 모든 키프레임에서
+  // 오브젝트를 지우거나 순서를 갈아야 하므로 문서를 바꾼다.
   assert.deepEqual(layerActionNames.sort(), [
     'drawingLayerAdd',
+    'drawingLayerDelete',
     'drawingLayerLockToggle',
+    'drawingLayerMoveDown',
+    'drawingLayerMoveUp',
     'drawingLayerSelectDown',
     'drawingLayerSelectUp',
     'drawingLayerVisibilityToggle'
   ]);
   assert.equal(
-    layerActionNames.some(action => action.startsWith('drawingLayerMove')),
-    false,
-    '레이어 이동은 오버레이 배선 없이 넣지 않는다'
+    layerActionNames.filter(action => action.startsWith('drawingLayerMove')).length,
+    2,
+    '레이어 이동은 오버레이 재정렬과 함께 들어온다'
   );
   const layerActions = new Set(layerActionNames);
   let engaged = false;
@@ -2627,7 +2629,7 @@ test('표시·잠금 단축키는 레이어 모델의 플래그만 뒤집는다'
   );
 });
 
-test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 간다', () => {
+test('표시·잠금과 겹침 순서는 오브젝트 id 집합으로 바뀌어 오버레이로 간다', () => {
   const start = appSource.indexOf('function fabricPilotLayerViewSets() {');
   assert.ok(start > 0, '집합 계산 함수를 찾지 못했다');
   const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
@@ -2640,11 +2642,13 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
     'isDrawingObjectVisible',
     'isDrawingObjectEditable',
     'findDrawingLayer',
-    `${source}\nreturn fabricPilotLayerViewSets;`
+    'drawingLayerIdForObject',
+    source + String.fromCharCode(10) + 'return fabricPilotLayerViewSets;'
   );
 
   const layerState = {
     activeLayerId: 'layer-a',
+    baseLayerId: 'layer-c',
     layers: [
       { id: 'layer-a', name: 'A', visible: true, locked: false },
       { id: 'layer-b', name: 'B', visible: false, locked: false },
@@ -2663,7 +2667,8 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
     () => live,
     visible,
     editable,
-    (current, id) => current.layers.find(layer => layer.id === id) || null
+    (current, id) => current.layers.find(layer => layer.id === id) || null,
+    (current, id) => layerOf[id] || current.baseLayerId
   )();
 
   const sets = run(layerState, new Set(['obj-a', 'obj-b', 'obj-c']));
@@ -2671,7 +2676,14 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
   assert.deepEqual(sets.lockedObjectIds, ['obj-c'], '잠근 레이어의 획만 잠근다');
   assert.equal(sets.activeLayerDrawable, true, '활성 레이어가 멀쩡하면 그릴 수 있다');
 
-  // 활성 레이어가 숨겨지면 새 획을 받지 않는다(레거시와 같다).
+  // 랭크는 겹침 순서다. 타임라인 위쪽(layers[0])이 화면에서도 위 —
+  // 캔버스는 나중 오브젝트를 위에 그리므로 인덱스를 뒤집는다.
+  assert.equal(sets.objectRanks['obj-a'], 2, '맨 위 레이어가 가장 큰 랭크');
+  assert.equal(sets.objectRanks['obj-b'], 1);
+  assert.equal(sets.objectRanks['obj-c'], 0, '맨 아래 레이어가 가장 작은 랭크');
+  assert.equal(sets.defaultRank, 0, '배정 없는 오브젝트는 기준 레이어 랭크');
+
+  // 활성 레이어가 숨겨지거나 잠기면 새 획을 받지 않는다(레거시와 같다).
   const hiddenActive = run({ ...layerState, activeLayerId: 'layer-b' }, new Set(['obj-a']));
   assert.equal(hiddenActive.activeLayerDrawable, false);
   const lockedActive = run({ ...layerState, activeLayerId: 'layer-c' }, new Set(['obj-a']));
@@ -2681,6 +2693,7 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
   const noDocument = run(layerState, null);
   assert.deepEqual(noDocument.hiddenObjectIds, []);
   assert.deepEqual(noDocument.lockedObjectIds, []);
+  assert.deepEqual(Object.keys(noDocument.objectRanks), []);
 });
 
 test('표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시 보낸다', () => {
@@ -2774,5 +2787,56 @@ test('체크인된 오버레이 번들은 런타임 API 를 모두 담고 있다
     missing,
     [],
     `번들에 없는 런타임 API: ${missing.join(', ')} — npm run bundle:mpv-fabric-overlay 를 돌리고 함께 커밋할 것`
+  );
+});
+
+test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만 모델을 바꾼다', () => {
+  // 반대로 하면 모델에는 없는데 그림은 남는 상태가 저장된다.
+  const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerDelete', e)");
+  assert.ok(start > 0, '삭제 단축키를 찾지 못했다');
+  const source = appSource.slice(start, start + 2600);
+
+  assert.ok(
+    source.includes('isFabricDrawingPilotEngaged() &&'),
+    '그리기 모드에서만 받는다'
+  );
+  assert.ok(
+    source.includes('deleteDrawingLayerState('),
+    '모델의 삭제로 지울 오브젝트를 정한다'
+  );
+  assert.ok(
+    source.includes("showToast('마지막 레이어는 지울 수 없습니다', 'warning')"),
+    '마지막 레이어는 지울 수 없다'
+  );
+  // 문서 → 모델 순서. applyDrawingAction 이 먼저 나와야 한다.
+  const removeCall = source.indexOf("'layer-objects-remove'");
+  const modelCall = source.indexOf('applyDrawingLayerStateChange(');
+  assert.ok(removeCall > 0 && modelCall > removeCall, '문서를 먼저 바꾼다');
+
+  const reorderCall = source.indexOf("'layer-objects-reorder'");
+  assert.ok(reorderCall > modelCall, '이동도 같은 분기 안에 있다');
+  assert.ok(
+    source.includes('fabricPilotObjectRanks(next)'),
+    '이동은 옮긴 뒤의 랭크를 보낸다'
+  );
+});
+
+test('겹침 순서 랭크는 표시·잠금과 같은 경로로 계속 밀어 넣는다', () => {
+  // 새 획이 **그리는 순간** 제 층에 들어가야, 레이어를 옮겨 맞춰 놓은 순서가
+  // 다음 획 하나에 다시 어긋나지 않는다.
+  const start = appSource.indexOf('function fabricPilotLayerViewSets() {');
+  const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
+  const source = appSource.slice(start, end);
+  assert.ok(
+    source.includes('...fabricPilotObjectRanks(state)'),
+    '집합과 함께 랭크를 보낸다'
+  );
+  assert.ok(
+    source.includes('state.layers.length - 1 - index'),
+    '타임라인 위쪽이 화면에서도 위가 되도록 인덱스를 뒤집는다'
+  );
+  assert.ok(
+    source.includes('Object.create(null)'),
+    '임의의 오브젝트 id 가 키가 되므로 프로토타입 없는 객체에 담는다'
   );
 });

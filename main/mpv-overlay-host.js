@@ -72,8 +72,14 @@ const HOST_DRAWING_ACTIONS = new Set([
   'keyframe-to-frame',
   'frame-to-keyframe',
   'frame-copy',
-  'frame-paste'
+  'frame-paste',
+  // 레이어 단위 오브젝트 조작(레거시 Shift+` / Ctrl+Shift+X·C). 이것만 **페이로드**를
+  // 나른다 — 지울 id 목록이나 오브젝트별 랭크다. 아래에서 형식을 따로 검사한다.
+  'layer-objects-remove',
+  'layer-objects-reorder'
 ]);
+// 랭크는 레이어 순서 인덱스다. 레이어 상한이 훨씬 낮으므로 넉넉히 잡아도 충분하다.
+const MAX_LAYER_OBJECT_RANK = 4096;
 const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
 const MAX_MPV_COLLABORATION_STATE_BYTES = 1024 * 1024;
 const MAX_MPV_COLLABORATION_SNAPSHOT_BYTES = 768 * 1024;
@@ -3326,12 +3332,27 @@ class MPVOverlayHost {
         layerViewRevision <= this.currentLayerViewRevision ||
         !validIds(request.hiddenObjectIds) ||
         !validIds(request.lockedObjectIds) ||
-        typeof request.activeLayerDrawable !== 'boolean') {
+        typeof request.activeLayerDrawable !== 'boolean' ||
+        // 겹침 순서 랭크도 같은 메시지로 올 수 있다. **선택 항목**이다 — 없으면
+        // 오버레이가 들고 있던 랭크를 그대로 쓴다. 오면 레이어 조작과 같은
+        // 형식으로 검사한다.
+        (request.objectRanks !== undefined && this._normalizeLayerObjectsPayload({
+          action: 'layer-objects-reorder',
+          objectRanks: request.objectRanks,
+          defaultRank: request.defaultRank
+        }) === null)) {
       return { success: false, accepted: false, error: 'stale or invalid layer view request' };
     }
 
     try {
-      const result = await this._executeFabricMethod('updateDrawingLayerView', request);
+      const result = await this._executeFabricMethod('updateDrawingLayerView', {
+        ...request,
+        ...(request.objectRanks === undefined ? {} : this._normalizeLayerObjectsPayload({
+          action: 'layer-objects-reorder',
+          objectRanks: request.objectRanks,
+          defaultRank: request.defaultRank
+        }))
+      });
       if (result?.accepted !== true) {
         return { success: false, accepted: false, error: result?.reason || 'layer view update rejected' };
       }
@@ -3491,10 +3512,46 @@ class MPVOverlayHost {
     };
   }
 
+  // 레이어 조작의 페이로드를 검사해 **새 객체로** 돌려준다. 원본을 그대로 넘기면
+  // 프로토타입 오염 키가 런타임의 조회에 섞일 수 있다.
+  _normalizeLayerObjectsPayload(request) {
+    if (request.action === 'layer-objects-remove') {
+      const ids = request.objectIds;
+      if (!Array.isArray(ids) || ids.length === 0 ||
+          ids.length > FABRIC_DRAWING_MAX_OBJECTS_TOTAL ||
+          !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 512)) {
+        return null;
+      }
+      return { objectIds: [...ids] };
+    }
+    if (request.action === 'layer-objects-reorder') {
+      const ranks = request.objectRanks;
+      if (!ranks || typeof ranks !== 'object' || Array.isArray(ranks)) return null;
+      const entries = Object.entries(ranks);
+      if (entries.length > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) return null;
+      const normalized = Object.create(null);
+      for (const [id, rank] of entries) {
+        if (typeof id !== 'string' || id.length === 0 || id.length > 512) return null;
+        if (!Number.isInteger(rank) || rank < 0 || rank > MAX_LAYER_OBJECT_RANK) return null;
+        normalized[id] = rank;
+      }
+      if (!Number.isInteger(request.defaultRank) ||
+          request.defaultRank < 0 || request.defaultRank > MAX_LAYER_OBJECT_RANK) {
+        return null;
+      }
+      return { objectRanks: normalized, defaultRank: request.defaultRank };
+    }
+    return {};
+  }
+
   async applyDrawingAction(request = {}) {
     const validAction = HOST_DRAWING_ACTIONS.has(request.action);
+    const layerObjectsPayload = validAction
+      ? this._normalizeLayerObjectsPayload(request)
+      : null;
     if (!this._drawingTokensMatch(request) ||
         !validAction ||
+        layerObjectsPayload === null ||
         typeof request.actionId !== 'string' ||
         request.actionId.length === 0 || request.actionId.length > 256 ||
         (request.targetFrame !== undefined && !isSafePersistenceCount(request.targetFrame))) {
@@ -3517,6 +3574,7 @@ class MPVOverlayHost {
       sessionId: request.sessionId,
       actionId: request.actionId,
       action: request.action,
+      ...layerObjectsPayload,
       ...(request.targetFrame === undefined ? {} : { targetFrame: request.targetFrame })
     };
     const executionContext = {
