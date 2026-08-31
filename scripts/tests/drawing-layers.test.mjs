@@ -372,3 +372,28 @@ test('같은 레이어의 다른 속성을 각자 바꾸면 둘 다 살린다', 
   assert.equal(findLayer(flipped, id).name, '내가 바꾼 이름');
   assert.equal(findLayer(flipped, id).locked, true);
 });
+
+test('순서 비교는 id 에 든 구분자에 속지 않는다', () => {
+  // 이어 붙여 비교하면 서로 다른 순서가 같은 문자열이 된다 — 레이어 id 에
+  // 구분자로 쓴 문자가 들어올 수 있기 때문이다. 그러면 재배열을 놓쳐 로컬
+  // 순서가 원격 순서로 조용히 덮인다.
+  const base = normalizeDrawingLayers({
+    version: 1,
+    layers: [{ id: 'a' }, { id: 'a a' }],
+    activeLayerId: 'a',
+    baseLayerId: 'a a',
+    assignments: {}
+  });
+  assert.deepEqual(base.layers.map(layer => layer.id), ['a', 'a a']);
+
+  const reordered = normalizeDrawingLayers({
+    ...base,
+    layers: [base.layers[1], base.layers[0]]
+  });
+  const merged = mergeDrawingLayers(base, reordered, base);
+  assert.deepEqual(
+    merged.layers.map(layer => layer.id),
+    ['a a', 'a'],
+    '재배열을 놓치지 않는다'
+  );
+});

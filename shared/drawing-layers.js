@@ -398,12 +398,17 @@ function mergeDrawingLayers(baseline, local, remote) {
   //
   // 감지는 **양쪽에 다 있는 id 만** 견준다. 삭제까지 섞어 보면 레이어 하나를
   // 지운 것을 재배열로 오인한다.
+  //
+  // 이어 붙여 비교하면 안 된다 — 레이어 id 에 구분자로 쓴 문자가 들어올 수 있어
+  // 서로 다른 순서가 같은 문자열이 된다(예: 'a' 와 'a a'). 원소로 견준다.
   const sequence = (state, filter) => state.layers
     .map(layer => layer.id)
-    .filter(filter)
-    .join(' ');
+    .filter(filter);
   const inBoth = id => baseById.has(id) && mineById.has(id);
-  const localReordered = sequence(mine, inBoth) !== sequence(base, inBoth);
+  const mineSequence = sequence(mine, inBoth);
+  const baseSequence = sequence(base, inBoth);
+  const localReordered = mineSequence.length !== baseSequence.length ||
+    mineSequence.some((id, index) => id !== baseSequence[index]);
 
   // 결과 순서: 기준이 되는 쪽을 먼저 깔고, 다른 쪽에만 있는 id 를 제자리에 끼운다.
   // 한쪽 목록만 훑으면 "내가 지웠지만 상대가 고친" 레이어를 아예 만나지 못한다.
