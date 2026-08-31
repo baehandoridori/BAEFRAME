@@ -5947,3 +5947,90 @@ test('enabling drawing input resets the brush revision for the new session', asy
     '새 세션은 brushRevision 1 부터 다시 받아야 한다'
   );
 });
+
+// ── 레이어 표시·잠금(뷰 상태) 호스트 경계 ──────────────────────────────────
+
+async function enableLayerViewSession(host, hostGeneration, sessionId, inputRevision) {
+  const session = {
+    sessionId,
+    stableVideoIdentity: 'video-layer-view',
+    targetFrame: 4,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+    tool: 'brush'
+  };
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: inputRevision - 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision,
+    enabled: true,
+    session
+  }))).success, true);
+  return (layerViewRevision, overrides = {}) => host.updateDrawingLayerView({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision,
+    sessionId,
+    layerViewRevision,
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    ...overrides
+  });
+}
+
+function createLayerViewHost() {
+  return createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingLayerView(')) return undefined;
+      return { accepted: true };
+    }
+  });
+}
+
+test('updateDrawingLayerView relays a valid request and advances the revision', async () => {
+  const { host } = createLayerViewHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableLayerViewSession(
+    host, ensured.drawingCapability.hostGeneration, 'session-layer-view', 2
+  );
+
+  const first = await send(1, { hiddenObjectIds: ['a', 'b'] });
+  assert.equal(first.success, true);
+  assert.equal(first.accepted, true);
+
+  const second = await send(2, { lockedObjectIds: ['c'], activeLayerDrawable: false });
+  assert.equal(second.success, true);
+});
+
+test('updateDrawingLayerView rejects stale tokens, backward revisions and malformed id 목록', async () => {
+  const { host } = createLayerViewHost();
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  const send = await enableLayerViewSession(host, hostGeneration, 'session-layer-view-stale', 2);
+
+  assert.equal((await send(1)).success, true);
+  // 역행하거나 같은 revision 은 거부된다 — 전체 집합을 보내므로 늦게 온 것은 버린다.
+  assert.equal((await send(1)).success, false);
+  assert.equal((await send(0)).success, false);
+  // 토큰 불일치.
+  assert.equal((await send(2, { hostGeneration: hostGeneration - 1 })).success, false);
+  assert.equal((await send(2, { videoGeneration: 7 })).success, false);
+  assert.equal((await send(2, { inputRevision: 99 })).success, false);
+  assert.equal((await send(2, { sessionId: 'session-other' })).success, false);
+  // id 목록은 문자열 배열이어야 한다.
+  assert.equal((await send(2, { hiddenObjectIds: 'a' })).success, false);
+  assert.equal((await send(2, { hiddenObjectIds: [123] })).success, false);
+  assert.equal((await send(2, { hiddenObjectIds: [''] })).success, false);
+  assert.equal((await send(2, { lockedObjectIds: null })).success, false);
+  assert.equal((await send(2, { hiddenObjectIds: ['x'.repeat(513)] })).success, false);
+  // 그리기 가능 여부는 반드시 boolean 이다 — 빠뜨리면 조용히 그려진다.
+  assert.equal((await send(2, { activeLayerDrawable: undefined })).success, false);
+  assert.equal((await send(2, { activeLayerDrawable: 'yes' })).success, false);
+  // 위 거절들은 revision 을 전진시키지 않았다.
+  assert.equal((await send(2)).success, true);
+});

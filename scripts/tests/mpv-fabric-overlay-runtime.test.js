@@ -8314,6 +8314,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'setDrawingInput',
     'updateDrawingBrush',
     'updateDrawingFrame',
+    'updateDrawingLayerView',
     'updateDrawingTool',
     'updateViewport'
   ]);
@@ -17237,4 +17238,154 @@ test('every record an outlined gesture produces survives persistence validation'
   } finally {
     await harness.destroy();
   }
+});
+
+// ── 레이어 표시·잠금(뷰 상태) ───────────────────────────────────────────────
+//
+// 레코드 키 집합이 고정이라 숨김·잠금을 문서에 쓸 수 없다. 렌더러가 계산한
+// id 집합을 받아 **그리기만** 바꾸고, 저장 문서는 손대지 않는다.
+
+function makeLayerViewRuntime() {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'layer-view-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('layer-view-stroke')]
+    }]
+  }));
+  // 수화한 영상과 세션의 세대가 맞아야 그 씬이 캔버스에 올라온다.
+  runtime.setDrawingInput(makeInput({ hostGeneration: 3, videoGeneration: 7 }));
+  return { runtime, canvas: FakeCanvas.instances[0] };
+}
+
+test('레이어 숨김은 캔버스에만 반영되고 저장 문서는 그대로다', () => {
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const target = () => canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+  assert.ok(target(), '수화한 획이 캔버스에 올라와야 한다');
+
+  const before = runtime.exportDrawingVideo(makePersistenceExport());
+  assert.equal(before.accepted, true);
+
+  const applied = runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  });
+  assert.deepEqual(applied, { accepted: true, hiddenCount: 1, lockedCount: 0 });
+  assert.equal(target().visible, false);
+  // 보이지 않는 획이 라쏘·클릭에 걸리면 사용자가 모르는 채로 옮겨진다.
+  assert.equal(target().selectable, false);
+  assert.equal(target().evented, false);
+
+  // 저장 문서는 한 글자도 달라지지 않는다 — 숨김은 레코드가 아니다.
+  const after = runtime.exportDrawingVideo(makePersistenceExport());
+  assert.deepEqual(after.snapshot, before.snapshot);
+  runtime.destroy();
+});
+
+test('레이어 잠금은 선택만 막고 화면에는 그대로 보인다', () => {
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const target = () => canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: ['layer-view-stroke'],
+    activeLayerDrawable: true
+  }).accepted, true);
+  assert.equal(target().visible, true, '잠금은 숨김이 아니다');
+  assert.equal(target().selectable, false);
+  assert.equal(target().evented, false);
+  runtime.destroy();
+});
+
+test('숨김은 캔버스를 다시 만들어도 유지된다', () => {
+  // 프레임 전환·실행취소는 캔버스를 통째로 다시 만든다. 집합을 들고 있지 않으면
+  // 그때 숨긴 획이 되살아난다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: ['layer-view-stroke'],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'runtime-session',
+    frameRevision: 1,
+    targetFrame: 30
+  });
+  runtime.updateDrawingFrame({
+    hostGeneration: 3,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: 'runtime-session',
+    frameRevision: 2,
+    targetFrame: 24
+  });
+
+  const target = canvas.objects.find(
+    object => object.__baeframeObjectId === 'layer-view-stroke'
+  );
+  assert.ok(target, '프레임을 돌아오면 획이 다시 올라온다');
+  assert.equal(target.visible, false, '다시 그려도 숨김이 유지된다');
+  runtime.destroy();
+});
+
+test('활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다', () => {
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const mutations = () => runtime.getDiagnostics().mutationCount;
+  const baseline = mutations();
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: false
+  }).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 811);
+  assert.equal(mutations(), baseline, '잠긴 레이어에는 그려지지 않는다');
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true
+  }).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 812);
+  assert.equal(mutations(), baseline + 1, '풀면 다시 그려진다');
+  runtime.destroy();
+});
+
+test('레이어 뷰 갱신은 낡은 세션이면 거절한다', () => {
+  const { runtime } = makeLayerViewRuntime();
+  assert.deepEqual(
+    runtime.updateDrawingLayerView({
+      sessionId: 'other-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [],
+      activeLayerDrawable: true
+    }),
+    { accepted: false, reason: 'stale-session' }
+  );
+  runtime.destroy();
 });

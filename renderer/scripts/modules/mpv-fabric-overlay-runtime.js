@@ -3472,6 +3472,19 @@ function createFabricOverlayRuntime(options = {}) {
   let prepared = false;
   let destroyed = false;
   let inputEnabled = false;
+  // ── 레이어 표시·잠금은 **뷰 상태**다 ─────────────────────────────────────
+  //
+  // 레코드 키 집합이 고정이라(validatePersistedRecord 의 hasExactKeys) 숨김·잠금을
+  // 문서에 쓸 수 없다. 렌더러가 레이어 모델에서 계산한 **id 집합**을 밀어 넣고,
+  // 여기서는 그리기만 바꾼다. 저장 스냅샷은 이 값을 읽지 않는다.
+  //
+  // 토글이 아니라 집합으로 들고 있어야 한다 — 프레임 전환·실행취소·재수화가
+  // 캔버스를 통째로 다시 만들기 때문이다. 한 번만 적용하는 방식이면 그때 숨긴
+  // 획이 다음 프레임에서 되살아난다.
+  let hiddenObjectIds = new Set();
+  let lockedObjectIds = new Set();
+  // 활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다(레거시와 같다).
+  let activeLayerDrawable = true;
   let currentSession = null;
   let passiveDisplaySession = null;
   let lastPaintedScene = null;
@@ -4474,6 +4487,11 @@ function createFabricOverlayRuntime(options = {}) {
     object.setCoords?.();
   }
 
+  function isLayerRestricted(objectId) {
+    return typeof objectId === 'string' &&
+      (hiddenObjectIds.has(objectId) || lockedObjectIds.has(objectId));
+  }
+
   function makeFabricPath(record, transient = false) {
     const { Path } = resolveFabric();
     const path = new Path(record.renderGeometry?.pathData || record.pathData, {
@@ -4488,9 +4506,14 @@ function createFabricOverlayRuntime(options = {}) {
       // evented 까지 끄면 눈에 보이는 그 픽셀을 클릭해도 그냥 빠져 버린다.
       // 클릭이 들어오면 onCanvasMouseDown 이 짝인 본체로 돌린다.
       // 짝을 잃은 고아는 평범한 획으로 되돌아간다.
-      selectable: !transient && !sceneStore.isDerivedOutline(record.id) &&
+      // 숨기거나 잠근 레이어의 획은 잡히지 않는다. 여기서 막지 않으면 보이지도
+      // 않는 획이 라쏘·클릭에 걸려 옮겨진다.
+      selectable: !transient && !isLayerRestricted(record.id) &&
+        !sceneStore.isDerivedOutline(record.id) &&
         sceneStore.getDiagnostics().tool === 'select',
-      evented: !transient && sceneStore.getDiagnostics().tool === 'select',
+      evented: !transient && !isLayerRestricted(record.id) &&
+        sceneStore.getDiagnostics().tool === 'select',
+      visible: transient || !hiddenObjectIds.has(record.id),
       objectCaching: !transient,
       perPixelTargetFind: !transient,
       padding: transient ? 0 : resolveSelectionHitTolerance(currentSession || {}),
@@ -8094,6 +8117,13 @@ function createFabricOverlayRuntime(options = {}) {
         activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
       return;
     }
+    // 활성 레이어가 숨겨졌거나 잠겼으면 새 획·지우기를 받지 않는다(레거시 parity).
+    // 선택 도구는 통과시킨다 — 다른 레이어의 획은 여전히 다룰 수 있어야 한다.
+    if (!activeLayerDrawable && sceneStore.getDiagnostics().tool !== 'select') {
+      event.preventDefault?.();
+      event.stopImmediatePropagation?.();
+      return;
+    }
     if (!requestPointerdownFrame) {
       beginPointerDown(event, true);
       return;
@@ -8680,8 +8710,12 @@ function createFabricOverlayRuntime(options = {}) {
         !nativeSelection &&
         activeIds.has(object.__baeframeObjectId);
       // 외곽선은 본체의 짝이라 어떤 선택 방식에서도 따로 잡히지 않는다.
-      const interactive = nativeSelection || activeInCustomSelection;
+      // 숨기거나 잠근 레이어의 획도 마찬가지다 — 여기서 함께 걸러야 토글만
+      // 들어왔을 때(캔버스 재구성 없이) 곧바로 반영된다.
+      const restricted = isLayerRestricted(object.__baeframeObjectId);
+      const interactive = !restricted && (nativeSelection || activeInCustomSelection);
       object.set({
+        visible: !hiddenObjectIds.has(object.__baeframeObjectId),
         selectable: interactive && !sceneStore.isDerivedOutline(object.__baeframeObjectId),
         // 외곽선도 이벤트는 받는다 — 그 위 클릭을 짝인 본체로 돌리기 위해서다.
         evented: interactive
@@ -9453,6 +9487,38 @@ function createFabricOverlayRuntime(options = {}) {
     return { accepted: true, size };
   }
 
+  // 렌더러가 레이어 모델에서 계산한 집합을 통째로 받는다. 델타가 아니라 **전체**라
+  // 순서가 어긋나도 마지막 것이 옳다. 호스트가 이미 검증하지만 런타임도 자기
+  // 입력을 믿지 않는다(레코드 검증과 같은 규약).
+  function toLayerViewObjectIds(value) {
+    const ids = new Set();
+    if (!Array.isArray(value)) return ids;
+    for (const id of value) {
+      if (ids.size >= MAX_PERSISTED_OBJECTS_TOTAL) break;
+      if (typeof id === 'string' && id.length > 0 && id.length <= 512) ids.add(id);
+    }
+    return ids;
+  }
+
+  function updateDrawingLayerView(command = {}) {
+    if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
+    if (command.sessionId !== currentSession?.sessionId) {
+      return { accepted: false, reason: 'stale-session' };
+    }
+    hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
+    lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
+    activeLayerDrawable = command.activeLayerDrawable !== false;
+    // 캔버스를 다시 만들지 않고 지금 붙어 있는 오브젝트에 바로 반영한다.
+    // 재구성 경로(renderActiveScene 등)는 makeFabricPath 에서 같은 값을 읽는다.
+    refreshSelectionInteractionPolicy();
+    fabricCanvas?.requestRenderAll?.();
+    return {
+      accepted: true,
+      hiddenCount: hiddenObjectIds.size,
+      lockedCount: lockedObjectIds.size
+    };
+  }
+
   function updateLocalDrawingTool(tool) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
     const result = sceneStore.setLocalTool({ sessionId: currentSession?.sessionId, tool });
@@ -9700,6 +9766,7 @@ function createFabricOverlayRuntime(options = {}) {
     exportDrawingVideo,
     updateDrawingTool,
     updateDrawingBrush,
+    updateDrawingLayerView,
     updateViewport,
     applyDrawingAction,
     getDiagnostics,

@@ -19,9 +19,14 @@ import { ReviewDataManager, getBframePath } from './modules/review-data-manager.
 import {
   addLayer as addDrawingLayerState,
   assignObject as assignDrawingObjectLayer,
+  findLayer as findDrawingLayer,
+  isObjectEditable as isDrawingObjectEditable,
+  isObjectVisible as isDrawingObjectVisible,
   layerIdForObject as drawingLayerIdForObject,
   pruneAssignments as pruneDrawingLayerAssignments,
-  selectLayerByOffset as selectDrawingLayerState
+  selectLayerByOffset as selectDrawingLayerState,
+  toggleLayerLock as toggleDrawingLayerLockState,
+  toggleLayerVisibility as toggleDrawingLayerVisibilityState
 } from '../../shared/drawing-layers.js';
 import { LiveblocksManager } from './modules/liveblocks-manager.js';
 import { CommentSync } from './modules/comment-sync.js';
@@ -6350,7 +6355,11 @@ async function initApp() {
   const FABRIC_PILOT_LAYER_ACTIONS = new Set([
     'drawingLayerAdd',
     'drawingLayerSelectUp',
-    'drawingLayerSelectDown'
+    'drawingLayerSelectDown',
+    // 표시·잠금은 문서를 바꾸지 않는 **뷰 상태**다. 레이어 모델의 플래그를
+    // 뒤집고, 거기서 계산한 id 집합을 오버레이로 밀어 넣는다.
+    'drawingLayerVisibilityToggle',
+    'drawingLayerLockToggle'
   ]);
 
   function shouldBlockFabricDrawingLegacyShortcut(event) {
@@ -8026,9 +8035,40 @@ async function initApp() {
     );
   }
 
+  // 레이어의 표시·잠금을 **오브젝트 id 집합**으로 바꿔 오버레이에 밀어 넣는다.
+  // 오버레이는 레이어를 모른다 — 그릴 때 이 집합만 본다. 문서에는 쓰지 않는다
+  // (레코드 키 집합이 고정이라 쓸 자리가 없다).
+  function fabricPilotLayerViewSets() {
+    const state = reviewDataManager.getDrawingLayers();
+    const hiddenObjectIds = [];
+    const lockedObjectIds = [];
+    const live = collectFabricDrawingObjectIds();
+    for (const id of live || []) {
+      if (!isDrawingObjectVisible(state, id)) hiddenObjectIds.push(id);
+      else if (!isDrawingObjectEditable(state, id)) lockedObjectIds.push(id);
+    }
+    const active = findDrawingLayer(state, state.activeLayerId);
+    return {
+      hiddenObjectIds,
+      lockedObjectIds,
+      // 활성 레이어가 숨겨졌거나 잠겼으면 오버레이가 새 획을 받지 않는다(레거시와 같다).
+      activeLayerDrawable: !(active?.visible === false || active?.locked === true)
+    };
+  }
+
+  // 오버레이는 세션이 새로 살아나면 빈 집합으로 시작한다. 레이어 모델이 바뀔 때와
+  // 문서가 바뀔 때, 그리고 세션이 active 가 될 때 모두 다시 밀어 넣어야 숨긴
+  // 레이어가 되살아나지 않는다.
+  function pushFabricPilotLayerView() {
+    if (!isFabricDrawingPilotEngaged()) return;
+    Promise.resolve(fabricDrawingPilotController.sendLayerView(fabricPilotLayerViewSets()))
+      .catch(() => {});
+  }
+
   function applyDrawingLayerStateChange(nextState, message) {
     if (!reviewDataManager.setDrawingLayers(nextState)) return false;
     renderActiveDrawingLayers();
+    pushFabricPilotLayerView();
     if (message) showToast(message, 'info');
     return true;
   }
@@ -8041,6 +8081,8 @@ async function initApp() {
       fabricPilotTimelineRenderQueued = false;
       syncFabricDrawingLayerAssignments();
       renderActiveDrawingLayers();
+      // 새로 생긴 오브젝트도 자기 레이어의 숨김·잠금을 따라야 한다.
+      pushFabricPilotLayerView();
       syncCurrentFabricDrawingDisplayFrame();
     });
   });
@@ -11052,7 +11094,12 @@ async function initApp() {
     // 늦다 — importRootValue·reset 은 구독자를 부르지 않으므로, 사용자가 새
     // 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어 그 획이 배정을 받지
     // 못하고 기준 레이어로 떨어진다.
-    if (nextState === 'active') seedFabricDrawingLayerAssignmentTracking();
+    if (nextState === 'active') {
+      seedFabricDrawingLayerAssignmentTracking();
+      // 오버레이의 집합은 세션과 함께 비워졌다. 다시 밀어 넣지 않으면 숨긴
+      // 레이어가 그리기 모드를 껐다 켤 때마다 되살아난다.
+      pushFabricPilotLayerView();
+    }
     if (nextState === 'passive') {
       syncCurrentFabricDrawingDisplayFrame();
     }
@@ -14511,6 +14558,30 @@ async function initApp() {
         } else {
           applyDrawingLayerStateChange(added.state, `레이어 추가: ${added.added.name}`);
         }
+        return;
+      }
+      // 표시·잠금은 레이어 모델의 플래그만 뒤집는다. 문서는 그대로다 —
+      // applyDrawingLayerStateChange 가 계산한 id 집합을 오버레이로 밀어 넣는다.
+      if (userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = toggleDrawingLayerVisibilityState(state, state.activeLayerId);
+        const layer = findDrawingLayer(next, state.activeLayerId);
+        applyDrawingLayerStateChange(
+          next,
+          layer ? `${layer.name}: ${layer.visible === false ? '숨김' : '표시'}` : null
+        );
+        return;
+      }
+      if (userSettings.matchShortcut('drawingLayerLockToggle', e)) {
+        e.preventDefault();
+        const state = reviewDataManager.getDrawingLayers();
+        const next = toggleDrawingLayerLockState(state, state.activeLayerId);
+        const layer = findDrawingLayer(next, state.activeLayerId);
+        applyDrawingLayerStateChange(
+          next,
+          layer ? `${layer.name}: ${layer.locked === true ? '잠금' : '잠금 해제'}` : null
+        );
         return;
       }
       const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)
