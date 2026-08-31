@@ -163,3 +163,26 @@ test('저장 중에 들어온 레이어 변경은 살아남는다', async () => 
   });
   assert.equal(manager.getDrawingLayers().layers.length, 3, '저장 중 변경이 살아남는다');
 });
+
+test('강제 덮어쓰기는 레이어도 원격으로 맞춘다', async () => {
+  // merge:false 는 로컬을 버리고 원격으로 맞추는 경로다. 레이어만 dirty 가드에
+  // 걸려 살아남으면, 나머지는 덮였는데 레이어는 로컬 값이 남아 다음 저장에서
+  // 원격 레이어를 도로 지운다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  manager._applyData({});
+
+  // 로컬에서 레이어를 하나 만든다(= dirty).
+  manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers()).state);
+  assert.equal(manager._drawingLayersDirty, true);
+
+  // 강제 덮어쓰기: 원격은 기본 한 장짜리다.
+  manager._drawingLayersDirty = false;
+  manager._captureRootEnvelope({});
+  assert.equal(
+    manager.getDrawingLayers().layers.length,
+    1,
+    '덮어쓰기는 레이어도 원격으로 맞춘다'
+  );
+  assert.equal(manager._drawingLayersDirty, false, '표시도 함께 내린다');
+});

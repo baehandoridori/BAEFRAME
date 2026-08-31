@@ -1905,6 +1905,10 @@ export class ReviewDataManager extends EventTarget {
 
       const retainIdentityWhenMissing = !this._reviewDocumentIdPersisted;
       const allowIdentityReplacement = reloadOptions.merge === false;
+      // 강제 덮어쓰기는 로컬을 버리고 원격으로 맞추는 경로다. 레이어만 dirty
+      // 가드에 걸려 살아남으면, 나머지는 덮였는데 레이어는 로컬 값이 남아
+      // 다음 저장에서 원격 레이어를 도로 지운다.
+      if (reloadOptions.merge === false) this._drawingLayersDirty = false;
       const rootCaptured = this._captureRootEnvelope(remoteData, {
         retainIdentityWhenMissing,
         allowIdentityReplacement
