@@ -22,6 +22,14 @@ import {
   isValidReviewDocumentId,
   mergeBframeRoot
 } from '../../../shared/bframe-root-envelope.js';
+import {
+  DRAWING_LAYERS_ROOT_KEY,
+  createDefaultDrawingLayers,
+  isSupportedDrawingLayersVersion,
+  mergeDrawingLayers,
+  normalizeDrawingLayers,
+  serializeDrawingLayers
+} from '../../../shared/drawing-layers.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
 
 // 저장 재시도 백오프(ms). 2s → 5s → 10s, 최대 3회.
@@ -920,6 +928,10 @@ export class ReviewDataManager extends EventTarget {
     this._fabricDrawingSourceRefreshHandler = null;
     this._initialSaveConflictHandler = null;
     this._opaqueRootFields = {};
+    this._drawingLayers = createDefaultDrawingLayers();
+    this._drawingLayersDirty = false;
+    this._drawingLayersBaseline = createDefaultDrawingLayers();
+    this._drawingLayersUnsupported = false;
     this._fabricDrawingPersistenceContext = {};
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
@@ -1343,6 +1355,7 @@ export class ReviewDataManager extends EventTarget {
       this._assertSaveOwner(saveOwner);
       let savedData = null;
       let savedChangeRevision = null;
+      let savedDrawingLayers = null;
       let savedFabricDrawingRevision = null;
       let savedReviewMergeBase = null;
       let lastConflictResult = null;
@@ -1412,6 +1425,9 @@ export class ReviewDataManager extends EventTarget {
         const attemptReviewMergeBase = captureReviewMergeBase(localData);
         const data = this._mergeBeforeSave(localData, latestRoot);
         const attemptChangeRevision = this._changeRevision;
+        // 이 시도가 담아 간 레이어 상태. setDrawingLayers 는 항상 새 객체를
+        // 만들므로 참조 비교로 "그 사이에 또 바뀌었는가" 를 알 수 있다.
+        const attemptDrawingLayers = this._drawingLayers;
         const attemptFabricDrawingRevision = this._fabricDrawingCollectedRevision;
         const attemptObservationEpoch = this._reviewFileObservationEpoch;
 
@@ -1433,6 +1449,13 @@ export class ReviewDataManager extends EventTarget {
           saveOptions
         );
         this._assertSaveOwner(saveOwner);
+        // IPC 가 성공을 보고한 **그 순간** 기준선을 옮긴다. 이 아래에는 쓰기가
+        // 이미 끝난 뒤에 던지거나 재시도로 빠지는 경로가 여럿 있고(관측 충돌·
+        // Fabric 권위 변경), 그 경로들이 낡은 기준선으로 다음 병합을 하면 방금
+        // 쓴 payload 가 흡수한 원격 변경을 "내 편집" 으로 오인해 더 새 값을 덮는다.
+        if (saveResult?.success === true) {
+          this._drawingLayersBaseline = attemptDrawingLayers;
+        }
 
         if (saveResult?.conflict === true) {
           this._writeBlockedReason = 'review-file-version-conflict';
@@ -1546,6 +1569,7 @@ export class ReviewDataManager extends EventTarget {
         }
         savedData = data;
         savedChangeRevision = attemptChangeRevision;
+        savedDrawingLayers = attemptDrawingLayers;
         savedFabricDrawingRevision = attemptFabricDrawingRevision;
         savedReviewMergeBase = attemptReviewMergeBase;
         break;
@@ -1562,6 +1586,16 @@ export class ReviewDataManager extends EventTarget {
       this._reviewMergeBase = savedReviewMergeBase ||
         captureReviewMergeBase(savedData);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
+      // 저장이 끝났으므로 로컬 레이어 변경은 더 이상 없다 — **이 저장이 담아 간
+      // 상태가 아직 최신일 때만** 그렇다. IPC 를 기다리는 사이 사용자가 레이어를
+      // 또 바꿨다면 그 변경은 아직 디스크에 없다. 여기서 플래그를 내리면 다음
+      // 저장의 새로고침이 방금 쓴 낡은 값으로 되돌린다.
+      // 기준선은 위 루프에서 쓰기가 성공할 때마다 이미 옮겼다. 여기서는 dirty
+      // 표시만 조건부로 내린다 — IPC 를 기다리는 사이 들어온 변경은 아직
+      // 디스크에 없으므로 표시를 유지해야 한다.
+      if (this._drawingLayers === savedDrawingLayers) {
+        this._drawingLayersDirty = false;
+      }
 
       log.info('.bframe 파일 저장됨', {
         path: saveOwner.bframePath,
@@ -1866,6 +1900,9 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
     const wasLoading = this.isLoading;
     this.isLoading = true;
+    // catch 는 try 안에서 선언한 것을 볼 수 없다(TDZ). 원격 스냅샷 읽기처럼
+    // 스테이징 이전에 던지는 경로도 있으므로 여기서 미리 잡아 둔다.
+    let restoreStagedLayers = () => {};
 
     try {
       // 원격 데이터 로드
@@ -1885,19 +1922,51 @@ export class ReviewDataManager extends EventTarget {
 
       const retainIdentityWhenMissing = !this._reviewDocumentIdPersisted;
       const allowIdentityReplacement = reloadOptions.merge === false;
+      // 강제 덮어쓰기는 로컬을 버리고 원격으로 맞추는 경로다. 레이어만 dirty
+      // 가드에 걸려 살아남으면, 나머지는 덮였는데 레이어는 로컬 값이 남아
+      // 다음 저장에서 원격 레이어를 도로 지운다.
+      //
+      // 다만 **덮어쓰기가 끝나기 전에** 버리면 안 된다. 아래 Fabric 재조정이
+      // 실패하면 재로드는 실패로 보고되는데 사용자의 미저장 레이어는 이미
+      // 사라진 뒤다. 되돌릴 수 있게 들고 있다가 실패 경로에서 복원한다.
+      // 재조정만 감싸면 그 뒤의 _applyData 가 던질 때(상한 원격 데이터 등) 복원이
+      // 건너뛰어져, 재로드는 실패로 보고되는데 사용자의 미저장 레이어는 이미
+      // 사라진 뒤다. **완전히 끝날 때까지** 어떤 실패에도 되돌린다.
+      const stagedLayers = this._drawingLayers;
+      const stagedLayersDirty = this._drawingLayersDirty;
+      const stagedLayersBaseline = this._drawingLayersBaseline;
+      let overwriteCompleted = reloadOptions.merge !== false;
+      restoreStagedLayers = () => {
+        if (overwriteCompleted) return;
+        this._drawingLayers = stagedLayers;
+        this._drawingLayersDirty = stagedLayersDirty;
+        this._drawingLayersBaseline = stagedLayersBaseline;
+      };
+      if (reloadOptions.merge === false) this._drawingLayersDirty = false;
       const rootCaptured = this._captureRootEnvelope(remoteData, {
         retainIdentityWhenMissing,
         allowIdentityReplacement
       });
       if (rootCaptured) {
-        const reconciled = await this._reconcileDrawingsV3DiskState(
-          remoteData,
-          reloadOwner
-        );
+        // 재조정이 **던지면** 바깥 catch 로 바로 빠져 아래 복원이 통째로
+        // 건너뛰어진다. 그 사이 원격 레이어는 이미 설치됐고 표시도 내려가 있어
+        // 사용자의 미저장 레이어가 사라진다.
+        let reconciled;
+        try {
+          reconciled = await this._reconcileDrawingsV3DiskState(
+            remoteData,
+            reloadOwner
+          );
+        } catch (error) {
+          restoreStagedLayers();
+          throw error;
+        }
         if (!this._ownsReviewContext(reloadOwner)) {
+          restoreStagedLayers();
           return { success: false, added: 0, updated: 0, skipped: true };
         }
         if (!reconciled) {
+          restoreStagedLayers();
           this._assertRootEnvelopeWritable();
           throw new Error('외부 Fabric 드로잉 교체를 안전하게 완료하지 못했습니다.');
         }
@@ -1957,6 +2026,7 @@ export class ReviewDataManager extends EventTarget {
           this._collectReviewDataForMerge(overwrittenReviewMergeBase)
         );
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
+        overwriteCompleted = true;
       }
 
       this.isLoading = wasLoading;
@@ -1969,6 +2039,7 @@ export class ReviewDataManager extends EventTarget {
       return { success: true, ...result };
 
     } catch (error) {
+      restoreStagedLayers();
       if (!this._ownsReviewContext(reloadOwner)) {
         return { success: false, added: 0, updated: 0, skipped: true };
       }
@@ -2052,6 +2123,12 @@ export class ReviewDataManager extends EventTarget {
 
   _resetRootEnvelopeState() {
     this._opaqueRootFields = {};
+    this._drawingLayers = createDefaultDrawingLayers();
+    this._drawingLayersDirty = false;
+    // 기준선도 함께 되돌린다. 앞 리뷰의 기준선을 들고 있으면 새 리뷰의 첫 저장
+    // 경합에서 무관한 기준으로 세 갈래 병합을 해, 기본 이름을 "내가 바꿨다" 로
+    // 오인하고 원격 레이어 이름을 덮어쓴다.
+    this._drawingLayersBaseline = this._drawingLayers;
     this._reviewDocumentId = null;
     this._reviewDocumentIdPersisted = false;
     this._writeBlockedVersion = null;
@@ -2571,6 +2648,43 @@ export class ReviewDataManager extends EventTarget {
     }
 
     this._opaqueRootFields = extractOpaqueBframeRoot(data);
+    // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다.
+    //
+    // **로컬 변경이 없을 때만** 디스크 값을 채택한다. 이 메서드는 로드뿐 아니라
+    // 저장 직전 새로고침에서도 불리므로:
+    //   - 로컬 변경이 있으면 채택하면 안 된다. 방금 만든 레이어가 되돌아간다.
+    //   - 로컬 변경이 없으면 채택해야 한다. 안 하면 다른 인스턴스가 올린 레이어
+    //     변경을 무관한 저장이 조용히 지운다.
+    // 다룰 수 없는 판은 손대지 않는다. 정규화하면 기본값으로 접히고, 그 뒤 무관한
+    // 저장이 키를 지워 미래 데이터가 사라진다.
+    this._drawingLayersUnsupported =
+      !isSupportedDrawingLayersVersion(this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]);
+    if (this._drawingLayersUnsupported) {
+      this._drawingLayers = createDefaultDrawingLayers();
+      this._drawingLayersBaseline = this._drawingLayers;
+      this._drawingLayersDirty = false;
+      return true;
+    }
+    const incomingLayers = normalizeDrawingLayers(
+      this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
+    );
+    if (this._drawingLayersDirty !== true) {
+      this._drawingLayers = incomingLayers;
+      this._drawingLayersBaseline = incomingLayers;
+    } else {
+      // 로컬 변경이 있는데 디스크도 바뀌었다 — 두 인스턴스가 같은 기준선에서
+      // 각자 레이어를 고친 것이다. 로컬을 그대로 밀면 먼저 저장한 쪽의 추가·
+      // 이름·배정이 통째로 사라진다. 기준선을 놓고 세 갈래로 합친다.
+      this._drawingLayers = mergeDrawingLayers(
+        this._drawingLayersBaseline,
+        this._drawingLayers,
+        incomingLayers
+      );
+      // 병합으로 원격 값을 **흡수했으므로** 그것이 새 기준선이다. 그대로 두면
+      // 저장이 지연·실패한 뒤 다음 병합이 흡수한 원격 값을 "내 편집" 으로 오인해,
+      // 그 사이 올라온 더 새 원격 변경을 덮어쓴다.
+      this._drawingLayersBaseline = incomingLayers;
+    }
 
     const dataVersion = getDataVersion(data);
     const unsupportedMajor = getUnsupportedBframeMajor(
@@ -2766,7 +2880,18 @@ export class ReviewDataManager extends EventTarget {
       knownRoot.reviewDocumentId = this._reviewDocumentId;
     }
 
-    return mergeBframeRoot(this._opaqueRootFields, knownRoot);
+    // 기본 상태면 키 자체를 만들지 않는다. 레이어를 쓰지 않은 파일에 빈 구조를
+    // 심어 저장 diff 를 늘릴 이유가 없다.
+    const opaqueRoot = { ...this._opaqueRootFields };
+    // 다룰 수 없는 판이면 원본을 그대로 둔다 — 지우지도 덮지도 않는다.
+    if (this._drawingLayersUnsupported !== true) {
+      const serializedLayers = serializeDrawingLayers(this._drawingLayers);
+      if (serializedLayers === undefined) delete opaqueRoot[DRAWING_LAYERS_ROOT_KEY];
+      else opaqueRoot[DRAWING_LAYERS_ROOT_KEY] = serializedLayers;
+    }
+    this._opaqueRootFields = opaqueRoot;
+
+    return mergeBframeRoot(opaqueRoot, knownRoot);
   }
 
   _collectFabricDrawingPersistenceRoot() {
@@ -2794,6 +2919,30 @@ export class ReviewDataManager extends EventTarget {
       drawingsV3: snapshot
     };
     this._fabricDrawingCollectedRevision = status.revision;
+  }
+
+  /** 현재 드로잉 레이어 상태. 항상 쓸 수 있는 정규화된 값이다. */
+  getDrawingLayers() {
+    return this._drawingLayers;
+  }
+
+  /**
+   * 레이어 상태를 갈아 끼운다. 실제로 달라졌을 때만 변경으로 표시해, 읽기만 해도
+   * 저장 대상이 되는 일을 막는다.
+   */
+  setDrawingLayers(state) {
+    const next = normalizeDrawingLayers(state);
+    const changed = JSON.stringify(next) !== JSON.stringify(this._drawingLayers);
+    this._drawingLayers = next;
+    if (changed) {
+      // 표시하지 않으면 자동 저장이 잡히지 않고 hasUnsavedChanges 가 false 로 남아,
+      // 닫기·영상 전환 경로가 레이어 변경을 그냥 버린다.
+      this._drawingLayersDirty = true;
+      // scheduleAutoSave 를 빼면 레이어만 바꾼 작업은 자동 저장 타이머가 잡히지
+      // 않아, 사용자가 따로 저장하지 않는 한 디스크에 닿지 않는다.
+      this._markDirty({ scheduleAutoSave: true });
+    }
+    return changed;
   }
 
   _acknowledgeFabricDrawingSave(savedRevision) {
@@ -3062,8 +3211,14 @@ export class ReviewDataManager extends EventTarget {
     const hasHighlights = (this.highlightManager?.highlights?.length || 0) > 0;
     const hasCompositionLayers = (this.compositionLayerManager?.layers?.length || 0) > 0;
     const hasManualVersions = (this._manualVersions?.length || 0) > 0;
+    // 레이어만 바꾼 것도 저장할 내용이다. 빼면 .bframe 이 아직 없는 새 영상에서
+    // 자동 저장 타이머가 hasUnsavedChanges 로 걸러지고, 영상 전환 전 저장도
+    // 건너뛰어져 사용자의 레이어 작업이 조용히 사라진다.
+    // 기본 상태면 serializeDrawingLayers 가 undefined 를 돌려주므로 그걸로 잰다.
+    const hasDrawingLayers = this._drawingLayersUnsupported !== true &&
+      serializeDrawingLayers(this._drawingLayers) !== undefined;
     return hasComments || hasDrawings || hasFabricDrawings ||
-      hasHighlights || hasCompositionLayers || hasManualVersions;
+      hasHighlights || hasCompositionLayers || hasManualVersions || hasDrawingLayers;
   }
 
   /**

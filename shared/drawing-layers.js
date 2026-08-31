@@ -1,0 +1,602 @@
+/**
+ * 파일럿 드로잉 레이어 모델 단일 소스.
+ *
+ * ## 왜 drawingsV3 밖에 두는가
+ *
+ * `drawingsV3` 의 레코드·키프레임은 3계층(스토어·런타임·호스트)이 각각
+ * **exact-keys** 로 검증한다. 필드를 하나라도 늘리면 구버전 앱이 파일을 통째로
+ * 거부한다(`docs/drawing-keyframe-features.md` §4.5).
+ *
+ * 대신 `.bframe` **최상위**는 앱이 모르는 필드를 opaque 데이터로 보존한다
+ * (`shared/bframe-root-envelope.js`, 2026-07-23 도입). `drawingsV3` 자체가 그
+ * 경로로 살아남고 있다. 그래서 레이어를 형제 루트 키 `drawingLayersV1` 에 두면
+ * **드로잉 스키마를 건드리지 않고** 레이어를 표현할 수 있고, 그 브리지를 가진
+ * 버전끼리는 왕복해도 레이어가 보존된다.
+ *
+ * ## 구조
+ *
+ *   {
+ *     version: 1,
+ *     layers: [{ id, name, visible, locked, color }],   // 배열 순서 = 위→아래
+ *     activeLayerId: '<id>',
+ *     baseLayerId: '<id>',
+ *     assignments: { '<objectId>': '<layerId>' }
+ *   }
+ *
+ * `assignments` 에 없는 오브젝트는 **기준 레이어**(`baseLayerId`)에 속한다.
+ * 그래서 레이어 정보가 없는 기존 파일도 마이그레이션 없이 그대로 열린다 —
+ * 모든 획이 기본 레이어다.
+ *
+ * 기준을 "배열의 첫 레이어" 로 두면 안 된다. 새 레이어를 맨 위에 넣는 순간
+ * 배정 없는 기존 그림이 통째로 **새 빈 레이어로 옮겨간다.** 기준은 레이어를
+ * 넣고 옮겨도 흔들리지 않아야 한다.
+ */
+
+const DRAWING_LAYERS_ROOT_KEY = 'drawingLayersV1';
+const DRAWING_LAYERS_VERSION = 1;
+const MAX_DRAWING_LAYERS = 64;
+const MAX_LAYER_NAME_LENGTH = 120;
+const MAX_LAYER_ID_LENGTH = 128;
+// 드로잉 레코드 id 는 최대 512자다(mpv-fabric-overlay-runtime.js 의
+// validatePersistedRecord). 레이어 id 한도로 재면 긴 id 를 가진 정상 오브젝트의
+// 배정이 정규화에서 버려져, 다시 열 때 기준 레이어로 되돌아간다.
+const MAX_OBJECT_ID_LENGTH = 512;
+// 레이어마다 다른 색을 돌려 쓴다. 타임라인 행을 눈으로 구분하는 유일한 단서다.
+const LAYER_COLORS = Object.freeze([
+  '#4f8ef7', '#ff4757', '#ffa502', '#2ed573',
+  '#a55eea', '#00d2d3', '#ff6b81', '#ffd32a'
+]);
+const DEFAULT_LAYER_NAME = '드로잉 1';
+
+function isPlainRecord(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isLayerId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_LAYER_ID_LENGTH;
+}
+
+// `{}` 에 그냥 대입하면 `__proto__` 같은 키가 프로토타입 설정자로 흘러 자기
+// 속성이 되지 않는다. 드로잉 레코드 id 는 512자 이하 아무 문자열이나 될 수 있으므로
+// 실제로 그런 id 가 올 수 있고, 그러면 그 오브젝트의 레이어 배정이 조용히 사라진다.
+function setAssignment(map, objectId, layerId) {
+  Object.defineProperty(map, objectId, {
+    value: layerId,
+    enumerable: true,
+    writable: true,
+    configurable: true
+  });
+}
+
+function isObjectId(value) {
+  return typeof value === 'string' && value.length > 0 && value.length <= MAX_OBJECT_ID_LENGTH;
+}
+
+function normalizeName(value, fallback) {
+  if (typeof value !== 'string') return fallback;
+  const trimmed = value.trim();
+  if (trimmed.length === 0) return fallback;
+  return trimmed.slice(0, MAX_LAYER_NAME_LENGTH);
+}
+
+function normalizeColor(value, index) {
+  return typeof value === 'string' && /^#[0-9a-fA-F]{6}$/.test(value)
+    ? value.toLowerCase()
+    : LAYER_COLORS[index % LAYER_COLORS.length];
+}
+
+// 만든 순간을 가리키는 표식. **이것 없이는 구분할 수 없는 경우가 있다** —
+// 두 인스턴스가 같은 id·같은 메타데이터로 각자 레이어를 만들면, 데이터만 보고는
+// "한 레이어를 양쪽이 보고 있는 것" 과 "각자 만든 다른 레이어" 를 가릴 수 없다.
+// 병합의 충돌 판정에만 쓰고 필드 병합에서는 뺀다(신원이지 값이 아니다).
+// 기본 레이어에는 붙이지 않는다 — 붙이면 "기본 상태" 판정이 매번 어긋난다.
+function makeOrigin() {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return typeof uuid === 'string' ? uuid : null;
+}
+
+function makeLayer(options = {}, index = 0) {
+  const origin = typeof options.origin === 'string' && options.origin.length > 0 &&
+    options.origin.length <= MAX_LAYER_ID_LENGTH
+    ? options.origin
+    : null;
+  return {
+    ...(origin === null ? {} : { origin }),
+    id: isLayerId(options.id) ? options.id : `drawing-layer-${index + 1}`,
+    name: normalizeName(options.name, `드로잉 ${index + 1}`),
+    // 저장된 값이 boolean 이 아니면 **보이고 잠기지 않은 쪽**이 안전한 기본이다.
+    // 반대로 두면 파일이 조금 상했을 때 그림이 통째로 사라진 것처럼 보인다.
+    visible: options.visible !== false,
+    locked: options.locked === true,
+    color: normalizeColor(options.color, index)
+  };
+}
+
+/**
+ * 이 앱이 다룰 수 있는 판인가.
+ *
+ * 앞으로 나올 판(version 2 등)을 정규화하면 기본값으로 접히고, 그 뒤 무관한
+ * 저장이 키를 통째로 지워 **미래 데이터가 사라진다.** .bframe 루트가 모르는
+ * 필드를 보존하려고 만들어졌는데 그 목적을 우리가 깨는 셈이다.
+ * 다룰 수 없는 판은 건드리지 않고 그대로 둔다.
+ */
+function isSupportedDrawingLayersVersion(value) {
+  if (!isPlainRecord(value)) return true;
+  const version = Number(value.version);
+  return !Number.isFinite(version) || version <= DRAWING_LAYERS_VERSION;
+}
+
+function createDefaultDrawingLayers() {
+  const layer = makeLayer({ name: DEFAULT_LAYER_NAME }, 0);
+  return {
+    version: DRAWING_LAYERS_VERSION,
+    layers: [layer],
+    activeLayerId: layer.id,
+    baseLayerId: layer.id,
+    assignments: {}
+  };
+}
+
+/**
+ * `.bframe` 루트에서 읽은 값을 정규화한다.
+ *
+ * 무엇이 들어와도 **쓸 수 있는 상태**를 돌려준다. 레이어 정보는 그림 자체가
+ * 아니라 그림을 묶는 부가 정보이므로, 조금 상했다고 파일을 거부하면 사용자가
+ * 그림을 통째로 잃는다. 알아볼 수 없는 부분만 버린다.
+ */
+function normalizeDrawingLayers(value) {
+  if (!isPlainRecord(value) || value.version !== DRAWING_LAYERS_VERSION) {
+    return createDefaultDrawingLayers();
+  }
+  const seenIds = new Set();
+  const layers = [];
+  for (const candidate of Array.isArray(value.layers) ? value.layers : []) {
+    if (layers.length >= MAX_DRAWING_LAYERS) break;
+    if (!isPlainRecord(candidate) || !isLayerId(candidate.id) || seenIds.has(candidate.id)) {
+      continue;
+    }
+    seenIds.add(candidate.id);
+    layers.push(makeLayer(candidate, layers.length));
+  }
+  if (layers.length === 0) return createDefaultDrawingLayers();
+
+  const assignments = {};
+  if (isPlainRecord(value.assignments)) {
+    for (const [objectId, layerId] of Object.entries(value.assignments)) {
+      // 사라진 레이어를 가리키는 배정은 버린다 — 그러면 그 오브젝트는 규칙대로
+      // 첫 레이어로 돌아간다. 남겨 두면 어느 레이어에도 없는 유령이 된다.
+      if (isObjectId(objectId) && seenIds.has(layerId)) setAssignment(assignments, objectId, layerId);
+    }
+  }
+  return {
+    version: DRAWING_LAYERS_VERSION,
+    layers,
+    activeLayerId: seenIds.has(value.activeLayerId) ? value.activeLayerId : layers[0].id,
+    // 기준이 사라졌으면 **맨 아래** 레이어를 기준으로 삼는다. 배정 없는 그림은
+    // 원래 가장 오래된 것이므로 아래쪽이 자연스럽고, 위에 새로 넣은 레이어로
+    // 딸려 올라가지 않는다.
+    baseLayerId: seenIds.has(value.baseLayerId)
+      ? value.baseLayerId
+      : layers[layers.length - 1].id,
+    assignments
+  };
+}
+
+/** 오브젝트가 속한 레이어 id. 배정이 없으면 첫 레이어다. */
+function layerIdForObject(state, objectId) {
+  const assigned = state?.assignments?.[objectId];
+  if (isLayerId(assigned) && state.layers.some(layer => layer.id === assigned)) return assigned;
+  return state?.baseLayerId ?? state?.layers?.[0]?.id ?? null;
+}
+
+function findLayer(state, layerId) {
+  return state?.layers?.find(layer => layer.id === layerId) || null;
+}
+
+/** 화면에 보여야 하는 오브젝트인가. 숨긴 레이어의 것은 그리지 않는다. */
+function isObjectVisible(state, objectId) {
+  const layer = findLayer(state, layerIdForObject(state, objectId));
+  return layer ? layer.visible !== false : true;
+}
+
+/** 편집할 수 있는 오브젝트인가. 잠긴 레이어의 것은 고르지도 지우지도 못한다. */
+function isObjectEditable(state, objectId) {
+  const layer = findLayer(state, layerIdForObject(state, objectId));
+  if (!layer) return true;
+  return layer.visible !== false && layer.locked !== true;
+}
+
+/**
+ * 저장할 값. 기본 상태 그대로면 `undefined` 를 돌려 루트에 키를 만들지 않는다 —
+ * 레이어를 쓰지 않은 파일에 빈 구조를 심어 diff 를 늘릴 이유가 없다.
+ */
+function serializeDrawingLayers(state) {
+  const normalized = normalizeDrawingLayers(state);
+  if (normalized.layers.length !== 1 || Object.keys(normalized.assignments).length !== 0) {
+    return normalized;
+  }
+  // **레이어 필드를 전부 비교해야 한다.** 이름·색·id 만 다른 한 장짜리 상태를
+  // 기본으로 판정하면 저장 때 키가 지워지고, 다시 열 때 '드로잉 1' 기본값으로
+  // 되돌아가 사용자가 붙인 이름과 색이 사라진다.
+  const [layer] = normalized.layers;
+  const [reference] = createDefaultDrawingLayers().layers;
+  const isDefault = Object.keys(reference)
+    .every(field => layer[field] === reference[field]);
+  return isDefault ? undefined : normalized;
+}
+
+
+// ── 변이 ────────────────────────────────────────────────────────────────────
+// 전부 **순수 함수**다. 새 상태를 돌려주고 입력을 건드리지 않는다. 오브젝트를
+// 실제로 지우는 것은 오버레이 스토어의 일이므로, 지워야 할 id 만 함께 돌려준다.
+
+function withLayers(state, layers, activeLayerId, assignments, baseLayerId) {
+  return normalizeDrawingLayers({
+    version: DRAWING_LAYERS_VERSION,
+    layers,
+    activeLayerId,
+    baseLayerId: baseLayerId || state.baseLayerId,
+    assignments: assignments || state.assignments
+  });
+}
+
+function allocateLayerId(state) {
+  const used = new Set(state.layers.map(layer => layer.id));
+  const uuid = globalThis.crypto?.randomUUID?.();
+  if (uuid && !used.has(`drawing-layer-${uuid}`)) return `drawing-layer-${uuid}`;
+  let ordinal = state.layers.length + 1;
+  while (used.has(`drawing-layer-${ordinal}`)) ordinal += 1;
+  return `drawing-layer-${ordinal}`;
+}
+
+/** 활성 레이어 **위에** 새 레이어를 넣고 활성으로 삼는다(레거시와 같다). */
+function addLayer(state, options = {}) {
+  const current = normalizeDrawingLayers(state);
+  if (current.layers.length >= MAX_DRAWING_LAYERS) {
+    return { state: current, added: null, reason: 'layer-limit-reached' };
+  }
+  const index = current.layers.findIndex(layer => layer.id === current.activeLayerId);
+  const ordinal = current.layers.length;
+  const layer = makeLayer({
+    origin: makeOrigin(),
+    ...options,
+    // **개수에서 id 를 유도하면 안 된다.** 셋 만들고 하나 지운 뒤 또 만들면
+    // 살아남은 레이어와 같은 id 가 나오고, 정규화가 중복을 버려 개수가 늘지
+    // 않으면서 기존 레이어의 메타데이터만 덮어쓴다. 그런데도 "추가됨" 으로
+    // 보고된다. 쓰이지 않는 id 를 찾을 때까지 센다.
+    // 호출자가 준 id 라도 **이미 쓰이고 있으면 새로 뽑는다** — 그대로 받으면
+    // 정규화가 기존 레이어를 버리고 새 것을 남기면서도 "추가됨" 으로 보고해,
+    // 멀쩡한 레이어가 메타데이터째 사라진다.
+    id: isLayerId(options.id) && !current.layers.some(layer => layer.id === options.id)
+      ? options.id
+      : allocateLayerId(current),
+    name: normalizeName(options.name, `드로잉 ${ordinal + 1}`)
+  }, ordinal);
+  const layers = [...current.layers];
+  layers.splice(index < 0 ? layers.length : index, 0, layer);
+  return { state: withLayers(current, layers, layer.id), added: layer, reason: null };
+}
+
+/**
+ * 레이어와 **그 위의 오브젝트**를 함께 없앤다. 마지막 하나는 지우지 않는다 —
+ * 레이어가 없으면 새 획을 어디에도 놓을 수 없다.
+ *
+ * 오브젝트 배정은 암묵적일 수 있으므로(배정이 없으면 첫 레이어) 문서의 전체
+ * 오브젝트 id 를 받아 판정한다. 모델만으로는 첫 레이어의 오브젝트를 셀 수 없다.
+ */
+function deleteLayer(state, layerId, allObjectIds = []) {
+  const current = normalizeDrawingLayers(state);
+  if (current.layers.length <= 1) {
+    return { state: current, removedObjectIds: [], reason: 'last-layer' };
+  }
+  if (!findLayer(current, layerId)) {
+    return { state: current, removedObjectIds: [], reason: 'unknown-layer' };
+  }
+  const removedObjectIds = [...allObjectIds]
+    .filter(objectId => layerIdForObject(current, objectId) === layerId);
+  const layers = current.layers.filter(layer => layer.id !== layerId);
+  const assignments = {};
+  for (const [objectId, assigned] of Object.entries(current.assignments)) {
+    if (assigned !== layerId) setAssignment(assignments, objectId, assigned);
+  }
+  const activeLayerId = current.activeLayerId === layerId
+    ? layers[0].id
+    : current.activeLayerId;
+  // 기준 레이어를 지우면 남은 맨 아래를 새 기준으로 삼는다. 그 레이어의
+  // 오브젝트는 위에서 함께 지웠으므로 배정 없는 것이 새로 생기지 않는다.
+  const baseLayerId = current.baseLayerId === layerId
+    ? layers[layers.length - 1].id
+    : current.baseLayerId;
+  return {
+    state: withLayers(current, layers, activeLayerId, assignments, baseLayerId),
+    removedObjectIds,
+    reason: null
+  };
+}
+
+/** 활성 레이어를 위(-1)/아래(+1)로 옮긴다. 끝에서는 그대로 둔다. */
+function selectLayerByOffset(state, offset) {
+  const current = normalizeDrawingLayers(state);
+  const index = current.layers.findIndex(layer => layer.id === current.activeLayerId);
+  const next = Math.max(0, Math.min(current.layers.length - 1, index + offset));
+  return withLayers(current, current.layers, current.layers[next].id);
+}
+
+/** 활성 레이어 자체를 위(-1)/아래(+1)로 옮긴다. 끝에서는 그대로 둔다. */
+function moveLayerByOffset(state, offset) {
+  const current = normalizeDrawingLayers(state);
+  const index = current.layers.findIndex(layer => layer.id === current.activeLayerId);
+  if (index < 0) return current;
+  const next = index + offset;
+  if (next < 0 || next >= current.layers.length) return current;
+  const layers = [...current.layers];
+  const [moved] = layers.splice(index, 1);
+  layers.splice(next, 0, moved);
+  return withLayers(current, layers, moved.id);
+}
+
+function toggleLayerFlag(state, layerId, flag) {
+  const current = normalizeDrawingLayers(state);
+  if (!findLayer(current, layerId)) return current;
+  const layers = current.layers.map(layer => (
+    layer.id === layerId ? { ...layer, [flag]: layer[flag] !== true } : layer
+  ));
+  return withLayers(current, layers, current.activeLayerId);
+}
+
+function toggleLayerVisibility(state, layerId) {
+  const current = normalizeDrawingLayers(state);
+  const layer = findLayer(current, layerId);
+  if (!layer) return current;
+  const layers = current.layers.map(candidate => (
+    candidate.id === layerId ? { ...candidate, visible: layer.visible === false } : candidate
+  ));
+  return withLayers(current, layers, current.activeLayerId);
+}
+
+function toggleLayerLock(state, layerId) {
+  return toggleLayerFlag(state, layerId, 'locked');
+}
+
+/** 새 획을 활성 레이어에 붙인다. 첫 레이어면 배정을 남기지 않는다(기본값이므로). */
+function assignObject(state, objectId, layerId) {
+  const current = normalizeDrawingLayers(state);
+  if (!isObjectId(objectId) || !findLayer(current, layerId)) return current;
+  const assignments = {};
+  for (const [id, assigned] of Object.entries(current.assignments)) {
+    setAssignment(assignments, id, assigned);
+  }
+  if (layerId === current.baseLayerId) delete assignments[objectId];
+  else setAssignment(assignments, objectId, layerId);
+  return withLayers(current, current.layers, current.activeLayerId, assignments);
+}
+
+/** 사라진 오브젝트의 배정을 걷어낸다. 남겨 두면 저장 파일이 계속 자란다. */
+function pruneAssignments(state, liveObjectIds) {
+  const current = normalizeDrawingLayers(state);
+  const live = new Set(liveObjectIds);
+  const assignments = {};
+  for (const [objectId, layerId] of Object.entries(current.assignments)) {
+    if (live.has(objectId)) setAssignment(assignments, objectId, layerId);
+  }
+  return withLayers(current, current.layers, current.activeLayerId, assignments);
+}
+
+
+/**
+ * 세 갈래 병합. 두 인스턴스가 같은 기준선에서 각자 레이어를 고쳤을 때 쓴다.
+ *
+ * 이게 없으면 나중에 저장한 쪽이 먼저 저장한 쪽의 레이어 추가·이름·배정을
+ * 통째로 지운다 — 레이어 상태는 필드 단위 머지 대상이 아니라 통으로 실려 가기
+ * 때문이다.
+ *
+ * 규칙(다른 필드의 머지와 같은 취지 — "각자 바꾼 것은 둘 다 살린다"):
+ *   - 원격에만 있는 레이어  : 살린다(상대가 추가했다)
+ *   - 로컬에만 있는 레이어  : 기준선에 없었으면 살린다(내가 추가했다),
+ *                            있었으면 내가 지운 것이므로 뺀다
+ *   - 양쪽에 있는 레이어    : 내가 기준선에서 바꿨으면 내 값, 아니면 원격 값
+ *   - 배정                  : 같은 규칙을 키마다 적용한다
+ *   - activeLayerId         : 보기 상태이므로 로컬을 존중한다
+ */
+function mergeDrawingLayers(baseline, local, remote) {
+  const base = normalizeDrawingLayers(baseline);
+  const mine = normalizeDrawingLayers(local);
+  let theirs = normalizeDrawingLayers(remote);
+
+  const baseById = new Map(base.layers.map(layer => [layer.id, layer]));
+
+  // 양쪽이 **각자** 같은 id 로 서로 다른 레이어를 만들 수 있다(호출자가 id 를
+  // 직접 준 경우). 그대로 합치면 한 레이어로 뭉뚱그려져 한쪽이 통째로 사라진다.
+  // 기준선에 없던 id 가 양쪽에 다 있으면 충돌이므로, 원격 쪽에 새 id 를 주고
+  // 그 배정도 함께 옮긴다.
+  // 같은 id 가 양쪽에 있다고 곧 충돌은 아니다 — 한쪽이 추가한 레이어가 이미
+  // 디스크에 반영돼 양쪽에서 보이는 경우가 훨씬 흔하고, 그건 **같은 레이어**다.
+  // 내용까지 다를 때만 "각자 만든 다른 레이어" 로 본다.
+  const sameFields = (left, right) => Boolean(left) && Boolean(right) &&
+    Object.keys(left).every(field => left[field] === right[field]);
+  const collisions = theirs.layers
+    .filter(layer => {
+      if (baseById.has(layer.id)) return false;
+      const mineLayer = mine.layers.find(candidate => candidate.id === layer.id);
+      if (!mineLayer) return false;
+      // 표식이 둘 다 있고 다르면 **각자 만든 다른 레이어**다. 메타데이터가
+      // 똑같아도 마찬가지다 — 표식이 그것을 가른다.
+      if (mineLayer.origin && layer.origin) return mineLayer.origin !== layer.origin;
+      return !sameFields(mineLayer, layer);
+    })
+    .map(layer => layer.id);
+  if (collisions.length > 0) {
+    const used = new Set([
+      ...base.layers.map(layer => layer.id),
+      ...mine.layers.map(layer => layer.id),
+      ...theirs.layers.map(layer => layer.id)
+    ]);
+    const remap = new Map();
+    for (const id of collisions) {
+      let ordinal = used.size + 1;
+      while (used.has(`drawing-layer-${ordinal}`)) ordinal += 1;
+      const nextId = `drawing-layer-${ordinal}`;
+      used.add(nextId);
+      remap.set(id, nextId);
+    }
+    const remappedAssignments = {};
+    for (const [objectId, layerId] of Object.entries(theirs.assignments)) {
+      setAssignment(remappedAssignments, objectId, remap.get(layerId) || layerId);
+    }
+    theirs = normalizeDrawingLayers({
+      ...theirs,
+      layers: theirs.layers.map(layer => (
+        remap.has(layer.id) ? { ...layer, id: remap.get(layer.id) } : layer
+      )),
+      activeLayerId: remap.get(theirs.activeLayerId) || theirs.activeLayerId,
+      baseLayerId: remap.get(theirs.baseLayerId) || theirs.baseLayerId,
+      assignments: remappedAssignments
+    });
+  }
+
+  const mineById = new Map(mine.layers.map(layer => [layer.id, layer]));
+  const theirsById = new Map(theirs.layers.map(layer => [layer.id, layer]));
+  const sameLayer = (left, right) => Boolean(left) && Boolean(right) &&
+    Object.keys(left).every(field => left[field] === right[field]);
+  // 같은 레이어의 **다른 속성**을 각자 바꿀 수 있다 — 한쪽은 이름, 한쪽은 잠금.
+  // 통째로 고르면 상대의 속성 변경이 조용히 사라지고 낡은 값이 디스크로 돌아간다.
+  // 필드마다 "기준선에서 바꾼 쪽" 을 고른다.
+  const mergeLayerFields = (baseLayer, myLayer, theirLayer) => {
+    if (!myLayer) return theirLayer;
+    if (!theirLayer) return myLayer;
+    if (!baseLayer) return myLayer;
+    const merged = { ...theirLayer };
+    for (const field of Object.keys(myLayer)) {
+      // 신원은 값이 아니다. 병합 대상에서 뺀다.
+      if (field === 'origin') continue;
+      if (myLayer[field] !== baseLayer[field]) merged[field] = myLayer[field];
+    }
+    return merged;
+  };
+
+  // 순서도 병합 대상이다. 로컬 변경이 **순서 바꾸기뿐**이면 필드 비교로는
+  // 아무것도 달라지지 않아, 원격 순서로 다시 세우면서 사용자의 재배열이
+  // 저장 전에 조용히 되돌아간다.
+  //
+  // 감지는 **양쪽에 다 있는 id 만** 견준다. 삭제까지 섞어 보면 레이어 하나를
+  // 지운 것을 재배열로 오인한다.
+  //
+  // 이어 붙여 비교하면 안 된다 — 레이어 id 에 구분자로 쓴 문자가 들어올 수 있어
+  // 서로 다른 순서가 같은 문자열이 된다(예: 'a' 와 'a a'). 원소로 견준다.
+  const sequence = (state, filter) => state.layers
+    .map(layer => layer.id)
+    .filter(filter);
+  const inBoth = id => baseById.has(id) && mineById.has(id);
+  const mineSequence = sequence(mine, inBoth);
+  const baseSequence = sequence(base, inBoth);
+  const localReordered = mineSequence.length !== baseSequence.length ||
+    mineSequence.some((id, index) => id !== baseSequence[index]);
+
+  // 결과 순서: 기준이 되는 쪽을 먼저 깔고, 다른 쪽에만 있는 id 를 제자리에 끼운다.
+  // 한쪽 목록만 훑으면 "내가 지웠지만 상대가 고친" 레이어를 아예 만나지 못한다.
+  const orderSource = localReordered ? mine.layers : theirs.layers;
+  const otherSource = localReordered ? theirs.layers : mine.layers;
+  const order = orderSource.map(layer => layer.id);
+  // 새 레이어는 **이웃 기준**으로 끼운다. 절대 인덱스로 넣으면 상대가 위에
+  // 추가한 만큼 내 레이어가 밀려, 기준선에 있던 레이어를 건너뛰어 합성 순서가
+  // 조용히 바뀐다(예: base [A,B] / 내 [A,X,B] / 상대 [Y,A,B] → [Y,X,A,B]).
+  let anchor = -1;
+  for (const layer of otherSource) {
+    const existing = order.indexOf(layer.id);
+    if (existing !== -1) {
+      anchor = existing;
+      continue;
+    }
+    anchor += 1;
+    order.splice(anchor, 0, layer.id);
+  }
+
+  const layers = [];
+  for (const id of order) {
+    const baseLayer = baseById.get(id) || null;
+    const myLayer = mineById.get(id) || null;
+    const theirLayer = theirsById.get(id) || null;
+    // 내가 지웠다 — 상대가 그 뒤에 고쳤으면 남긴다. 남의 편집을 내 삭제로 덮지 않는다.
+    if (!myLayer && baseLayer) {
+      if (theirLayer && !sameLayer(theirLayer, baseLayer)) layers.push(theirLayer);
+      continue;
+    }
+    // 상대가 지웠다 — 내가 손대지 않았으면 그 삭제를 따른다.
+    if (!theirLayer && baseLayer) {
+      if (myLayer && !sameLayer(myLayer, baseLayer)) layers.push(myLayer);
+      continue;
+    }
+    // 양쪽에 있거나 어느 한쪽이 새로 만든 것.
+    layers.push(mergeLayerFields(baseLayer, myLayer, theirLayer));
+  }
+
+  // 둘이 **서로 다른** 레이어를 지우면 결과가 빈다. 그대로 두면 정규화가 기본
+  // 레이어를 지어내 양쪽의 진짜 레이어가 메타데이터째 사라지고 배정도 전부
+  // 버려진다. 실제로 살아 있는 것 하나를 남긴다 — 디스크에 있는 원격 쪽을
+  // 우선하고, 없으면 내 쪽이다.
+  if (layers.length === 0) {
+    const survivor = theirs.layers[0] || mine.layers[0] || base.layers[0];
+    if (survivor) layers.push(survivor);
+  }
+
+  // 상한을 넘으면 정규화가 **뒤에서부터 잘라 낸다.** 양쪽이 각자 추가해 상한을
+  // 넘긴 경우, 잘려 나가는 것이 새 레이어가 아니라 기준선에 있던 레이어일 수
+  // 있고 그러면 그 레이어의 배정이 통째로 버려진다.
+  // 넘칠 때는 **새로 추가된 것부터** 뒤에서 덜어 낸다.
+  while (layers.length > MAX_DRAWING_LAYERS) {
+    const index = layers.findLastIndex(layer => !baseById.has(layer.id));
+    if (index < 0) break;
+    layers.splice(index, 1);
+  }
+
+  const liveIds = new Set(layers.map(layer => layer.id));
+  const assignments = {};
+  const assignmentKeys = new Set([
+    ...Object.keys(theirs.assignments),
+    ...Object.keys(mine.assignments),
+    ...Object.keys(base.assignments)
+  ]);
+  for (const objectId of assignmentKeys) {
+    const baseValue = base.assignments[objectId];
+    const myValue = mine.assignments[objectId];
+    const theirValue = theirs.assignments[objectId];
+    const chosen = myValue !== baseValue ? myValue : theirValue;
+    if (chosen !== undefined && liveIds.has(chosen)) {
+      setAssignment(assignments, objectId, chosen);
+    }
+  }
+
+  return normalizeDrawingLayers({
+    version: DRAWING_LAYERS_VERSION,
+    layers,
+    activeLayerId: liveIds.has(mine.activeLayerId) ? mine.activeLayerId : theirs.activeLayerId,
+    baseLayerId: mine.baseLayerId !== base.baseLayerId ? mine.baseLayerId : theirs.baseLayerId,
+    assignments
+  });
+}
+
+export {
+  DEFAULT_LAYER_NAME,
+  isSupportedDrawingLayersVersion,
+  mergeDrawingLayers,
+  addLayer,
+  assignObject,
+  deleteLayer,
+  moveLayerByOffset,
+  pruneAssignments,
+  selectLayerByOffset,
+  toggleLayerLock,
+  toggleLayerVisibility,
+  DRAWING_LAYERS_ROOT_KEY,
+  DRAWING_LAYERS_VERSION,
+  LAYER_COLORS,
+  MAX_DRAWING_LAYERS,
+  createDefaultDrawingLayers,
+  findLayer,
+  isObjectEditable,
+  isObjectVisible,
+  layerIdForObject,
+  makeLayer,
+  normalizeDrawingLayers,
+  serializeDrawingLayers
+};
