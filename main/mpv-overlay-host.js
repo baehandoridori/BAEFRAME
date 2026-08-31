@@ -72,8 +72,16 @@ const HOST_DRAWING_ACTIONS = new Set([
   'keyframe-to-frame',
   'frame-to-keyframe',
   'frame-copy',
-  'frame-paste'
+  'frame-paste',
+  // 레이어 단위 오브젝트 조작(레거시 Shift+` / Ctrl+Shift+X·C). 이것만 **페이로드**를
+  // 나른다 — 지울 id 목록이나 오브젝트별 랭크다. 아래에서 형식을 따로 검사한다.
+  'layer-objects-remove',
+  'layer-objects-reorder',
+  // 씬은 그대로 두고 짝 id 만 만드는 표식(페이로드 없음).
+  'layer-model-marker'
 ]);
+// 랭크는 레이어 순서 인덱스다. 레이어 상한이 훨씬 낮으므로 넉넉히 잡아도 충분하다.
+const MAX_LAYER_OBJECT_RANK = 4096;
 const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
 const MAX_MPV_COLLABORATION_STATE_BYTES = 1024 * 1024;
 const MAX_MPV_COLLABORATION_SNAPSHOT_BYTES = 768 * 1024;
@@ -253,6 +261,18 @@ const FABRIC_DRAWING_TRANSFORM_CHANGE_KEYS = Object.freeze([
   'id',
   'beforeTransform',
   'afterTransform'
+]);
+// 오버레이 팔레트의 되돌리기·다시하기가 **레이어 조작**을 되돌렸을 때 알린다.
+// 그 조작은 씬만 되돌릴 수 있고 레이어 목록·배정은 렌더러 쪽에 있어서, 짝 id 를
+// 렌더러로 넘겨 줘야 모델까지 함께 돌아간다.
+const FABRIC_DRAWING_LAYER_HISTORY_KEYS = Object.freeze([
+  'type',
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'commandId',
+  'direction'
 ]);
 const FABRIC_DRAWING_RESYNC_KEYS = Object.freeze([
   'type',
@@ -2722,6 +2742,21 @@ function normalizeFabricDrawingPersistenceMessage(message) {
     }
     return createFabricDrawingResyncMessage(fence, message.reason);
   }
+  if (message.type === 'layer-history') {
+    const fence = readFabricDrawingPersistenceFence(message);
+    if (!fence ||
+        !hasExactPersistenceKeys(message, FABRIC_DRAWING_LAYER_HISTORY_KEYS) ||
+        !isBoundedPersistenceString(message.commandId, 256) ||
+        (message.direction !== 'undo' && message.direction !== 'redo')) {
+      return null;
+    }
+    return {
+      type: 'layer-history',
+      ...fence,
+      commandId: message.commandId,
+      direction: message.direction
+    };
+  }
   if (message.type !== 'transition' ||
       !hasExactPersistenceKeys(message, ['type', 'transition'])) {
     return null;
@@ -3326,12 +3361,33 @@ class MPVOverlayHost {
         layerViewRevision <= this.currentLayerViewRevision ||
         !validIds(request.hiddenObjectIds) ||
         !validIds(request.lockedObjectIds) ||
-        typeof request.activeLayerDrawable !== 'boolean') {
+        typeof request.activeLayerDrawable !== 'boolean' ||
+        (request.layerHistoryBusy !== undefined &&
+          typeof request.layerHistoryBusy !== 'boolean') ||
+        // 겹침 순서 랭크도 같은 메시지로 올 수 있다. **선택 항목**이다 — 없으면
+        // 오버레이가 들고 있던 랭크를 그대로 쓴다. 오면 레이어 조작과 같은
+        // 형식으로 검사한다.
+        (request.objectRanks !== undefined && this._normalizeLayerObjectsPayload({
+          action: 'layer-objects-reorder',
+          objectRanks: request.objectRanks,
+          defaultRank: request.defaultRank,
+          activeLayerRank: request.activeLayerRank
+        }) === null)) {
       return { success: false, accepted: false, error: 'stale or invalid layer view request' };
     }
 
     try {
-      const result = await this._executeFabricMethod('updateDrawingLayerView', request);
+      const result = await this._executeFabricMethod('updateDrawingLayerView', {
+        ...request,
+        // **activeLayerRank 도 함께 넘긴다.** 정규화 결과가 request 를 덮으므로
+        // 여기서 빠지면 새 획이 늘 기준 레이어 자리에 꽂힌다.
+        ...(request.objectRanks === undefined ? {} : this._normalizeLayerObjectsPayload({
+          action: 'layer-objects-reorder',
+          objectRanks: request.objectRanks,
+          defaultRank: request.defaultRank,
+          activeLayerRank: request.activeLayerRank
+        }))
+      });
       if (result?.accepted !== true) {
         return { success: false, accepted: false, error: result?.reason || 'layer view update rejected' };
       }
@@ -3491,10 +3547,77 @@ class MPVOverlayHost {
     };
   }
 
+  // 레이어 조작의 페이로드를 검사해 **새 객체로** 돌려준다. 원본을 그대로 넘기면
+  // 프로토타입 오염 키가 런타임의 조회에 섞일 수 있다.
+  _normalizeLayerObjectsPayload(request) {
+    // 짝 id 는 렌더러가 정해 보낼 수 있다(보내기 전에 모델 델타를 등록하려고).
+    const commandId = request.commandId === undefined
+      ? {}
+      : (isBoundedPersistenceString(request.commandId, 256)
+        ? { commandId: request.commandId }
+        : null);
+    if (commandId === null) return null;
+    if (request.action === 'layer-model-marker') return { ...commandId };
+    if (request.action === 'layer-objects-remove') {
+      const ids = request.objectIds;
+      if (!Array.isArray(ids) || ids.length === 0 ||
+          ids.length > FABRIC_DRAWING_MAX_OBJECTS_TOTAL ||
+          !ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 512)) {
+        return null;
+      }
+      return { ...commandId, objectIds: [...ids] };
+    }
+    if (request.action === 'layer-objects-reorder' && request.silent !== undefined &&
+        typeof request.silent !== 'boolean') {
+      return null;
+    }
+    if (request.action === 'layer-objects-reorder') {
+      // 랭크는 **쌍 배열**로 온다. 객체로 받으면 페이로드를 소스에 끼울 때
+      // 객체 리터럴이 되어 `"__proto__"` id 의 랭크가 사라진다.
+      const ranks = request.objectRanks;
+      if (!Array.isArray(ranks)) return null;
+      if (ranks.length > FABRIC_DRAWING_MAX_OBJECTS_TOTAL) return null;
+      const normalized = [];
+      for (const pair of ranks) {
+        if (!Array.isArray(pair) || pair.length !== 2) return null;
+        const [id, rank] = pair;
+        if (typeof id !== 'string' || id.length === 0 || id.length > 512) return null;
+        if (!Number.isInteger(rank) || rank < 0 || rank > MAX_LAYER_OBJECT_RANK) return null;
+        normalized.push([id, rank]);
+      }
+      if (!Number.isInteger(request.defaultRank) ||
+          request.defaultRank < 0 || request.defaultRank > MAX_LAYER_OBJECT_RANK) {
+        return null;
+      }
+      // 새로 그리는 획이 들어갈 자리(활성 레이어의 랭크). 없으면 기본 랭크를 쓴다.
+      if (request.activeLayerRank !== undefined &&
+          (!Number.isInteger(request.activeLayerRank) ||
+           request.activeLayerRank < 0 ||
+           request.activeLayerRank > MAX_LAYER_OBJECT_RANK)) {
+        return null;
+      }
+      return {
+        ...commandId,
+        objectRanks: normalized,
+        defaultRank: request.defaultRank,
+        // 정규화(silent)는 히스토리를 남기지 않는다.
+        ...(request.silent === true ? { silent: true } : {}),
+        ...(request.activeLayerRank === undefined
+          ? {}
+          : { activeLayerRank: request.activeLayerRank })
+      };
+    }
+    return {};
+  }
+
   async applyDrawingAction(request = {}) {
     const validAction = HOST_DRAWING_ACTIONS.has(request.action);
+    const layerObjectsPayload = validAction
+      ? this._normalizeLayerObjectsPayload(request)
+      : null;
     if (!this._drawingTokensMatch(request) ||
         !validAction ||
+        layerObjectsPayload === null ||
         typeof request.actionId !== 'string' ||
         request.actionId.length === 0 || request.actionId.length > 256 ||
         (request.targetFrame !== undefined && !isSafePersistenceCount(request.targetFrame))) {
@@ -3517,6 +3640,7 @@ class MPVOverlayHost {
       sessionId: request.sessionId,
       actionId: request.actionId,
       action: request.action,
+      ...layerObjectsPayload,
       ...(request.targetFrame === undefined ? {} : { targetFrame: request.targetFrame })
     };
     const executionContext = {
@@ -3577,8 +3701,22 @@ class MPVOverlayHost {
         applied: result?.applied === true,
         duplicate: result?.duplicate === true,
         ...(typeof result?.reason === 'string' ? { reason: result.reason } : {}),
+        // 레이어 조작만 짝 id 를 돌려준다. 렌더러가 레이어 **모델**의 before/after
+        // 를 이 id 로 찾아 함께 되돌린다 — 오버레이는 씬만 되돌릴 수 있다.
+        ...(typeof result?.commandId === 'string' && result.commandId.length <= 256
+          ? { commandId: result.commandId }
+          : {}),
+        ...(result?.historyDirection === 'undo' || result?.historyDirection === 'redo'
+          ? { historyDirection: result.historyDirection }
+          : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount))),
-        keyframeSetChanged: result?.keyframeSetChanged === true
+        keyframeSetChanged: result?.keyframeSetChanged === true,
+        // 레이어 조작은 씬을 갈아 끼우고 전이를 내보내지 않는다. 컨트롤러가
+        // 이 신호를 보고 수화 문서를 다시 받아 온다. 응답을 가볍게 유지하려고
+        // 필요할 때만 싣는다(reason·commandId 와 같은 규칙).
+        ...(result?.persistenceResyncRequired === true
+          ? { persistenceResyncRequired: true }
+          : {})
       };
     } catch (error) {
       return { success: false, applied: false, error: error.message };

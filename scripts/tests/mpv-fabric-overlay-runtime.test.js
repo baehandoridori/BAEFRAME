@@ -17933,3 +17933,309 @@ test('보는 중(passive)에도 저장된 숨김이 적용된다', () => {
   }).accepted, false);
   runtime.destroy();
 });
+
+// ── 레이어 단위 오브젝트 조작 ─────────────────────────────────────────────
+//
+// 삭제·순서는 앞의 조작들과 달리 **오브젝트 자체**를 바꾸고, 현재 프레임이
+// 아니라 그 영상의 **모든 키프레임**에 걸린다.
+
+function makeLayerOpsRuntime() {
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [
+      {
+        id: 'layer-ops-keyframe-a',
+        frame: 24,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 1,
+        objects: [makeHistoryStroke('top-24'), makeHistoryStroke('bottom-24')]
+      },
+      {
+        id: 'layer-ops-keyframe-b',
+        frame: 30,
+        sourceWidth: 1920,
+        sourceHeight: 1080,
+        mutationSequence: 1,
+        objects: [makeHistoryStroke('top-30'), makeHistoryStroke('bottom-30')]
+      }
+    ]
+  }));
+  runtime.setDrawingInput(makeInput({ hostGeneration: 3, videoGeneration: 7 }));
+  const idsByFrame = () => Object.fromEntries(
+    runtime.exportDrawingVideo(makePersistenceExport()).snapshot.scenes
+      .map(scene => [scene.targetFrame, scene.objects.map(object => object.id)])
+  );
+  return { runtime, canvas: FakeCanvas.instances[0], idsByFrame };
+}
+
+test('레이어 삭제는 모든 키프레임에서 그 오브젝트를 걷고 한 번에 되돌아간다', () => {
+  const { runtime, idsByFrame } = makeLayerOpsRuntime();
+  const before = idsByFrame();
+  assert.deepEqual(before[24], ['top-24', 'bottom-24']);
+
+  const result = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-remove-1',
+    action: 'layer-objects-remove',
+    objectIds: ['top-24', 'top-30']
+  });
+  assert.equal(result.applied, true, JSON.stringify(result));
+  assert.equal(result.changedFrames, 2, '두 키프레임 모두 손댄다');
+  assert.deepEqual(idsByFrame(), { 24: ['bottom-24'], 30: ['bottom-30'] });
+  // 키프레임 자체는 남는다 — 비어도 빈 키프레임이다.
+  assert.equal(result.keyframeSetChanged, false);
+
+  const undone = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-remove-undo',
+    action: 'undo'
+  });
+  assert.equal(undone.applied, true, JSON.stringify(undone));
+  assert.deepEqual(idsByFrame(), before, '한 번의 실행취소로 모든 프레임이 돌아온다');
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-remove-redo',
+    action: 'redo'
+  }).applied, true);
+  assert.deepEqual(idsByFrame(), { 24: ['bottom-24'], 30: ['bottom-30'] });
+  runtime.destroy();
+});
+
+test('레이어 순서 이동은 키프레임마다 랭크대로 다시 세운다', () => {
+  const { runtime, idsByFrame } = makeLayerOpsRuntime();
+  const before = idsByFrame();
+
+  // 랭크가 큰 쪽이 나중에(=위에) 온다. bottom 을 위로 올린다.
+  const result = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-reorder-1',
+    action: 'layer-objects-reorder',
+    objectRanks: [['top-24', 0], ['bottom-24', 1], ['top-30', 0], ['bottom-30', 1]],
+    defaultRank: 0
+  });
+  // 이미 그 순서면 아무것도 바꾸지 않는다 — 헛된 히스토리 항목을 남기지 않는다.
+  assert.deepEqual(result, { applied: false, reason: 'no-change' });
+  assert.deepEqual(idsByFrame(), before);
+
+  const flipped = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-reorder-2',
+    action: 'layer-objects-reorder',
+    objectRanks: [['top-24', 1], ['bottom-24', 0], ['top-30', 1], ['bottom-30', 0]],
+    defaultRank: 0
+  });
+  assert.equal(flipped.applied, true);
+  assert.deepEqual(idsByFrame(), {
+    24: ['bottom-24', 'top-24'],
+    30: ['bottom-30', 'top-30']
+  });
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-reorder-undo',
+    action: 'undo'
+  }).applied, true);
+  assert.deepEqual(idsByFrame(), before, '실행취소가 순서를 되돌린다');
+  runtime.destroy();
+});
+
+test('레이어 조작은 잘못된 요청을 거절한다', () => {
+  const { runtime, idsByFrame } = makeLayerOpsRuntime();
+  const before = idsByFrame();
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-bad-1',
+    action: 'layer-objects-remove',
+    objectIds: []
+  }).applied, false, '지울 것이 없으면 거절한다');
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-bad-2',
+    action: 'layer-objects-reorder'
+  }).applied, false, '랭크가 없으면 거절한다');
+
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-bad-3',
+    action: 'layer-objects-remove',
+    objectIds: ['does-not-exist']
+  }).applied, false, '아무것도 바뀌지 않으면 거절한다');
+
+  assert.deepEqual(idsByFrame(), before, '거절은 문서를 건드리지 않는다');
+  runtime.destroy();
+});
+
+test('새 획은 레이어 랭크가 정한 자리에 들어간다', () => {
+  // 맨 뒤에 붙이면 아래 레이어에 그린 획이 위 레이어의 그림 위로 올라온다 —
+  // 레이어를 옮겨 순서를 맞춰 놔도 다음 획 하나에 다시 어긋난다.
+  const { runtime, canvas, idsByFrame } = makeLayerOpsRuntime();
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    // 이미 있는 두 획은 위 레이어(랭크 1), 앞으로 그릴 획은 아래 레이어(랭크 0).
+    objectRanks: [['top-24', 1], ['bottom-24', 1]],
+    defaultRank: 0,
+    activeLayerRank: 0
+  }).accepted, true);
+
+  drawStroke(canvas.upperCanvasEl, 8890);
+  const ids = idsByFrame()[24];
+  assert.equal(ids.length, 3);
+  assert.deepEqual(
+    ids.slice(1),
+    ['top-24', 'bottom-24'],
+    '아래 레이어의 새 획은 위 레이어 그림들보다 앞(=아래)에 들어간다'
+  );
+
+  // **활성 레이어의 자리**로 들어가야 한다. 랭크 맵에는 방금 그은 획이 없으므로
+  // 맵 조회로 떨어뜨리면 기준 레이어 자리에 꽂힌다 — 활성 레이어가 위쪽이어도.
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    objectRanks: [['top-24', 1], ['bottom-24', 1]],
+    defaultRank: 0,
+    activeLayerRank: 2
+  }).accepted, true);
+  drawStroke(canvas.upperCanvasEl, 8891);
+  const after = idsByFrame()[24];
+  assert.equal(after.length, 4);
+  assert.equal(
+    after.indexOf('top-24') < after.length - 1 &&
+      after[after.length - 1] !== ids[0],
+    true,
+    '위 레이어가 활성이면 새 획이 맨 뒤(=맨 위)로 간다'
+  );
+  assert.deepEqual(
+    after.slice(0, 3),
+    ids,
+    '앞선 순서는 그대로다'
+  );
+  runtime.destroy();
+});
+
+test('id 가 __proto__ 인 획도 랭크를 잃지 않는다', () => {
+  // 랭크는 쌍 배열로 오고 스토어는 Map 으로 조회한다. 그래서 이런 id 도
+  // 프로토타입 키와 섞이지 않는다. (객체 리터럴 주입 쪽 위험은 호스트 테스트
+  // '페이로드는 소스에 객체 리터럴로 끼워진다' 가 따로 못박는다.)
+  FakeCanvas.instances = [];
+  const document = new FakeDocument();
+  const root = document.createElement('div');
+  const runtime = createFabricOverlayRuntime({
+    fabric: { Canvas: FakeCanvas, Path: FakePath },
+    document
+  });
+  runtime.prepare(root);
+  runtime.hydrateDrawingVideo(makePersistenceHydration({
+    keyframes: [{
+      id: 'proto-keyframe',
+      frame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      mutationSequence: 1,
+      objects: [makeHistoryStroke('__proto__'), makeHistoryStroke('plain')]
+    }]
+  }));
+  runtime.setDrawingInput(makeInput({ hostGeneration: 3, videoGeneration: 7 }));
+
+  const applied = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-proto-1',
+    action: 'layer-objects-reorder',
+    objectRanks: [['__proto__', 5], ['plain', 0]],
+    defaultRank: 0
+  });
+  assert.equal(applied.applied, true, JSON.stringify(applied));
+  const ids = runtime.exportDrawingVideo(makePersistenceExport())
+    .snapshot.scenes[0].objects.map(object => object.id);
+  assert.deepEqual(ids, ['plain', '__proto__'], '그 id 도 랭크대로 자리를 잡는다');
+  runtime.destroy();
+});
+
+test('레이어 조작은 지속화 재동기를 요청한다', () => {
+  // 씬을 통째로 갈아 끼우므로 전이가 나가지 않는다. 알리지 않으면 렌더러의
+  // 수화 문서가 조작 전 상태로 남아 지운 획이 다시 투영된다.
+  const { runtime } = makeLayerOpsRuntime();
+  const removed = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-resync-1',
+    action: 'layer-objects-remove',
+    objectIds: ['top-24']
+  });
+  assert.equal(removed.applied, true);
+  assert.equal(removed.persistenceResyncRequired, true, '조작은 재동기를 요청한다');
+
+  const undone = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-resync-undo',
+    action: 'undo'
+  });
+  assert.equal(undone.applied, true);
+  assert.equal(undone.persistenceResyncRequired, true, '되돌림도 씬을 갈아 끼운다');
+
+  // 표식은 씬을 건드리지 않으므로 재동기가 필요 없다.
+  const marker = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-resync-marker',
+    action: 'layer-model-marker'
+  });
+  assert.equal(marker.applied, true);
+  assert.notEqual(marker.persistenceResyncRequired, true);
+  runtime.destroy();
+});
+
+test('정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지킨다', () => {
+  // 랭크가 늦게 닿아 엉뚱한 층에 꽂힌 획을 제자리로 돌리는 것은 사용자 조작이
+  // 아니다. 구조 조작으로 처리하면 씬을 갈아 끼우면서 그 씬의 획 이력을 걷고
+  // 자기를 가장 최근 되돌리기 항목으로 올린다 — 그러면 다음 Ctrl+Z 가 방금 그은
+  // 획 대신 이 정리를 되돌리고, 그 획의 이력은 이미 사라진 뒤다.
+  const { runtime, canvas, idsByFrame } = makeLayerOpsRuntime();
+  drawStroke(canvas.upperCanvasEl, 8901);
+  const drawnCount = idsByFrame()[24].length;
+  const undoDepthBefore = runtime.getDiagnostics().globalUndoDepth;
+
+  const healed = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-heal-1',
+    action: 'layer-objects-reorder',
+    objectRanks: [['top-24', 1], ['bottom-24', 0], ['top-30', 1], ['bottom-30', 0]],
+    defaultRank: 0,
+    silent: true
+  });
+  assert.equal(healed.applied, true, JSON.stringify(healed));
+  assert.equal(healed.structural, false, '정규화는 구조 조작이 아니다');
+  assert.deepEqual(idsByFrame()[30], ['bottom-30', 'top-30'], '순서는 바로잡힌다');
+  assert.equal(
+    runtime.getDiagnostics().globalUndoDepth,
+    undoDepthBefore,
+    '되돌리기 깊이가 늘지 않는다'
+  );
+
+  // 다음 되돌리기는 **방금 그은 획**을 되돌린다 — 정리가 아니라.
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-heal-undo',
+    action: 'undo'
+  }).applied, true);
+  assert.equal(
+    idsByFrame()[24].length,
+    drawnCount - 1,
+    '방금 그은 획이 되돌아간다(정리가 되돌아가지 않는다)'
+  );
+  runtime.destroy();
+});
+

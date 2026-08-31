@@ -302,7 +302,9 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
     ]
   );
   const bridge = harness.exposed.get('mpvOverlayPersistence');
-  assert.deepEqual(Object.keys(bridge), ['notifyCommittedTransition']);
+  // 레이어 조작을 팔레트 버튼으로 되돌리면 씬만 돌아간다. 레이어 목록·배정은
+  // 렌더러 쪽에 있어서 짝 id 를 따로 알려야 한다.
+  assert.deepEqual(Object.keys(bridge), ['notifyLayerHistory', 'notifyCommittedTransition']);
 
   const transition = makeTransition();
   assert.equal(bridge.notifyCommittedTransition(transition), true);
@@ -311,6 +313,39 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
     { type: 'transition', transition }
   ]]);
   assert.notEqual(harness.sent[0][1].transition, transition);
+});
+
+test('overlay preload sends bounded layer-history notifications only', () => {
+  const harness = loadOverlayPreload();
+  const bridge = harness.exposed.get('mpvOverlayPersistence');
+  const fence = {
+    hostGeneration: 3,
+    videoGeneration: 7,
+    persistenceSessionId: 'session-1',
+    stableVideoIdentity: 'video-1'
+  };
+
+  assert.equal(bridge.notifyLayerHistory({
+    ...fence,
+    commandId: 'layer-op:video-1:2',
+    direction: 'undo'
+  }), true);
+  assert.deepEqual(harness.sent, [[
+    'mpv-overlay:fabric-drawing-persistence',
+    { type: 'layer-history', ...fence, commandId: 'layer-op:video-1:2', direction: 'undo' }
+  ]]);
+
+  harness.sent.length = 0;
+  // 울타리가 없거나 방향이 이상하면 보내지 않는다.
+  assert.equal(bridge.notifyLayerHistory({ commandId: 'x', direction: 'undo' }), false);
+  assert.equal(bridge.notifyLayerHistory({ ...fence, commandId: '', direction: 'undo' }), false);
+  assert.equal(bridge.notifyLayerHistory({ ...fence, commandId: 'x', direction: 'sideways' }), false);
+  assert.equal(bridge.notifyLayerHistory({
+    ...fence,
+    commandId: 'x'.repeat(257),
+    direction: 'undo'
+  }), false);
+  assert.deepEqual(harness.sent, []);
 });
 
 test('overlay preload sends only exact bounded pointerdown frame requests', () => {

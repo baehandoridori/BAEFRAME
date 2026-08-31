@@ -6007,6 +6007,42 @@ test('updateDrawingLayerView relays a valid request and advances the revision', 
   assert.equal(second.success, true);
 });
 
+test('레이어 뷰는 새 획이 들어갈 자리(activeLayerRank)를 함께 넘긴다', async () => {
+  // 정규화 결과가 request 를 덮는다. 여기서 빠지면 런타임이 기본 랭크로
+  // 떨어져 새 획이 활성 레이어가 무엇이든 늘 기준 레이어 자리에 꽂힌다.
+  const forwarded = [];
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingLayerView(')) return undefined;
+      forwarded.push(readFabricMethodPayload(script, 'updateDrawingLayerView'));
+      return { accepted: true };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const send = await enableLayerViewSession(
+    host, ensured.drawingCapability.hostGeneration, 'session-active-rank', 2
+  );
+
+  assert.equal((await send(1, {
+    objectRanks: [['obj-1', 0]],
+    defaultRank: 0,
+    activeLayerRank: 3
+  })).success, true);
+  assert.equal(forwarded[0].activeLayerRank, 3, '활성 레이어 랭크가 런타임까지 간다');
+
+  // 범위 밖이면 요청 자체를 거절한다.
+  assert.equal((await send(2, {
+    objectRanks: [['obj-1', 0]],
+    defaultRank: 0,
+    activeLayerRank: -1
+  })).success, false);
+  assert.equal((await send(2, {
+    objectRanks: [['obj-1', 0]],
+    defaultRank: 0,
+    activeLayerRank: 1.5
+  })).success, false);
+});
+
 test('updateDrawingLayerView rejects stale tokens, backward revisions and malformed id 목록', async () => {
   const { host } = createLayerViewHost();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
@@ -6090,4 +6126,106 @@ test('passive 레이어 뷰는 영상 정체로 맞추고 리비전을 전진시
   );
   // 세션 id 로는 맞출 수 없다 — 보는 중에는 활성 세션이 없다.
   assert.equal((await send(7, { sessionId: 'host-session' })).success, true);
+});
+
+test('페이로드는 소스에 객체 리터럴로 끼워진다 — 그래서 랭크는 쌍 배열이다', () => {
+  // 호스트는 payload 를 JSON.stringify 해 실행할 소스에 그대로 끼운다. 리터럴에서
+  // "__proto__" 키는 데이터가 아니라 **프로토타입 지정 문법**이라 자기 속성이
+  // 되지 못한다. 오브젝트 id 를 키로 쓰는 표현은 그래서 쓸 수 없다.
+  const asSource = value => new Function(`return (${JSON.stringify(value)});`)();
+
+  const asObject = asSource({ objectRanks: { '__proto__': 2, keep: 1 } });
+  assert.equal(
+    Object.prototype.hasOwnProperty.call(asObject.objectRanks, '__proto__'),
+    false,
+    '객체로 나르면 그 id 의 랭크가 사라진다'
+  );
+  assert.equal(asObject.objectRanks.keep, 1, '다른 키는 멀쩡해 눈에 띄지도 않는다');
+
+  const asPairs = asSource({ objectRanks: [['__proto__', 2], ['keep', 1]] });
+  assert.deepEqual(
+    asPairs.objectRanks,
+    [['__proto__', 2], ['keep', 1]],
+    '쌍 배열은 재해석되지 않는다'
+  );
+});
+
+test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 필드만 넘긴다', async () => {
+  // 이 두 액션만 페이로드를 나른다. 검사 없이 통과시키면 임의의 객체가 런타임의
+  // 정렬·삭제 판정에 그대로 들어간다.
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.applyDrawingAction(')) {
+        forwarded.push(readFabricMethodPayload(script, 'applyDrawingAction'));
+        return { applied: true, repainted: true, deletedCount: 0 };
+      }
+      return undefined;
+    }
+  });
+  await activateDrawingHost(harness, { sessionId: 'session-layer-ops' });
+  const send = (actionId, overrides) => harness.host.applyDrawingAction({
+    hostGeneration: harness.host.hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-layer-ops',
+    actionId,
+    ...overrides
+  });
+
+  const removed = await send('layer-remove-ok', {
+    action: 'layer-objects-remove',
+    objectIds: ['obj-1', 'obj-2'],
+    secret: 'must-not-reach-runtime'
+  });
+  assert.equal(removed.success, true);
+  assert.deepEqual(forwarded[0].objectIds, ['obj-1', 'obj-2']);
+  assert.equal(forwarded[0].secret, undefined, '허용 목록 밖 필드는 넘기지 않는다');
+
+  const reordered = await send('layer-reorder-ok', {
+    action: 'layer-objects-reorder',
+    objectRanks: [['obj-1', 0], ['obj-2', 3]],
+    defaultRank: 1
+  });
+  assert.equal(reordered.success, true);
+  assert.deepEqual(forwarded[1].objectRanks, [['obj-1', 0], ['obj-2', 3]]);
+  assert.equal(forwarded[1].defaultRank, 1);
+
+  // id 가 '__proto__' 여도 살아남는다. 객체로 날랐다면 소스에 끼우는 순간
+  // 프로토타입 지정 문법이 되어 사라졌을 자리다.
+  const proto = await send('layer-reorder-proto', {
+    action: 'layer-objects-reorder',
+    objectRanks: [['__proto__', 2]],
+    defaultRank: 0
+  });
+  assert.equal(proto.success, true);
+  assert.deepEqual(forwarded[2].objectRanks, [['__proto__', 2]]);
+
+  // 형식이 어긋나면 런타임까지 가지 않는다.
+  const before = forwarded.length;
+  assert.equal((await send('layer-bad-1', {
+    action: 'layer-objects-remove', objectIds: []
+  })).success, false, '빈 목록');
+  assert.equal((await send('layer-bad-2', {
+    action: 'layer-objects-remove', objectIds: ['ok', 7]
+  })).success, false, '문자열이 아닌 id');
+  assert.equal((await send('layer-bad-3', {
+    action: 'layer-objects-remove'
+  })).success, false, '목록 자체가 없음');
+  assert.equal((await send('layer-bad-4', {
+    action: 'layer-objects-reorder', objectRanks: [['obj-1', 1.5]], defaultRank: 0
+  })).success, false, '정수가 아닌 랭크');
+  assert.equal((await send('layer-bad-5', {
+    action: 'layer-objects-reorder', objectRanks: [['obj-1', -1]], defaultRank: 0
+  })).success, false, '음수 랭크');
+  assert.equal((await send('layer-bad-6', {
+    action: 'layer-objects-reorder', objectRanks: [['obj-1', 0]]
+  })).success, false, '기본 랭크 없음');
+  assert.equal((await send('layer-bad-7', {
+    action: 'layer-objects-reorder', objectRanks: { 'obj-1': 0 }, defaultRank: 0
+  })).success, false, '객체는 쌍 배열이 아니다');
+  assert.equal((await send('layer-bad-8', {
+    action: 'layer-objects-reorder', objectRanks: [['obj-1']], defaultRank: 0
+  })).success, false, '쌍이 아닌 항목');
+  assert.equal(forwarded.length, before, '거절은 런타임에 닿지 않는다');
 });

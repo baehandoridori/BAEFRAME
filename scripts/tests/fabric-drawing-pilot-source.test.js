@@ -655,21 +655,23 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   const layerActionNames = [...appSource
     .slice(layerSetStart, appSource.indexOf(']);', layerSetStart))
     .matchAll(/'([^']+)'/g)].map(match => match[1]);
-  // 추가·선택은 메타데이터만으로 완결되고, 표시·잠금은 오버레이에 id 집합을
-  // 밀어 넣어 그리기만 바꾼다(문서는 그대로). 이동은 오버레이가 오브젝트 순서를
-  // 바꿔야 의미가 있어 여기 없다 — 메타데이터만 바꾸면 타임라인 행만 움직이고
-  // 화면의 겹침 순서는 그대로다.
+  // 추가·선택은 메타데이터만으로 완결되고, 표시·잠금은 id 집합을 밀어 넣어
+  // 그리기만 바꾼다(문서는 그대로). 삭제·이동은 오버레이가 모든 키프레임에서
+  // 오브젝트를 지우거나 순서를 갈아야 하므로 문서를 바꾼다.
   assert.deepEqual(layerActionNames.sort(), [
     'drawingLayerAdd',
+    'drawingLayerDelete',
     'drawingLayerLockToggle',
+    'drawingLayerMoveDown',
+    'drawingLayerMoveUp',
     'drawingLayerSelectDown',
     'drawingLayerSelectUp',
     'drawingLayerVisibilityToggle'
   ]);
   assert.equal(
-    layerActionNames.some(action => action.startsWith('drawingLayerMove')),
-    false,
-    '레이어 이동은 오버레이 배선 없이 넣지 않는다'
+    layerActionNames.filter(action => action.startsWith('drawingLayerMove')).length,
+    2,
+    '레이어 이동은 오버레이 재정렬과 함께 들어온다'
   );
   const layerActions = new Set(layerActionNames);
   let engaged = false;
@@ -2627,7 +2629,7 @@ test('표시·잠금 단축키는 레이어 모델의 플래그만 뒤집는다'
   );
 });
 
-test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 간다', () => {
+test('표시·잠금과 겹침 순서는 오브젝트 id 집합으로 바뀌어 오버레이로 간다', () => {
   const start = appSource.indexOf('function fabricPilotLayerViewSets() {');
   assert.ok(start > 0, '집합 계산 함수를 찾지 못했다');
   const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
@@ -2640,11 +2642,13 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
     'isDrawingObjectVisible',
     'isDrawingObjectEditable',
     'findDrawingLayer',
-    `${source}\nreturn fabricPilotLayerViewSets;`
+    'drawingLayerIdForObject',
+    source + String.fromCharCode(10) + 'return fabricPilotLayerViewSets;'
   );
 
   const layerState = {
     activeLayerId: 'layer-a',
+    baseLayerId: 'layer-c',
     layers: [
       { id: 'layer-a', name: 'A', visible: true, locked: false },
       { id: 'layer-b', name: 'B', visible: false, locked: false },
@@ -2663,7 +2667,8 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
     () => live,
     visible,
     editable,
-    (current, id) => current.layers.find(layer => layer.id === id) || null
+    (current, id) => current.layers.find(layer => layer.id === id) || null,
+    (current, id) => layerOf[id] || current.baseLayerId
   )();
 
   const sets = run(layerState, new Set(['obj-a', 'obj-b', 'obj-c']));
@@ -2671,7 +2676,18 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
   assert.deepEqual(sets.lockedObjectIds, ['obj-c'], '잠근 레이어의 획만 잠근다');
   assert.equal(sets.activeLayerDrawable, true, '활성 레이어가 멀쩡하면 그릴 수 있다');
 
-  // 활성 레이어가 숨겨지면 새 획을 받지 않는다(레거시와 같다).
+  // 랭크는 겹침 순서다. 타임라인 위쪽(layers[0])이 화면에서도 위 —
+  // 캔버스는 나중 오브젝트를 위에 그리므로 인덱스를 뒤집는다.
+  // 랭크는 **쌍 배열**이다 — 객체로 나르면 소스 주입에서 `__proto__` id 가 사라진다.
+  assert.deepEqual(
+    sets.objectRanks,
+    [['obj-a', 2], ['obj-b', 1], ['obj-c', 0]],
+    '맨 위 레이어가 가장 큰 랭크'
+  );
+  assert.equal(sets.defaultRank, 0, '배정 없는 오브젝트는 기준 레이어 랭크');
+  assert.equal(sets.activeLayerRank, 2, '새 획은 활성 레이어 자리로 간다');
+
+  // 활성 레이어가 숨겨지거나 잠기면 새 획을 받지 않는다(레거시와 같다).
   const hiddenActive = run({ ...layerState, activeLayerId: 'layer-b' }, new Set(['obj-a']));
   assert.equal(hiddenActive.activeLayerDrawable, false);
   const lockedActive = run({ ...layerState, activeLayerId: 'layer-c' }, new Set(['obj-a']));
@@ -2681,6 +2697,7 @@ test('표시·잠금은 오브젝트 id 집합으로 바뀌어 오버레이로 �
   const noDocument = run(layerState, null);
   assert.deepEqual(noDocument.hiddenObjectIds, []);
   assert.deepEqual(noDocument.lockedObjectIds, []);
+  assert.deepEqual(noDocument.objectRanks, []);
 });
 
 test('표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시 보낸다', () => {
@@ -2774,5 +2791,606 @@ test('체크인된 오버레이 번들은 런타임 API 를 모두 담고 있다
     missing,
     [],
     `번들에 없는 런타임 API: ${missing.join(', ')} — npm run bundle:mpv-fabric-overlay 를 돌리고 함께 커밋할 것`
+  );
+});
+
+test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만 모델을 바꾼다', () => {
+  // 반대로 하면 모델에는 없는데 그림은 남는 상태가 저장된다.
+  const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerDelete', e)");
+  assert.ok(start > 0, '삭제 단축키를 찾지 못했다');
+  // 두 분기(삭제·이동)를 함께 본다. 분기가 길어지면 이 창도 함께 늘려야 한다.
+  const source = appSource.slice(start, appSource.indexOf(
+    "const selectOffset = userSettings.matchShortcut('drawingLayerSelectUp', e)",
+    start
+  ));
+
+  assert.ok(
+    source.includes('isFabricDrawingPilotEngaged() &&'),
+    '그리기 모드에서만 받는다'
+  );
+  assert.ok(
+    source.includes('deleteDrawingLayerState('),
+    '모델의 삭제로 지울 오브젝트를 정한다'
+  );
+  assert.ok(
+    source.includes("showToast('마지막 레이어는 지울 수 없습니다', 'warning')"),
+    '마지막 레이어는 지울 수 없다'
+  );
+  // 읽기·계산·반영이 한 덩어리로 줄을 서야 한다. 오버레이 요청만 줄을 세우면
+  // 두 단축키가 같은 옛 상태를 읽고 나중 것이 앞선 것의 결과를 덮는다.
+  assert.ok(
+    source.includes('queueFabricPilotLayerOperation(async () => {'),
+    '조작 전체를 큐에 넣는다'
+  );
+  const queueStart = source.indexOf('queueFabricPilotLayerOperation(async () => {');
+  const stateRead = source.indexOf('reviewDataManager.getDrawingLayers()');
+  assert.ok(stateRead > queueStart, '상태는 큐 안에서 읽는다');
+
+  // 문서 → 모델 순서. 오버레이 조작이 먼저 나와야 한다.
+  const removeCall = source.indexOf("'layer-objects-remove'");
+  const modelCall = source.indexOf('applyDrawingLayerStateChange(');
+  assert.ok(removeCall > 0 && modelCall > removeCall, '문서를 먼저 바꾼다');
+
+  // 두 조작 모두 짝 id 로 레이어 모델의 before/after 를 기억해야 실행취소가
+  // 씬과 모델을 함께 되돌린다.
+  assert.ok(
+    source.includes('revert: current => insertDrawingLayerNear('),
+    '삭제는 되돌리기를 **델타**로 기억한다(스냅샷을 통째로 덮지 않는다)'
+  );
+  // 짝 id 등록은 **보내기 전에** 한다 — 응답을 기다렸다 등록하면 그 사이에
+  // 끼어든 Ctrl+Z 가 씬을 먼저 되돌리고 짝을 못 찾는다.
+  const registerAt = source.indexOf('rememberFabricPilotLayerHistory(commandId, {');
+  const sendAt = source.indexOf('const sent = await sendFabricPilotLayerOperation(');
+  assert.ok(registerAt > 0 && sendAt > registerAt, '등록이 전송보다 앞선다');
+  // 되돌릴 자리는 이웃 정체로 잡는다 — 숫자 인덱스는 그 사이 추가에 흔들린다.
+  assert.ok(
+    source.includes("aboveId: state.layers[removedIndex - 1]?.id || null"),
+    '지운 레이어의 이웃을 기억한다'
+  );
+  assert.ok(
+    source.includes('wasBase: state.baseLayerId === layerId'),
+    '기준 레이어였는지도 기억한다'
+  );
+  // 지워진 획의 배정은 실행취소를 위해 남아 있다. 살아 있는 id 만 되돌리면 그
+  // 획을 나중에 되살렸을 때 배정이 없어 기준 레이어로 떨어진다.
+  assert.ok(
+    source.includes('.filter(([, assignedLayerId]) => assignedLayerId === state.activeLayerId)'),
+    '지운 레이어를 가리키던 배정을 모두 모은다'
+  );
+  assert.ok(
+    source.includes('[...new Set([...result.removedObjectIds, ...retainedIds])]'),
+    '살아 있는 id 와 합쳐 되돌린다'
+  );
+  // 커밋은 **컨트롤러 큐 안에서**(finalize) 지금 상태 위에 다시 계산해 얹는다.
+  // 응답에서 큐를 풀면 그 틈에 Ctrl+Z 가 씬을 먼저 되돌리고, 이 커밋이 이미
+  // 되돌린 씬 위에 모델을 얹는다.
+  assert.ok(
+    source.includes('reviewDataManager.getDrawingLayers(),') &&
+      source.includes('() => applyDrawingLayerStateChange('),
+    '커밋도 지금 상태 위에서 다시 계산한다'
+  );
+  const helperStart = appSource.indexOf('async function sendFabricPilotLayerOperation(');
+  const helperSource = appSource.slice(helperStart, helperStart + 1200);
+  assert.ok(
+    helperSource.includes('{ finalize }'),
+    '커밋을 컨트롤러 큐 안에서 끝낸다'
+  );
+  // 컨트롤러가 실제로 그 커밋이 끝날 때까지 큐를 붙잡아야 한다.
+  const controllerSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'),
+    'utf8'
+  ));
+  const detailedStart = controllerSource.indexOf(
+    'function applyDrawingActionDetailed(action, payload = null, options = {}) {'
+  );
+  assert.ok(detailedStart > 0, '상세 결과 API 를 찾지 못했다');
+  assert.ok(
+    controllerSource.slice(detailedStart, detailedStart + 700)
+      .includes('await options.finalize(response);'),
+    '큐 안에서 커밋을 기다린다'
+  );
+  assert.ok(
+    source.indexOf("'layer-objects-reorder'") > 0,
+    '이동도 같은 분기 안에 있다'
+  );
+  assert.ok(
+    source.includes('fabricPilotObjectRanks(next)'),
+    '이동은 옮긴 뒤의 랭크를 보낸다'
+  );
+  // 이동은 **짝 레이어를 기준으로** 기억한다. 인덱스도 상대 칸 수도 기다리는
+  // 동안 레이어가 끼면 같은 이동을 재현하지 못한다.
+  assert.ok(
+    source.includes("const neighborId = state.layers[movedFrom + moveOffset]?.id || null;"),
+    '넘어간 짝 레이어를 기억한다'
+  );
+  assert.ok(
+    source.includes('placeDrawingLayerRelativeTo(current, movedId, neighborId, revertSide)'),
+    '되돌리기는 짝의 반대편으로 되돌린다'
+  );
+  assert.ok(
+    source.includes('reviewDataManager.getDrawingLayers(), movedId, neighborId, movedSide'),
+    '커밋도 지금 상태 위에서 같은 짝 기준 이동을 한다'
+  );
+  // 방금 그은 획의 배정은 다음 프레임에 붙는다 — 먼저 흘려보내지 않으면 그 획이
+  // 지울 목록에서 빠져 레이어만 사라지고 획은 기준 레이어에 남는다.
+  assert.ok(
+    source.includes('syncFabricDrawingLayerAssignments();'),
+    '계산 전에 배정 동기화를 흘려보낸다'
+  );
+});
+
+test('겹침 순서 랭크는 표시·잠금과 같은 경로로 계속 밀어 넣는다', () => {
+  // 새 획이 **그리는 순간** 제 층에 들어가야, 레이어를 옮겨 맞춰 놓은 순서가
+  // 다음 획 하나에 다시 어긋나지 않는다.
+  const start = appSource.indexOf('function fabricPilotLayerViewSets() {');
+  const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
+  const source = appSource.slice(start, end);
+  assert.ok(
+    source.includes('...fabricPilotObjectRanks(state)'),
+    '집합과 함께 랭크를 보낸다'
+  );
+  assert.ok(
+    source.includes('state.layers.length - 1 - index'),
+    '타임라인 위쪽이 화면에서도 위가 되도록 인덱스를 뒤집는다'
+  );
+  assert.ok(
+    source.includes('objectRanks.push([id, rank])'),
+    '임의의 오브젝트 id 가 키가 되므로 객체가 아니라 쌍 배열로 나른다'
+  );
+});
+
+test('레이어 히스토리 예산은 프레임마다의 스냅샷을 모두 센다', () => {
+  // 레이어 조작 항목은 프레임마다 before/after 를 든다. 위 두 자리만 보면
+  // 통째로 0바이트로 세어져, 큰 문서에서 순서를 반복해 옮기면 문서 크기의
+  // 스냅샷 쌍이 상한까지 그대로 남는다.
+  const start = fabricRuntimeSource.indexOf('function structuralEntryBytes(entry) {');
+  assert.ok(start > 0, '예산 계산 함수를 찾지 못했다');
+  const end = fabricRuntimeSource.indexOf('function trimStructuralOrder(', start);
+  assert.ok(end > start, '예산 계산 함수의 끝을 찾지 못했다');
+  const source = fabricRuntimeSource.slice(start, end);
+
+  const estimate = new Function(
+    'defaultEstimateObjectBytes',
+    source + String.fromCharCode(10) + 'return structuralEntryBytes;'
+  )(record => Number(record?.bytes) || 0);
+
+  const singleFrame = estimate({
+    structural: {
+      before: { objects: [{ bytes: 10 }] },
+      after: { objects: [{ bytes: 5 }] }
+    }
+  });
+  assert.equal(singleFrame, 15, '한 프레임 항목은 그대로 센다');
+
+  const multiFrame = estimate({
+    structural: {
+      frames: [
+        { before: { objects: [{ bytes: 100 }] }, after: { objects: [{ bytes: 100 }] } },
+        { before: { objects: [{ bytes: 40 }] }, after: { objects: [{ bytes: 40 }] } }
+      ]
+    }
+  });
+  assert.equal(multiFrame, 280, '프레임마다의 스냅샷을 모두 센다');
+});
+
+test('레이어 모델은 짝 id 로 씬과 함께 되돌아가되 그 사이의 편집을 지킨다', () => {
+  // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 렌더러 쪽에 있어서 짝을 지어야
+  // 하는데, **스냅샷을 통째로 덮으면** 그 사이에 사용자가 한 다른 편집이 조용히
+  // 사라진다. 델타를 지금 상태 위에 얹는다.
+  const declaration = appSource.indexOf('const fabricPilotLayerHistory = new Map();');
+  assert.ok(declaration > 0, '히스토리 보관소 선언을 찾지 못했다');
+  const end = appSource.indexOf('function insertDrawingLayerNear(', declaration);
+  assert.ok(end > declaration, '히스토리 구간의 끝을 찾지 못했다');
+  const source = appSource.slice(declaration, end);
+
+  let layerState = { edits: ['base'] };
+  let rendered = 0;
+  let pushed = 0;
+  const harness = new Function(
+    'reviewDataManager',
+    'renderActiveDrawingLayers',
+    'pushFabricPilotLayerView',
+    source + String.fromCharCode(10) +
+      'return { remember: rememberFabricPilotLayerHistory, apply: applyFabricPilotLayerHistory };'
+  )(
+    {
+      getDrawingLayers: () => layerState,
+      setDrawingLayers: next => { layerState = next; return true; }
+    },
+    () => { rendered += 1; },
+    () => { pushed += 1; }
+  );
+
+  harness.remember('layer-op:v:1', {
+    revert: current => ({ edits: [...current.edits, 'reverted'] }),
+    apply: current => ({ edits: [...current.edits, 'applied'] })
+  });
+
+  // 조작 뒤에 사용자가 다른 편집을 했다.
+  layerState = { edits: ['base', 'user-added-layer'] };
+
+  harness.apply({ commandId: 'layer-op:v:1', direction: 'undo' });
+  assert.deepEqual(
+    layerState.edits,
+    ['base', 'user-added-layer', 'reverted'],
+    '되돌림은 그 사이의 편집 위에 얹힌다'
+  );
+  assert.equal(rendered, 1);
+  assert.equal(pushed, 1, '되돌린 모델로 집합·랭크도 다시 보낸다');
+
+  harness.apply({ commandId: 'layer-op:v:1', direction: 'redo' });
+  assert.deepEqual(
+    layerState.edits,
+    ['base', 'user-added-layer', 'reverted', 'applied'],
+    '다시 하기도 지금 상태 위에 얹힌다'
+  );
+
+  // 모르는 짝 id 는 아무것도 하지 않는다.
+  const beforeUnknown = rendered;
+  harness.apply({ commandId: 'layer-op:v:999', direction: 'undo' });
+  assert.equal(rendered, beforeUnknown, '짝이 없으면 건드리지 않는다');
+
+  // 오래된 항목은 상한에서 버린다.
+  for (let index = 0; index < 70; index += 1) {
+    harness.remember(`layer-op:v:bulk-${index}`, { revert: c => c, apply: c => c });
+  }
+  const settled = layerState;
+  harness.apply({ commandId: 'layer-op:v:1', direction: 'undo' });
+  assert.equal(layerState, settled, '상한을 넘은 옛 항목은 버려진다');
+});
+
+test('씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다', () => {
+  // 빈 레이어를 지우거나 이미 순서가 맞으면 씬이 바뀌지 않는다. 그래도 실행취소는
+  // 레이어 모델을 되돌려야 하는데, 짝지을 id 가 없으면 Ctrl+Z 가 엉뚱한 앞
+  // 커맨드를 되돌린다. 전송 실패(낡은 토큰·타임아웃)와는 구분해야 한다.
+  const start = appSource.indexOf('async function sendFabricPilotLayerOperation(');
+  assert.ok(start > 0, '조작 전송 헬퍼를 찾지 못했다');
+  const end = appSource.indexOf('const fabricPilotLayerHistory = new Map();', start);
+  assert.ok(end > start, '헬퍼의 끝을 찾지 못했다');
+  const source = appSource.slice(start, end);
+
+  const calls = [];
+  const build = responses => new Function(
+    'fabricDrawingPilotController',
+    source + String.fromCharCode(10) + 'return sendFabricPilotLayerOperation;'
+  )({
+    applyDrawingActionDetailed: (action, payload) => {
+      calls.push([action, payload.commandId]);
+      return Promise.resolve(responses[calls.length - 1]);
+    }
+  });
+
+  return Promise.resolve()
+    .then(async () => {
+      calls.length = 0;
+      const ok = await build([{ success: true }])(
+        'layer-objects-remove', { objectIds: ['a'] }, 'cmd-1'
+      );
+      assert.deepEqual(ok, { ok: true });
+      assert.deepEqual(calls, [['layer-objects-remove', 'cmd-1']], '짝 id 를 함께 보낸다');
+    })
+    .then(async () => {
+      // 씬이 안 바뀌면 표식을 **같은 짝 id 로** 하나 더 보낸다.
+      calls.length = 0;
+      const marked = await build([
+        { success: false, reason: 'no-change' },
+        { success: true }
+      ])('layer-objects-reorder', {}, 'cmd-2');
+      assert.deepEqual(marked, { ok: true });
+      assert.deepEqual(calls, [
+        ['layer-objects-reorder', 'cmd-2'],
+        ['layer-model-marker', 'cmd-2']
+      ]);
+    })
+    .then(async () => {
+      // 보낼 조작 자체가 없을 때(빈 레이어 삭제)도 표식만 보낸다.
+      calls.length = 0;
+      const emptyLayer = await build([{ success: true }])(null, { objectIds: [] }, 'cmd-3');
+      assert.deepEqual(emptyLayer, { ok: true });
+      assert.deepEqual(calls, [['layer-model-marker', 'cmd-3']]);
+    })
+    .then(async () => {
+      // 전송 실패는 표식을 남기지 않고 실패로 돌려준다.
+      calls.length = 0;
+      const failed = await build([{ success: false, error: 'stale' }])(
+        'layer-objects-reorder', {}, 'cmd-4'
+      );
+      assert.deepEqual(failed, { ok: false });
+      assert.deepEqual(calls, [['layer-objects-reorder', 'cmd-4']]);
+    });
+});
+
+test('지운 레이어는 이웃 정체를 기준으로 되돌아온다', () => {
+  // 숫자 인덱스는 그 사이에 레이어가 추가되면 같은 자리를 가리키지 못한다 —
+  // [A,B,C] 에서 B 를 지우고 위에 N 을 더한 뒤 되돌리면 인덱스 1 은 [N,B,A,C]
+  // 가 되어, 오버레이가 되살린 겹침 순서(B 가 A 아래)와 어긋난다.
+  const start = appSource.indexOf('function insertDrawingLayerNear(');
+  assert.ok(start > 0, '되돌려 넣기 함수를 찾지 못했다');
+  const end = appSource.indexOf('function placeDrawingLayerRelativeTo(', start);
+  assert.ok(end > start, '되돌려 넣기 함수의 끝을 찾지 못했다');
+  const source = appSource.slice(start, end);
+
+  const assigned = [];
+  const insertNear = new Function(
+    'normalizeDrawingLayersState',
+    'assignDrawingObjectLayer',
+    source + String.fromCharCode(10) + 'return insertDrawingLayerNear;'
+  )(
+    state => state,
+    (state, objectId, layerId) => {
+      assigned.push([objectId, layerId]);
+      return state;
+    }
+  );
+
+  const layer = { id: 'B', name: 'B' };
+  const ids = layers => layers.map(entry => entry.id);
+
+  // 그 사이에 N 이 위에 끼어도 A 바로 아래(=원래 자리)로 돌아온다.
+  const withInsertion = insertNear(
+    { layers: [{ id: 'N' }, { id: 'A' }, { id: 'C' }], baseLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    ['obj-1']
+  );
+  assert.deepEqual(ids(withInsertion.layers), ['N', 'A', 'B', 'C']);
+  assert.deepEqual(assigned, [['obj-1', 'B']], '배정도 함께 되돌린다');
+
+  // 위 이웃이 사라졌으면 아래 이웃 앞에 넣는다.
+  const belowOnly = insertNear(
+    { layers: [{ id: 'C' }], baseLayerId: 'C' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    []
+  );
+  assert.deepEqual(ids(belowOnly.layers), ['B', 'C']);
+
+  // 둘 다 없으면 끝에 붙인다.
+  const neither = insertNear(
+    { layers: [{ id: 'Z' }], baseLayerId: 'Z' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    []
+  );
+  assert.deepEqual(ids(neither.layers), ['Z', 'B']);
+
+  // 지운 것이 기준 레이어였으면 기준도 되돌린다 — 안 그러면 배정 없는
+  // 오브젝트(레거시·원격 데이터)가 이후 엉뚱한 레이어로 풀린다.
+  const wasBase = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: true },
+    []
+  );
+  assert.equal(wasBase.baseLayerId, 'B');
+  const keepsBase = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false },
+    []
+  );
+  assert.equal(keepsBase.baseLayerId, 'A', '기준이 아니었으면 그대로 둔다');
+
+  // 지운 것이 활성 레이어였으면 활성도 되돌린다 — 안 그러면 되돌린 직후 그은
+  // 획이 삭제가 골라 둔 대체 레이어로 간다.
+  const restoresActive = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A', activeLayerId: 'A' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false, wasActive: true, replacementActiveId: 'A' },
+    []
+  );
+  assert.equal(restoresActive.activeLayerId, 'B');
+
+  // 그 사이 사용자가 다른 레이어를 골랐으면 그 선택을 지킨다.
+  const keepsUserChoice = insertNear(
+    { layers: [{ id: 'A' }, { id: 'C' }], baseLayerId: 'A', activeLayerId: 'C' },
+    layer,
+    { aboveId: 'A', belowId: 'C', wasBase: false, wasActive: true, replacementActiveId: 'A' },
+    []
+  );
+  assert.equal(keepsUserChoice.activeLayerId, 'C');
+
+  // 이미 있는 레이어는 다시 넣지 않는다.
+  const duplicate = insertNear(
+    { layers: [{ id: 'B' }], baseLayerId: 'B' },
+    layer,
+    { aboveId: null, belowId: null, wasBase: false },
+    []
+  );
+  assert.deepEqual(ids(duplicate.layers), ['B']);
+});
+
+test('랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다', () => {
+  // 레이어를 바꾼 직후에는 랭크 갱신이 오버레이에 닿기 전에 획이 커밋될 수 있다.
+  // 뒤늦은 배정 갱신은 랭크 맵만 바꿀 뿐 이미 커밋된 씬의 순서를 다시 세우지
+  // 않으므로, 문서 순서가 랭크와 어긋나면 재정렬을 한 번 보낸다.
+  const start = appSource.indexOf('function fabricPilotLayerOrderInverted(');
+  assert.ok(start > 0, '역전 판정 함수를 찾지 못했다');
+  const end = appSource.indexOf('function healFabricPilotLayerOrder(', start);
+  assert.ok(end > start, '역전 판정 함수의 끝을 찾지 못했다');
+  const inverted = new Function(
+    appSource.slice(start, end) + String.fromCharCode(10) +
+      'return fabricPilotLayerOrderInverted;'
+  )();
+
+  const ranks = { objectRanks: [['low', 0], ['high', 1]], defaultRank: 0 };
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'low' }, { id: 'high' }] }] }, ranks),
+    false,
+    '랭크가 오름차순이면 멀쩡하다'
+  );
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'high' }, { id: 'low' }] }] }, ranks),
+    true,
+    '아래 레이어 획이 위 레이어 획보다 뒤에 있으면 어긋난 것이다'
+  );
+  // 랭크 맵에 없는 id(짝인 외곽선 등)는 건너뛴다 — 본체들의 상대 순서만 본다.
+  assert.equal(
+    inverted(
+      { keyframes: [{ objects: [{ id: 'low' }, { id: 'unknown' }, { id: 'high' }] }] },
+      ranks
+    ),
+    false
+  );
+  // 프레임마다 따로 본다.
+  assert.equal(
+    inverted({
+      keyframes: [
+        { objects: [{ id: 'low' }, { id: 'high' }] },
+        { objects: [{ id: 'high' }, { id: 'low' }] }
+      ]
+    }, ranks),
+    true
+  );
+  assert.equal(inverted(null, ranks), false, '문서가 없으면 손대지 않는다');
+
+  // 같은 층 안의 자리도 본다. 랭크에 2를 곱하고 방금 붙인 획에 +1 을 주면,
+  // 층은 맞는데 제 층 안에서 아래에 깔린 새 획도 역전으로 잡힌다.
+  const scaled = { objectRanks: [['older', 2], ['newer', 3]], defaultRank: 0 };
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'newer' }, { id: 'older' }] }] }, scaled),
+    true,
+    '새 획이 같은 층의 옛 획보다 아래면 바로잡는다'
+  );
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'older' }, { id: 'newer' }] }] }, scaled),
+    false
+  );
+});
+
+test('정규화 랭크는 같은 층 안에서 새 획을 위로 보낸다', () => {
+  const start = appSource.indexOf('const fabricPilotPlacedByRankIds = new Set();');
+  assert.ok(start > 0, '세션 목록 선언을 찾지 못했다');
+  const end = appSource.indexOf('function fabricPilotLayerOrderInverted(', start);
+  const build = new Function(
+    'fabricPilotObjectRanks',
+    appSource.slice(start, end) + String.fromCharCode(10) + 'return fabricPilotHealingRanks;'
+  )(() => ({ objectRanks: [['a', 0], ['b', 1]], defaultRank: 0 }));
+
+  assert.deepEqual(build({}, ['b']), {
+    objectRanks: [['a', 0], ['b', 3]],
+    defaultRank: 0
+  });
+  // **세션 동안 기억한다.** 되돌리기·다시하기가 옛 순서를 되살렸을 때 판정
+  // 근거가 사라지면 정규화가 두 번 다시 돌지 않는다.
+  assert.deepEqual(build({}, []), {
+    objectRanks: [['a', 0], ['b', 3]],
+    defaultRank: 0
+  }, '한 번 붙인 id 는 계속 기억한다');
+  // 층 사이 간격은 2 라, +1 을 받아도 다음 층을 넘지 않는다.
+  assert.deepEqual(build({}, ['a']), {
+    objectRanks: [['a', 1], ['b', 3]],
+    defaultRank: 0
+  });
+});
+
+test('팔레트 버튼으로 되돌린 레이어 조작도 모델을 함께 되돌린다', () => {
+  // 팔레트의 되돌리기·다시하기는 오버레이 안에서 바로 처리된다. 씬만 돌아가므로
+  // 짝 id 를 렌더러에 알려야 레이어 목록·배정과 수화 문서까지 맞는다.
+  assert.ok(
+    fabricRuntimeSource.includes('function notifyLayerHistoryApplied(result) {'),
+    '런타임이 팔레트 조작 결과를 알린다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes('bridge.notifyLayerHistory({'),
+    '오버레이 브리지로 짝 id 를 보낸다'
+  );
+  // 경로를 타는 것만으로는 부족하다 — 그 안에서 실제로 알려야 한다.
+  const localStart = fabricRuntimeSource.indexOf('const runLocalHistory = action => {');
+  assert.ok(localStart > 0, '팔레트 히스토리 처리기를 찾지 못했다');
+  const localEnd = fabricRuntimeSource.indexOf('addDomListener(undoButton', localStart);
+  assert.ok(
+    fabricRuntimeSource.slice(localStart, localEnd).includes('notifyLayerHistoryApplied(result);'),
+    '팔레트 처리기가 결과를 알린다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes("addDomListener(undoButton, 'click', () => runLocalHistory('undo'));"),
+    '되돌리기 버튼이 그 경로를 탄다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes("addDomListener(redoButton, 'click', () => runLocalHistory('redo'));"),
+    '다시하기 버튼도 같다'
+  );
+});
+
+test('레이어 조작이 도는 동안 팔레트 되돌리기를 잠근다', () => {
+  // 팔레트 버튼은 런타임 안에서 바로 돌아 컨트롤러 큐 밖에 있다. 조작이 정착하기
+  // 전에 눌리면 씬만 먼저 되돌아가고, 뒤늦은 커밋이 이미 되돌린 씬 위에 모델을
+  // 얹어 둘이 어긋난다.
+  assert.ok(
+    appSource.includes('layerHistoryBusy: fabricPilotLayerOperationDepth > 0'),
+    '렌더러가 큐 깊이를 실어 보낸다'
+  );
+  const queueStart = appSource.indexOf('function queueFabricPilotLayerOperation(task) {');
+  assert.ok(queueStart > 0, '레이어 조작 큐를 찾지 못했다');
+  const queueSource = appSource.slice(queueStart, queueStart + 700);
+  assert.ok(
+    queueSource.includes('fabricPilotLayerOperationDepth += 1;') &&
+      queueSource.includes('fabricPilotLayerOperationDepth -= 1;'),
+    '큐가 깊이를 세고 되돌린다'
+  );
+  assert.ok(
+    queueSource.includes('pushFabricPilotLayerView();'),
+    '깊이가 바뀌면 오버레이에 알린다'
+  );
+
+  // 런타임은 그 동안 버튼을 받지 않는다.
+  const localStart = fabricRuntimeSource.indexOf('const runLocalHistory = action => {');
+  assert.ok(localStart > 0, '팔레트 히스토리 처리기를 찾지 못했다');
+  assert.ok(
+    fabricRuntimeSource.slice(localStart, localStart + 400)
+      .includes('if (layerHistoryBusy) return;'),
+    '잠겨 있으면 받지 않는다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes('layerHistoryBusy = command.layerHistoryBusy === true;'),
+    '잠금 상태는 레이어 뷰로 온다'
+  );
+});
+
+test('정규화는 사용자 히스토리에 남기지 않는다', () => {
+  const start = appSource.indexOf('function healFabricPilotLayerOrder(recentIds) {');
+  assert.ok(start > 0, '정규화 함수를 찾지 못했다');
+  const source = appSource.slice(start, start + 900);
+  assert.ok(
+    source.includes('{ ...ranks, silent: true }'),
+    '정규화는 silent 로 보낸다'
+  );
+});
+
+test('정규화 재정렬은 그림자 관찰자를 다시 심는다', () => {
+  // 제자리 재정렬은 전이를 내보내지 않으면서 mutationSequence 를 올린다.
+  // 그림자가 그대로 머물면 다음 획 전이를 sequence-gap 으로 거절하고 그 씬의
+  // 그림자가 영구히 저하된다.
+  const start = fabricRuntimeSource.indexOf(
+    "if (operation === 'layer-objects-reorder' && command.silent === true) {"
+  );
+  assert.ok(start > 0, '정규화 분기를 찾지 못했다');
+  const source = fabricRuntimeSource.slice(start, start + 1600);
+  assert.ok(
+    source.includes('reseededSceneInstanceIds.push(scene.sceneInstanceId);'),
+    '바꾼 씬을 모은다'
+  );
+  assert.ok(
+    source.includes('notifyScenesDropped(reseededSceneInstanceIds);'),
+    '그 씬들을 떨어뜨려 다시 심게 한다'
+  );
+});
+
+test('정규화는 손댄 씬을 그림자에서 다시 심게 한다', () => {
+  // 떨어뜨린 씬에 "심었다" 표시가 남아 있으면, 다음 활성화가 값이 빈 지도를
+  // 만들어 보내고 어댑터가 invalid-seed 로 격리한다.
+  const start = fabricRuntimeSource.indexOf(
+    "if (operation === 'layer-objects-reorder' && command.silent === true) {"
+  );
+  assert.ok(start > 0, '정규화 분기를 찾지 못했다');
+  const source = fabricRuntimeSource.slice(start, start + 1600);
+  assert.ok(
+    source.includes('scene.drawingObserverSeeded = false;'),
+    '심었다는 표시를 되돌린다'
+  );
+  assert.ok(
+    source.includes('notifyScenesDropped(reseededSceneInstanceIds);'),
+    '그 씬들을 떨어뜨린다'
   );
 });

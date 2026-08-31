@@ -13,7 +13,11 @@ const CONTROLLER_DRAWING_ACTIONS = new Set([
   'keyframe-to-frame',
   'frame-to-keyframe',
   'frame-copy',
-  'frame-paste'
+  'frame-paste',
+  // 레이어 단위 오브젝트 조작(레거시 Shift+` / Ctrl+Shift+X·C). 페이로드를 나른다.
+  'layer-objects-remove',
+  'layer-objects-reorder',
+  'layer-model-marker'
 ]);
 // shared/fabric-drawing-tools.js 의 FABRIC_DRAWING_TOOLS 와 같아야 한다.
 // 이 파일은 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다
@@ -135,6 +139,11 @@ export function createFabricDrawingPilotController(options = {}) {
   const electronAPI = options.electronAPI || {};
   const getContext = typeof options.getContext === 'function' ? options.getContext : () => ({});
   const onStateChange = typeof options.onStateChange === 'function' ? options.onStateChange : () => {};
+  // 구조 실행취소가 레이어 조작을 되돌리면 알린다. 레이어 목록·배정은 렌더러
+  // 쪽에 있어서 오버레이 혼자서는 되돌릴 수 없다.
+  const onLayerHistoryApplied = typeof options.onLayerHistoryApplied === 'function'
+    ? options.onLayerHistoryApplied
+    : () => {};
   const onHistoryFallback = typeof options.onHistoryFallback === 'function'
     ? options.onHistoryFallback
     : () => {};
@@ -1357,7 +1366,10 @@ export function createFabricDrawingPilotController(options = {}) {
   //
   // 세션이 새로 살아나면 오버레이의 집합은 비어 있다. 렌더러가 active 전이에서
   // 다시 불러 줘야 숨긴 레이어가 되살아나지 않는다.
-  async function sendLayerView({ hiddenObjectIds, lockedObjectIds, activeLayerDrawable }) {
+  async function sendLayerView({
+    hiddenObjectIds, lockedObjectIds, activeLayerDrawable,
+    objectRanks, defaultRank, activeLayerRank, layerHistoryBusy
+  }) {
     // passive 투영에서도 보낸다 — 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
     // 동안에도 숨겨져 있어야 한다. 그때는 세션이 없으므로 영상 정체로 맞춘다.
     if (state !== 'active' && state !== 'passive') return false;
@@ -1374,7 +1386,16 @@ export function createFabricDrawingPilotController(options = {}) {
       layerViewRevision: passiveLayerViewRevision,
       hiddenObjectIds: [...hiddenObjectIds],
       lockedObjectIds: [...lockedObjectIds],
-      activeLayerDrawable: activeLayerDrawable !== false
+      activeLayerDrawable: activeLayerDrawable !== false,
+      // 레이어 조작이 정착하는 동안 팔레트 되돌리기를 잠근다.
+      layerHistoryBusy: layerHistoryBusy === true,
+      // 겹침 순서 랭크. 새 획이 그리는 순간 제 층에 들어가게 한다.
+      objectRanks: Array.isArray(objectRanks) ? objectRanks : [],
+      defaultRank: Number.isInteger(defaultRank) ? defaultRank : 0,
+      // 새로 그리는 획이 들어갈 자리. 랭크 맵에는 이미 문서에 있는 id 만 있다.
+      activeLayerRank: Number.isInteger(activeLayerRank)
+        ? activeLayerRank
+        : (Number.isInteger(defaultRank) ? defaultRank : 0)
     };
     try {
       const response = await withPersistenceIpcDeadline(
@@ -1415,7 +1436,7 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
-  function makeDrawingActionRequest(action) {
+  function makeDrawingActionRequest(action, payload = null) {
     if (state !== 'active' || !currentSession || !CONTROLLER_DRAWING_ACTIONS.has(action)) {
       return null;
     }
@@ -1435,7 +1456,9 @@ export function createFabricDrawingPilotController(options = {}) {
       sessionId,
       actionId: uuid(),
       action,
-      targetFrame
+      targetFrame,
+      // 레이어 조작만 페이로드를 나른다. 호스트가 형식을 다시 검사한다.
+      ...(payload || null)
     };
     return { ...request };
   }
@@ -1449,19 +1472,50 @@ export function createFabricDrawingPilotController(options = {}) {
       // 실행취소가 키프레임을 없애거나 되살리면 전이만으로는 스토어의 키프레임 목록을
       // 맞출 수 없다(전이는 객체 단위다). 그대로 두면 타임라인이 다음 저장 주기까지
       // 사라진 키프레임 마커를 들고 있으므로 즉시 재동기한다.
-      if (response.keyframeSetChanged === true) runDetached(requestPersistenceResync());
+      // 레이어 조작은 키프레임 집합을 바꾸지 않지만 씬 내용을 통째로 갈아
+      // 끼우고 전이를 내보내지 않는다. 두 경우 모두 수화 문서를 다시 받아야
+      // 렌더러가 조작 전 그림을 계속 투영하지 않는다.
+      if (response.keyframeSetChanged === true ||
+          response.persistenceResyncRequired === true) {
+        runDetached(requestPersistenceResync());
+      }
       return response;
     } catch {
       return { success: false, applied: false };
     }
   }
 
-  function applyDrawingAction(action) {
-    const request = makeDrawingActionRequest(action);
-    if (!request) return Promise.resolve(false);
-    const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
+  function applyDrawingAction(action, payload = null) {
+    return applyDrawingActionDetailed(action, payload)
+      .then(response => response?.success === true);
+  }
+
+  // 응답 원문이 필요한 호출부용. 성공 여부만으로는 **의도한 no-change** 와
+  // 전송 실패(낡은 토큰·타임아웃)를 가릴 수 없다 — 레이어 순서 이동은 그 둘을
+  // 다르게 다뤄야 한다(전자는 모델을 반영, 후자는 되돌린다).
+  // options.finalize 를 주면 **그것이 끝날 때까지 큐를 풀지 않는다.** 레이어
+  // 조작은 오버레이 응답 뒤에 렌더러가 모델을 커밋하는데, 응답에서 큐를 풀어
+  // 버리면 그 틈에 Ctrl+Z 가 씬을 먼저 되돌린다 — 그러면 아직 바뀌지 않은
+  // 모델을 되돌리려 해 아무 일도 안 하고, 뒤이은 커밋이 이미 되돌린 씬 위에
+  // 모델을 얹는다.
+  function applyDrawingActionDetailed(action, payload = null, options = {}) {
+    const request = makeDrawingActionRequest(action, payload);
+    if (!request) {
+      return Promise.resolve({ success: false, applied: false, reason: 'invalid-request' });
+    }
+    const operation = drawingActionQueue.then(async () => {
+      const response = await sendDrawingActionRequest(request);
+      if (typeof options.finalize === 'function') {
+        try {
+          await options.finalize(response);
+        } catch (_error) {
+          // 커밋 실패는 호출부가 다룬다. 큐만 풀어 준다.
+        }
+      }
+      return response;
+    });
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
-    return operation.then(r => r?.success === true);
+    return operation.then(r => r || { success: false, applied: false });
   }
 
   function enqueueHistoryFallback(historyAction, historyRevision) {
@@ -1480,6 +1534,14 @@ export function createFabricDrawingPilotController(options = {}) {
     }
     const operation = drawingActionQueue.then(async () => {
       const result = await sendDrawingActionRequest(request);
+      if (result?.applied === true &&
+          typeof result.commandId === 'string' &&
+          (result.historyDirection === 'undo' || result.historyDirection === 'redo')) {
+        onLayerHistoryApplied({
+          commandId: result.commandId,
+          direction: result.historyDirection
+        });
+      }
       if (result?.applied === true || result?.duplicate === true) return result;
       if (result?.reason === 'history-empty' &&
           historyRevision === readHistoryRevision()) {
@@ -2008,6 +2070,16 @@ export function createFabricDrawingPilotController(options = {}) {
     }
     persistenceEventEpoch += 1;
     if (message.type === 'resync-required') {
+      runDetached(requestPersistenceResync());
+      return true;
+    }
+    // 팔레트 버튼으로 되돌린 레이어 조작. 오버레이는 씬만 되돌렸으므로 모델을
+    // 함께 되돌리고 문서를 다시 받아 온다.
+    if (message.type === 'layer-history') {
+      onLayerHistoryApplied({
+        commandId: message.commandId,
+        direction: message.direction
+      });
       runDetached(requestPersistenceResync());
       return true;
     }
@@ -2949,6 +3021,7 @@ export function createFabricDrawingPilotController(options = {}) {
     cancelVideoChange,
     toggle,
     applyDrawingAction,
+    applyDrawingActionDetailed,
     sendLayerView,
     routeKeydown,
     disable,

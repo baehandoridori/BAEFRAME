@@ -13633,6 +13633,11 @@ void main() {
         ["frame-copy", "frame-copy"],
         ["frame-paste", "frame-paste"]
       ]);
+      var LAYER_OBJECT_ACTIONS = /* @__PURE__ */ new Set([
+        "layer-objects-remove",
+        "layer-objects-reorder",
+        "layer-model-marker"
+      ]);
       var DRAWING_V3_DIAGNOSTIC_STATUSES = /* @__PURE__ */ new Set([
         "active",
         "degraded",
@@ -14153,6 +14158,18 @@ void main() {
         }
         function recordPersistenceObserverFailure() {
           persistenceObserverFailureCount += 1;
+        }
+        function getPersistenceFence() {
+          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          if (!stableVideoIdentity) return null;
+          const persistence = persistenceByVideo.get(stableVideoIdentity);
+          if (!persistence) return null;
+          return {
+            hostGeneration: persistence.hostGeneration,
+            videoGeneration: persistence.videoGeneration,
+            persistenceSessionId: persistence.persistenceSessionId,
+            stableVideoIdentity
+          };
         }
         function notifyPersistenceTransition(scene, eventFactory) {
           if (!committedTransitionObserver) return;
@@ -14954,9 +14971,10 @@ void main() {
           }
           const record = clonePlain(stroke);
           const outline = outlineRecord && !scene.objects.has(outlineRecord.id) ? clonePlain(outlineRecord) : null;
-          const nextObjects = new Map(scene.objects);
-          if (outline) nextObjects.set(outline.id, outline);
-          nextObjects.set(record.id, record);
+          const nextObjects = insertObjectsByRank(
+            scene.objects,
+            outline ? [outline, record] : [record]
+          );
           const touchedIds = outline ? [outline.id, record.id] : [record.id];
           const baseTransforms = /* @__PURE__ */ new Map([[record.id, clonePlain(record.transform || {})]]);
           if (outline) baseTransforms.set(outline.id, clonePlain(outline.transform || {}));
@@ -14975,6 +14993,45 @@ void main() {
           if (!objects || !isOutlineId(id)) return false;
           const bodyId = bodyIdFor(id);
           return bodyId !== null && objects.has(bodyId);
+        }
+        let objectRankMap = null;
+        let defaultObjectRank = 0;
+        let activeLayerRank = 0;
+        function setObjectRanks(next = {}) {
+          const ranks = next?.objectRanks;
+          objectRankMap = Array.isArray(ranks) ? new Map(ranks.filter((pair) => Array.isArray(pair) && pair.length === 2)) : null;
+          defaultObjectRank = Number.isFinite(Number(next?.defaultRank)) ? Number(next.defaultRank) : 0;
+          activeLayerRank = Number.isFinite(Number(next?.activeLayerRank)) ? Number(next.activeLayerRank) : defaultObjectRank;
+          return { accepted: true };
+        }
+        function rankOfObject(id) {
+          if (!objectRankMap) return defaultObjectRank;
+          const bodyId = bodyIdFor(id);
+          const raw = Number(objectRankMap.get(bodyId || id));
+          if (Number.isFinite(raw)) return raw;
+          const own = Number(objectRankMap.get(id));
+          return Number.isFinite(own) ? own : defaultObjectRank;
+        }
+        function insertObjectsByRank(objects, records) {
+          if (!objectRankMap) {
+            const appended = new Map(objects);
+            for (const record of records) appended.set(record.id, record);
+            return appended;
+          }
+          const rank = activeLayerRank;
+          const next = /* @__PURE__ */ new Map();
+          let inserted = false;
+          for (const [id, record] of objects) {
+            if (!inserted && rankOfObject(id) > rank) {
+              for (const incoming of records) next.set(incoming.id, incoming);
+              inserted = true;
+            }
+            next.set(id, record);
+          }
+          if (!inserted) {
+            for (const incoming of records) next.set(incoming.id, incoming);
+          }
+          return next;
         }
         function selectObjects(objectIds = []) {
           const scene = activeScene();
@@ -15634,6 +15691,31 @@ void main() {
         }
         function applyStructuralHistory(entry, order, direction) {
           const { stableVideoIdentity, frame, shift, tailBlankFrame } = entry.structural;
+          if (Array.isArray(entry.structural.frames)) {
+            dropProvisionalScenes(stableVideoIdentity);
+            for (const target of entry.structural.frames) {
+              const blueprint = direction === "undo" ? target.before : target.after;
+              detachScene(scenes.get(makeSceneKey(stableVideoIdentity, target.frame)) || null);
+              materializeSceneAt(stableVideoIdentity, target.frame, blueprint);
+            }
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            moveGlobalOrderEntry(order, direction, entry.commandId);
+            return {
+              applied: true,
+              structural: true,
+              operation: entry.structural.operation,
+              // 렌더러가 이 id 로 레이어 모델의 짝을 찾아 함께 되돌린다.
+              commandId: entry.commandId,
+              historyDirection: direction,
+              frame: null,
+              changedFrames: entry.structural.frames.length,
+              keyframeSetChanged: false,
+              // 되돌림도 씬을 갈아 끼운다 — 같은 이유로 재동기가 필요하다.
+              persistenceResyncRequired: entry.structural.frames.length > 0,
+              // 되돌림도 씬을 갈아 끼운다 — 같은 이유로 재동기가 필요하다.
+              ...globalHistoryDepths()
+            };
+          }
           const before = direction === "undo" ? entry.structural.after : entry.structural.before;
           const after = direction === "undo" ? entry.structural.before : entry.structural.after;
           const delta = direction === "undo" ? -shift : shift;
@@ -15682,6 +15764,9 @@ void main() {
         }
         function structuralEntryBytes(entry) {
           const blueprints = [entry?.structural?.before, entry?.structural?.after];
+          for (const target of entry?.structural?.frames || []) {
+            blueprints.push(target.before, target.after);
+          }
           let bytes = 0;
           for (const blueprint of blueprints) {
             for (const record of blueprint?.objects || []) {
@@ -15732,6 +15817,140 @@ void main() {
               tailBlankFrame
             }
           });
+        }
+        const LAYER_OBJECT_OPERATIONS = /* @__PURE__ */ new Set([
+          "layer-objects-remove",
+          "layer-objects-reorder",
+          // 씬은 그대로 두고 **짝 id 만** 만드는 표식. 빈 레이어를 지우거나 겹칠 그림이
+          // 없어 순서가 그대로일 때도 실행취소는 레이어 모델을 되돌려야 하는데,
+          // 씬 변경이 없으면 짝지을 id 가 없다. 그러면 Ctrl+Z 가 엉뚱한 앞 커맨드를
+          // 되돌린다.
+          "layer-model-marker"
+        ]);
+        function applyLayerObjectsOperation(command = {}) {
+          if (destroyed) return { applied: false, reason: "store-destroyed" };
+          const operation = command.operation;
+          if (!LAYER_OBJECT_OPERATIONS.has(operation)) {
+            return { applied: false, reason: "invalid-layer-objects-operation" };
+          }
+          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
+          const removeIds = /* @__PURE__ */ new Set();
+          if (operation === "layer-objects-remove") {
+            for (const id of command.objectIds || []) {
+              if (typeof id !== "string" || id.length === 0) continue;
+              removeIds.add(id);
+              const outlineId = outlineIdFor(id);
+              if (outlineId) removeIds.add(outlineId);
+            }
+            if (removeIds.size === 0) return { applied: false, reason: "no-objects" };
+          }
+          const ranks = operation === "layer-objects-reorder" && Array.isArray(command.objectRanks) ? new Map(command.objectRanks.filter((pair) => Array.isArray(pair) && pair.length === 2)) : null;
+          if (operation === "layer-objects-reorder" && !ranks) {
+            return { applied: false, reason: "no-ranks" };
+          }
+          const defaultRank = Number.isFinite(Number(command.defaultRank)) ? Number(command.defaultRank) : 0;
+          const rankFor = (id) => {
+            const bodyId = bodyIdFor(id);
+            const raw = Number(ranks?.get(bodyId || id));
+            if (Number.isFinite(raw)) return raw;
+            const own = Number(ranks?.get(id));
+            return Number.isFinite(own) ? own : defaultRank;
+          };
+          const requestedCommandId = typeof command.commandId === "string" && command.commandId.length > 0 && command.commandId.length <= 256 ? command.commandId : null;
+          if (operation === "layer-model-marker") {
+            const markerId = requestedCommandId || `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
+            appendStructuralOrder(stableVideoIdentity, {
+              commandId: markerId,
+              sceneKey: null,
+              structural: { stableVideoIdentity, operation, frames: [] }
+            });
+            return {
+              applied: true,
+              structural: true,
+              operation,
+              commandId: markerId,
+              changedFrames: 0,
+              keyframeSetChanged: false,
+              ...globalHistoryDepths()
+            };
+          }
+          dropProvisionalScenes(stableVideoIdentity);
+          if (operation === "layer-objects-reorder" && command.silent === true) {
+            let changed = 0;
+            const reseededSceneInstanceIds = [];
+            for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+              const current = [...scene.objects.values()];
+              const next = [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
+              if (!next.some((record, index) => record.id !== current[index].id)) continue;
+              const nextObjects = /* @__PURE__ */ new Map();
+              for (const record of next) nextObjects.set(record.id, record);
+              scene.objects = nextObjects;
+              scene.dirty = true;
+              scene.mutationCount += 1;
+              scene.mutationSequence += 1;
+              scene.drawingObserverSeeded = false;
+              reseededSceneInstanceIds.push(scene.sceneInstanceId);
+              changed += 1;
+            }
+            notifyScenesDropped(reseededSceneInstanceIds);
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            if (changed === 0) return { applied: false, reason: "no-change" };
+            return {
+              applied: true,
+              structural: false,
+              operation,
+              changedFrames: changed,
+              keyframeSetChanged: false,
+              persistenceResyncRequired: true,
+              ...globalHistoryDepths()
+            };
+          }
+          const frames = [];
+          for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+            const current = [...scene.objects.values()];
+            const next = operation === "layer-objects-remove" ? current.filter((record) => !removeIds.has(record.id)) : [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
+            const dimensions = { sourceWidth: scene.sourceWidth, sourceHeight: scene.sourceHeight };
+            const changed = next.length !== current.length || next.some((record, index) => record.id !== current[index].id);
+            if (!changed) continue;
+            frames.push({
+              frame: scene.targetFrame,
+              before: { ...dimensions, objects: current.map(clonePlain) },
+              after: { ...dimensions, objects: next.map(clonePlain) }
+            });
+          }
+          if (frames.length === 0) {
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            return { applied: false, reason: "no-change" };
+          }
+          for (const entry of frames) {
+            detachScene(scenes.get(makeSceneKey(stableVideoIdentity, entry.frame)) || null);
+            materializeSceneAt(stableVideoIdentity, entry.frame, entry.after);
+          }
+          rebuildActiveProvisionalScene(stableVideoIdentity);
+          const commandId = requestedCommandId || `layer-op:${stableVideoIdentity}:${commandSequence += 1}`;
+          appendStructuralOrder(stableVideoIdentity, {
+            commandId,
+            sceneKey: null,
+            structural: { stableVideoIdentity, operation, frames }
+          });
+          return {
+            applied: true,
+            structural: true,
+            operation,
+            commandId,
+            changedFrames: frames.length,
+            // 키프레임 집합은 그대로다 — 비게 된 키프레임도 빈 키프레임으로 남는다.
+            keyframeSetChanged: false,
+            // 씬을 통째로 갈아 끼웠으므로 **전이가 나가지 않는다.** 알리지 않으면
+            // 렌더러의 수화 문서가 조작 전 상태로 남아, 지운 획이 다시 투영되고
+            // 이어지는 레이어 계산이 낡은 id 를 쓴다.
+            persistenceResyncRequired: true,
+            // 씬을 통째로 갈아 끼웠으므로 **전이가 나가지 않는다.** 알리지 않으면
+            // 렌더러의 수화 문서가 조작 전 상태로 남아, 지운 획이 다시 투영되고
+            // 이어지는 레이어 계산이 낡은 id 를 쓴다.
+            ...globalHistoryDepths()
+          };
         }
         function applyFrameOperation(command = {}) {
           if (destroyed) return { applied: false, reason: "store-destroyed" };
@@ -15963,6 +16182,9 @@ void main() {
           deleteSelection,
           clearSession,
           applyFrameOperation,
+          applyLayerObjectsOperation,
+          setObjectRanks,
+          getPersistenceFence,
           updateTool,
           setLocalTool,
           getSceneSnapshot,
@@ -16320,6 +16542,7 @@ void main() {
         let inputEnabled = false;
         let hiddenObjectIds = /* @__PURE__ */ new Set();
         let lockedObjectIds = /* @__PURE__ */ new Set();
+        let layerHistoryBusy = false;
         let activeLayerDrawable = true;
         let currentSession = null;
         let passiveDisplaySession = null;
@@ -21160,16 +21383,17 @@ void main() {
             }
             addDomListener(eraserModeControls.pixelButton, "click", () => setEraserMode("pixel"));
             addDomListener(eraserModeControls.strokeButton, "click", () => setEraserMode("stroke"));
-            addDomListener(undoButton, "click", () => applyDrawingAction({
-              sessionId: currentSession?.sessionId,
-              actionId: createId("undo"),
-              action: "undo"
-            }));
-            addDomListener(redoButton, "click", () => applyDrawingAction({
-              sessionId: currentSession?.sessionId,
-              actionId: createId("redo"),
-              action: "redo"
-            }));
+            const runLocalHistory = (action) => {
+              if (layerHistoryBusy) return;
+              const result = applyDrawingAction({
+                sessionId: currentSession?.sessionId,
+                actionId: createId(action),
+                action
+              });
+              notifyLayerHistoryApplied(result);
+            };
+            addDomListener(undoButton, "click", () => runLocalHistory("undo"));
+            addDomListener(redoButton, "click", () => runLocalHistory("redo"));
             addDomListener(deleteButton, "click", () => applyDrawingAction({
               sessionId: currentSession?.sessionId,
               actionId: createId("delete"),
@@ -21523,6 +21747,14 @@ void main() {
           hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
+          layerHistoryBusy = command.layerHistoryBusy === true;
+          if (command.objectRanks !== void 0) {
+            sceneStore.setObjectRanks?.({
+              objectRanks: command.objectRanks,
+              defaultRank: command.defaultRank,
+              activeLayerRank: command.activeLayerRank
+            });
+          }
           if (passiveMatch) {
             repaintLastPaintedScene({ force: true });
             return {
@@ -21555,6 +21787,22 @@ void main() {
             lockedCount: lockedObjectIds.size
           };
         }
+        function notifyLayerHistoryApplied(result) {
+          if (!result || typeof result.commandId !== "string") return;
+          if (result.historyDirection !== "undo" && result.historyDirection !== "redo") return;
+          const bridge = windowRef?.mpvOverlayPersistence;
+          if (typeof bridge?.notifyLayerHistory !== "function") return;
+          const fence = sceneStore.getPersistenceFence?.();
+          if (!fence) return;
+          try {
+            bridge.notifyLayerHistory({
+              ...fence,
+              commandId: result.commandId,
+              direction: result.historyDirection
+            });
+          } catch (_error) {
+          }
+        }
         function updateLocalDrawingTool(tool) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
           const result = sceneStore.setLocalTool({ sessionId: currentSession?.sessionId, tool });
@@ -21568,6 +21816,37 @@ void main() {
             return { applied: false, reason: "stale-session" };
           }
           const action = command.action || command.type;
+          if (LAYER_OBJECT_ACTIONS.has(action)) {
+            if (!actionDeduper.accept(command.actionId)) {
+              metrics.recordDuplicateAction();
+              return { applied: false, duplicate: true };
+            }
+            if (pendingLassoSelection) abortPendingLassoSelection({ authoritative: true });
+            if (strokeEraseGesture) cancelStrokeEraseGesture();
+            if (activeStroke) cancelActiveStroke();
+            if (shapeGesture) cancelShapeGesture();
+            if (selectGesture || transformStart) cancelSelectInteraction();
+            const result2 = sceneStore.applyLayerObjectsOperation({
+              operation: action,
+              objectIds: command.objectIds,
+              objectRanks: command.objectRanks,
+              defaultRank: command.defaultRank,
+              // 정규화는 히스토리를 남기지 않는다(사용자 조작이 아니다).
+              silent: command.silent === true,
+              commandId: command.commandId
+            });
+            if (!result2.applied) {
+              actionDeduper.release?.(command.actionId);
+              return result2;
+            }
+            renderActiveScene({ immediate: true });
+            fabricCanvas?.discardActiveObject?.();
+            sceneStore.selectObjects([]);
+            setToolMode(currentSession?.tool || "brush");
+            updateObjectMetric();
+            settleArmedFramePreview();
+            return { ...result2, repainted: true };
+          }
           if (FRAME_STRUCTURE_ACTIONS.has(action)) {
             if (!actionDeduper.accept(command.actionId)) {
               metrics.recordDuplicateAction();
