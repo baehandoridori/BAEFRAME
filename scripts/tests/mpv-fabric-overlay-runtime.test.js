@@ -18197,3 +18197,44 @@ test('레이어 조작은 지속화 재동기를 요청한다', () => {
   assert.notEqual(marker.persistenceResyncRequired, true);
   runtime.destroy();
 });
+
+test('정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지킨다', () => {
+  // 랭크가 늦게 닿아 엉뚱한 층에 꽂힌 획을 제자리로 돌리는 것은 사용자 조작이
+  // 아니다. 구조 조작으로 처리하면 씬을 갈아 끼우면서 그 씬의 획 이력을 걷고
+  // 자기를 가장 최근 되돌리기 항목으로 올린다 — 그러면 다음 Ctrl+Z 가 방금 그은
+  // 획 대신 이 정리를 되돌리고, 그 획의 이력은 이미 사라진 뒤다.
+  const { runtime, canvas, idsByFrame } = makeLayerOpsRuntime();
+  drawStroke(canvas.upperCanvasEl, 8901);
+  const drawnCount = idsByFrame()[24].length;
+  const undoDepthBefore = runtime.getDiagnostics().globalUndoDepth;
+
+  const healed = runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-heal-1',
+    action: 'layer-objects-reorder',
+    objectRanks: [['top-24', 1], ['bottom-24', 0], ['top-30', 1], ['bottom-30', 0]],
+    defaultRank: 0,
+    silent: true
+  });
+  assert.equal(healed.applied, true, JSON.stringify(healed));
+  assert.equal(healed.structural, false, '정규화는 구조 조작이 아니다');
+  assert.deepEqual(idsByFrame()[30], ['bottom-30', 'top-30'], '순서는 바로잡힌다');
+  assert.equal(
+    runtime.getDiagnostics().globalUndoDepth,
+    undoDepthBefore,
+    '되돌리기 깊이가 늘지 않는다'
+  );
+
+  // 다음 되돌리기는 **방금 그은 획**을 되돌린다 — 정리가 아니라.
+  assert.equal(runtime.applyDrawingAction({
+    sessionId: 'runtime-session',
+    actionId: 'layer-heal-undo',
+    action: 'undo'
+  }).applied, true);
+  assert.equal(
+    idsByFrame()[24].length,
+    drawnCount - 1,
+    '방금 그은 획이 되돌아간다(정리가 되돌아가지 않는다)'
+  );
+  runtime.destroy();
+});

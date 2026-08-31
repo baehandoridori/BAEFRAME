@@ -2934,6 +2934,40 @@ function createSessionSceneStore(options = {}) {
     // 홀드 씬은 커밋 씬에서 파생된 사본이라 먼저 걷고 마지막에 다시 만든다.
     dropProvisionalScenes(stableVideoIdentity);
 
+    // **정규화(silent)** 는 사용자 조작이 아니다. 랭크가 늦게 닿아 엉뚱한 층에
+    // 꽂힌 획을 제자리로 돌리는 것뿐이라, 히스토리에 남기면 안 된다. 구조 조작
+    // 경로는 씬을 갈아 끼우면서 그 씬의 획 이력을 걷어내고 자기를 가장 최근
+    // 되돌리기 항목으로 올린다 — 그러면 다음 Ctrl+Z 가 방금 그은 획 대신 이
+    // 정리를 되돌리고, 그 획의 이력은 이미 사라진 뒤다.
+    if (operation === 'layer-objects-reorder' && command.silent === true) {
+      let changed = 0;
+      for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+        const current = [...scene.objects.values()];
+        const next = [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
+        if (!next.some((record, index) => record.id !== current[index].id)) continue;
+        const nextObjects = new Map();
+        for (const record of next) nextObjects.set(record.id, record);
+        // 씬을 갈아 끼우지 않고 **제자리에서** 순서만 바꾼다. 히스토리도 씬
+        // 인스턴스도 그대로 살아 있다.
+        scene.objects = nextObjects;
+        scene.dirty = true;
+        scene.mutationCount += 1;
+        scene.mutationSequence += 1;
+        changed += 1;
+      }
+      rebuildActiveProvisionalScene(stableVideoIdentity);
+      if (changed === 0) return { applied: false, reason: 'no-change' };
+      return {
+        applied: true,
+        structural: false,
+        operation,
+        changedFrames: changed,
+        keyframeSetChanged: false,
+        persistenceResyncRequired: true,
+        ...globalHistoryDepths()
+      };
+    }
+
     const frames = [];
     for (const scene of committedScenesForVideo(stableVideoIdentity)) {
       const current = [...scene.objects.values()];
@@ -3745,6 +3779,11 @@ function createFabricOverlayRuntime(options = {}) {
   // 획이 다음 프레임에서 되살아난다.
   let hiddenObjectIds = new Set();
   let lockedObjectIds = new Set();
+  // 렌더러가 레이어 조작을 처리하는 중에는 팔레트의 되돌리기·다시하기를 잠근다.
+  // 그 버튼은 런타임 안에서 바로 돌아 컨트롤러 큐 밖에 있다 — 조작이 정착하기
+  // 전에 눌리면 씬만 먼저 되돌아가고, 뒤늦은 커밋이 이미 되돌린 씬 위에 모델을
+  // 얹어 둘이 어긋난다.
+  let layerHistoryBusy = false;
   // 활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다(레거시와 같다).
   let activeLayerDrawable = true;
   let currentSession = null;
@@ -9376,6 +9415,8 @@ function createFabricOverlayRuntime(options = {}) {
       // 되돌린 경우에는 **씬만** 돌아가므로, 짝 id 를 렌더러에 알려 레이어
       // 목록·배정과 수화 문서까지 함께 맞춘다.
       const runLocalHistory = action => {
+        // 레이어 조작이 정착하는 동안에는 받지 않는다(위 layerHistoryBusy 참조).
+        if (layerHistoryBusy) return;
         const result = applyDrawingAction({
           sessionId: currentSession?.sessionId,
           actionId: createId(action),
@@ -9808,6 +9849,7 @@ function createFabricOverlayRuntime(options = {}) {
     hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
+    layerHistoryBusy = command.layerHistoryBusy === true;
     // 겹침 순서 랭크도 같은 경로로 온다. 새 획이 **그리는 순간** 제 층에 들어가야
     // 레이어를 옮겨 맞춰 놓은 순서가 다음 획 하나에 어긋나지 않는다.
     if (command.objectRanks !== undefined) {
@@ -9937,7 +9979,9 @@ function createFabricOverlayRuntime(options = {}) {
         operation: action,
         objectIds: command.objectIds,
         objectRanks: command.objectRanks,
-        defaultRank: command.defaultRank
+        defaultRank: command.defaultRank,
+        // 정규화는 히스토리를 남기지 않는다(사용자 조작이 아니다).
+        silent: command.silent === true
       });
       if (!result.applied) {
         actionDeduper.release?.(command.actionId);

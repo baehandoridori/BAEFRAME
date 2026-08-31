@@ -3362,6 +3362,8 @@ class MPVOverlayHost {
         !validIds(request.hiddenObjectIds) ||
         !validIds(request.lockedObjectIds) ||
         typeof request.activeLayerDrawable !== 'boolean' ||
+        (request.layerHistoryBusy !== undefined &&
+          typeof request.layerHistoryBusy !== 'boolean') ||
         // 겹침 순서 랭크도 같은 메시지로 올 수 있다. **선택 항목**이다 — 없으면
         // 오버레이가 들고 있던 랭크를 그대로 쓴다. 오면 레이어 조작과 같은
         // 형식으로 검사한다.
@@ -3557,6 +3559,10 @@ class MPVOverlayHost {
       }
       return { objectIds: [...ids] };
     }
+    if (request.action === 'layer-objects-reorder' && request.silent !== undefined &&
+        typeof request.silent !== 'boolean') {
+      return null;
+    }
     if (request.action === 'layer-objects-reorder') {
       // 랭크는 **쌍 배열**로 온다. 객체로 받으면 페이로드를 소스에 끼울 때
       // 객체 리터럴이 되어 `"__proto__"` id 의 랭크가 사라진다.
@@ -3585,6 +3591,8 @@ class MPVOverlayHost {
       return {
         objectRanks: normalized,
         defaultRank: request.defaultRank,
+        // 정규화(silent)는 히스토리를 남기지 않는다.
+        ...(request.silent === true ? { silent: true } : {}),
         ...(request.activeLayerRank === undefined
           ? {}
           : { activeLayerRank: request.activeLayerRank })

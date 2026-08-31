@@ -15875,6 +15875,32 @@ void main() {
             };
           }
           dropProvisionalScenes(stableVideoIdentity);
+          if (operation === "layer-objects-reorder" && command.silent === true) {
+            let changed = 0;
+            for (const scene of committedScenesForVideo(stableVideoIdentity)) {
+              const current = [...scene.objects.values()];
+              const next = [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
+              if (!next.some((record, index) => record.id !== current[index].id)) continue;
+              const nextObjects = /* @__PURE__ */ new Map();
+              for (const record of next) nextObjects.set(record.id, record);
+              scene.objects = nextObjects;
+              scene.dirty = true;
+              scene.mutationCount += 1;
+              scene.mutationSequence += 1;
+              changed += 1;
+            }
+            rebuildActiveProvisionalScene(stableVideoIdentity);
+            if (changed === 0) return { applied: false, reason: "no-change" };
+            return {
+              applied: true,
+              structural: false,
+              operation,
+              changedFrames: changed,
+              keyframeSetChanged: false,
+              persistenceResyncRequired: true,
+              ...globalHistoryDepths()
+            };
+          }
           const frames = [];
           for (const scene of committedScenesForVideo(stableVideoIdentity)) {
             const current = [...scene.objects.values()];
@@ -16511,6 +16537,7 @@ void main() {
         let inputEnabled = false;
         let hiddenObjectIds = /* @__PURE__ */ new Set();
         let lockedObjectIds = /* @__PURE__ */ new Set();
+        let layerHistoryBusy = false;
         let activeLayerDrawable = true;
         let currentSession = null;
         let passiveDisplaySession = null;
@@ -21352,6 +21379,7 @@ void main() {
             addDomListener(eraserModeControls.pixelButton, "click", () => setEraserMode("pixel"));
             addDomListener(eraserModeControls.strokeButton, "click", () => setEraserMode("stroke"));
             const runLocalHistory = (action) => {
+              if (layerHistoryBusy) return;
               const result = applyDrawingAction({
                 sessionId: currentSession?.sessionId,
                 actionId: createId(action),
@@ -21714,6 +21742,7 @@ void main() {
           hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
+          layerHistoryBusy = command.layerHistoryBusy === true;
           if (command.objectRanks !== void 0) {
             sceneStore.setObjectRanks?.({
               objectRanks: command.objectRanks,
@@ -21796,7 +21825,9 @@ void main() {
               operation: action,
               objectIds: command.objectIds,
               objectRanks: command.objectRanks,
-              defaultRank: command.defaultRank
+              defaultRank: command.defaultRank,
+              // 정규화는 히스토리를 남기지 않는다(사용자 조작이 아니다).
+              silent: command.silent === true
             });
             if (!result2.applied) {
               actionDeduper.release?.(command.actionId);

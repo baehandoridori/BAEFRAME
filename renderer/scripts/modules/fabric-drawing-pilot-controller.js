@@ -1368,7 +1368,7 @@ export function createFabricDrawingPilotController(options = {}) {
   // 다시 불러 줘야 숨긴 레이어가 되살아나지 않는다.
   async function sendLayerView({
     hiddenObjectIds, lockedObjectIds, activeLayerDrawable,
-    objectRanks, defaultRank, activeLayerRank
+    objectRanks, defaultRank, activeLayerRank, layerHistoryBusy
   }) {
     // passive 투영에서도 보낸다 — 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
     // 동안에도 숨겨져 있어야 한다. 그때는 세션이 없으므로 영상 정체로 맞춘다.
@@ -1387,6 +1387,8 @@ export function createFabricDrawingPilotController(options = {}) {
       hiddenObjectIds: [...hiddenObjectIds],
       lockedObjectIds: [...lockedObjectIds],
       activeLayerDrawable: activeLayerDrawable !== false,
+      // 레이어 조작이 정착하는 동안 팔레트 되돌리기를 잠근다.
+      layerHistoryBusy: layerHistoryBusy === true,
       // 겹침 순서 랭크. 새 획이 그리는 순간 제 층에 들어가게 한다.
       objectRanks: Array.isArray(objectRanks) ? objectRanks : [],
       defaultRank: Number.isInteger(defaultRank) ? defaultRank : 0,

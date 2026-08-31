@@ -8076,6 +8076,8 @@ async function initApp() {
       lockedObjectIds,
       // 활성 레이어가 숨겨졌거나 잠겼으면 오버레이가 새 획을 받지 않는다(레거시와 같다).
       activeLayerDrawable: !(active?.visible === false || active?.locked === true),
+      // 레이어 조작이 도는 동안에는 팔레트 되돌리기를 잠근다.
+      layerHistoryBusy: fabricPilotLayerOperationDepth > 0,
       // 겹침 순서 랭크를 함께 보낸다 — 새 획이 그리는 순간 제 층에 들어가야
       // 레이어를 옮겨 맞춰 놓은 순서가 다음 획 하나에 어긋나지 않는다.
       ...fabricPilotObjectRanks(state)
@@ -8126,10 +8128,20 @@ async function initApp() {
   // 나중 것의 반영이 앞선 것의 결과를 덮는다 — 지운 레이어가 그림 없이
   // 되살아난다.
   let fabricPilotLayerOperationQueue = Promise.resolve();
+  // 큐가 도는 동안에는 오버레이 팔레트의 되돌리기·다시하기를 잠근다. 그 버튼은
+  // 런타임 안에서 바로 돌아 이 큐 밖에 있다 — 조작이 정착하기 전에 눌리면 씬만
+  // 먼저 되돌아가고, 뒤늦은 커밋이 이미 되돌린 씬 위에 모델을 얹어 어긋난다.
+  let fabricPilotLayerOperationDepth = 0;
 
   function queueFabricPilotLayerOperation(task) {
+    fabricPilotLayerOperationDepth += 1;
+    if (fabricPilotLayerOperationDepth === 1) pushFabricPilotLayerView();
+    const settle = () => {
+      fabricPilotLayerOperationDepth -= 1;
+      if (fabricPilotLayerOperationDepth === 0) pushFabricPilotLayerView();
+    };
     const operation = fabricPilotLayerOperationQueue.then(task, task);
-    fabricPilotLayerOperationQueue = operation.then(() => {}, () => {});
+    fabricPilotLayerOperationQueue = operation.then(settle, settle);
     return operation;
   }
 
@@ -8177,8 +8189,13 @@ async function initApp() {
     const ranks = fabricPilotObjectRanks(state);
     const document = fabricDrawingPersistenceStore.getHydrationDocument?.();
     if (!fabricPilotLayerOrderInverted(document, ranks)) return;
-    void queueFabricPilotLayerOperation(
-      () => sendFabricPilotLayerOperation('layer-objects-reorder', ranks)
+    // **정규화는 사용자 조작이 아니다.** 히스토리에 남기면 다음 Ctrl+Z 가 방금
+    // 그은 획 대신 이 정리를 되돌리고, 구조 조작 경로가 그 획의 이력까지 걷는다.
+    void queueFabricPilotLayerOperation(() =>
+      fabricDrawingPilotController.applyDrawingActionDetailed(
+        'layer-objects-reorder',
+        { ...ranks, silent: true }
+      )
     );
   }
 

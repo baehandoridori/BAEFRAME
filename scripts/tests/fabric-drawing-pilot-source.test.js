@@ -3210,3 +3210,48 @@ test('팔레트 버튼으로 되돌린 레이어 조작도 모델을 함께 되�
     '다시하기 버튼도 같다'
   );
 });
+
+test('레이어 조작이 도는 동안 팔레트 되돌리기를 잠근다', () => {
+  // 팔레트 버튼은 런타임 안에서 바로 돌아 컨트롤러 큐 밖에 있다. 조작이 정착하기
+  // 전에 눌리면 씬만 먼저 되돌아가고, 뒤늦은 커밋이 이미 되돌린 씬 위에 모델을
+  // 얹어 둘이 어긋난다.
+  assert.ok(
+    appSource.includes('layerHistoryBusy: fabricPilotLayerOperationDepth > 0'),
+    '렌더러가 큐 깊이를 실어 보낸다'
+  );
+  const queueStart = appSource.indexOf('function queueFabricPilotLayerOperation(task) {');
+  assert.ok(queueStart > 0, '레이어 조작 큐를 찾지 못했다');
+  const queueSource = appSource.slice(queueStart, queueStart + 700);
+  assert.ok(
+    queueSource.includes('fabricPilotLayerOperationDepth += 1;') &&
+      queueSource.includes('fabricPilotLayerOperationDepth -= 1;'),
+    '큐가 깊이를 세고 되돌린다'
+  );
+  assert.ok(
+    queueSource.includes('pushFabricPilotLayerView();'),
+    '깊이가 바뀌면 오버레이에 알린다'
+  );
+
+  // 런타임은 그 동안 버튼을 받지 않는다.
+  const localStart = fabricRuntimeSource.indexOf('const runLocalHistory = action => {');
+  assert.ok(localStart > 0, '팔레트 히스토리 처리기를 찾지 못했다');
+  assert.ok(
+    fabricRuntimeSource.slice(localStart, localStart + 400)
+      .includes('if (layerHistoryBusy) return;'),
+    '잠겨 있으면 받지 않는다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes('layerHistoryBusy = command.layerHistoryBusy === true;'),
+    '잠금 상태는 레이어 뷰로 온다'
+  );
+});
+
+test('정규화는 사용자 히스토리에 남기지 않는다', () => {
+  const start = appSource.indexOf('function healFabricPilotLayerOrder() {');
+  assert.ok(start > 0, '정규화 함수를 찾지 못했다');
+  const source = appSource.slice(start, start + 900);
+  assert.ok(
+    source.includes('{ ...ranks, silent: true }'),
+    '정규화는 silent 로 보낸다'
+  );
+});
