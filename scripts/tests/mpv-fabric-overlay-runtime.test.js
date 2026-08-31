@@ -16942,13 +16942,15 @@ test('구조 조작은 지속화 한도와 그림자 수명주기를 지킨다',
   // 코덱스 2차 지적 3건. 셋 다 화면에서는 성공한 것처럼 보이지만 저장이나
   // 진단이 뒤에서 망가지는 유형이다.
   const dropped = [];
+  const activated = [];
   // 하네스는 씬 스토어를 따로 만든다 — 스토어 옵션은 sceneStoreOptions 로 가야 한다.
   const harness = createRealFabricHarness({
     sceneStoreOptions: {
       // 몇 프레임만 복제해도 한도에 닿도록 좁힌다.
       maxBytes: 24_000,
       drawingEngineObserver: {
-        dropScenes(ids) { dropped.push(...ids); }
+        dropScenes(ids) { dropped.push(...ids); },
+        activateScene(descriptor) { activated.push(descriptor.sceneInstanceId); }
       }
     }
   });
@@ -17002,19 +17004,33 @@ test('구조 조작은 지속화 한도와 그림자 수명주기를 지킨다',
 
     // ── 그림자 수명주기 ──
     // 프레임을 밀면 씬의 targetFrame 이 바뀐다. sceneInstanceId 를 그대로 두면
-    // 다음 활성화에서 seed-signature-changed 로 격리된다. 버리고 새로 심어야 한다.
+    // 다음 활성화에서 seed-signature-changed 로 격리된다. 옮긴 씬은 옛 인스턴스를
+    // 버리고 새 id 로 다시 심어야 한다.
+    //
+    // 첫 밀기에는 임시 씬이 없으므로 옮긴 커밋 씬 하나만 버려진다. 두 번째부터는
+    // 직전 재구성이 만든 임시 씬까지 둘이 버려진다. 재등록을 빼면 커밋 씬 쪽이
+    // 사라져 첫 밀기에서 아무것도 버려지지 않는다.
     dropped.length = 0;
     assert.equal(act('frame-insert').applied, true);
     assert.ok(harness.sceneStore.getSceneSnapshot('real-fabric-video', 1), '씬이 한 칸 밀렸다');
-    assert.equal(dropped.length, 1, '옮긴 씬의 옛 인스턴스를 그림자에서 버린다');
-    const firstDrop = dropped[0];
+    assert.equal(dropped.length, 1, '옮긴 커밋 씬을 버린다');
+    const firstDrops = new Set(dropped);
 
-    // 한 번 더 밀면 **새로 받은** 인스턴스가 버려져야 한다. 같은 id 가 다시
-    // 나오면 재등록이 아니라 그냥 알림만 보낸 것이다.
+    // 한 번 더 밀면 **전부 새로 받은** 인스턴스가 버려져야 한다. 같은 id 가 다시
+    // 나오면 재등록이 아니라 알림만 보낸 것이다.
     dropped.length = 0;
     assert.equal(act('frame-insert').applied, true);
-    assert.equal(dropped.length, 1);
-    assert.notEqual(dropped[0], firstDrop, '옮긴 씬은 새 인스턴스 id 로 다시 심는다');
+    assert.equal(dropped.length, 2);
+    for (const id of dropped) {
+      assert.equal(firstDrops.has(id), false, '옮긴 씬은 새 인스턴스 id 로 다시 심는다');
+    }
+
+    // 구조 조작이 만든 활성 씬은 그림자에 **심어야** 한다. 심지 않으면 다음
+    // 변이의 enqueueTransition 이 false 를 돌려주고 그림자가 영구히 뒤처진다.
+    activated.length = 0;
+    gotoFrame(30);
+    assert.equal(act('frame-insert-blank-keyframe').applied, true);
+    assert.ok(activated.length > 0, '새로 만든 활성 씬을 그림자에 심는다');
 
     // ── 복제 한도 ──
     // Shift+3 은 홀드 내용을 통째로 복제한다. 여러 프레임에 반복하면 문서가

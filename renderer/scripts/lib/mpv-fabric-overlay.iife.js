@@ -15497,19 +15497,22 @@ void main() {
           if (scenes.has(key)) {
             activeSession.sceneKey = key;
             activeSession.sourceFrame = null;
+            notifySceneActivation(scenes.get(key), activeSession);
             return;
           }
           const held = heldSceneAt(stableVideoIdentity, frame);
-          const scene = materializeSceneAt(stableVideoIdentity, frame, held ? {
+          const blueprint = held && canMaterializeScene(stableVideoIdentity, sceneBlueprint(held)) ? {
             sourceWidth: held.sourceWidth,
             sourceHeight: held.sourceHeight,
             objects: [...held.objects.values()].map(clonePlain)
-          } : { objects: [] });
+          } : { objects: [] };
+          const scene = materializeSceneAt(stableVideoIdentity, frame, blueprint);
           scene.provisional = true;
           scene.provisionalSourceFrame = held ? held.targetFrame : null;
           scene.dirty = false;
           activeSession.sceneKey = scene.key;
           activeSession.sourceFrame = held ? held.targetFrame : null;
+          notifySceneActivation(scene, activeSession);
         }
         function heldSceneAt(stableVideoIdentity, frame) {
           let held = null;
@@ -15563,6 +15566,7 @@ void main() {
             order.redo = order.redo.filter((entry) => entry.sceneKey !== scene.key);
           }
           scenes.delete(scene.key);
+          notifyScenesDropped([scene.sceneInstanceId]);
           return {
             targetFrame: scene.targetFrame,
             sourceWidth: scene.sourceWidth,

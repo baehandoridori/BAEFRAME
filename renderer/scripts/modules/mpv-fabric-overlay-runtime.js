@@ -2412,21 +2412,29 @@ function createSessionSceneStore(options = {}) {
     if (scenes.has(key)) {
       activeSession.sceneKey = key;
       activeSession.sourceFrame = null;
+      // 새로 만든 씬은 그림자가 모른다. 심지 않으면 다음 변이의 enqueueTransition
+      // 이 false 를 돌려주고 그림자가 영구히 뒤처진다.
+      notifySceneActivation(scenes.get(key), activeSession);
       return;
     }
     const held = heldSceneAt(stableVideoIdentity, frame);
-    const scene = materializeSceneAt(stableVideoIdentity, frame, held
+    // 홀드 사본도 문서 용량을 먹는다. 큰 키프레임을 옮긴 직후 앞 키프레임까지
+    // 홀드하면 커밋 씬 둘 + 사본 하나가 되어 한도를 넘고, 이후 편집이 전부
+    // 거절된다. 담을 수 없으면 **빈 임시 씬**으로 둔다 — 커밋된 그림은 그대로다.
+    const blueprint = held && canMaterializeScene(stableVideoIdentity, sceneBlueprint(held))
       ? {
         sourceWidth: held.sourceWidth,
         sourceHeight: held.sourceHeight,
         objects: [...held.objects.values()].map(clonePlain)
       }
-      : { objects: [] });
+      : { objects: [] };
+    const scene = materializeSceneAt(stableVideoIdentity, frame, blueprint);
     scene.provisional = true;
     scene.provisionalSourceFrame = held ? held.targetFrame : null;
     scene.dirty = false;
     activeSession.sceneKey = scene.key;
     activeSession.sourceFrame = held ? held.targetFrame : null;
+    notifySceneActivation(scene, activeSession);
   }
 
   // 프레임 F 에서 실제로 보이는 씬. 키프레임이 없으면 홀드 중인 직전 키프레임이다.
@@ -2489,6 +2497,9 @@ function createSessionSceneStore(options = {}) {
       order.redo = order.redo.filter(entry => entry.sceneKey !== scene.key);
     }
     scenes.delete(scene.key);
+    // 알리지 않으면 그림자 어댑터가 사라진 씬의 문서를 계속 들고 있어, 씬 수와
+    // 패리티 진단에 **존재하지 않는 그림**이 섞인다.
+    notifyScenesDropped([scene.sceneInstanceId]);
     return {
       targetFrame: scene.targetFrame,
       sourceWidth: scene.sourceWidth,
