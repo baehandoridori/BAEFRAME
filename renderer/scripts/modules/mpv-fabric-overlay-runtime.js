@@ -9533,7 +9533,28 @@ function createFabricOverlayRuntime(options = {}) {
     hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
-    // 부분 선택으로 스테이징된 조각은 **새 id 의 프록시**다. 제한 집합은 원본
+    // ── 이미 시작한 작업은 자기 목록을 들고 간다 ─────────────────────────
+    //
+    // 집합을 바꾸는 것만으로는 **앞으로의 판정**만 달라진다. 진행 중이거나
+    // 세워 둔 작업은 각자 대상 목록을 이미 쥐고 있어 그대로 커밋된다.
+    // 아래 네 가지를 모두 물려야 "잠갔는데 바뀌었다" 가 없어진다.
+
+    // (1) 그리는 중. 손을 뗄 때 finalizeActiveStroke·commitShapeGesture 가
+    // 그대로 커밋한다(확정된 pointerdown 재생은 시작 가드도 우회한다).
+    if (!activeLayerDrawable) {
+      cancelPendingPointerdownFrame();
+      if (activeStroke) cancelActiveStroke();
+      if (shapeGesture) cancelShapeGesture();
+    }
+    // (2) 선택을 끄는 중. 선택에서 빼기만 하면 오브젝트가 끌던 자리에 남고,
+    // 뒤이어 오는 object:modified 가 그 이동을 저장한다.
+    if ((selectGesture || transformStart) && (
+      selectionIds().some(id => isLayerRestricted(id)) ||
+      isLayerRestricted(transformStart?.target?.__baeframeObjectId)
+    )) {
+      cancelSelectInteraction();
+    }
+    // (3) 세워 둔 조각. 부분 선택은 조각을 **새 id 의 프록시**로 세운다. 제한 집합은 원본
     // id 로 되어 있어 아래 selectionIds() 필터를 그대로 빠져나간다. 그대로 두면
     // 잠긴 뒤에도 커밋이 원본을 자르거나 지운다 — 통째로 물린다.
     const pendingRestricted = pendingLassoSelection && (
@@ -9543,7 +9564,7 @@ function createFabricOverlayRuntime(options = {}) {
         .some(id => isLayerRestricted(id))
     );
     if (pendingRestricted) abortPendingLassoSelection();
-    // 진행 중인 지우개도 마찬가지다. 이미 erasedIds 에 들어간 id 는 새 집합이
+    // (4) 지우는 중. 이미 erasedIds 에 들어간 id 는 새 집합이
     // 막지 못하고, 손을 뗄 때 finalizeStrokeEraseGesture 가 그대로 지운다 —
     // 드래그 도중에 그 레이어를 숨기거나 잠갔는데도 지워진다.
     // 제스처를 물리면 미리보기로 감춘 획도 함께 되살아난다.

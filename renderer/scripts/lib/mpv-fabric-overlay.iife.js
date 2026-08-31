@@ -21521,6 +21521,14 @@ void main() {
           hiddenObjectIds = toLayerViewObjectIds(command.hiddenObjectIds);
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
+          if (!activeLayerDrawable) {
+            cancelPendingPointerdownFrame();
+            if (activeStroke) cancelActiveStroke();
+            if (shapeGesture) cancelShapeGesture();
+          }
+          if ((selectGesture || transformStart) && (selectionIds().some((id) => isLayerRestricted(id)) || isLayerRestricted(transformStart?.target?.__baeframeObjectId))) {
+            cancelSelectInteraction();
+          }
           const pendingRestricted = pendingLassoSelection && ((pendingLassoSelection.replacements || []).some((entry) => isLayerRestricted(entry.removeId)) || [...pendingLassoSelection.selectedPersistedIds || []].some((id) => isLayerRestricted(id)));
           if (pendingRestricted) abortPendingLassoSelection();
           if (strokeEraseGesture && [...strokeEraseGesture.erasedIds].some((id) => isLayerRestricted(id))) {

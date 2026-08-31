@@ -17722,3 +17722,99 @@ test('드래그 중인 지우개는 그 레이어가 잠기면 물린다', async
     await harness.destroy();
   }
 });
+
+test('그리는 도중 활성 레이어를 잠그면 그 획은 커밋되지 않는다', () => {
+  // activeLayerDrawable 을 내려도 **이미 시작한** 획은 손을 뗄 때 그대로
+  // 커밋된다. 그러면 방금 잠근 레이어에 새 오브젝트가 들어간다.
+  const { runtime, canvas } = makeLayerViewRuntime();
+  const baseline = runtime.getDiagnostics().mutationCount;
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 8850,
+    pointerType: 'pen',
+    button: 0,
+    clientX: 10,
+    clientY: 20,
+    pressure: 0.2,
+    timeStamp: 1
+  });
+  canvas.upperCanvasEl.dispatch('pointermove', {
+    pointerId: 8850,
+    pointerType: 'pen',
+    clientX: 30,
+    clientY: 40,
+    pressure: 0.8,
+    timeStamp: 2
+  });
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: false
+  }).accepted, true);
+
+  canvas.upperCanvasEl.dispatch('pointerup', {
+    pointerId: 8850,
+    pointerType: 'pen',
+    clientX: 50,
+    clientY: 60,
+    pressure: 0.6,
+    timeStamp: 3
+  });
+
+  assert.equal(
+    runtime.getDiagnostics().mutationCount,
+    baseline,
+    '그리던 획이 커밋되지 않는다'
+  );
+  runtime.destroy();
+});
+
+test('선택을 끄는 도중 그 레이어를 잠그면 이동을 되돌린다', () => {
+  // 선택에서 빼기만 하면 오브젝트가 끌던 자리에 남고, 뒤이어 오는
+  // object:modified 가 그 이동을 저장한다 — 잠근 뒤에 옮겨진 채로 저장된다.
+  const harness = createHistoryHarness();
+  const { canvas, runtime, sceneStore } = harness;
+  drawStroke(canvas.upperCanvasEl, 8860);
+  assert.equal(runtime.updateDrawingTool({
+    sessionId: 'runtime-session',
+    toolRevision: 1,
+    tool: 'select'
+  }).accepted, true);
+
+  const path = canvas.getObjects()[0];
+  const objectId = path.__baeframeObjectId;
+  canvas.activeObject = path;
+  canvas.activeObjects = [path];
+  canvas.emit('selection:created', { selected: [path] });
+
+  canvas.upperCanvasEl.dispatch('pointerdown', {
+    pointerId: 8861,
+    pointerType: 'mouse',
+    button: 0,
+    clientX: 10,
+    clientY: 10
+  });
+  canvas.emit('before:transform', { transform: { target: path } });
+  path.left = 25;
+
+  assert.equal(runtime.updateDrawingLayerView({
+    sessionId: 'runtime-session',
+    hiddenObjectIds: [],
+    lockedObjectIds: [objectId],
+    activeLayerDrawable: true
+  }).accepted, true);
+
+  assert.equal(path.left, 0, '끌던 오브젝트가 시작 위치로 돌아온다');
+  assert.deepEqual(sceneStore.getActiveSceneSnapshot().selectedObjectIds, []);
+
+  // 늦게 도착한 modified 이벤트도 이동을 저장하지 않는다.
+  canvas.emit('object:modified', { target: path });
+  assert.equal(
+    sceneStore.getActiveSceneSnapshot().objects[0].transform.left,
+    0,
+    '잠근 뒤의 이동은 저장되지 않는다'
+  );
+  runtime.destroy();
+});
