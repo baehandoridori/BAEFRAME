@@ -457,6 +457,16 @@ function mergeDrawingLayers(baseline, local, remote) {
     if (survivor) layers.push(survivor);
   }
 
+  // 상한을 넘으면 정규화가 **뒤에서부터 잘라 낸다.** 양쪽이 각자 추가해 상한을
+  // 넘긴 경우, 잘려 나가는 것이 새 레이어가 아니라 기준선에 있던 레이어일 수
+  // 있고 그러면 그 레이어의 배정이 통째로 버려진다.
+  // 넘칠 때는 **새로 추가된 것부터** 뒤에서 덜어 낸다.
+  while (layers.length > MAX_DRAWING_LAYERS) {
+    const index = layers.findLastIndex(layer => !baseById.has(layer.id));
+    if (index < 0) break;
+    layers.splice(index, 1);
+  }
+
   const liveIds = new Set(layers.map(layer => layer.id));
   const assignments = {};
   const assignmentKeys = new Set([

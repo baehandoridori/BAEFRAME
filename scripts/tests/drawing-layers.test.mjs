@@ -462,3 +462,35 @@ test('양쪽이 다른 자리에 추가해도 합성 순서가 뒤바뀌지 않�
     'X 는 A 와 B 사이에 그대로 남는다'
   );
 });
+
+test('상한을 넘겨도 기존 레이어와 그 배정을 지키다', () => {
+  // 넘칠 때 정규화가 뒤에서부터 자르면, 잘려 나가는 것이 새 레이어가 아니라
+  // 기준선에 있던 레이어일 수 있고 그 배정이 통째로 버려진다.
+  const layersList = [];
+  for (let index = 0; index < MAX_DRAWING_LAYERS - 1; index += 1) {
+    layersList.push({ id: `base-${index}`, name: `기준 ${index}` });
+  }
+  const base = normalizeDrawingLayers({
+    version: 1,
+    layers: layersList,
+    activeLayerId: 'base-0',
+    baseLayerId: `base-${MAX_DRAWING_LAYERS - 2}`,
+    assignments: {}
+  });
+  assert.equal(base.layers.length, MAX_DRAWING_LAYERS - 1);
+  const withArt = assignObject(base, 'obj-1', 'base-0');
+
+  // 양쪽이 각자 하나씩 추가해 상한을 넘긴다.
+  const mine = addLayer(withArt, { id: 'mine-new', name: '내 것' }).state;
+  const theirs = addLayer(withArt, { id: 'theirs-new', name: '남의 것' }).state;
+  const merged = mergeDrawingLayers(withArt, mine, theirs);
+
+  assert.equal(merged.layers.length, MAX_DRAWING_LAYERS, '상한을 지킨다');
+  for (const layer of withArt.layers) {
+    assert.ok(
+      merged.layers.some(candidate => candidate.id === layer.id),
+      `기준선 레이어 ${layer.id} 가 남는다`
+    );
+  }
+  assert.equal(merged.assignments['obj-1'], 'base-0', '기존 배정이 살아남는다');
+});
