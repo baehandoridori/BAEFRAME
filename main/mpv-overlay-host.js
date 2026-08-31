@@ -63,7 +63,16 @@ const HOST_DRAWING_ACTIONS = new Set([
   'delete-selection',
   'clear-session',
   'undo',
-  'redo'
+  'redo',
+  // 프레임·키프레임 구조 조작(레거시 2 / 3 / Shift+2 / Shift+3 / 4 / Ctrl+Alt+C·V).
+  // 저장 스키마는 그대로 두고 키프레임 집합만 바꾼다.
+  'frame-insert-blank-keyframe',
+  'frame-insert',
+  'frame-remove',
+  'keyframe-to-frame',
+  'frame-to-keyframe',
+  'frame-copy',
+  'frame-paste'
 ]);
 const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
 const MAX_MPV_COLLABORATION_STATE_BYTES = 1024 * 1024;
