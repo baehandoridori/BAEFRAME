@@ -16834,11 +16834,34 @@ test('프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바�
       '홀드 중이던 획을 그대로 물려받는다'
     );
 
+    // 4 — 홀드 중인 키프레임 위에서는 키프레임을 지우지 않는다.
+    // 그 그림이 뒤 프레임까지 이어지고 있으므로, 프레임 하나를 지우는 것은
+    // 홀드를 한 칸 줄이는 일이다. 무조건 지우면 그림이 사라진다.
+    // (레거시 DrawingLayer.deleteFrame 의 currentHasHold 규칙)
+    gotoFrame(8);
+    assert.equal(op('frame-to-keyframe').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 3, 5, 8]);
+    gotoFrame(5);
+    assert.equal(op('frame-remove').applied, true);
+    assert.deepEqual(
+      keyframeFrames(),
+      [0, 3, 5, 7],
+      '홀드가 있으면 그 키프레임은 남고 뒤만 당겨진다'
+    );
+
+    // 홀드가 없으면(바로 다음 프레임이 키프레임이면) 그 키프레임을 지운다.
+    gotoFrame(6);
+    assert.equal(op('frame-to-keyframe').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 3, 5, 6, 7]);
+    gotoFrame(5);
+    assert.equal(op('frame-remove').applied, true);
+    assert.deepEqual(keyframeFrames(), [0, 3, 5, 6], '홀드가 없으면 그 키프레임을 지운다');
+
     // Ctrl+Alt+C / V — 프레임 복사·붙여넣기
     assert.equal(op('frame-copy').applied, true);
-    gotoFrame(7);
+    gotoFrame(9);
     assert.equal(op('frame-paste').applied, true);
-    assert.deepEqual(keyframeFrames(), [0, 3, 5, 7]);
+    assert.deepEqual(keyframeFrames(), [0, 3, 5, 6, 9]);
     assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
   } finally {
     await harness.destroy();

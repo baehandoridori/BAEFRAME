@@ -2418,17 +2418,20 @@ function createSessionSceneStore(options = {}) {
       return;
     }
     const held = heldSceneAt(stableVideoIdentity, frame);
-    // 홀드 사본도 문서 용량을 먹는다. 큰 키프레임을 옮긴 직후 앞 키프레임까지
-    // 홀드하면 커밋 씬 둘 + 사본 하나가 되어 한도를 넘고, 이후 편집이 전부
-    // 거절된다. 담을 수 없으면 **빈 임시 씬**으로 둔다 — 커밋된 그림은 그대로다.
-    const blueprint = held && canMaterializeScene(stableVideoIdentity, sceneBlueprint(held))
+    // 홀드 사본은 **언제나 만든다.** 용량이 빠듯하다고 빈 씬으로 두면 캔버스가
+    // 비어 보이고, 갓 만든 임시 씬은 파생을 타지 않으므로(disposable) 다음 획이
+    // 빈 상태 위에 커밋돼 홀드하던 그림이 새 키프레임에서 사라진다.
+    //
+    // 이 사본은 커밋 씬이 아니라 지속화 스냅샷에 들어가지 않는다. 저장 한도를
+    // 위협하지 않고, 재생헤드가 움직이면 사라진다. 메모리 회계가 잠시 소프트
+    // 한도를 넘을 수 있지만 그 초과는 씬 하나 크기로 유계다.
+    const scene = materializeSceneAt(stableVideoIdentity, frame, held
       ? {
         sourceWidth: held.sourceWidth,
         sourceHeight: held.sourceHeight,
         objects: [...held.objects.values()].map(clonePlain)
       }
-      : { objects: [] };
-    const scene = materializeSceneAt(stableVideoIdentity, frame, blueprint);
+      : { objects: [] });
     scene.provisional = true;
     scene.provisionalSourceFrame = held ? held.targetFrame : null;
     scene.dirty = false;
@@ -2670,8 +2673,13 @@ function createSessionSceneStore(options = {}) {
     const totalBytes = () => [...structuralOf(order.undo), ...structuralOf(order.redo)]
       .reduce((sum, entry) => sum + structuralEntryBytes(entry), 0);
     // 오래된 undo 항목부터 버린다. redo 는 이미 새 편집에서 비워지므로 undo 만 본다.
+    // **가장 새 항목은 버리지 않는다.** 그것 하나만으로 예산을 넘더라도, 버리면
+    // 방금 한 파괴적 조작을 되돌릴 수단이 사라지고 Ctrl+Z 가 관계없는 옛 커맨드를
+    // 되돌린다 — 이 스택을 만든 이유가 바로 그것을 막기 위해서였다.
+    // 한 항목의 크기는 문서 한도로 이미 묶여 있으므로 초과분도 유계다.
+    const newest = order.undo.findLast(entry => entry.structural) || null;
     while (structuralOf(order.undo).length > maxHistory || totalBytes() > maxHistoryBytes) {
-      const index = order.undo.findIndex(entry => entry.structural);
+      const index = order.undo.findIndex(entry => entry.structural && entry !== newest);
       if (index < 0) break;
       order.undo.splice(index, 1);
     }
@@ -2814,12 +2822,21 @@ function createSessionSceneStore(options = {}) {
     }
 
     if (operation === 'frame-remove') {
-      const removed = sceneBlueprint(committedAtFrame);
+      // 그 키프레임의 그림이 뒤 프레임까지 **홀드**되고 있으면, 프레임 하나를
+      // 지우는 것은 홀드를 한 칸 줄이는 일이지 키프레임을 없애는 일이 아니다.
+      // 무조건 지우면 그림이 사라지고 앞 키프레임이 드러난다.
+      // 레거시 DrawingLayer.deleteFrame 의 currentHasHold 규칙과 같다.
+      const nextKeyframe = ordered.find(scene => scene.targetFrame > frame) || null;
+      const hasHold = nextKeyframe
+        ? nextKeyframe.targetFrame > frame + 1
+        : (totalFrames === null || frame < totalFrames - 1);
+      const doomed = hasHold ? null : committedAtFrame;
+      const removed = sceneBlueprint(doomed);
       dropProvisionalScenes(stableVideoIdentity);
-      detachScene(committedAtFrame);
+      detachScene(doomed);
       const nextFrameByKey = new Map();
       for (const scene of ordered) {
-        if (scene === committedAtFrame) continue;
+        if (scene === doomed) continue;
         if (scene.targetFrame > frame) nextFrameByKey.set(scene.key, scene.targetFrame - 1);
       }
       rekeyScenes(stableVideoIdentity, nextFrameByKey);

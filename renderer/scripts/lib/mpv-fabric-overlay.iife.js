@@ -15501,12 +15501,11 @@ void main() {
             return;
           }
           const held = heldSceneAt(stableVideoIdentity, frame);
-          const blueprint = held && canMaterializeScene(stableVideoIdentity, sceneBlueprint(held)) ? {
+          const scene = materializeSceneAt(stableVideoIdentity, frame, held ? {
             sourceWidth: held.sourceWidth,
             sourceHeight: held.sourceHeight,
             objects: [...held.objects.values()].map(clonePlain)
-          } : { objects: [] };
-          const scene = materializeSceneAt(stableVideoIdentity, frame, blueprint);
+          } : { objects: [] });
           scene.provisional = true;
           scene.provisionalSourceFrame = held ? held.targetFrame : null;
           scene.dirty = false;
@@ -15688,8 +15687,9 @@ void main() {
         function trimStructuralOrder(order) {
           const structuralOf = (list) => list.filter((entry) => entry.structural);
           const totalBytes = () => [...structuralOf(order.undo), ...structuralOf(order.redo)].reduce((sum, entry) => sum + structuralEntryBytes(entry), 0);
+          const newest = order.undo.findLast((entry) => entry.structural) || null;
           while (structuralOf(order.undo).length > maxHistory || totalBytes() > maxHistoryBytes) {
-            const index = order.undo.findIndex((entry) => entry.structural);
+            const index = order.undo.findIndex((entry) => entry.structural && entry !== newest);
             if (index < 0) break;
             order.undo.splice(index, 1);
           }
@@ -15816,12 +15816,15 @@ void main() {
             };
           }
           if (operation === "frame-remove") {
-            const removed = sceneBlueprint(committedAtFrame);
+            const nextKeyframe = ordered.find((scene) => scene.targetFrame > frame) || null;
+            const hasHold = nextKeyframe ? nextKeyframe.targetFrame > frame + 1 : totalFrames === null || frame < totalFrames - 1;
+            const doomed = hasHold ? null : committedAtFrame;
+            const removed = sceneBlueprint(doomed);
             dropProvisionalScenes(stableVideoIdentity);
-            detachScene(committedAtFrame);
+            detachScene(doomed);
             const nextFrameByKey2 = /* @__PURE__ */ new Map();
             for (const scene of ordered) {
-              if (scene === committedAtFrame) continue;
+              if (scene === doomed) continue;
               if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
             }
             rekeyScenes(stableVideoIdentity, nextFrameByKey2);
