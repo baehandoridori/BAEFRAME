@@ -85,8 +85,23 @@ function normalizeColor(value, index) {
     : LAYER_COLORS[index % LAYER_COLORS.length];
 }
 
+// 만든 순간을 가리키는 표식. **이것 없이는 구분할 수 없는 경우가 있다** —
+// 두 인스턴스가 같은 id·같은 메타데이터로 각자 레이어를 만들면, 데이터만 보고는
+// "한 레이어를 양쪽이 보고 있는 것" 과 "각자 만든 다른 레이어" 를 가릴 수 없다.
+// 병합의 충돌 판정에만 쓰고 필드 병합에서는 뺀다(신원이지 값이 아니다).
+// 기본 레이어에는 붙이지 않는다 — 붙이면 "기본 상태" 판정이 매번 어긋난다.
+function makeOrigin() {
+  const uuid = globalThis.crypto?.randomUUID?.();
+  return typeof uuid === 'string' ? uuid : null;
+}
+
 function makeLayer(options = {}, index = 0) {
+  const origin = typeof options.origin === 'string' && options.origin.length > 0 &&
+    options.origin.length <= MAX_LAYER_ID_LENGTH
+    ? options.origin
+    : null;
   return {
+    ...(origin === null ? {} : { origin }),
     id: isLayerId(options.id) ? options.id : `drawing-layer-${index + 1}`,
     name: normalizeName(options.name, `드로잉 ${index + 1}`),
     // 저장된 값이 boolean 이 아니면 **보이고 잠기지 않은 쪽**이 안전한 기본이다.
@@ -229,6 +244,7 @@ function addLayer(state, options = {}) {
   const index = current.layers.findIndex(layer => layer.id === current.activeLayerId);
   const ordinal = current.layers.length;
   const layer = makeLayer({
+    origin: makeOrigin(),
     ...options,
     // **개수에서 id 를 유도하면 안 된다.** 셋 만들고 하나 지운 뒤 또 만들면
     // 살아남은 레이어와 같은 id 가 나오고, 정규화가 중복을 버려 개수가 늘지
@@ -388,7 +404,11 @@ function mergeDrawingLayers(baseline, local, remote) {
     .filter(layer => {
       if (baseById.has(layer.id)) return false;
       const mineLayer = mine.layers.find(candidate => candidate.id === layer.id);
-      return Boolean(mineLayer) && !sameFields(mineLayer, layer);
+      if (!mineLayer) return false;
+      // 표식이 둘 다 있고 다르면 **각자 만든 다른 레이어**다. 메타데이터가
+      // 똑같아도 마찬가지다 — 표식이 그것을 가른다.
+      if (mineLayer.origin && layer.origin) return mineLayer.origin !== layer.origin;
+      return !sameFields(mineLayer, layer);
     })
     .map(layer => layer.id);
   if (collisions.length > 0) {
@@ -433,6 +453,8 @@ function mergeDrawingLayers(baseline, local, remote) {
     if (!baseLayer) return myLayer;
     const merged = { ...theirLayer };
     for (const field of Object.keys(myLayer)) {
+      // 신원은 값이 아니다. 병합 대상에서 뺀다.
+      if (field === 'origin') continue;
       if (myLayer[field] !== baseLayer[field]) merged[field] = myLayer[field];
     }
     return merged;

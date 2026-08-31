@@ -516,3 +516,54 @@ test('양쪽이 같은 id 로 각자 만든 레이어를 둘 다 살린다', () 
     '옮겨간 레이어로 배정도 함께 간다'
   );
 });
+
+test('같은 id·같은 메타데이터로 각자 만든 레이어도 구분한다', () => {
+  // 데이터만 보고는 "한 레이어를 양쪽이 보는 것" 과 "각자 만든 다른 레이어" 를
+  // 가릴 수 없다. 생성 표식(origin)이 그것을 가른다.
+  const base = createDefaultDrawingLayers();
+  const mine = addLayer(base, { id: 'same', name: '같은 이름' }).state;
+  const theirs = addLayer(base, { id: 'same', name: '같은 이름' }).state;
+  const mineLayer = findLayer(mine, 'same');
+  const theirLayer = findLayer(theirs, 'same');
+  assert.ok(mineLayer.origin && theirLayer.origin, '만든 레이어에는 표식이 붙는다');
+  assert.notEqual(mineLayer.origin, theirLayer.origin, '표식은 서로 다르다');
+
+  // 각자 다른 오브젝트를 올렸다.
+  const mineArt = assignObject(mine, 'obj-mine', 'same');
+  const theirArt = assignObject(theirs, 'obj-theirs', 'same');
+
+  const merged = mergeDrawingLayers(base, mineArt, theirArt);
+  assert.equal(merged.layers.length, 3, '두 레이어가 각각 남는다');
+  assert.notEqual(
+    merged.assignments['obj-mine'],
+    merged.assignments['obj-theirs'],
+    '두 오브젝트가 한 레이어로 합쳐지지 않는다'
+  );
+
+  // 기본 레이어에는 표식을 붙이지 않는다 — 붙이면 "기본 상태" 판정이 어긋난다.
+  assert.equal(base.layers[0].origin, undefined);
+  assert.equal(serializeDrawingLayers(createDefaultDrawingLayers()), undefined);
+});
+
+test('표식이 같으면 이름이 달라져도 한 레이어다', () => {
+  // 한쪽이 추가한 레이어가 디스크에 반영된 뒤 한쪽이 이름을 바꾸면, 필드는
+  // 달라지지만 **같은 레이어**다. 표식을 보지 않고 필드만 견주면 충돌로 오인해
+  // 레이어가 하나 더 생긴다.
+  const base = createDefaultDrawingLayers();
+  const added = addLayer(base, { name: '원래 이름' });
+  const shared = added.state;
+  const sharedId = added.added.id;
+
+  // 양쪽이 같은 레이어를 보고 있고, 나만 이름을 바꿨다.
+  const mine = normalizeDrawingLayers({
+    ...shared,
+    layers: shared.layers.map(layer => (
+      layer.id === sharedId ? { ...layer, name: '바꾼 이름' } : layer
+    ))
+  });
+
+  // 기준선에는 아직 그 레이어가 없다(= 추가가 아직 기준선에 반영되지 않았다).
+  const merged = mergeDrawingLayers(base, mine, shared);
+  assert.equal(merged.layers.length, 2, '레이어가 하나 더 생기지 않는다');
+  assert.equal(findLayer(merged, sharedId).name, '바꾼 이름');
+});
