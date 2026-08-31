@@ -20,7 +20,6 @@ import {
   addLayer as addDrawingLayerState,
   assignObject as assignDrawingObjectLayer,
   layerIdForObject as drawingLayerIdForObject,
-  moveLayerByOffset as moveDrawingLayerState,
   pruneAssignments as pruneDrawingLayerAssignments,
   selectLayerByOffset as selectDrawingLayerState
 } from '../../shared/drawing-layers.js';
@@ -2198,10 +2197,16 @@ async function initApp() {
 
   async function moveFabricPilotKeyframes(keyframes, frameDelta, anchor) {
     if (fabricPilotKeyframeMoveInProgress || _isProcessingUndo) return false;
-    const moves = keyframes.map(keyframe => ({
-      fromFrame: keyframe.fromFrame,
-      toFrame: keyframe.toFrame
-    }));
+    // 레이어마다 행이 있으므로 **같은 문서 프레임**을 여러 행에서 고를 수 있다.
+    // 그대로 넘기면 moveKeyframes 가 중복 출발 프레임을 거절해 드래그가 통째로
+    // 무산된다. 문서 프레임 기준으로 접는다.
+    const seenFromFrames = new Set();
+    const moves = [];
+    for (const keyframe of keyframes) {
+      if (seenFromFrames.has(keyframe.fromFrame)) continue;
+      seenFromFrames.add(keyframe.fromFrame);
+      moves.push({ fromFrame: keyframe.fromFrame, toFrame: keyframe.toFrame });
+    }
     fabricPilotKeyframeMoveInProgress = true;
     const globalHistoryMutation = beginGlobalHistoryMutation();
     if (!globalHistoryMutation) {
@@ -6334,9 +6339,7 @@ async function initApp() {
   const FABRIC_PILOT_LAYER_ACTIONS = new Set([
     'drawingLayerAdd',
     'drawingLayerSelectUp',
-    'drawingLayerSelectDown',
-    'drawingLayerMoveUp',
-    'drawingLayerMoveDown'
+    'drawingLayerSelectDown'
   ]);
 
   function shouldBlockFabricDrawingLegacyShortcut(event) {
@@ -7908,8 +7911,11 @@ async function initApp() {
       if (knownDrawingObjectIds.has(id)) continue;
       next = assignDrawingObjectLayer(next, id, next.activeLayerId);
     }
-    // 사라진 오브젝트의 배정을 남겨 두면 저장 파일이 계속 자란다.
-    next = pruneDrawingLayerAssignments(next, [...live]);
+    // **여기서 걷어내면 안 된다.** 획을 지운 뒤 실행취소로 되살리면, 배정이
+    // 이미 사라져 그 획이 "새 오브젝트" 로 보이고 그때의 활성 레이어로 옮겨간다.
+    // 사용자가 지우고 → 레이어를 바꾸고 → 되돌리면 그림이 다른 레이어로 이동한
+    // 채 저장된다. 정리는 문서를 새로 심을 때(seed) 한 번만 한다 — 그 시점에는
+    // 그 영상의 실행취소 이력도 이미 사라진 뒤다.
     knownDrawingObjectIds = live;
     reviewDataManager.setDrawingLayers(next);
   }
@@ -7925,6 +7931,11 @@ async function initApp() {
     const live = collectFabricDrawingObjectIds();
     knownDrawingObjectIds = live || new Set();
     drawingObjectIdsSeeded = live !== null;
+    // 사라진 오브젝트의 배정은 여기서만 걷는다. 실행취소로 되살아날 수 있는
+    // 동안에는 남겨 둬야 한다(위 주석 참조).
+    if (live) {reviewDataManager.setDrawingLayers(
+      pruneDrawingLayerAssignments(reviewDataManager.getDrawingLayers(), [...live])
+    );}
   }
 
   function resetFabricDrawingLayerAssignmentTracking() {
@@ -14425,18 +14436,6 @@ async function initApp() {
         const next = selectDrawingLayerState(state, selectOffset);
         const active = next.layers.find(layer => layer.id === next.activeLayerId);
         applyDrawingLayerStateChange(next, active ? `선택: ${active.name}` : null);
-        return;
-      }
-      const moveOffset = userSettings.matchShortcut('drawingLayerMoveUp', e)
-        ? -1
-        : (userSettings.matchShortcut('drawingLayerMoveDown', e) ? 1 : 0);
-      if (moveOffset !== 0) {
-        e.preventDefault();
-        const state = reviewDataManager.getDrawingLayers();
-        applyDrawingLayerStateChange(
-          moveDrawingLayerState(state, moveOffset),
-          moveOffset < 0 ? '레이어를 위로 옮김' : '레이어를 아래로 옮김'
-        );
         return;
       }
     }

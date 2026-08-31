@@ -589,7 +589,14 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   const layerActionNames = [...appSource
     .slice(layerSetStart, appSource.indexOf(']);', layerSetStart))
     .matchAll(/'([^']+)'/g)].map(match => match[1]);
-  assert.equal(layerActionNames.length, 5, '오버레이 없이 완결되는 레이어 액션 5종');
+  // 이동은 오버레이가 오브젝트 순서를 바꿔야 의미가 있어 여기 없다 —
+  // 메타데이터만 바꾸면 타임라인 행만 움직이고 화면의 겹침 순서는 그대로다.
+  assert.equal(layerActionNames.length, 3, '오버레이 없이 완결되는 레이어 액션 3종');
+  assert.equal(
+    layerActionNames.some(action => action.startsWith('drawingLayerMove')),
+    false,
+    '레이어 이동은 오버레이 배선 없이 넣지 않는다'
+  );
   const layerActions = new Set(layerActionNames);
   let engaged = false;
   let projectionOwned = true;
@@ -654,11 +661,8 @@ test('passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단
   for (const action of layerActionNames) {
     assert.equal(shouldBlock({ action, key: '', code: '' }), false, `레이어 조작: ${action}`);
   }
-  assert.equal(
-    shouldBlock({ action: 'drawingLayerMoveUp', key: 'x', code: 'KeyX', ctrlKey: true, shiftKey: true }),
-    false,
-    'Ctrl+Shift+X 는 chord 차단보다 먼저 통과해야 한다'
-  );
+  // 남은 3종은 Ctrl 조합이 아니라 chord 차단에 걸리지 않는다. 이동(Ctrl+Shift+X·C)이
+  // 들어오는 PR 에서는 그 순서를 다시 확인해야 한다.
   assert.equal(shouldBlock({ action: 'drawingToolSelect', key: '', code: '' }), true);
 });
 
@@ -2198,4 +2202,36 @@ test('the outline section sits under the colour palette in the brush panel', () 
   );
   // style 에 필드를 늘리면 구버전 앱이 문서를 통째로 거부한다.
   assert.doesNotMatch(fabricRuntimeSource, /outlineWidth:/);
+});
+
+test('같은 문서 프레임을 여러 행에서 골라도 이동이 무산되지 않는다', () => {
+  // 레이어마다 행이 있으므로 같은 프레임을 두 행에서 고를 수 있다. 그대로 넘기면
+  // moveKeyframes 가 중복 출발 프레임을 거절해 드래그가 통째로 무산된다.
+  const start = appSource.indexOf('async function moveFabricPilotKeyframes(');
+  assert.ok(start > 0, '이동 함수를 찾지 못했다');
+  const head = appSource.slice(start, start + 900);
+  assert.ok(head.includes('const seenFromFrames = new Set();'), '문서 프레임 기준으로 접는다');
+  assert.ok(
+    head.includes('if (seenFromFrames.has(keyframe.fromFrame)) continue;'),
+    '중복 출발 프레임을 건너뛴다'
+  );
+});
+
+test('삭제된 획의 레이어 배정은 실행취소가 되살릴 때까지 남는다', () => {
+  // 즉시 걷어내면 되살아난 획이 "새 오브젝트" 로 보여 그때의 활성 레이어로
+  // 옮겨간다. 지우고 → 레이어를 바꾸고 → 되돌리면 그림이 다른 레이어로 이동한
+  // 채 저장된다.
+  const syncStart = appSource.indexOf('function syncFabricDrawingLayerAssignments() {');
+  const syncEnd = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking', syncStart);
+  const syncSource = appSource.slice(syncStart, syncEnd);
+  assert.equal(
+    syncSource.includes('pruneDrawingLayerAssignments'),
+    false,
+    '변이 알림에서는 걷지 않는다'
+  );
+  const seedStart = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking() {');
+  assert.ok(
+    appSource.slice(seedStart, seedStart + 800).includes('pruneDrawingLayerAssignments'),
+    '문서를 새로 심을 때만 걷는다'
+  );
 });
