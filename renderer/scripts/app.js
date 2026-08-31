@@ -8189,6 +8189,17 @@ async function initApp() {
     return next;
   }
 
+  // 이동은 **상대 offset** 으로 다시 계산한다. 기다리는 동안 레이어가 추가되면
+  // 그때 계산해 둔 절대 인덱스는 같은 이동을 재현하지 못한다 — [A,B] 에서 A 를
+  // 아래로 옮기면 인덱스 1 인데, 위에 N 이 끼어 [N,A,B] 가 되면 인덱스 1 은
+  // 제자리라 아무 일도 일어나지 않는다(오버레이는 이미 순서를 바꾼 뒤다).
+  function moveDrawingLayerByOffsetOn(state, layerId, offset) {
+    const from = state.layers.findIndex(layer => layer.id === layerId);
+    if (from < 0) return state;
+    const next = Math.max(0, Math.min(state.layers.length - 1, from + offset));
+    return moveDrawingLayerToIndex(state, layerId, next);
+  }
+
   function moveDrawingLayerToIndex(state, layerId, index) {
     const layers = [...state.layers];
     const from = layers.findIndex(layer => layer.id === layerId);
@@ -14752,6 +14763,11 @@ async function initApp() {
           userSettings.matchShortcut('drawingLayerDelete', e)) {
         e.preventDefault();
         void queueFabricPilotLayerOperation(async () => {
+          // 방금 그은 획의 배정은 **다음 애니메이션 프레임**에 붙는다. 그 전에
+          // 이 단축키가 눌리면 그 획이 아직 기준 레이어로 보여 지울 목록에서
+          // 빠진다 — 레이어는 사라지는데 그 획만 기준 레이어에 남는다.
+          // 먼저 흘려보낸다(같은 계산을 다시 해도 안전하다).
+          syncFabricDrawingLayerAssignments();
           const state = reviewDataManager.getDrawingLayers();
           const live = collectFabricDrawingObjectIds();
           const layer = findDrawingLayer(state, state.activeLayerId);
@@ -14810,6 +14826,8 @@ async function initApp() {
       if (isFabricDrawingPilotEngaged() && moveOffset !== 0) {
         e.preventDefault();
         void queueFabricPilotLayerOperation(async () => {
+          // 순서 랭크도 배정을 보고 계산한다 — 삭제와 같은 이유로 먼저 흘려보낸다.
+          syncFabricDrawingLayerAssignments();
           const state = reviewDataManager.getDrawingLayers();
           const next = moveDrawingLayerState(state, moveOffset);
           const moved = next.layers.some((layer, index) => layer.id !== state.layers[index]?.id);
@@ -14828,15 +14846,15 @@ async function initApp() {
             return;
           }
           const movedId = next.activeLayerId;
-          const fromIndex = state.layers.findIndex(candidate => candidate.id === movedId);
-          const toIndex = next.layers.findIndex(candidate => candidate.id === movedId);
           rememberFabricPilotLayerHistory(sent.commandId, {
-            revert: current => moveDrawingLayerToIndex(current, movedId, fromIndex),
-            apply: current => moveDrawingLayerToIndex(current, movedId, toIndex)
+            revert: current => moveDrawingLayerByOffsetOn(current, movedId, -moveOffset),
+            apply: current => moveDrawingLayerByOffsetOn(current, movedId, moveOffset)
           });
-          // 커밋도 지금 상태 위에서 다시 옮긴다.
+          // 커밋도 지금 상태 위에서 **같은 상대 이동**을 다시 한다.
           applyDrawingLayerStateChange(
-            moveDrawingLayerToIndex(reviewDataManager.getDrawingLayers(), movedId, toIndex),
+            moveDrawingLayerByOffsetOn(
+              reviewDataManager.getDrawingLayers(), movedId, moveOffset
+            ),
             layer ? `레이어 이동: ${layer.name}` : null
           );
         });

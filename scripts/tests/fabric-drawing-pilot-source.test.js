@@ -2845,13 +2845,21 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     source.includes('fabricPilotObjectRanks(next)'),
     '이동은 옮긴 뒤의 랭크를 보낸다'
   );
+  // 이동은 **상대 offset** 으로 기억하고 다시 계산한다. 절대 인덱스는 기다리는
+  // 동안 레이어가 추가되면 같은 이동을 재현하지 못한다.
   assert.ok(
-    source.includes('revert: current => moveDrawingLayerToIndex(current, movedId, fromIndex)'),
-    '이동도 델타로 기억한다'
+    source.includes('revert: current => moveDrawingLayerByOffsetOn(current, movedId, -moveOffset)'),
+    '이동은 상대 offset 델타로 기억한다'
   );
   assert.ok(
-    source.includes('moveDrawingLayerToIndex(reviewDataManager.getDrawingLayers(), movedId, toIndex)'),
-    '커밋도 지금 상태 위에서 다시 옮긴다'
+    source.includes('reviewDataManager.getDrawingLayers(), movedId, moveOffset'),
+    '커밋도 지금 상태 위에서 같은 상대 이동을 한다'
+  );
+  // 방금 그은 획의 배정은 다음 프레임에 붙는다 — 먼저 흘려보내지 않으면 그 획이
+  // 지울 목록에서 빠져 레이어만 사라지고 획은 기준 레이어에 남는다.
+  assert.ok(
+    source.includes('syncFabricDrawingLayerAssignments();'),
+    '계산 전에 배정 동기화를 흘려보낸다'
   );
 });
 
