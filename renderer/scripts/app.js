@@ -26,6 +26,7 @@ import {
   layerIdForObject as drawingLayerIdForObject,
   pruneAssignments as pruneDrawingLayerAssignments,
   moveLayerByOffset as moveDrawingLayerState,
+  normalizeDrawingLayers as normalizeDrawingLayersState,
   selectLayerByOffset as selectDrawingLayerState,
   toggleLayerLock as toggleDrawingLayerLockState,
   toggleLayerVisibility as toggleDrawingLayerVisibilityState
@@ -8151,9 +8152,13 @@ async function initApp() {
   const fabricPilotLayerHistory = new Map();
   const FABRIC_PILOT_LAYER_HISTORY_LIMIT = 64;
 
-  function rememberFabricPilotLayerHistory(commandId, before, after) {
-    if (typeof commandId !== 'string' || commandId.length === 0) return;
-    fabricPilotLayerHistory.set(commandId, { before, after });
+  // **스냅샷이 아니라 델타를 기억한다.** 모델 전체를 기억해 두었다가 나중에
+  // 통째로 덮으면, 그 사이에 사용자가 한 다른 편집(레이어 추가·표시 토글 등)이
+  // 조용히 사라진다. 되돌릴 때·다시 할 때 **그때의 현재 상태 위에** 이 조작만
+  // 뒤집거나 다시 얹는다.
+  function rememberFabricPilotLayerHistory(commandId, delta) {
+    if (typeof commandId !== 'string' || commandId.length === 0 || !delta) return;
+    fabricPilotLayerHistory.set(commandId, delta);
     while (fabricPilotLayerHistory.size > FABRIC_PILOT_LAYER_HISTORY_LIMIT) {
       const oldest = fabricPilotLayerHistory.keys().next().value;
       fabricPilotLayerHistory.delete(oldest);
@@ -8161,12 +8166,36 @@ async function initApp() {
   }
 
   function applyFabricPilotLayerHistory({ commandId, direction } = {}) {
-    const entry = fabricPilotLayerHistory.get(commandId);
-    if (!entry) return;
-    const next = direction === 'undo' ? entry.before : entry.after;
+    const delta = fabricPilotLayerHistory.get(commandId);
+    if (!delta) return;
+    const step = direction === 'undo' ? delta.revert : delta.apply;
+    if (typeof step !== 'function') return;
+    const next = step(reviewDataManager.getDrawingLayers());
     if (!next || !reviewDataManager.setDrawingLayers(next)) return;
     renderActiveDrawingLayers();
     pushFabricPilotLayerView();
+  }
+
+  // 레이어를 원래 자리에 되돌려 넣는다. 배정은 shared 의 assignObject 로 하나씩
+  // 넣는다 — 임의의 오브젝트 id 가 키라서 객체 병합으로는 안전하지 않다.
+  function insertDrawingLayerAt(state, layer, index, assignedObjectIds) {
+    if (!layer || state.layers.some(candidate => candidate.id === layer.id)) return state;
+    const layers = [...state.layers];
+    layers.splice(Math.max(0, Math.min(index, layers.length)), 0, layer);
+    let next = normalizeDrawingLayersState({ ...state, layers });
+    for (const objectId of assignedObjectIds || []) {
+      next = assignDrawingObjectLayer(next, objectId, layer.id);
+    }
+    return next;
+  }
+
+  function moveDrawingLayerToIndex(state, layerId, index) {
+    const layers = [...state.layers];
+    const from = layers.findIndex(layer => layer.id === layerId);
+    if (from < 0 || index < 0 || index >= layers.length || from === index) return state;
+    const [moved] = layers.splice(from, 1);
+    layers.splice(index, 0, moved);
+    return normalizeDrawingLayersState({ ...state, layers });
   }
 
   function pushFabricPilotLayerView() {
@@ -14744,11 +14773,33 @@ async function initApp() {
             showToast('레이어의 그림을 지우지 못했습니다', 'error');
             return;
           }
-          // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌린다.
-          rememberFabricPilotLayerHistory(sent.commandId, state, result.state);
+          // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 짝 id 로 함께 되돌리되
+          // **델타로** 기억한다 — 스냅샷을 통째로 덮으면 그 사이의 다른 편집이
+          // 사라진다.
+          const removedIndex = state.layers.findIndex(
+            candidate => candidate.id === state.activeLayerId
+          );
+          const removedLayer = layer;
+          const removedIds = [...result.removedObjectIds];
+          const layerId = state.activeLayerId;
+          rememberFabricPilotLayerHistory(sent.commandId, {
+            revert: current => insertDrawingLayerAt(
+              current, removedLayer, removedIndex, removedIds
+            ),
+            apply: current => deleteDrawingLayerState(
+              current, layerId, [...(collectFabricDrawingObjectIds() || [])]
+            ).state
+          });
+          // 커밋도 **지금** 상태 위에서 다시 계산한다. 기다리는 동안 다른 편집이
+          // 들어왔을 수 있다.
+          const committed = deleteDrawingLayerState(
+            reviewDataManager.getDrawingLayers(),
+            layerId,
+            [...(collectFabricDrawingObjectIds() || [])]
+          );
           applyDrawingLayerStateChange(
-            result.state,
-            layer ? `레이어 삭제: ${layer.name}` : null
+            committed.state,
+            removedLayer ? `레이어 삭제: ${removedLayer.name}` : null
           );
         });
         return;
@@ -14776,9 +14827,16 @@ async function initApp() {
             showToast('레이어 순서를 바꾸지 못했습니다', 'error');
             return;
           }
-          rememberFabricPilotLayerHistory(sent.commandId, state, next);
+          const movedId = next.activeLayerId;
+          const fromIndex = state.layers.findIndex(candidate => candidate.id === movedId);
+          const toIndex = next.layers.findIndex(candidate => candidate.id === movedId);
+          rememberFabricPilotLayerHistory(sent.commandId, {
+            revert: current => moveDrawingLayerToIndex(current, movedId, fromIndex),
+            apply: current => moveDrawingLayerToIndex(current, movedId, toIndex)
+          });
+          // 커밋도 지금 상태 위에서 다시 옮긴다.
           applyDrawingLayerStateChange(
-            next,
+            moveDrawingLayerToIndex(reviewDataManager.getDrawingLayers(), movedId, toIndex),
             layer ? `레이어 이동: ${layer.name}` : null
           );
         });

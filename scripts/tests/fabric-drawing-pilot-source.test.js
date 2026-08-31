@@ -2798,7 +2798,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 반대로 하면 모델에는 없는데 그림은 남는 상태가 저장된다.
   const start = appSource.indexOf("userSettings.matchShortcut('drawingLayerDelete', e)");
   assert.ok(start > 0, '삭제 단축키를 찾지 못했다');
-  const source = appSource.slice(start, start + 2600);
+  const source = appSource.slice(start, start + 4200);
 
   assert.ok(
     source.includes('isFabricDrawingPilotEngaged() &&'),
@@ -2830,18 +2830,28 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 두 조작 모두 짝 id 로 레이어 모델의 before/after 를 기억해야 실행취소가
   // 씬과 모델을 함께 되돌린다.
   assert.ok(
-    source.includes('rememberFabricPilotLayerHistory(sent.commandId, state, result.state)'),
-    '삭제는 모델의 before/after 를 짝 id 로 기억한다'
+    source.includes('revert: current => insertDrawingLayerAt('),
+    '삭제는 되돌리기를 **델타**로 기억한다(스냅샷을 통째로 덮지 않는다)'
   );
-  const reorderCall = source.indexOf("'layer-objects-reorder'");
-  assert.ok(reorderCall > modelCall, '이동도 같은 분기 안에 있다');
+  assert.ok(
+    source.includes('deleteDrawingLayerState(\n            reviewDataManager.getDrawingLayers(),'),
+    '커밋도 지금 상태 위에서 다시 계산한다'
+  );
+  assert.ok(
+    source.indexOf("'layer-objects-reorder'") > 0,
+    '이동도 같은 분기 안에 있다'
+  );
   assert.ok(
     source.includes('fabricPilotObjectRanks(next)'),
     '이동은 옮긴 뒤의 랭크를 보낸다'
   );
   assert.ok(
-    source.includes('rememberFabricPilotLayerHistory(sent.commandId, state, next)'),
-    '이동도 모델의 before/after 를 짝 id 로 기억한다'
+    source.includes('revert: current => moveDrawingLayerToIndex(current, movedId, fromIndex)'),
+    '이동도 델타로 기억한다'
+  );
+  assert.ok(
+    source.includes('moveDrawingLayerToIndex(reviewDataManager.getDrawingLayers(), movedId, toIndex)'),
+    '커밋도 지금 상태 위에서 다시 옮긴다'
   );
 });
 
@@ -2899,19 +2909,17 @@ test('레이어 히스토리 예산은 프레임마다의 스냅샷을 모두 �
   assert.equal(multiFrame, 280, '프레임마다의 스냅샷을 모두 센다');
 });
 
-test('레이어 모델은 짝 id 로 씬과 함께 되돌아간다', () => {
-  // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 렌더러 쪽에 있어서, 짝을 짓지
-  // 않으면 삭제를 되돌렸을 때 그림만 살아나 기준 레이어로 떨어지고, 이동을
-  // 되돌렸을 때 겹침 순서만 돌아오고 목록은 옮긴 채로 남는다.
-  const start = appSource.indexOf('function rememberFabricPilotLayerHistory(');
-  assert.ok(start > 0, '레이어 히스토리 기억 함수를 찾지 못했다');
-  const end = appSource.indexOf('function pushFabricPilotLayerView() {', start);
-  assert.ok(end > start, '레이어 히스토리 구간의 끝을 찾지 못했다');
+test('레이어 모델은 짝 id 로 씬과 함께 되돌아가되 그 사이의 편집을 지킨다', () => {
+  // 오버레이는 씬만 되돌린다. 레이어 목록·배정은 렌더러 쪽에 있어서 짝을 지어야
+  // 하는데, **스냅샷을 통째로 덮으면** 그 사이에 사용자가 한 다른 편집이 조용히
+  // 사라진다. 델타를 지금 상태 위에 얹는다.
   const declaration = appSource.indexOf('const fabricPilotLayerHistory = new Map();');
-  assert.ok(declaration > 0 && declaration < start, '히스토리 보관소 선언을 찾지 못했다');
+  assert.ok(declaration > 0, '히스토리 보관소 선언을 찾지 못했다');
+  const end = appSource.indexOf('function insertDrawingLayerAt(', declaration);
+  assert.ok(end > declaration, '히스토리 구간의 끝을 찾지 못했다');
   const source = appSource.slice(declaration, end);
 
-  let layerState = { id: 'after' };
+  let layerState = { edits: ['base'] };
   let rendered = 0;
   let pushed = 0;
   const harness = new Function(
@@ -2922,20 +2930,36 @@ test('레이어 모델은 짝 id 로 씬과 함께 되돌아간다', () => {
       'return { remember: rememberFabricPilotLayerHistory, apply: applyFabricPilotLayerHistory };'
   )(
     {
+      getDrawingLayers: () => layerState,
       setDrawingLayers: next => { layerState = next; return true; }
     },
     () => { rendered += 1; },
     () => { pushed += 1; }
   );
 
-  harness.remember('layer-op:v:1', { id: 'before' }, { id: 'after' });
+  harness.remember('layer-op:v:1', {
+    revert: current => ({ edits: [...current.edits, 'reverted'] }),
+    apply: current => ({ edits: [...current.edits, 'applied'] })
+  });
+
+  // 조작 뒤에 사용자가 다른 편집을 했다.
+  layerState = { edits: ['base', 'user-added-layer'] };
+
   harness.apply({ commandId: 'layer-op:v:1', direction: 'undo' });
-  assert.deepEqual(layerState, { id: 'before' }, '실행취소는 조작 전 모델로 돌린다');
+  assert.deepEqual(
+    layerState.edits,
+    ['base', 'user-added-layer', 'reverted'],
+    '되돌림은 그 사이의 편집 위에 얹힌다'
+  );
   assert.equal(rendered, 1);
   assert.equal(pushed, 1, '되돌린 모델로 집합·랭크도 다시 보낸다');
 
   harness.apply({ commandId: 'layer-op:v:1', direction: 'redo' });
-  assert.deepEqual(layerState, { id: 'after' }, '재실행은 조작 후 모델로 돌린다');
+  assert.deepEqual(
+    layerState.edits,
+    ['base', 'user-added-layer', 'reverted', 'applied'],
+    '다시 하기도 지금 상태 위에 얹힌다'
+  );
 
   // 모르는 짝 id 는 아무것도 하지 않는다.
   const beforeUnknown = rendered;
@@ -2944,11 +2968,11 @@ test('레이어 모델은 짝 id 로 씬과 함께 되돌아간다', () => {
 
   // 오래된 항목은 상한에서 버린다.
   for (let index = 0; index < 70; index += 1) {
-    harness.remember(`layer-op:v:bulk-${index}`, { id: 'b' }, { id: 'a' });
+    harness.remember(`layer-op:v:bulk-${index}`, { revert: c => c, apply: c => c });
   }
-  layerState = { id: 'after' };
+  const settled = layerState;
   harness.apply({ commandId: 'layer-op:v:1', direction: 'undo' });
-  assert.deepEqual(layerState, { id: 'after' }, '상한을 넘은 옛 항목은 버려진다');
+  assert.equal(layerState, settled, '상한을 넘은 옛 항목은 버려진다');
 });
 
 test('씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다', () => {
