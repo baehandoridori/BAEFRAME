@@ -17818,3 +17818,37 @@ test('선택을 끄는 도중 그 레이어를 잠그면 이동을 되돌린다'
   );
   runtime.destroy();
 });
+
+test('활성 레이어가 잠기면 다른 레이어를 담은 지우개도 물린다', async () => {
+  // pointerdown 가드가 "그릴 수 없으면 지울 수도 없다" 로 잡는다. 드래그 도중
+  // 잠긴 경우만 예외로 두면, 큐가 다른(제한되지 않은) 레이어의 획만 담았을 때
+  // 손을 떼면서 그대로 지워져 규칙이 어긋난다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8870);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 8871;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+
+    // 지울 대상은 제한하지 않는다 — 활성 레이어만 잠근다.
+    assert.equal(harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [],
+      activeLayerDrawable: false
+    }).accepted, true);
+
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '활성 레이어가 잠기면 큐에 있던 것도 지워지지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});

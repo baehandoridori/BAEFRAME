@@ -21531,7 +21531,7 @@ void main() {
           }
           const pendingRestricted = pendingLassoSelection && ((pendingLassoSelection.replacements || []).some((entry) => isLayerRestricted(entry.removeId)) || [...pendingLassoSelection.selectedPersistedIds || []].some((id) => isLayerRestricted(id)));
           if (pendingRestricted) abortPendingLassoSelection();
-          if (strokeEraseGesture && [...strokeEraseGesture.erasedIds].some((id) => isLayerRestricted(id))) {
+          if (strokeEraseGesture && (!activeLayerDrawable || [...strokeEraseGesture.erasedIds].some((id) => isLayerRestricted(id)))) {
             cancelStrokeEraseGesture();
           }
           const selected = selectionIds();

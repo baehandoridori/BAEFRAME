@@ -884,8 +884,22 @@ test('파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬�
   );
   assert.equal(layer.keyframes[0].isEmpty, false);
   assert.equal(layer.keyframes[1].isEmpty, true);
-  assert.equal(layer.locked, true);
+  // 행의 잠금은 **레이어 모델의 실제 값**이다. 고정값을 넣으면 Ctrl+2 로 풀어도
+  // 헤더가 계속 잠긴 것으로 보인다. 마커를 옮길 수 있는지는 별개다.
+  assert.equal(layer.locked, false, '모델이 안 잠겼으면 행도 안 잠긴다');
   assert.equal(layer.timelineKeyframesMovable, true);
+
+  projectionLayerState.layers[0].locked = true;
+  try {
+    assert.equal(getProjection()[0].locked, true, '모델이 잠기면 행도 잠긴다');
+    assert.equal(
+      getProjection()[0].timelineKeyframesMovable,
+      true,
+      '잠금과 마커 이동 가능 여부는 따로 간다'
+    );
+  } finally {
+    projectionLayerState.layers[0].locked = false;
+  }
 });
 
 test('Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸고 선택과 전역 undo를 갱신한다', async () => {

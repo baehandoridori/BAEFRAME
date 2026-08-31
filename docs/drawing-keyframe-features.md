@@ -98,7 +98,7 @@
 | 마커 클릭 선택 | 가능 | **가능** (시각 확인용) |
 | 마커 드래그 이동 | 가능 | **불가** — `locked: true` + `_isKeyframeLayerMovable` |
 | `Delete` 삭제 | 가능 | **불가** — `deleteSelectedOrCurrentKeyframes`가 투영 존재 시 `return false` |
-| 눈 / 자물쇠 버튼 | 표시 | **CSS로 숨김** |
+| 눈 / 자물쇠 버튼 | 표시 | **CSS로 숨김** (상태 자체는 레이어 모델의 실제 값이다 — 행의 `locked` 는 마커 이동 가능 여부와 별개다) |
 | 우클릭 레이어 설정 | 가능 | **핸들러 미등록** |
 
 ### 3.2 레거시 `drawings` 데이터의 읽기 전용 투영

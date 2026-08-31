@@ -9568,8 +9568,13 @@ function createFabricOverlayRuntime(options = {}) {
     // 막지 못하고, 손을 뗄 때 finalizeStrokeEraseGesture 가 그대로 지운다 —
     // 드래그 도중에 그 레이어를 숨기거나 잠갔는데도 지워진다.
     // 제스처를 물리면 미리보기로 감춘 획도 함께 되살아난다.
-    if (strokeEraseGesture &&
-        [...strokeEraseGesture.erasedIds].some(id => isLayerRestricted(id))) {
+    // 활성 레이어가 제한되면 큐가 비었든 다른 레이어를 담았든 물린다 —
+    // pointerdown 가드가 "그릴 수 없으면 지울 수도 없다" 로 잡고 있는데,
+    // 드래그 도중 잠긴 경우만 예외로 두면 규칙이 어긋난다.
+    if (strokeEraseGesture && (
+      !activeLayerDrawable ||
+      [...strokeEraseGesture.erasedIds].some(id => isLayerRestricted(id))
+    )) {
       cancelStrokeEraseGesture();
     }
     // 이미 선택돼 있던 획이 숨겨지거나 잠기면 **선택에서 뺀다.** 남겨 두면

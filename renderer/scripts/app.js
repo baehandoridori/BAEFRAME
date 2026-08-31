@@ -6644,8 +6644,11 @@ async function initApp() {
           name: layer.name,
           color: layer.color,
           visible: layer.visible !== false,
-          // 타임라인에서 마커를 직접 편집하는 경로는 아직 열지 않는다.
-          locked: true,
+          // **레이어 모델의 실제 잠금 상태**다. 고정값을 넣으면 Ctrl+2 로 풀어도
+          // 헤더가 계속 잠긴 것으로 보여 화면과 모델이 어긋난다.
+          // 마커를 옮길 수 있는지는 timelineKeyframesMovable 이 따로 정한다
+          // (timeline.js 의 _isKeyframeLayerMovable) — 두 개념은 다르다.
+          locked: layer.locked === true,
           timelineKeyframesMovable: true,
           active: layer.id === layerState.activeLayerId,
           opacity: 1,
