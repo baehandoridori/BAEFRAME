@@ -14859,7 +14859,14 @@ async function initApp() {
             candidate => candidate.id === state.activeLayerId
           );
           const removedLayer = layer;
-          const removedIds = [...result.removedObjectIds];
+          // **지운 레이어를 가리키던 배정 전부**를 되돌린다. 지워진 획의 배정은
+          // 실행취소를 위해 남겨 두므로(pruneAssignments 는 문서를 새로 심을 때만
+          // 돈다), 살아 있는 id 만 되돌리면 그 획을 나중에 되살렸을 때 배정이
+          // 없어 기준 레이어로 떨어진다 — everSeen 때문에 다시 붙지도 않는다.
+          const retainedIds = Object.entries(state.assignments || {})
+            .filter(([, assignedLayerId]) => assignedLayerId === state.activeLayerId)
+            .map(([objectId]) => objectId);
+          const removedIds = [...new Set([...result.removedObjectIds, ...retainedIds])];
           const layerId = state.activeLayerId;
           // 되돌릴 자리는 **이웃 정체**로 잡는다(숫자 인덱스는 그 사이 추가에
           // 흔들린다). 기준 레이어였는지도 함께 기억한다.

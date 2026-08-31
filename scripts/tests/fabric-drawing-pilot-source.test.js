@@ -2842,6 +2842,16 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     source.includes('wasBase: state.baseLayerId === layerId'),
     '기준 레이어였는지도 기억한다'
   );
+  // 지워진 획의 배정은 실행취소를 위해 남아 있다. 살아 있는 id 만 되돌리면 그
+  // 획을 나중에 되살렸을 때 배정이 없어 기준 레이어로 떨어진다.
+  assert.ok(
+    source.includes('.filter(([, assignedLayerId]) => assignedLayerId === state.activeLayerId)'),
+    '지운 레이어를 가리키던 배정을 모두 모은다'
+  );
+  assert.ok(
+    source.includes('[...new Set([...result.removedObjectIds, ...retainedIds])]'),
+    '살아 있는 id 와 합쳐 되돌린다'
+  );
   assert.ok(
     source.includes('deleteDrawingLayerState(\n            reviewDataManager.getDrawingLayers(),'),
     '커밋도 지금 상태 위에서 다시 계산한다'
