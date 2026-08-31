@@ -25,6 +25,7 @@ import {
 import {
   DRAWING_LAYERS_ROOT_KEY,
   createDefaultDrawingLayers,
+  isSupportedDrawingLayersVersion,
   mergeDrawingLayers,
   normalizeDrawingLayers,
   serializeDrawingLayers
@@ -930,6 +931,7 @@ export class ReviewDataManager extends EventTarget {
     this._drawingLayers = createDefaultDrawingLayers();
     this._drawingLayersDirty = false;
     this._drawingLayersBaseline = createDefaultDrawingLayers();
+    this._drawingLayersUnsupported = false;
     this._fabricDrawingPersistenceContext = {};
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
@@ -2653,6 +2655,16 @@ export class ReviewDataManager extends EventTarget {
     //   - 로컬 변경이 있으면 채택하면 안 된다. 방금 만든 레이어가 되돌아간다.
     //   - 로컬 변경이 없으면 채택해야 한다. 안 하면 다른 인스턴스가 올린 레이어
     //     변경을 무관한 저장이 조용히 지운다.
+    // 다룰 수 없는 판은 손대지 않는다. 정규화하면 기본값으로 접히고, 그 뒤 무관한
+    // 저장이 키를 지워 미래 데이터가 사라진다.
+    this._drawingLayersUnsupported =
+      !isSupportedDrawingLayersVersion(this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]);
+    if (this._drawingLayersUnsupported) {
+      this._drawingLayers = createDefaultDrawingLayers();
+      this._drawingLayersBaseline = this._drawingLayers;
+      this._drawingLayersDirty = false;
+      return true;
+    }
     const incomingLayers = normalizeDrawingLayers(
       this._opaqueRootFields[DRAWING_LAYERS_ROOT_KEY]
     );
@@ -2870,10 +2882,13 @@ export class ReviewDataManager extends EventTarget {
 
     // 기본 상태면 키 자체를 만들지 않는다. 레이어를 쓰지 않은 파일에 빈 구조를
     // 심어 저장 diff 를 늘릴 이유가 없다.
-    const serializedLayers = serializeDrawingLayers(this._drawingLayers);
     const opaqueRoot = { ...this._opaqueRootFields };
-    if (serializedLayers === undefined) delete opaqueRoot[DRAWING_LAYERS_ROOT_KEY];
-    else opaqueRoot[DRAWING_LAYERS_ROOT_KEY] = serializedLayers;
+    // 다룰 수 없는 판이면 원본을 그대로 둔다 — 지우지도 덮지도 않는다.
+    if (this._drawingLayersUnsupported !== true) {
+      const serializedLayers = serializeDrawingLayers(this._drawingLayers);
+      if (serializedLayers === undefined) delete opaqueRoot[DRAWING_LAYERS_ROOT_KEY];
+      else opaqueRoot[DRAWING_LAYERS_ROOT_KEY] = serializedLayers;
+    }
     this._opaqueRootFields = opaqueRoot;
 
     return mergeBframeRoot(opaqueRoot, knownRoot);
@@ -3200,7 +3215,8 @@ export class ReviewDataManager extends EventTarget {
     // 자동 저장 타이머가 hasUnsavedChanges 로 걸러지고, 영상 전환 전 저장도
     // 건너뛰어져 사용자의 레이어 작업이 조용히 사라진다.
     // 기본 상태면 serializeDrawingLayers 가 undefined 를 돌려주므로 그걸로 잰다.
-    const hasDrawingLayers = serializeDrawingLayers(this._drawingLayers) !== undefined;
+    const hasDrawingLayers = this._drawingLayersUnsupported !== true &&
+      serializeDrawingLayers(this._drawingLayers) !== undefined;
     return hasComments || hasDrawings || hasFabricDrawings ||
       hasHighlights || hasCompositionLayers || hasManualVersions || hasDrawingLayers;
   }

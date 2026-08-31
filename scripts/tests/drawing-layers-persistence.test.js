@@ -331,3 +331,29 @@ test('레이어만 바꾼 것도 저장할 내용으로 센다', async () => {
   manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers(), { name: '새 레이어' }).state);
   assert.equal(manager.hasSubstantiveContent(), true, '레이어를 만들면 내용이 있다');
 });
+
+test('다룰 수 없는 판의 레이어 데이터는 손대지 않는다', async () => {
+  // 앞으로 나올 판(version 2 등)을 정규화하면 기본값으로 접히고, 그 뒤 무관한
+  // 저장이 키를 통째로 지워 미래 데이터가 사라진다. .bframe 루트가 모르는 필드를
+  // 보존하려고 만들어졌는데 그 목적을 우리가 깨는 셈이다.
+  const { ReviewDataManager, layers } = await loadModules();
+  const manager = new ReviewDataManager({});
+  const future = { version: 2, layers: [{ id: 'x' }], somethingNew: true };
+
+  manager._applyData({ [layers.DRAWING_LAYERS_ROOT_KEY]: future });
+  assert.equal(manager._drawingLayersUnsupported, true, '다룰 수 없는 판으로 표시한다');
+  // 내용 판정에도 세지 않는다 — 우리 것이 아니다.
+  assert.equal(manager.hasSubstantiveContent(), false);
+
+  // 저장 payload 를 실제로 조립해 원본이 그대로 남는지 본다.
+  const root = manager._collectData();
+  assert.deepEqual(
+    root[layers.DRAWING_LAYERS_ROOT_KEY],
+    future,
+    '지우지도 덮지도 않는다'
+  );
+
+  // 우리가 다룰 수 있는 판은 그대로 동작한다.
+  manager._applyData({});
+  assert.equal(manager._drawingLayersUnsupported, false);
+});

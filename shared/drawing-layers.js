@@ -112,6 +112,20 @@ function makeLayer(options = {}, index = 0) {
   };
 }
 
+/**
+ * 이 앱이 다룰 수 있는 판인가.
+ *
+ * 앞으로 나올 판(version 2 등)을 정규화하면 기본값으로 접히고, 그 뒤 무관한
+ * 저장이 키를 통째로 지워 **미래 데이터가 사라진다.** .bframe 루트가 모르는
+ * 필드를 보존하려고 만들어졌는데 그 목적을 우리가 깨는 셈이다.
+ * 다룰 수 없는 판은 건드리지 않고 그대로 둔다.
+ */
+function isSupportedDrawingLayersVersion(value) {
+  if (!isPlainRecord(value)) return true;
+  const version = Number(value.version);
+  return !Number.isFinite(version) || version <= DRAWING_LAYERS_VERSION;
+}
+
 function createDefaultDrawingLayers() {
   const layer = makeLayer({ name: DEFAULT_LAYER_NAME }, 0);
   return {
@@ -563,6 +577,7 @@ function mergeDrawingLayers(baseline, local, remote) {
 
 export {
   DEFAULT_LAYER_NAME,
+  isSupportedDrawingLayersVersion,
   mergeDrawingLayers,
   addLayer,
   assignObject,
