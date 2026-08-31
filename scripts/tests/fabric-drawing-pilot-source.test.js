@@ -1914,12 +1914,19 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
     /const MPV_OVERLAY_RELAY_DRAWING_ACTIONS = Object\.freeze\(\[([\s\S]*?)\]\);/
   );
   assert.ok(block, '릴레이 우회 목록이 있어야 한다');
-  const listed = block[1].split(',').map(entry => entry.trim().replace(/^'|'$/g, '')).filter(Boolean);
+  const listed = [...block[1].matchAll(/'([^']+)'/g)].map(match => match[1]);
   assert.deepEqual(listed.sort(), [
     'brushSizeDown', 'brushSizeUp',
     'drawingToolArrow', 'drawingToolBrush', 'drawingToolCircle', 'drawingToolEraser',
     'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect'
   ]);
+  // 프레임·키프레임 조작 7종도 우회해야 한다. 목록을 손으로 베끼면 배선과 어긋나므로
+  // 매핑을 통째로 펼쳐 넣고, 그 펼침이 실제로 있는지 확인한다. 빼면 에디터 포커스가
+  // 남아 있을 때 수식키 없는 2·3·4 가 에디터에 글자로 들어간다.
+  assert.ok(
+    block[1].includes('...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS)'),
+    '프레임 조작 매핑이 릴레이 우회 목록에 펼쳐져 있어야 한다'
+  );
   assert.match(
     appSource,
     /for \(const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS\) add\(describe\(actionId\)\);/

@@ -1,6 +1,20 @@
 const DRAWING_PROTOCOL = 'baeframe-drawing-surface';
 const DRAWING_PROTOCOL_VERSION = 1;
-const CONTROLLER_DRAWING_ACTIONS = new Set(['delete-selection', 'undo', 'redo']);
+// 오버레이로 보낼 수 있는 액션. **여기에 없으면 makeDrawingActionRequest 가 조용히
+// 거절해 IPC 가 아예 나가지 않는다** — 단축키를 새로 이어도 아무 일이 일어나지 않는다.
+const CONTROLLER_DRAWING_ACTIONS = new Set([
+  'delete-selection',
+  'undo',
+  'redo',
+  // 프레임·키프레임 구조 조작(레거시 2 / 3 / Shift+2 / Shift+3 / 4 / Ctrl+Alt+C·V)
+  'frame-insert-blank-keyframe',
+  'frame-insert',
+  'frame-remove',
+  'keyframe-to-frame',
+  'frame-to-keyframe',
+  'frame-copy',
+  'frame-paste'
+]);
 // shared/fabric-drawing-tools.js 의 FABRIC_DRAWING_TOOLS 와 같아야 한다.
 // 이 파일은 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다
 // (shared/fabric-drawing-limits.js ↔ fabric-drawing-persistence-store.js 와 같은 구조).

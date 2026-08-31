@@ -16845,6 +16845,99 @@ test('프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바�
   }
 });
 
+test('파괴적인 프레임 조작은 Ctrl+Z 로 되돌아온다', async () => {
+  // 4(프레임 제거)·Shift+2(키프레임→프레임)·Ctrl+Alt+V(붙여넣기)는 그림을 없앤다.
+  // 구조 항목을 전역 순서에 쌓지 않으면 되돌릴 수 없을 뿐 아니라, 사라진 씬의
+  // 커맨드가 인덱스에서 걷히면서 **관계없는 옛 획**이 대신 되돌아간다.
+  const harness = createRealFabricHarness();
+  let sequence = 0;
+  const setInput = (inputRevision, enabled) => harness.runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision,
+    enabled,
+    ...(enabled
+      ? {
+        session: {
+          sessionId: 'real-fabric-session',
+          stableVideoIdentity: 'real-fabric-video',
+          targetFrame: 0,
+          sourceWidth: 200,
+          sourceHeight: 120,
+          canvasRect: { left: 0, top: 0, width: 200, height: 120 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 },
+          tool: 'brush'
+        }
+      }
+      : {})
+  });
+  const gotoFrame = frame => harness.runtime.updateDrawingFrame({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 3,
+    sessionId: 'real-fabric-session',
+    frameRevision: (sequence += 1),
+    targetFrame: frame
+  });
+  const act = (action, extra = {}) => harness.runtime.applyDrawingAction({
+    sessionId: 'real-fabric-session',
+    actionId: `undo-frame-${(sequence += 1)}`,
+    action,
+    ...extra
+  });
+  try {
+    setInput(2, false);
+    harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'frame-undo-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: []
+    });
+    setInput(3, true);
+
+    // 프레임 이동은 **미리보기만** 무장한다. 실제 세션 재타깃은 변이 시점에
+    // 일어나므로 getActiveSceneSnapshot() 은 이동 직후를 관측할 표면이 아니다.
+    // 스토어의 프레임별 씬을 직접 읽는다.
+    const at = frame => harness.sceneStore
+      .getSceneSnapshot('real-fabric-video', frame)?.objects?.map(record => record.id) || null;
+
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7201);
+    gotoFrame(6);
+    harness.drawStroke([{ x: 20, y: 60 }, { x: 80, y: 60 }], 7202);
+    // 홀드 모델이라 프레임 6 은 프레임 0 의 획을 물려받은 뒤 새 획이 더해진다.
+    const doomed = at(6);
+    assert.equal(doomed.length, 2, '물려받은 획 + 새로 그은 획');
+    assert.deepEqual(at(0).length, 1);
+
+    // Shift+2 — 그 키프레임을 없앤다.
+    assert.deepEqual(act('keyframe-to-frame').keyframeFrames, [0]);
+    // 키프레임은 사라졌고, 재생헤드가 선 자리에는 홀드 내용을 베낀 임시 씬만 남는다.
+    assert.deepEqual(at(6).length, 1, '앞 키프레임을 홀드한다');
+
+    // Ctrl+Z — 없앤 키프레임이 그림째 돌아와야 한다.
+    const undone = act('undo');
+    assert.equal(undone.applied, true, '구조 조작이 되돌아간다');
+    assert.equal(undone.structural, true, '구조 항목으로 되돌렸다');
+    assert.deepEqual(undone.keyframeFrames, [0, 6], '키프레임이 제자리로');
+    assert.deepEqual(at(6), doomed, '그림이 id 까지 그대로 돌아온다');
+
+    // 관계없는 프레임의 획은 건드리지 않았어야 한다 — 사라진 씬의 커맨드가
+    // 인덱스에서 걷히면서 **옛 획이 대신 되돌아가는 것**이 이 지적의 핵심이었다.
+    assert.deepEqual(at(0).length, 1, '관계없는 프레임의 획은 그대로다');
+
+    // 다시 실행 — 조작을 재적용한다.
+    const redone = act('redo');
+    assert.equal(redone.applied, true);
+    assert.deepEqual(redone.keyframeFrames, [0], '다시 실행이 조작을 재적용한다');
+    assert.deepEqual(at(6).length, 1, '다시 홀드로 돌아간다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
 test('every record an outlined gesture produces survives persistence validation', async () => {
   // 이 스위트가 16라운드 동안 놓친 검증이다. renderGeometry 는 스키마상
   // fillRule: 'evenodd' 고정 + M/L/Z 다각형만 + 자기교차 불가이고, 어기면

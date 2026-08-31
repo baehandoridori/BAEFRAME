@@ -898,7 +898,15 @@ function createSessionSceneStore(options = {}) {
     let index = list.length - 1;
     let attempts = 0;
     while (index >= 0 && attempts < MAX_GLOBAL_HISTORY_ATTEMPTS) {
-      const scene = scenes.get(list[index].sceneKey);
+      const entry = list[index];
+      // 구조 항목(프레임 조작)은 씬 하나에 매이지 않는다.
+      if (entry.structural) {
+        attempts += 1;
+        yield { structuralEntry: entry, order };
+        index -= 1;
+        continue;
+      }
+      const scene = scenes.get(entry.sceneKey);
       if (!scene) {
         // 정리 누락으로 남은 유령 항목만 실제로 걷어낸다.
         list.splice(index, 1);
@@ -2151,7 +2159,8 @@ function createSessionSceneStore(options = {}) {
     // 되돌린 곳이 현재 보고 있는 키프레임이 아니면 화면에는 변화가 없다 — 의도된
     // 동작이며, 사용자 결정에 따라 재생헤드를 옮기지 않는다.
     let lastFailure = null;
-    for (const { scene, order } of globalHistoryCandidates(direction)) {
+    for (const { scene, structuralEntry, order } of globalHistoryCandidates(direction)) {
+      if (structuralEntry) return applyStructuralHistory(structuralEntry, order, direction);
       const attempt = applyHistoryEntry(scene, order, direction);
       if (attempt.applied) return attempt;
       lastFailure = attempt;
@@ -2521,6 +2530,95 @@ function createSessionSceneStore(options = {}) {
     return committedScenesForVideo(stableVideoIdentity).map(scene => scene.targetFrame);
   }
 
+  // ── 구조 조작의 실행취소 ───────────────────────────────────────────────────
+  //
+  // 프레임 조작은 씬 하나의 커맨드가 아니라 **키프레임 집합 전체**를 바꾼다.
+  // 그래서 씬별 히스토리에 넣을 수 없고, 전역 순서 인덱스에 별도 항목으로 쌓는다.
+  //
+  // 이걸 빼면 4(프레임 제거)·Shift+2(키프레임→프레임)·Ctrl+Alt+V(붙여넣기)가
+  // 그림을 **되돌릴 수 없게** 지운다. 게다가 detachScene 이 그 씬의 커맨드를
+  // 전역 인덱스에서 걷어내므로, 이어서 Ctrl+Z 를 누르면 관계없는 옛 획이 되돌아간다.
+  //
+  // 항목은 조작을 그대로 뒤집을 수 있을 만큼만 담는다:
+  //   before : 조작이 없앤 씬(없으면 null)
+  //   after  : 조작이 만든 씬(없으면 null)
+  //   shift  : 그 프레임부터 민 방향(+1 / -1 / 0)
+  //
+  // 한계: 되살린 씬은 **자기 획 히스토리를 잃는다.** 그 커맨드들은 씬이 사라질 때
+  // 전역 인덱스에서 함께 걷혔고, 되살린 씬은 새 히스토리로 시작한다. 그림은
+  // 온전히 돌아오지만 그 프레임 안에서의 획 단위 되돌리기는 거기서 다시 시작한다.
+  function shiftScenesBy(stableVideoIdentity, fromFrame, delta, inclusive) {
+    const nextFrameByKey = new Map();
+    const ordered = committedScenesForVideo(stableVideoIdentity);
+    // 오른쪽으로 밀 때는 뒤에서부터 옮겨야 중간에 키가 겹치지 않는다.
+    const walk = delta > 0 ? [...ordered].reverse() : ordered;
+    for (const scene of walk) {
+      const matches = inclusive
+        ? scene.targetFrame >= fromFrame
+        : scene.targetFrame > fromFrame;
+      if (matches) nextFrameByKey.set(scene.key, scene.targetFrame + delta);
+    }
+    rekeyScenes(stableVideoIdentity, nextFrameByKey);
+  }
+
+  function appendStructuralOrder(stableVideoIdentity, entry) {
+    const order = globalOrderFor(stableVideoIdentity, true);
+    if (!order) return;
+    // 새 편집이 들어오면 전역 redo 는 전부 무효다(애니메이트 동일).
+    for (const redoEntry of order.redo) {
+      const scene = redoEntry.sceneKey ? scenes.get(redoEntry.sceneKey) : null;
+      if (!scene) continue;
+      scene.history.clearRedo();
+      scene.historyEntries = { undo: scene.historyEntries.undo, redo: [] };
+    }
+    order.redo = [];
+    order.undo.push(entry);
+  }
+
+  function applyStructuralHistory(entry, order, direction) {
+    const { stableVideoIdentity, frame, shift } = entry.structural;
+    const before = direction === 'undo' ? entry.structural.after : entry.structural.before;
+    const after = direction === 'undo' ? entry.structural.before : entry.structural.after;
+    // undo 는 민 방향을 뒤집고, redo 는 원래대로 민다. inclusive 경계가 방향마다
+    // 다르다 — 오른쪽으로 밀 때는 그 프레임부터, 되돌릴 때는 그 다음 프레임부터다.
+    const delta = direction === 'undo' ? -shift : shift;
+    dropProvisionalScenes(stableVideoIdentity);
+    if (before) {
+      detachScene(scenes.get(makeSceneKey(stableVideoIdentity, frame)) || null);
+    }
+    if (delta !== 0) {
+      shiftScenesBy(stableVideoIdentity, frame, delta, delta > 0);
+    }
+    if (after) materializeSceneAt(stableVideoIdentity, frame, after);
+    rebuildActiveProvisionalScene(stableVideoIdentity);
+    moveGlobalOrderEntry(order, direction, entry.commandId);
+    return {
+      applied: true,
+      structural: true,
+      operation: entry.structural.operation,
+      frame,
+      keyframeSetChanged: true,
+      keyframeFrames: committedKeyframeFrames(stableVideoIdentity),
+      ...globalHistoryDepths()
+    };
+  }
+
+  function sceneBlueprint(scene) {
+    if (!scene) return null;
+    return {
+      sourceWidth: scene.sourceWidth,
+      sourceHeight: scene.sourceHeight,
+      objects: [...scene.objects.values()].map(clonePlain)
+    };
+  }
+
+  function recordStructural(stableVideoIdentity, operation, frame, shift, before, after) {
+    appendStructuralOrder(stableVideoIdentity, {
+      commandId: `frame-op:${stableVideoIdentity}:${(commandSequence += 1)}`,
+      structural: { stableVideoIdentity, operation, frame, shift, before, after }
+    });
+  }
+
   function applyFrameOperation(command = {}) {
     if (destroyed) return { applied: false, reason: 'store-destroyed' };
     const operation = command.operation;
@@ -2576,9 +2674,11 @@ function createSessionSceneStore(options = {}) {
       if (frameClipboard.stableVideoIdentity !== stableVideoIdentity) {
         return { applied: false, reason: 'clipboard-other-video' };
       }
+      const replaced = sceneBlueprint(committedAtFrame);
       dropProvisionalScenes(stableVideoIdentity);
       detachScene(committedAtFrame);
-      materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
+      const pasted = materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
+      recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
@@ -2591,8 +2691,10 @@ function createSessionSceneStore(options = {}) {
 
     if (operation === 'keyframe-to-frame') {
       if (!committedAtFrame) return { applied: false, reason: 'no-keyframe-here' };
+      const removed = sceneBlueprint(committedAtFrame);
       dropProvisionalScenes(stableVideoIdentity);
       detachScene(committedAtFrame);
+      recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
@@ -2608,13 +2710,14 @@ function createSessionSceneStore(options = {}) {
       // 홀드 중인 내용을 복사해 정식 키프레임으로 만든다(애니메이트 F6 과 같다).
       const held = heldSceneAt(stableVideoIdentity, frame);
       dropProvisionalScenes(stableVideoIdentity);
-      materializeSceneAt(stableVideoIdentity, frame, held
+      const created = materializeSceneAt(stableVideoIdentity, frame, held
         ? {
           sourceWidth: held.sourceWidth,
           sourceHeight: held.sourceHeight,
           objects: [...held.objects.values()].map(clonePlain)
         }
         : { objects: [] });
+      recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
@@ -2626,6 +2729,7 @@ function createSessionSceneStore(options = {}) {
     }
 
     if (operation === 'frame-remove') {
+      const removed = sceneBlueprint(committedAtFrame);
       dropProvisionalScenes(stableVideoIdentity);
       detachScene(committedAtFrame);
       const nextFrameByKey = new Map();
@@ -2634,6 +2738,7 @@ function createSessionSceneStore(options = {}) {
         if (scene.targetFrame > frame) nextFrameByKey.set(scene.key, scene.targetFrame - 1);
       }
       rekeyScenes(stableVideoIdentity, nextFrameByKey);
+      recordStructural(stableVideoIdentity, operation, frame, -1, removed, null);
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
@@ -2653,9 +2758,10 @@ function createSessionSceneStore(options = {}) {
       if (scene.targetFrame >= frame) nextFrameByKey.set(scene.key, scene.targetFrame + 1);
     }
     rekeyScenes(stableVideoIdentity, nextFrameByKey);
-    if (operation === 'frame-insert-blank-keyframe') {
-      materializeSceneAt(stableVideoIdentity, frame, { objects: [] });
-    }
+    const inserted = operation === 'frame-insert-blank-keyframe'
+      ? materializeSceneAt(stableVideoIdentity, frame, { objects: [] })
+      : null;
+    recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
     rebuildActiveProvisionalScene(stableVideoIdentity);
     return {
       applied: true,

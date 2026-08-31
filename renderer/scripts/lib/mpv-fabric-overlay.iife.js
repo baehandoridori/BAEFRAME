@@ -14234,7 +14234,14 @@ void main() {
           let index = list.length - 1;
           let attempts = 0;
           while (index >= 0 && attempts < MAX_GLOBAL_HISTORY_ATTEMPTS) {
-            const scene = scenes.get(list[index].sceneKey);
+            const entry = list[index];
+            if (entry.structural) {
+              attempts += 1;
+              yield { structuralEntry: entry, order };
+              index -= 1;
+              continue;
+            }
+            const scene = scenes.get(entry.sceneKey);
             if (!scene) {
               list.splice(index, 1);
               index -= 1;
@@ -15293,7 +15300,8 @@ void main() {
         }
         function moveHistory(direction) {
           let lastFailure = null;
-          for (const { scene, order } of globalHistoryCandidates(direction)) {
+          for (const { scene, structuralEntry, order } of globalHistoryCandidates(direction)) {
+            if (structuralEntry) return applyStructuralHistory(structuralEntry, order, direction);
             const attempt = applyHistoryEntry(scene, order, direction);
             if (attempt.applied) return attempt;
             lastFailure = attempt;
@@ -15593,6 +15601,67 @@ void main() {
         function committedKeyframeFrames(stableVideoIdentity) {
           return committedScenesForVideo(stableVideoIdentity).map((scene) => scene.targetFrame);
         }
+        function shiftScenesBy(stableVideoIdentity, fromFrame, delta, inclusive) {
+          const nextFrameByKey = /* @__PURE__ */ new Map();
+          const ordered = committedScenesForVideo(stableVideoIdentity);
+          const walk = delta > 0 ? [...ordered].reverse() : ordered;
+          for (const scene of walk) {
+            const matches = inclusive ? scene.targetFrame >= fromFrame : scene.targetFrame > fromFrame;
+            if (matches) nextFrameByKey.set(scene.key, scene.targetFrame + delta);
+          }
+          rekeyScenes(stableVideoIdentity, nextFrameByKey);
+        }
+        function appendStructuralOrder(stableVideoIdentity, entry) {
+          const order = globalOrderFor(stableVideoIdentity, true);
+          if (!order) return;
+          for (const redoEntry of order.redo) {
+            const scene = redoEntry.sceneKey ? scenes.get(redoEntry.sceneKey) : null;
+            if (!scene) continue;
+            scene.history.clearRedo();
+            scene.historyEntries = { undo: scene.historyEntries.undo, redo: [] };
+          }
+          order.redo = [];
+          order.undo.push(entry);
+        }
+        function applyStructuralHistory(entry, order, direction) {
+          const { stableVideoIdentity, frame, shift } = entry.structural;
+          const before = direction === "undo" ? entry.structural.after : entry.structural.before;
+          const after = direction === "undo" ? entry.structural.before : entry.structural.after;
+          const delta = direction === "undo" ? -shift : shift;
+          dropProvisionalScenes(stableVideoIdentity);
+          if (before) {
+            detachScene(scenes.get(makeSceneKey(stableVideoIdentity, frame)) || null);
+          }
+          if (delta !== 0) {
+            shiftScenesBy(stableVideoIdentity, frame, delta, delta > 0);
+          }
+          if (after) materializeSceneAt(stableVideoIdentity, frame, after);
+          rebuildActiveProvisionalScene(stableVideoIdentity);
+          moveGlobalOrderEntry(order, direction, entry.commandId);
+          return {
+            applied: true,
+            structural: true,
+            operation: entry.structural.operation,
+            frame,
+            keyframeSetChanged: true,
+            keyframeFrames: committedKeyframeFrames(stableVideoIdentity),
+            ...globalHistoryDepths()
+          };
+        }
+        function sceneBlueprint(scene) {
+          if (!scene) return null;
+          return {
+            sourceWidth: scene.sourceWidth,
+            sourceHeight: scene.sourceHeight,
+            objects: [...scene.objects.values()].map(clonePlain)
+          };
+        }
+        function recordStructural(stableVideoIdentity, operation, frame, shift, before, after) {
+          appendStructuralOrder(stableVideoIdentity, {
+            commandId: `frame-op:${stableVideoIdentity}:${commandSequence += 1}`,
+            structural: { stableVideoIdentity, operation, frame, shift, before, after }
+          });
+        }
         function applyFrameOperation(command = {}) {
           if (destroyed) return { applied: false, reason: "store-destroyed" };
           const operation = command.operation;
@@ -15642,9 +15711,11 @@ void main() {
             if (frameClipboard.stableVideoIdentity !== stableVideoIdentity) {
               return { applied: false, reason: "clipboard-other-video" };
             }
+            const replaced = sceneBlueprint(committedAtFrame);
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
-            materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
+            const pasted = materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
+            recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
@@ -15656,8 +15727,10 @@ void main() {
           }
           if (operation === "keyframe-to-frame") {
             if (!committedAtFrame) return { applied: false, reason: "no-keyframe-here" };
+            const removed = sceneBlueprint(committedAtFrame);
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
+            recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
@@ -15671,11 +15744,12 @@ void main() {
             if (committedAtFrame) return { applied: false, reason: "already-keyframe" };
             const held = heldSceneAt(stableVideoIdentity, frame);
             dropProvisionalScenes(stableVideoIdentity);
-            materializeSceneAt(stableVideoIdentity, frame, held ? {
+            const created = materializeSceneAt(stableVideoIdentity, frame, held ? {
               sourceWidth: held.sourceWidth,
               sourceHeight: held.sourceHeight,
               objects: [...held.objects.values()].map(clonePlain)
             } : { objects: [] });
+            recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
@@ -15686,6 +15760,7 @@ void main() {
             };
           }
           if (operation === "frame-remove") {
+            const removed = sceneBlueprint(committedAtFrame);
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
             const nextFrameByKey2 = /* @__PURE__ */ new Map();
@@ -15694,6 +15769,7 @@ void main() {
               if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
             }
             rekeyScenes(stableVideoIdentity, nextFrameByKey2);
+            recordStructural(stableVideoIdentity, operation, frame, -1, removed, null);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
@@ -15710,9 +15786,8 @@ void main() {
             if (scene.targetFrame >= frame) nextFrameByKey.set(scene.key, scene.targetFrame + 1);
           }
           rekeyScenes(stableVideoIdentity, nextFrameByKey);
-          if (operation === "frame-insert-blank-keyframe") {
-            materializeSceneAt(stableVideoIdentity, frame, { objects: [] });
-          }
+          const inserted = operation === "frame-insert-blank-keyframe" ? materializeSceneAt(stableVideoIdentity, frame, { objects: [] }) : null;
+          recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
           rebuildActiveProvisionalScene(stableVideoIdentity);
           return {
             applied: true,

@@ -8939,7 +8939,11 @@ async function initApp() {
     'drawingToolCircle',
     'drawingToolArrow',
     'brushSizeDown',
-    'brushSizeUp'
+    'brushSizeUp',
+    // 프레임·키프레임 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때
+    // 릴레이가 이 키를 에디터로 보내고, handleKeydown 이 shouldIgnoreGlobalShortcutTarget
+    // 에서 먼저 돌아가 조작이 실패한다. 수식키 없는 2·3·4 는 에디터에 글자로 들어간다.
+    ...Object.keys(FABRIC_PILOT_FRAME_OPERATIONS)
   ]);
 
   function getMpvOverlayDrawModeShortcutDescriptor() {
