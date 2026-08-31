@@ -6034,3 +6034,60 @@ test('updateDrawingLayerView rejects stale tokens, backward revisions and malfor
   // 위 거절들은 revision 을 전진시키지 않았다.
   assert.equal((await send(2)).success, true);
 });
+
+test('passive 레이어 뷰는 영상 정체로 맞추고 리비전을 전진시킨다', async () => {
+  // 보는 중에는 세션 id 가 없다. 응답 검사까지 같은 술어로 하지 않으면 적용해
+  // 놓고 거절로 보고돼 리비전이 전진하지 않고, 늦게 도착한 옛 갱신이 다시
+  // 통과해 지금 집합을 덮는다.
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 1, objectCount: 1 };
+      }
+      if (script.includes('.updateDrawingLayerView(')) return { accepted: true };
+      return undefined;
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  // 입력을 끈 채(=passive) 영상을 수화하면 호스트가 영상 정체를 기억한다.
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }))).success, true);
+  assert.equal(
+    (await host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration))).accepted,
+    true
+  );
+
+  const send = (layerViewRevision, overrides = {}) => host.updateDrawingLayerView({
+    hostGeneration,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: null,
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    layerViewRevision,
+    hiddenObjectIds: [],
+    lockedObjectIds: [],
+    activeLayerDrawable: true,
+    ...overrides
+  });
+
+  const first = await send(5);
+  assert.equal(first.success, true, 'passive 갱신이 받아들여진다');
+  assert.equal(first.accepted, true);
+
+  // 리비전이 전진했으므로 늦게 도착한 옛 갱신은 거절된다.
+  assert.equal((await send(4)).success, false, '늦게 온 옛 갱신은 버린다');
+  assert.equal((await send(5)).success, false);
+  assert.equal((await send(6)).success, true);
+
+  // 다른 영상 정체는 받지 않는다.
+  assert.equal(
+    (await send(7, { stableVideoIdentity: 'C:/shots/other.mov' })).success,
+    false
+  );
+  // 세션 id 로는 맞출 수 없다 — 보는 중에는 활성 세션이 없다.
+  assert.equal((await send(7, { sessionId: 'host-session' })).success, true);
+});

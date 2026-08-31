@@ -3308,13 +3308,14 @@ class MPVOverlayHost {
     // passive 투영에서도 받는다. 저장된 레이어 모델이 숨겨 둔 획은 보기만 하는
     // 동안에도 숨겨져 있어야 한다. 그때는 세션 id 가 없으므로 영상 정체로 맞춘다.
     // 문서를 나르지 않는 메시지라 실패해도 그림이 아니라 표시만 어긋난다.
-    const currentTokensMatch = request.hostGeneration === this.hostGeneration &&
+    const tokensMatch = () => request.hostGeneration === this.hostGeneration &&
       request.videoGeneration === this.currentVideoGeneration &&
       request.inputRevision === this.currentInputRevision &&
       (this.desiredInputEnabled
         ? request.sessionId === this.activeSessionId
         : this.currentStableVideoIdentity !== null &&
           request.stableVideoIdentity === this.currentStableVideoIdentity);
+    const currentTokensMatch = tokensMatch();
     const validIds = value =>
       Array.isArray(value) &&
       value.length <= FABRIC_DRAWING_MAX_OBJECTS_TOTAL &&
@@ -3334,8 +3335,10 @@ class MPVOverlayHost {
       if (result?.accepted !== true) {
         return { success: false, accepted: false, error: result?.reason || 'layer view update rejected' };
       }
-      if (!this._drawingTokensMatch(request) ||
-          layerViewRevision <= this.currentLayerViewRevision) {
+      // **응답 검사도 같은 술어로 한다.** _drawingTokensMatch 는 활성 세션을
+      // 요구하므로, passive 갱신은 적용해 놓고 거절로 보고돼 리비전이 전진하지
+      // 않는다. 그러면 늦게 도착한 옛 갱신이 다시 통과해 지금 집합을 덮는다.
+      if (!tokensMatch() || layerViewRevision <= this.currentLayerViewRevision) {
         return { success: false, accepted: false, error: 'stale layer view response' };
       }
       this.currentLayerViewRevision = layerViewRevision;

@@ -7849,9 +7849,20 @@ async function initApp() {
   let fabricDrawingViewportRevision = 0;
   let fabricDrawingViewportSignature = '';
   let resetMpvOverlayCollaborationDrag = () => {};
+  // 표시 프레임을 세우는 약속을 돌려준다. passive 레이어 뷰 전송이 **표시 세션이
+  // 선 뒤**에 가야 해서 필요하다 — 먼저 보내면 오버레이가 거절하고 다시 시도하지
+  // 않는다. 기존 호출부는 반환값을 쓰지 않는다.
   function syncCurrentFabricDrawingDisplayFrame(options) {
     const currentFrame = Math.max(0, Math.trunc(Number(videoPlayer.currentFrame) || 0));
-    void fabricDrawingPilotController.syncDisplayFrame(currentFrame, options);
+    return Promise.resolve(
+      fabricDrawingPilotController.syncDisplayFrame(currentFrame, options)
+    ).catch(() => false);
+  }
+
+  // 표시 프레임이 선 뒤에 집합을 보낸다.
+  function pushFabricPilotLayerViewAfterDisplay(options) {
+    return syncCurrentFabricDrawingDisplayFrame(options)
+      .then(() => pushFabricPilotLayerView());
   }
   const mpvOverlayLifecycle = createMpvOverlayLifecycle({
     onWarning: (error) => {
@@ -8089,8 +8100,8 @@ async function initApp() {
       syncFabricDrawingLayerAssignments();
       renderActiveDrawingLayers();
       // 새로 생긴 오브젝트도 자기 레이어의 숨김·잠금을 따라야 한다.
-      pushFabricPilotLayerView();
-      syncCurrentFabricDrawingDisplayFrame();
+      // 보는 중(passive)에는 표시 세션이 선 뒤에 보내야 오버레이가 받는다.
+      void pushFabricPilotLayerViewAfterDisplay();
     });
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(
@@ -11101,9 +11112,6 @@ async function initApp() {
     // 늦다 — importRootValue·reset 은 구독자를 부르지 않으므로, 사용자가 새
     // 레이어를 고르고 그은 첫 획의 알림이 첫 seed 가 되어 그 획이 배정을 받지
     // 못하고 기준 레이어로 떨어진다.
-    // passive 로 내려갈 때도 보낸다 — 그리기 모드를 끄면 오버레이가 투영으로
-    // 넘어가는데, 그때 집합을 다시 심지 않으면 숨긴 레이어가 되살아난다.
-    if (nextState === 'passive') pushFabricPilotLayerView();
     if (nextState === 'active') {
       seedFabricDrawingLayerAssignmentTracking();
       // 오버레이의 집합은 세션과 함께 비워졌다. 다시 밀어 넣지 않으면 숨긴
@@ -11111,7 +11119,10 @@ async function initApp() {
       pushFabricPilotLayerView();
     }
     if (nextState === 'passive') {
-      syncCurrentFabricDrawingDisplayFrame();
+      // 그리기 모드를 끄면 오버레이가 투영으로 넘어간다. 그때 집합을 다시 심지
+      // 않으면 숨긴 레이어가 되살아난다. 다만 **표시 세션이 선 뒤**에 보내야
+      // 한다 — passive 수신은 그 세션으로 요청을 맞추기 때문이다.
+      void pushFabricPilotLayerViewAfterDisplay();
     }
     // persistence 우회/차단 사유가 바뀌는 순간을 파일 로그로 남긴다(이어붙이기 정지 진단용).
     const fabricPersistenceReason = snapshot?.persistenceFailureReason || null;

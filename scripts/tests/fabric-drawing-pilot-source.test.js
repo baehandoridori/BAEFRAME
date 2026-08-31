@@ -1406,13 +1406,20 @@ test('playback frame consumers and passive landings request the current Fabric d
     playbackSyncSource,
     /if \(shouldSyncFrameConsumers\) \{[\s\S]*?fabricDrawingPilotController\.syncDisplayFrame\(currentFrame\)/
   );
+  // 두 자리 모두 표시 프레임을 요청한다. 지금은 레이어 뷰 전송과 순서를 맞추려고
+  // pushFabricPilotLayerViewAfterDisplay() 를 거치는데, 그 안이 곧
+  // syncCurrentFabricDrawingDisplayFrame() 이다.
   assert.match(
     appSource,
-    /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{[\s\S]*?syncCurrentFabricDrawingDisplayFrame\(\)/
+    /function pushFabricPilotLayerViewAfterDisplay\(options\) \{[\s\S]{0,120}?return syncCurrentFabricDrawingDisplayFrame\(options\)/
   );
   assert.match(
     appSource,
-    /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*?if \(nextState === 'passive'\)[\s\S]*?syncCurrentFabricDrawingDisplayFrame\(\)/
+    /fabricDrawingPersistenceStore\.subscribe\(\(\) => \{[\s\S]*?pushFabricPilotLayerViewAfterDisplay\(\)/
+  );
+  assert.match(
+    appSource,
+    /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]*?if \(nextState === 'passive'\)[\s\S]*?pushFabricPilotLayerViewAfterDisplay\(\)/
   );
 });
 
@@ -2690,13 +2697,21 @@ test('표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시
   );
   const subscribeStart = appSource.indexOf('syncFabricDrawingLayerAssignments();');
   assert.ok(
-    appSource.slice(subscribeStart, subscribeStart + 400).includes('pushFabricPilotLayerView();'),
-    '문서가 바뀌면 다시 보낸다'
+    appSource.slice(subscribeStart, subscribeStart + 500)
+      .includes('pushFabricPilotLayerViewAfterDisplay();'),
+    '문서가 바뀌면 표시 프레임을 세운 뒤 다시 보낸다'
   );
   const stateStart = appSource.indexOf('function handleFabricDrawingPilotStateChange(');
+  const stateHead = appSource.slice(stateStart, stateStart + 1200);
   assert.ok(
-    appSource.slice(stateStart, stateStart + 900).includes('pushFabricPilotLayerView();'),
+    stateHead.includes('pushFabricPilotLayerView();'),
     '세션이 살아나면 다시 보낸다'
+  );
+  // passive 로 내려갈 때는 표시 세션이 선 뒤에 보낸다 — 먼저 보내면 오버레이가
+  // 거절하고 다시 시도하지 않는다.
+  assert.ok(
+    stateHead.includes('pushFabricPilotLayerViewAfterDisplay();'),
+    'passive 로 내려가도 표시 프레임 뒤에 다시 보낸다'
   );
 });
 
