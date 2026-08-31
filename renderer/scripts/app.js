@@ -7933,6 +7933,19 @@ async function initApp() {
     return readFabricDrawingDocument()?.ids || null;
   }
 
+  // 이번 알림에서 사라진 오브젝트들이 모두 같은 레이어에 있었으면 그 레이어를
+  // 돌려준다. 하나라도 다르면 null — 조각의 출처를 특정할 수 없다.
+  function inheritedDrawingLayerForReplacements(state, live) {
+    let layerId = null;
+    for (const id of knownDrawingObjectIds) {
+      if (live.has(id)) continue;
+      const removedLayerId = drawingLayerIdForObject(state, id);
+      if (layerId !== null && layerId !== removedLayerId) return null;
+      layerId = removedLayerId;
+    }
+    return layerId;
+  }
+
   function syncFabricDrawingLayerAssignments() {
     const live = collectFabricDrawingObjectIds();
     if (!live) return;
@@ -7942,13 +7955,20 @@ async function initApp() {
       return;
     }
     let next = reviewDataManager.getDrawingLayers();
+    // 획을 자르면(지우개 부분 지우기·올가미 이동) 런타임이 원본을 지우고 **새 id** 의
+    // 조각으로 갈아 끼운다. 그 조각을 새로 그린 획으로 보면 활성 레이어로 옮겨가,
+    // 다른 레이어를 고른 채 획 일부만 지웠을 뿐인데 그림이 통째로 이동한다.
+    // 이번 알림에서 사라진 오브젝트들의 배정이 한 레이어로 모이면 그것을 물려준다.
+    // 여러 레이어가 섞이면 어느 조각이 어디서 왔는지 알 수 없어 활성 레이어로 둔다
+    // (저장 레코드에 부모 링크가 없다 — 스키마 불가침).
+    const inheritedLayerId = inheritedDrawingLayerForReplacements(next, live);
     for (const id of live) {
       if (knownDrawingObjectIds.has(id)) continue;
       // 되살아난 것이면 원래 배정을 그대로 둔다. 덮으면 지우고 → 레이어를 바꾸고
       // → 되돌렸을 때 그림이 다른 레이어로 옮겨간 채 저장된다.
       if (everSeenDrawingObjectIds.has(id)) continue;
       everSeenDrawingObjectIds.add(id);
-      next = assignDrawingObjectLayer(next, id, next.activeLayerId);
+      next = assignDrawingObjectLayer(next, id, inheritedLayerId || next.activeLayerId);
     }
     // **여기서 걷어내면 안 된다.** 획을 지운 뒤 실행취소로 되살리면, 배정이
     // 이미 사라져 그 획이 "새 오브젝트" 로 보이고 그때의 활성 레이어로 옮겨간다.

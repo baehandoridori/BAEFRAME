@@ -2101,8 +2101,8 @@ test('새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을
   const syncSource = appSource.slice(syncStart, syncStart + 1600);
   assert.ok(syncSource.includes('if (!drawingObjectIdsSeeded) {'), '첫 로드는 seed 만 한다');
   assert.ok(
-    syncSource.includes('assignDrawingObjectLayer(next, id, next.activeLayerId)'),
-    '새 오브젝트는 활성 레이어에 붙는다'
+    syncSource.includes('assignDrawingObjectLayer(next, id, inheritedLayerId || next.activeLayerId)'),
+    '새 오브젝트는 물려받을 레이어가 없으면 활성 레이어에 붙는다'
   );
   const seedStart1 = appSource.indexOf('function seedFabricDrawingLayerAssignmentTracking(');
   assert.ok(seedStart1 > 0, 'seed 소스를 찾지 못했다');
@@ -2485,4 +2485,86 @@ test('파일럿 레이어 헤더 클릭은 캡처 방화벽을 통과한다', ()
   });
   handleClick(actionButton);
   assert.equal(actionButton.blocked, true, '행 안의 액션 버튼은 막는다');
+});
+
+test('잘린 획의 조각은 원본 레이어를 물려받는다', () => {
+  // 지우개 부분 지우기·올가미 이동은 원본을 지우고 새 id 의 조각으로 갈아 끼운다
+  // (mpv-fabric-overlay-runtime.js 의 lasso-remain / lasso-selected).
+  // 조각을 새로 그린 획으로 보면, 다른 레이어를 고른 채 일부만 지웠을 뿐인데
+  // 그림이 통째로 활성 레이어로 옮겨간 채 저장된다.
+  const helperStart = appSource.indexOf('function inheritedDrawingLayerForReplacements(state, live) {');
+  assert.ok(helperStart > 0, '상속 판정 함수를 찾지 못했다');
+  const syncStart = appSource.indexOf('function syncFabricDrawingLayerAssignments() {');
+  const syncEnd = appSource.indexOf('  let lastPrunedDrawingDocumentId = null;', syncStart);
+  assert.ok(syncEnd > syncStart, '동기화 소스의 끝을 찾지 못했다');
+  const source = appSource.slice(helperStart, syncEnd);
+
+  const assigned = [];
+  let layerState = { activeLayerId: 'layer-b', baseLayerId: 'layer-base', layers: [], assignments: {} };
+  const build = (known, everSeen) => new Function(
+    'knownDrawingObjectIds',
+    'everSeenDrawingObjectIds',
+    'drawingObjectIdsSeeded',
+    'collectFabricDrawingObjectIds',
+    'drawingLayerIdForObject',
+    'assignDrawingObjectLayer',
+    'reviewDataManager',
+    `${source}
+    return syncFabricDrawingLayerAssignments;`
+  )(
+    new Set(known),
+    new Set(everSeen),
+    true,
+    () => liveIds,
+    (state, id) => state.assignments[id] || state.baseLayerId,
+    (state, id, layerId) => {
+      assigned.push([id, layerId]);
+      return { ...state, assignments: { ...state.assignments, [id]: layerId } };
+    },
+    {
+      getDrawingLayers: () => layerState,
+      setDrawingLayers: next => { layerState = next; return true; }
+    }
+  );
+
+  // 원본 obj-a 는 layer-a 에 있고, 활성 레이어는 layer-b 다.
+  layerState = {
+    activeLayerId: 'layer-b',
+    baseLayerId: 'layer-base',
+    layers: [],
+    assignments: { 'obj-a': 'layer-a' }
+  };
+  let liveIds = new Set(['frag-1', 'frag-2']);
+  build(['obj-a'], ['obj-a'])();
+  assert.deepEqual(
+    assigned,
+    [['frag-1', 'layer-a'], ['frag-2', 'layer-a']],
+    '조각은 원본 레이어를 물려받는다'
+  );
+
+  // 사라진 것이 없으면 새 획은 활성 레이어로 간다.
+  assigned.length = 0;
+  layerState = { activeLayerId: 'layer-b', baseLayerId: 'layer-base', layers: [], assignments: {} };
+  liveIds = new Set(['obj-a', 'obj-new']);
+  build(['obj-a'], ['obj-a'])();
+  assert.deepEqual(assigned, [['obj-new', 'layer-b']], '새로 그린 획은 활성 레이어로 간다');
+
+  // 사라진 것들이 여러 레이어에 걸치면 출처를 특정할 수 없어 활성 레이어로 둔다.
+  assigned.length = 0;
+  layerState = {
+    activeLayerId: 'layer-b',
+    baseLayerId: 'layer-base',
+    layers: [],
+    assignments: { 'obj-a': 'layer-a', 'obj-c': 'layer-c' }
+  };
+  liveIds = new Set(['frag-1']);
+  build(['obj-a', 'obj-c'], ['obj-a', 'obj-c'])();
+  assert.deepEqual(assigned, [['frag-1', 'layer-b']], '섞이면 활성 레이어로 둔다');
+
+  // 배정이 없던(기준 레이어) 원본에서 잘린 조각도 기준 레이어에 남는다.
+  assigned.length = 0;
+  layerState = { activeLayerId: 'layer-b', baseLayerId: 'layer-base', layers: [], assignments: {} };
+  liveIds = new Set(['frag-1']);
+  build(['obj-base'], ['obj-base'])();
+  assert.deepEqual(assigned, [['frag-1', 'layer-base']], '기준 레이어 원본의 조각은 기준에 남는다');
 });
