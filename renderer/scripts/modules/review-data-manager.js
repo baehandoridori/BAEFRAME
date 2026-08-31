@@ -1447,6 +1447,13 @@ export class ReviewDataManager extends EventTarget {
           saveOptions
         );
         this._assertSaveOwner(saveOwner);
+        // IPC 가 성공을 보고한 **그 순간** 기준선을 옮긴다. 이 아래에는 쓰기가
+        // 이미 끝난 뒤에 던지거나 재시도로 빠지는 경로가 여럿 있고(관측 충돌·
+        // Fabric 권위 변경), 그 경로들이 낡은 기준선으로 다음 병합을 하면 방금
+        // 쓴 payload 가 흡수한 원격 변경을 "내 편집" 으로 오인해 더 새 값을 덮는다.
+        if (saveResult?.success === true) {
+          this._drawingLayersBaseline = attemptDrawingLayers;
+        }
 
         if (saveResult?.conflict === true) {
           this._writeBlockedReason = 'review-file-version-conflict';
@@ -1527,12 +1534,6 @@ export class ReviewDataManager extends EventTarget {
         }
         this._hasPersistedFile = true;
         this._reviewDocumentIdPersisted = true;
-        // 기준선은 **IPC 쓰기가 성공할 때마다 즉시** 전진한다. 아래에는 쓰기가
-        // 끝난 뒤에도 재시도로 빠지는 경로가 있어(fabric-drawing-authority-changed),
-        // 루프 밖에서만 옮기면 그 경로가 낡은 기준선으로 다음 병합을 한다.
-        // 그러면 이 쓰기가 흡수한 원격 변경이 "내 편집" 으로 오인돼 더 새 원격
-        // 값을 덮어쓴다.
-        this._drawingLayersBaseline = attemptDrawingLayers;
         if (attemptFabricDrawingAuthorityEpoch !== this._fabricDrawingAuthorityEpoch) {
           // IPC write는 이미 끝났지만, collect 이후 더 최신 Fabric 권위가 생겼다.
           // 방금 쓴 payload를 current로 승인하거나 saved로 전파하지 않고 다시 저장한다.
@@ -1897,6 +1898,9 @@ export class ReviewDataManager extends EventTarget {
     this._cancelAutoSave();
     const wasLoading = this.isLoading;
     this.isLoading = true;
+    // catch 는 try 안에서 선언한 것을 볼 수 없다(TDZ). 원격 스냅샷 읽기처럼
+    // 스테이징 이전에 던지는 경로도 있으므로 여기서 미리 잡아 둔다.
+    let restoreStagedLayers = () => {};
 
     try {
       // 원격 데이터 로드
@@ -1923,10 +1927,15 @@ export class ReviewDataManager extends EventTarget {
       // 다만 **덮어쓰기가 끝나기 전에** 버리면 안 된다. 아래 Fabric 재조정이
       // 실패하면 재로드는 실패로 보고되는데 사용자의 미저장 레이어는 이미
       // 사라진 뒤다. 되돌릴 수 있게 들고 있다가 실패 경로에서 복원한다.
+      // 재조정만 감싸면 그 뒤의 _applyData 가 던질 때(상한 원격 데이터 등) 복원이
+      // 건너뛰어져, 재로드는 실패로 보고되는데 사용자의 미저장 레이어는 이미
+      // 사라진 뒤다. **완전히 끝날 때까지** 어떤 실패에도 되돌린다.
       const stagedLayers = this._drawingLayers;
       const stagedLayersDirty = this._drawingLayersDirty;
       const stagedLayersBaseline = this._drawingLayersBaseline;
-      const restoreStagedLayers = () => {
+      let overwriteCompleted = reloadOptions.merge !== false;
+      restoreStagedLayers = () => {
+        if (overwriteCompleted) return;
         this._drawingLayers = stagedLayers;
         this._drawingLayersDirty = stagedLayersDirty;
         this._drawingLayersBaseline = stagedLayersBaseline;
@@ -2015,6 +2024,7 @@ export class ReviewDataManager extends EventTarget {
           this._collectReviewDataForMerge(overwrittenReviewMergeBase)
         );
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
+        overwriteCompleted = true;
       }
 
       this.isLoading = wasLoading;
@@ -2027,6 +2037,7 @@ export class ReviewDataManager extends EventTarget {
       return { success: true, ...result };
 
     } catch (error) {
+      restoreStagedLayers();
       if (!this._ownsReviewContext(reloadOwner)) {
         return { success: false, added: 0, updated: 0, skipped: true };
       }

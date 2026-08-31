@@ -269,11 +269,53 @@ test('기준선은 IPC 쓰기가 성공할 때마다 즉시 전진한다', async
   );
   const writeSucceeded = source.indexOf('this._reviewDocumentIdPersisted = true;');
   assert.ok(writeSucceeded > 0, '쓰기 성공 지점을 찾지 못했다');
-  const nearby = source.slice(writeSucceeded, writeSucceeded + 600);
+  // IPC 가 성공을 보고하는 지점 직후여야 한다. 그 아래에는 쓰기가 끝난 뒤에도
+  // 던지거나 재시도로 빠지는 경로가 여럿 있다(관측 충돌·Fabric 권위 변경).
+  const ipcReturned = source.indexOf('const saveResult = await window.electronAPI.saveReview(');
+  assert.ok(ipcReturned > 0 && ipcReturned < writeSucceeded, 'IPC 호출 지점을 찾지 못했다');
+  const advance = source.indexOf('this._drawingLayersBaseline = attemptDrawingLayers;');
+  assert.ok(advance > ipcReturned, '기준선 전진이 IPC 뒤에 온다');
   assert.ok(
-    nearby.includes('this._drawingLayersBaseline = attemptDrawingLayers;'),
-    '쓰기 성공 직후 기준선을 옮겨야 한다'
+    advance < source.indexOf('review-file-version-conflict', ipcReturned),
+    '관측 충돌 검사보다 **먼저** 기준선을 옮겨야 한다'
   );
-  // 재시도로 빠지는 continue 가 그 뒤에 있어야 의미가 있다.
-  assert.ok(nearby.includes('fabric-drawing-authority-changed'), '재시도 경로가 뒤에 온다');
+  assert.ok(
+    advance < source.indexOf('fabric-drawing-authority-changed', ipcReturned),
+    'Fabric 권위 재시도보다 먼저 옮겨야 한다'
+  );
+});
+
+test('덮어쓰기가 완전히 끝나기 전 실패는 로컬 레이어를 되돌린다', async () => {
+  // 재조정만 감싸면 그 뒤의 _applyData 가 던질 때 복원이 건너뛰어져, 재로드는
+  // 실패로 보고되는데 사용자의 미저장 레이어는 이미 사라진 뒤다.
+  // 실행 경로를 통째로 재현하기 어려워 배선을 고정한다.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const source = fs.readFileSync(
+    path.join(process.cwd(), 'renderer/scripts/modules/review-data-manager.js'),
+    'utf8'
+  );
+  const reloadStart = source.indexOf('async reloadAndMerge(');
+  const reload = source.slice(
+    reloadStart,
+    source.indexOf("log.info('reloadAndMerge: 데이터 덮어쓰기 완료')", reloadStart)
+  );
+  // catch 는 try 안에서 선언한 것을 볼 수 없다(TDZ). try 앞에서 잡아 둬야 한다.
+  assert.ok(
+    reload.indexOf('let restoreStagedLayers = () => {};') <
+      reload.indexOf('try {'),
+    'restoreStagedLayers 는 try 앞에서 선언돼야 한다'
+  );
+  // 덮어쓰기가 끝났으면 되돌리지 않는다.
+  assert.ok(reload.includes('if (overwriteCompleted) return;'), '완료 후에는 되돌리지 않는다');
+  assert.ok(
+    source.includes('overwriteCompleted = true;'),
+    '덮어쓰기 완료 지점에서 표시를 올린다'
+  );
+  // 바깥 catch 도 복원한다.
+  const outerCatch = source.indexOf('} catch (error) {', source.indexOf('return { success: true, ...result };'));
+  assert.ok(
+    source.slice(outerCatch, outerCatch + 120).includes('restoreStagedLayers();'),
+    '바깥 catch 에서도 되돌린다'
+  );
 });
