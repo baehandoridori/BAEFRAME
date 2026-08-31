@@ -415,10 +415,19 @@ function mergeDrawingLayers(baseline, local, remote) {
   const orderSource = localReordered ? mine.layers : theirs.layers;
   const otherSource = localReordered ? theirs.layers : mine.layers;
   const order = orderSource.map(layer => layer.id);
-  otherSource.forEach((layer, index) => {
-    if (order.includes(layer.id)) return;
-    order.splice(Math.min(index, order.length), 0, layer.id);
-  });
+  // 새 레이어는 **이웃 기준**으로 끼운다. 절대 인덱스로 넣으면 상대가 위에
+  // 추가한 만큼 내 레이어가 밀려, 기준선에 있던 레이어를 건너뛰어 합성 순서가
+  // 조용히 바뀐다(예: base [A,B] / 내 [A,X,B] / 상대 [Y,A,B] → [Y,X,A,B]).
+  let anchor = -1;
+  for (const layer of otherSource) {
+    const existing = order.indexOf(layer.id);
+    if (existing !== -1) {
+      anchor = existing;
+      continue;
+    }
+    anchor += 1;
+    order.splice(anchor, 0, layer.id);
+  }
 
   const layers = [];
   for (const id of order) {

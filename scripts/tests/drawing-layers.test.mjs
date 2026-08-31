@@ -433,3 +433,32 @@ test('서로 다른 레이어를 지워도 진짜 레이어가 남는다', () =>
   assert.equal(merged.activeLayerId, merged.layers[0].id);
   assert.equal(merged.baseLayerId, merged.layers[0].id);
 });
+
+test('양쪽이 다른 자리에 추가해도 합성 순서가 뒤바뀌지 않는다', () => {
+  // 절대 인덱스로 끼우면 상대가 위에 추가한 만큼 내 레이어가 밀려, 기준선에
+  // 있던 레이어를 건너뛰어 합성 순서가 조용히 바뀐다.
+  const base = normalizeDrawingLayers({
+    version: 1,
+    layers: [{ id: 'A' }, { id: 'B' }],
+    activeLayerId: 'A',
+    baseLayerId: 'B',
+    assignments: {}
+  });
+  // 나는 A 와 B 사이에 X 를 넣었다.
+  const mine = normalizeDrawingLayers({
+    ...base,
+    layers: [base.layers[0], { id: 'X', name: '내 것' }, base.layers[1]]
+  });
+  // 상대는 맨 위에 Y 를 넣었다.
+  const theirs = normalizeDrawingLayers({
+    ...base,
+    layers: [{ id: 'Y', name: '남의 것' }, ...base.layers]
+  });
+
+  const merged = mergeDrawingLayers(base, mine, theirs);
+  assert.deepEqual(
+    merged.layers.map(layer => layer.id),
+    ['Y', 'A', 'X', 'B'],
+    'X 는 A 와 B 사이에 그대로 남는다'
+  );
+});
