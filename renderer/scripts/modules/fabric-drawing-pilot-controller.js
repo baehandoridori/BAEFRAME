@@ -2056,6 +2056,16 @@ export function createFabricDrawingPilotController(options = {}) {
       runDetached(requestPersistenceResync());
       return true;
     }
+    // 팔레트 버튼으로 되돌린 레이어 조작. 오버레이는 씬만 되돌렸으므로 모델을
+    // 함께 되돌리고 문서를 다시 받아 온다.
+    if (message.type === 'layer-history') {
+      onLayerHistoryApplied({
+        commandId: message.commandId,
+        direction: message.direction
+      });
+      runDetached(requestPersistenceResync());
+      return true;
+    }
     if (message.type !== 'transition' || !message.transition) return false;
 
     let result;

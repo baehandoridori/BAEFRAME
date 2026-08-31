@@ -535,6 +535,29 @@ const cancelActiveCollaborationDrag = installCollaborationActionRelay();
 installPointerPresenceRelay();
 
 contextBridge.exposeInMainWorld('mpvOverlayPersistence', Object.freeze({
+  // 팔레트의 되돌리기·다시하기가 레이어 조작을 되돌렸을 때 짝 id 를 알린다.
+  // 그 조작은 씬만 되돌릴 수 있고 레이어 목록·배정은 렌더러 쪽에 있다.
+  notifyLayerHistory(event) {
+    const fence = readFence(event);
+    if (!fence ||
+        typeof event?.commandId !== 'string' ||
+        event.commandId.length === 0 ||
+        event.commandId.length > 256 ||
+        (event.direction !== 'undo' && event.direction !== 'redo')) {
+      return false;
+    }
+    try {
+      ipcRenderer.send(PERSISTENCE_CHANNEL, {
+        type: 'layer-history',
+        ...fence,
+        commandId: event.commandId,
+        direction: event.direction
+      });
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  },
   notifyCommittedTransition(event) {
     const message = createPersistenceMessage(event);
     if (!message) return false;

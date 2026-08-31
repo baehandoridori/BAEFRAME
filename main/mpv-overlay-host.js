@@ -262,6 +262,18 @@ const FABRIC_DRAWING_TRANSFORM_CHANGE_KEYS = Object.freeze([
   'beforeTransform',
   'afterTransform'
 ]);
+// 오버레이 팔레트의 되돌리기·다시하기가 **레이어 조작**을 되돌렸을 때 알린다.
+// 그 조작은 씬만 되돌릴 수 있고 레이어 목록·배정은 렌더러 쪽에 있어서, 짝 id 를
+// 렌더러로 넘겨 줘야 모델까지 함께 돌아간다.
+const FABRIC_DRAWING_LAYER_HISTORY_KEYS = Object.freeze([
+  'type',
+  'hostGeneration',
+  'videoGeneration',
+  'persistenceSessionId',
+  'stableVideoIdentity',
+  'commandId',
+  'direction'
+]);
 const FABRIC_DRAWING_RESYNC_KEYS = Object.freeze([
   'type',
   'hostGeneration',
@@ -2729,6 +2741,21 @@ function normalizeFabricDrawingPersistenceMessage(message) {
       return null;
     }
     return createFabricDrawingResyncMessage(fence, message.reason);
+  }
+  if (message.type === 'layer-history') {
+    const fence = readFabricDrawingPersistenceFence(message);
+    if (!fence ||
+        !hasExactPersistenceKeys(message, FABRIC_DRAWING_LAYER_HISTORY_KEYS) ||
+        !isBoundedPersistenceString(message.commandId, 256) ||
+        (message.direction !== 'undo' && message.direction !== 'redo')) {
+      return null;
+    }
+    return {
+      type: 'layer-history',
+      ...fence,
+      commandId: message.commandId,
+      direction: message.direction
+    };
   }
   if (message.type !== 'transition' ||
       !hasExactPersistenceKeys(message, ['type', 'transition'])) {

@@ -3136,3 +3136,77 @@ test('지운 레이어는 이웃 정체를 기준으로 되돌아온다', () => 
   );
   assert.deepEqual(ids(duplicate.layers), ['B']);
 });
+
+test('랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다', () => {
+  // 레이어를 바꾼 직후에는 랭크 갱신이 오버레이에 닿기 전에 획이 커밋될 수 있다.
+  // 뒤늦은 배정 갱신은 랭크 맵만 바꿀 뿐 이미 커밋된 씬의 순서를 다시 세우지
+  // 않으므로, 문서 순서가 랭크와 어긋나면 재정렬을 한 번 보낸다.
+  const start = appSource.indexOf('function fabricPilotLayerOrderInverted(');
+  assert.ok(start > 0, '역전 판정 함수를 찾지 못했다');
+  const end = appSource.indexOf('function healFabricPilotLayerOrder()', start);
+  assert.ok(end > start, '역전 판정 함수의 끝을 찾지 못했다');
+  const inverted = new Function(
+    appSource.slice(start, end) + String.fromCharCode(10) +
+      'return fabricPilotLayerOrderInverted;'
+  )();
+
+  const ranks = { objectRanks: [['low', 0], ['high', 1]], defaultRank: 0 };
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'low' }, { id: 'high' }] }] }, ranks),
+    false,
+    '랭크가 오름차순이면 멀쩡하다'
+  );
+  assert.equal(
+    inverted({ keyframes: [{ objects: [{ id: 'high' }, { id: 'low' }] }] }, ranks),
+    true,
+    '아래 레이어 획이 위 레이어 획보다 뒤에 있으면 어긋난 것이다'
+  );
+  // 랭크 맵에 없는 id(짝인 외곽선 등)는 건너뛴다 — 본체들의 상대 순서만 본다.
+  assert.equal(
+    inverted(
+      { keyframes: [{ objects: [{ id: 'low' }, { id: 'unknown' }, { id: 'high' }] }] },
+      ranks
+    ),
+    false
+  );
+  // 프레임마다 따로 본다.
+  assert.equal(
+    inverted({
+      keyframes: [
+        { objects: [{ id: 'low' }, { id: 'high' }] },
+        { objects: [{ id: 'high' }, { id: 'low' }] }
+      ]
+    }, ranks),
+    true
+  );
+  assert.equal(inverted(null, ranks), false, '문서가 없으면 손대지 않는다');
+});
+
+test('팔레트 버튼으로 되돌린 레이어 조작도 모델을 함께 되돌린다', () => {
+  // 팔레트의 되돌리기·다시하기는 오버레이 안에서 바로 처리된다. 씬만 돌아가므로
+  // 짝 id 를 렌더러에 알려야 레이어 목록·배정과 수화 문서까지 맞는다.
+  assert.ok(
+    fabricRuntimeSource.includes('function notifyLayerHistoryApplied(result) {'),
+    '런타임이 팔레트 조작 결과를 알린다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes('bridge.notifyLayerHistory({'),
+    '오버레이 브리지로 짝 id 를 보낸다'
+  );
+  // 경로를 타는 것만으로는 부족하다 — 그 안에서 실제로 알려야 한다.
+  const localStart = fabricRuntimeSource.indexOf('const runLocalHistory = action => {');
+  assert.ok(localStart > 0, '팔레트 히스토리 처리기를 찾지 못했다');
+  const localEnd = fabricRuntimeSource.indexOf('addDomListener(undoButton', localStart);
+  assert.ok(
+    fabricRuntimeSource.slice(localStart, localEnd).includes('notifyLayerHistoryApplied(result);'),
+    '팔레트 처리기가 결과를 알린다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes("addDomListener(undoButton, 'click', () => runLocalHistory('undo'));"),
+    '되돌리기 버튼이 그 경로를 탄다'
+  );
+  assert.ok(
+    fabricRuntimeSource.includes("addDomListener(redoButton, 'click', () => runLocalHistory('redo'));"),
+    '다시하기 버튼도 같다'
+  );
+});

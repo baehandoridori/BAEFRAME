@@ -789,6 +789,21 @@ function createSessionSceneStore(options = {}) {
     persistenceObserverFailureCount += 1;
   }
 
+  // 활성 영상의 지속화 울타리. 오버레이 팔레트가 되돌린 레이어 조작을 렌더러에
+  // 알릴 때 쓴다 — 그 메시지도 다른 지속화 메시지와 같은 울타리를 지나야 한다.
+  function getPersistenceFence() {
+    const stableVideoIdentity = activeSession?.stableVideoIdentity;
+    if (!stableVideoIdentity) return null;
+    const persistence = persistenceByVideo.get(stableVideoIdentity);
+    if (!persistence) return null;
+    return {
+      hostGeneration: persistence.hostGeneration,
+      videoGeneration: persistence.videoGeneration,
+      persistenceSessionId: persistence.persistenceSessionId,
+      stableVideoIdentity
+    };
+  }
+
   function notifyPersistenceTransition(scene, eventFactory) {
     if (!committedTransitionObserver) return;
     const persistence = persistenceByVideo.get(scene.stableVideoIdentity);
@@ -3248,6 +3263,7 @@ function createSessionSceneStore(options = {}) {
     applyFrameOperation,
     applyLayerObjectsOperation,
     setObjectRanks,
+    getPersistenceFence,
     updateTool,
     setLocalTool,
     getSceneSnapshot,
@@ -9356,16 +9372,19 @@ function createFabricOverlayRuntime(options = {}) {
       }
       addDomListener(eraserModeControls.pixelButton, 'click', () => setEraserMode('pixel'));
       addDomListener(eraserModeControls.strokeButton, 'click', () => setEraserMode('stroke'));
-      addDomListener(undoButton, 'click', () => applyDrawingAction({
-        sessionId: currentSession?.sessionId,
-        actionId: createId('undo'),
-        action: 'undo'
-      }));
-      addDomListener(redoButton, 'click', () => applyDrawingAction({
-        sessionId: currentSession?.sessionId,
-        actionId: createId('redo'),
-        action: 'redo'
-      }));
+      // 팔레트의 되돌리기·다시하기는 런타임 안에서 바로 처리된다. 레이어 조작을
+      // 되돌린 경우에는 **씬만** 돌아가므로, 짝 id 를 렌더러에 알려 레이어
+      // 목록·배정과 수화 문서까지 함께 맞춘다.
+      const runLocalHistory = action => {
+        const result = applyDrawingAction({
+          sessionId: currentSession?.sessionId,
+          actionId: createId(action),
+          action
+        });
+        notifyLayerHistoryApplied(result);
+      };
+      addDomListener(undoButton, 'click', () => runLocalHistory('undo'));
+      addDomListener(redoButton, 'click', () => runLocalHistory('redo'));
       addDomListener(deleteButton, 'click', () => applyDrawingAction({
         sessionId: currentSession?.sessionId,
         actionId: createId('delete'),
@@ -9865,6 +9884,24 @@ function createFabricOverlayRuntime(options = {}) {
       hiddenCount: hiddenObjectIds.size,
       lockedCount: lockedObjectIds.size
     };
+  }
+
+  function notifyLayerHistoryApplied(result) {
+    if (!result || typeof result.commandId !== 'string') return;
+    if (result.historyDirection !== 'undo' && result.historyDirection !== 'redo') return;
+    const bridge = windowRef?.mpvOverlayPersistence;
+    if (typeof bridge?.notifyLayerHistory !== 'function') return;
+    const fence = sceneStore.getPersistenceFence?.();
+    if (!fence) return;
+    try {
+      bridge.notifyLayerHistory({
+        ...fence,
+        commandId: result.commandId,
+        direction: result.historyDirection
+      });
+    } catch (_error) {
+      // 보조 신호다. 실패해도 다음 저장·재동기에서 복구된다.
+    }
   }
 
   function updateLocalDrawingTool(tool) {

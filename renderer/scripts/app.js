@@ -8149,6 +8149,39 @@ async function initApp() {
     return { ok: marker?.success === true, commandId: marker?.commandId };
   }
 
+  // 레이어를 바꾼 직후에는 랭크 갱신이 오버레이에 닿기 **전에** 획이 커밋될 수
+  // 있다(입력을 켠 직후 첫 레이어 뷰가 도착하기 전도 같다). 그러면 그 획이 옛
+  // 활성 레이어 자리에 꽂힌 채 저장된다 — 뒤늦은 배정 갱신은 랭크 맵만 바꿀 뿐
+  // **이미 커밋된 씬의 순서를 다시 세우지 않는다.**
+  //
+  // 그래서 문서 순서가 랭크와 어긋나면 한 번 바로잡는다. 랭크 맵에 없는 id
+  // (짝인 외곽선 등)는 건너뛴다 — 본체들의 상대 순서만 본다.
+  function fabricPilotLayerOrderInverted(document, ranks) {
+    const rankOf = new Map(ranks.objectRanks);
+    for (const keyframe of document?.keyframes || []) {
+      let previous = null;
+      for (const object of keyframe?.objects || []) {
+        if (!rankOf.has(object?.id)) continue;
+        const rank = rankOf.get(object.id);
+        if (previous !== null && rank < previous) return true;
+        previous = rank;
+      }
+    }
+    return false;
+  }
+
+  function healFabricPilotLayerOrder() {
+    if (!isFabricDrawingPilotEngaged()) return;
+    const state = reviewDataManager.getDrawingLayers();
+    if (state.layers.length < 2) return;
+    const ranks = fabricPilotObjectRanks(state);
+    const document = fabricDrawingPersistenceStore.getHydrationDocument?.();
+    if (!fabricPilotLayerOrderInverted(document, ranks)) return;
+    void queueFabricPilotLayerOperation(
+      () => sendFabricPilotLayerOperation('layer-objects-reorder', ranks)
+    );
+  }
+
   const fabricPilotLayerHistory = new Map();
   const FABRIC_PILOT_LAYER_HISTORY_LIMIT = 64;
 
@@ -8249,6 +8282,8 @@ async function initApp() {
       // 새로 생긴 오브젝트도 자기 레이어의 숨김·잠금을 따라야 한다.
       // 보는 중(passive)에는 표시 세션이 선 뒤에 보내야 오버레이가 받는다.
       void pushFabricPilotLayerViewAfterDisplay();
+      // 랭크가 닿기 전에 커밋된 획은 엉뚱한 층에 꽂혀 있다. 한 번 바로잡는다.
+      healFabricPilotLayerOrder();
     });
   });
   reviewDataManager.setFabricDrawingSourceRefreshHandler(

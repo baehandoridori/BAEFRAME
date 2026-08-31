@@ -14159,6 +14159,18 @@ void main() {
         function recordPersistenceObserverFailure() {
           persistenceObserverFailureCount += 1;
         }
+        function getPersistenceFence() {
+          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          if (!stableVideoIdentity) return null;
+          const persistence = persistenceByVideo.get(stableVideoIdentity);
+          if (!persistence) return null;
+          return {
+            hostGeneration: persistence.hostGeneration,
+            videoGeneration: persistence.videoGeneration,
+            persistenceSessionId: persistence.persistenceSessionId,
+            stableVideoIdentity
+          };
+        }
         function notifyPersistenceTransition(scene, eventFactory) {
           if (!committedTransitionObserver) return;
           const persistence = persistenceByVideo.get(scene.stableVideoIdentity);
@@ -16141,6 +16153,7 @@ void main() {
           applyFrameOperation,
           applyLayerObjectsOperation,
           setObjectRanks,
+          getPersistenceFence,
           updateTool,
           setLocalTool,
           getSceneSnapshot,
@@ -21338,16 +21351,16 @@ void main() {
             }
             addDomListener(eraserModeControls.pixelButton, "click", () => setEraserMode("pixel"));
             addDomListener(eraserModeControls.strokeButton, "click", () => setEraserMode("stroke"));
-            addDomListener(undoButton, "click", () => applyDrawingAction({
-              sessionId: currentSession?.sessionId,
-              actionId: createId("undo"),
-              action: "undo"
-            }));
-            addDomListener(redoButton, "click", () => applyDrawingAction({
-              sessionId: currentSession?.sessionId,
-              actionId: createId("redo"),
-              action: "redo"
-            }));
+            const runLocalHistory = (action) => {
+              const result = applyDrawingAction({
+                sessionId: currentSession?.sessionId,
+                actionId: createId(action),
+                action
+              });
+              notifyLayerHistoryApplied(result);
+            };
+            addDomListener(undoButton, "click", () => runLocalHistory("undo"));
+            addDomListener(redoButton, "click", () => runLocalHistory("redo"));
             addDomListener(deleteButton, "click", () => applyDrawingAction({
               sessionId: currentSession?.sessionId,
               actionId: createId("delete"),
@@ -21739,6 +21752,22 @@ void main() {
             hiddenCount: hiddenObjectIds.size,
             lockedCount: lockedObjectIds.size
           };
+        }
+        function notifyLayerHistoryApplied(result) {
+          if (!result || typeof result.commandId !== "string") return;
+          if (result.historyDirection !== "undo" && result.historyDirection !== "redo") return;
+          const bridge = windowRef?.mpvOverlayPersistence;
+          if (typeof bridge?.notifyLayerHistory !== "function") return;
+          const fence = sceneStore.getPersistenceFence?.();
+          if (!fence) return;
+          try {
+            bridge.notifyLayerHistory({
+              ...fence,
+              commandId: result.commandId,
+              direction: result.historyDirection
+            });
+          } catch (_error) {
+          }
         }
         function updateLocalDrawingTool(tool) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
