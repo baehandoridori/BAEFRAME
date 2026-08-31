@@ -109,9 +109,14 @@ test('레이어 변경은 저장 대상으로 표시된다', async () => {
   manager.setDrawingLayers(manager.getDrawingLayers());
   assert.equal(manager._changeRevision, before, '같은 값은 표시하지 않는다');
 
+  let scheduled = 0;
+  manager._scheduleAutoSave = () => { scheduled += 1; };
+  manager.autoSaveEnabled = true;
   manager.setDrawingLayers(layers.addLayer(manager.getDrawingLayers()).state);
   assert.notEqual(manager._changeRevision, before, '달라지면 변경으로 표시한다');
   assert.equal(manager.isDirty, true);
+  // 자동 저장 타이머까지 잡아야 사용자가 따로 저장하지 않아도 디스크에 닿는다.
+  assert.equal(scheduled, 1, '레이어만 바꿔도 자동 저장을 예약한다');
 });
 
 test('로컬 변경이 없으면 다른 인스턴스의 레이어 변경을 채택한다', async () => {

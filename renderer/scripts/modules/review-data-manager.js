@@ -1581,10 +1581,14 @@ export class ReviewDataManager extends EventTarget {
       // 상태가 아직 최신일 때만** 그렇다. IPC 를 기다리는 사이 사용자가 레이어를
       // 또 바꿨다면 그 변경은 아직 디스크에 없다. 여기서 플래그를 내리면 다음
       // 저장의 새로고침이 방금 쓴 낡은 값으로 되돌린다.
+      // 기준선은 **쓰기가 성공할 때마다** 전진한다. 방금 쓴 것이 디스크의 사실이고,
+      // 이후 동시 편집은 거기서부터 재야 한다. 뒤처지면 그 저장이 이미 받아들인
+      // 외부 변경을 다음 병합이 "내 편집" 으로 오인해 더 새 원격 값을 덮어쓴다.
+      this._drawingLayersBaseline = savedDrawingLayers;
+      // 반면 dirty 표시는 조건부다. IPC 를 기다리는 사이 들어온 변경은 아직
+      // 디스크에 없으므로 표시를 유지해야 한다.
       if (this._drawingLayers === savedDrawingLayers) {
         this._drawingLayersDirty = false;
-        // 저장한 것이 곧 새 기준선이다. 이후 동시 편집은 여기서부터 잰다.
-        this._drawingLayersBaseline = savedDrawingLayers;
       }
 
       log.info('.bframe 파일 저장됨', {
@@ -2901,7 +2905,9 @@ export class ReviewDataManager extends EventTarget {
       // 표시하지 않으면 자동 저장이 잡히지 않고 hasUnsavedChanges 가 false 로 남아,
       // 닫기·영상 전환 경로가 레이어 변경을 그냥 버린다.
       this._drawingLayersDirty = true;
-      this._markDirty();
+      // scheduleAutoSave 를 빼면 레이어만 바꾼 작업은 자동 저장 타이머가 잡히지
+      // 않아, 사용자가 따로 저장하지 않는 한 디스크에 닿지 않는다.
+      this._markDirty({ scheduleAutoSave: true });
     }
     return changed;
   }
