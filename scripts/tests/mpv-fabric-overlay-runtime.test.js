@@ -17685,3 +17685,40 @@ test('스테이징된 조각은 원본 레이어가 잠기면 취소된다', asy
     await harness.destroy();
   }
 });
+
+test('드래그 중인 지우개는 그 레이어가 잠기면 물린다', async () => {
+  // 이미 erasedIds 에 들어간 id 는 새 제한 집합이 막지 못한다. 손을 뗄 때
+  // finalize 가 그대로 지우므로, 드래그 도중에 숨기거나 잠갔는데도 지워진다.
+  const harness = createRealFabricHarness();
+  try {
+    harness.drawStrokeAt(60, 8840);
+    const before = harness.sceneStore.getActiveSceneSnapshot();
+    const [sourceId] = before.objects.map(object => object.id);
+
+    enableRealFabricShapeTool(harness, 'eraser');
+    const pointerId = 8841;
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 60, pointerId, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 60, pointerId, 1);
+    // 여기서 이미 지울 대상으로 큐에 들어가 미리보기로 감춰져 있다.
+    const target = harness.canvas.getObjects()
+      .find(candidate => candidate.__baeframeObjectId === sourceId);
+    assert.equal(target.visible, false, '드래그 중에는 미리보기로 감춰진다');
+
+    assert.equal(harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [sourceId],
+      activeLayerDrawable: true
+    }).accepted, true);
+
+    harness.dispatchCapturedPointerUp(60, 60, pointerId);
+
+    assert.deepEqual(
+      harness.sceneStore.getActiveSceneSnapshot().objects,
+      before.objects,
+      '잠근 뒤에는 손을 떼도 지워지지 않는다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
