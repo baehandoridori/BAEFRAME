@@ -2861,9 +2861,33 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
     source.includes('[...new Set([...result.removedObjectIds, ...retainedIds])]'),
     '살아 있는 id 와 합쳐 되돌린다'
   );
+  // 커밋은 **컨트롤러 큐 안에서**(finalize) 지금 상태 위에 다시 계산해 얹는다.
+  // 응답에서 큐를 풀면 그 틈에 Ctrl+Z 가 씬을 먼저 되돌리고, 이 커밋이 이미
+  // 되돌린 씬 위에 모델을 얹는다.
   assert.ok(
-    source.includes('deleteDrawingLayerState(\n            reviewDataManager.getDrawingLayers(),'),
+    source.includes('reviewDataManager.getDrawingLayers(),') &&
+      source.includes('() => applyDrawingLayerStateChange('),
     '커밋도 지금 상태 위에서 다시 계산한다'
+  );
+  const helperStart = appSource.indexOf('async function sendFabricPilotLayerOperation(');
+  const helperSource = appSource.slice(helperStart, helperStart + 1200);
+  assert.ok(
+    helperSource.includes('{ finalize }'),
+    '커밋을 컨트롤러 큐 안에서 끝낸다'
+  );
+  // 컨트롤러가 실제로 그 커밋이 끝날 때까지 큐를 붙잡아야 한다.
+  const controllerSource = normalizeNewlines(fs.readFileSync(
+    path.join(rootDir, 'renderer/scripts/modules/fabric-drawing-pilot-controller.js'),
+    'utf8'
+  ));
+  const detailedStart = controllerSource.indexOf(
+    'function applyDrawingActionDetailed(action, payload = null, options = {}) {'
+  );
+  assert.ok(detailedStart > 0, '상세 결과 API 를 찾지 못했다');
+  assert.ok(
+    controllerSource.slice(detailedStart, detailedStart + 700)
+      .includes('await options.finalize(response);'),
+    '큐 안에서 커밋을 기다린다'
   );
   assert.ok(
     source.indexOf("'layer-objects-reorder'") > 0,

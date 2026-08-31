@@ -1493,12 +1493,27 @@ export function createFabricDrawingPilotController(options = {}) {
   // 응답 원문이 필요한 호출부용. 성공 여부만으로는 **의도한 no-change** 와
   // 전송 실패(낡은 토큰·타임아웃)를 가릴 수 없다 — 레이어 순서 이동은 그 둘을
   // 다르게 다뤄야 한다(전자는 모델을 반영, 후자는 되돌린다).
-  function applyDrawingActionDetailed(action, payload = null) {
+  // options.finalize 를 주면 **그것이 끝날 때까지 큐를 풀지 않는다.** 레이어
+  // 조작은 오버레이 응답 뒤에 렌더러가 모델을 커밋하는데, 응답에서 큐를 풀어
+  // 버리면 그 틈에 Ctrl+Z 가 씬을 먼저 되돌린다 — 그러면 아직 바뀌지 않은
+  // 모델을 되돌리려 해 아무 일도 안 하고, 뒤이은 커밋이 이미 되돌린 씬 위에
+  // 모델을 얹는다.
+  function applyDrawingActionDetailed(action, payload = null, options = {}) {
     const request = makeDrawingActionRequest(action, payload);
     if (!request) {
       return Promise.resolve({ success: false, applied: false, reason: 'invalid-request' });
     }
-    const operation = drawingActionQueue.then(() => sendDrawingActionRequest(request));
+    const operation = drawingActionQueue.then(async () => {
+      const response = await sendDrawingActionRequest(request);
+      if (typeof options.finalize === 'function') {
+        try {
+          await options.finalize(response);
+        } catch (_error) {
+          // 커밋 실패는 호출부가 다룬다. 큐만 풀어 준다.
+        }
+      }
+      return response;
+    });
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation.then(r => r || { success: false, applied: false });
   }

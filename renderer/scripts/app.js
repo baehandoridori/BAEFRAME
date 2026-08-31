@@ -8163,17 +8163,24 @@ async function initApp() {
   // **짝 id 를 먼저 정한다.** 응답을 기다렸다가 등록하면, 그 사이에 끼어든
   // Ctrl+Z 가 씬을 먼저 되돌리고 짝을 못 찾는다 — 그 뒤 늦은 커밋이 이미
   // 되돌린 씬 위에 모델을 얹는다. 부르는 쪽이 델타를 등록한 뒤 이 id 로 보낸다.
-  async function sendFabricPilotLayerOperation(action, payload, commandId) {
+  // commit 은 **컨트롤러 큐 안에서** 돈다. 응답에서 큐를 풀어 버리면 그 틈에
+  // Ctrl+Z 가 씬을 먼저 되돌리고, 아직 바뀌지 않은 모델을 되돌리려 해 아무 일도
+  // 안 한 뒤, 이 커밋이 이미 되돌린 씬 위에 모델을 얹는다.
+  async function sendFabricPilotLayerOperation(action, payload, commandId, commit) {
+    const finalize = response => {
+      if (response?.success === true && typeof commit === 'function') commit();
+    };
     const response = action === null
       ? { reason: 'no-change' }
       : await fabricDrawingPilotController.applyDrawingActionDetailed(
         action,
-        { ...payload, commandId }
+        { ...payload, commandId },
+        { finalize }
       );
     if (response?.success === true) return { ok: true };
     if (response?.reason !== 'no-change') return { ok: false };
     const marker = await fabricDrawingPilotController
-      .applyDrawingActionDetailed('layer-model-marker', { commandId });
+      .applyDrawingActionDetailed('layer-model-marker', { commandId }, { finalize });
     return { ok: marker?.success === true };
   }
 
@@ -14917,23 +14924,21 @@ async function initApp() {
           const sent = await sendFabricPilotLayerOperation(
             result.removedObjectIds.length > 0 ? 'layer-objects-remove' : null,
             { objectIds: result.removedObjectIds },
-            commandId
+            commandId,
+            // 커밋도 **지금** 상태 위에서 다시 계산한다. 기다리는 동안 다른 편집이
+            // 들어왔을 수 있다.
+            () => applyDrawingLayerStateChange(
+              deleteDrawingLayerState(
+                reviewDataManager.getDrawingLayers(),
+                layerId,
+                [...(collectFabricDrawingObjectIds() || [])]
+              ).state,
+              removedLayer ? `레이어 삭제: ${removedLayer.name}` : null
+            )
           );
           if (!sent.ok) {
             showToast('레이어의 그림을 지우지 못했습니다', 'error');
-            return;
           }
-          // 커밋도 **지금** 상태 위에서 다시 계산한다. 기다리는 동안 다른 편집이
-          // 들어왔을 수 있다.
-          const committed = deleteDrawingLayerState(
-            reviewDataManager.getDrawingLayers(),
-            layerId,
-            [...(collectFabricDrawingObjectIds() || [])]
-          );
-          applyDrawingLayerStateChange(
-            committed.state,
-            removedLayer ? `레이어 삭제: ${removedLayer.name}` : null
-          );
         });
         return;
       }
@@ -14975,19 +14980,18 @@ async function initApp() {
           const sent = await sendFabricPilotLayerOperation(
             'layer-objects-reorder',
             fabricPilotObjectRanks(next),
-            commandId
+            commandId,
+            // 커밋도 지금 상태 위에서 **같은 짝 기준 이동**을 다시 한다.
+            () => applyDrawingLayerStateChange(
+              placeDrawingLayerRelativeTo(
+                reviewDataManager.getDrawingLayers(), movedId, neighborId, movedSide
+              ),
+              layer ? `레이어 이동: ${layer.name}` : null
+            )
           );
           if (!sent.ok) {
             showToast('레이어 순서를 바꾸지 못했습니다', 'error');
-            return;
           }
-          // 커밋도 지금 상태 위에서 **같은 짝 기준 이동**을 다시 한다.
-          applyDrawingLayerStateChange(
-            placeDrawingLayerRelativeTo(
-              reviewDataManager.getDrawingLayers(), movedId, neighborId, movedSide
-            ),
-            layer ? `레이어 이동: ${layer.name}` : null
-          );
         });
         return;
       }

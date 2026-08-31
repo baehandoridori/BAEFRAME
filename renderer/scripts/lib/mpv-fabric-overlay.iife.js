@@ -15879,6 +15879,7 @@ void main() {
           if (operation === "layer-objects-reorder" && command.silent === true) {
             let changed = 0;
             const reseededSceneInstanceIds = [];
+            const changedSceneKeys = /* @__PURE__ */ new Set();
             for (const scene of committedScenesForVideo(stableVideoIdentity)) {
               const current = [...scene.objects.values()];
               const next = [...current].sort((left, right) => rankFor(left.id) - rankFor(right.id));
@@ -15889,10 +15890,17 @@ void main() {
               scene.dirty = true;
               scene.mutationCount += 1;
               scene.mutationSequence += 1;
+              scene.history.clearRedo();
+              scene.historyEntries = { undo: scene.historyEntries.undo, redo: [] };
               reseededSceneInstanceIds.push(scene.sceneInstanceId);
+              changedSceneKeys.add(scene.key);
               changed += 1;
             }
             notifyScenesDropped(reseededSceneInstanceIds);
+            const order = globalOrderFor(stableVideoIdentity);
+            if (order) {
+              order.redo = order.redo.filter((entry) => !changedSceneKeys.has(entry.sceneKey));
+            }
             rebuildActiveProvisionalScene(stableVideoIdentity);
             if (changed === 0) return { applied: false, reason: "no-change" };
             return {
