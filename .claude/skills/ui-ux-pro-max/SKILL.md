@@ -197,15 +197,16 @@ After getting the design system, use domain searches to get additional details:
 | Alternative fonts | `typography` | `--domain typography "elegant luxury"` |
 | Landing structure | `landing` | `--domain landing "hero social-proof"` |
 
-### Step 4: Stack Guidelines (Default: html-tailwind)
+### Step 4: Existing Stack Guidelines (conditional)
 
 Get implementation-specific best practices. Use the existing project stack. For BAEFRAME desktop work, use general UX guidance without selecting an unrelated web framework.
 
 ```powershell
-& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --stack html-tailwind
+# BAEFRAME desktop: framework-independent UX lookup
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain ux
 ```
 
-Available stacks: `html-tailwind`, `react`, `nextjs`, `vue`, `svelte`, `swiftui`, `react-native`, `flutter`, `shadcn`, `jetpack-compose`
+Only select a stack for a project that already uses it or when the user explicitly requests it. Available stacks: `html-tailwind`, `react`, `nextjs`, `vue`, `svelte`, `swiftui`, `react-native`, `flutter`, `shadcn`, `jetpack-compose`
 
 ---
 
