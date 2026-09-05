@@ -103,28 +103,23 @@ Search specific domains using the CLI tool below.
 
 ## Prerequisites
 
-Check if Python is installed:
+아래 실행 예제는 PowerShell 기준이다. 이 세션에서 실제로 실행되는 Python 3 경로를 확인하고 모든 예제에서 같은 `$uiPython`을 재사용한다. 설치 여부만 확인하고 다른 명령 이름으로 실행하지 않는다.
 
-```bash
-python3 --version || python --version
-```
-
-If Python is not installed, install it based on user's OS:
-
-**macOS:**
-```bash
-brew install python3
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update && sudo apt install python3
-```
-
-**Windows:**
 ```powershell
-winget install Python.Python.3.12
+$uiPython = $null
+foreach ($candidate in @('python', 'python3')) {
+  $command = Get-Command $candidate -ErrorAction SilentlyContinue
+  if (-not $command) { continue }
+  $version = & $command.Source --version 2>&1
+  if ($LASTEXITCODE -eq 0 -and "$version" -match '^Python 3\.') {
+    $uiPython = $command.Source
+    break
+  }
+}
+if (-not $uiPython) { throw 'Python 3 실행 경로를 먼저 준비하세요.' }
 ```
+
+Windows에서 설치가 필요하면 `winget install Python.Python.3.12`를 검토한다. 설치 후 새 터미널에서 위 검사를 다시 실행한다. macOS/Linux의 다른 셸에서는 위 PowerShell 문법 대신 해당 셸에서 확인한 Python 3 실행 경로를 모든 검색 명령에 일관되게 사용한다.
 
 ---
 
@@ -144,8 +139,8 @@ Extract key information from user request:
 
 **For new design work, start with `--design-system`** to get comprehensive recommendations with reasoning:
 
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "<product_type> <industry> <keywords>" --design-system [-p "Project Name"]
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<product_type> <industry> <keywords>" --design-system [-p "Project Name"]
 ```
 
 This command:
@@ -155,16 +150,16 @@ This command:
 4. Includes anti-patterns to avoid
 
 **Example:**
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness service" --design-system -p "Serenity Spa"
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness service" --design-system -p "Serenity Spa"
 ```
 
 ### Step 2b: Persist Design System (Master + Overrides Pattern)
 
 To save the design system for hierarchical retrieval across sessions, add `--persist`:
 
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name"
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name"
 ```
 
 This creates:
@@ -172,8 +167,8 @@ This creates:
 - `design-system/pages/` — Folder for page-specific overrides
 
 **With page-specific override:**
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name" --page "dashboard"
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<query>" --design-system --persist -p "Project Name" --page "dashboard"
 ```
 
 This also creates:
@@ -188,8 +183,8 @@ This also creates:
 
 After getting the design system, use domain searches to get additional details:
 
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain <domain> [-n <max_results>]
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain <domain> [-n <max_results>]
 ```
 
 **When to use detailed searches:**
@@ -206,8 +201,8 @@ python .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --domain <doma
 
 Get implementation-specific best practices. Use the existing project stack. For BAEFRAME desktop work, use general UX guidance without selecting an unrelated web framework.
 
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --stack html-tailwind
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "<keyword>" --stack html-tailwind
 ```
 
 Available stacks: `html-tailwind`, `react`, `nextjs`, `vue`, `svelte`, `swiftui`, `react-native`, `flutter`, `shadcn`, `jetpack-compose`
@@ -260,26 +255,26 @@ Available stacks: `html-tailwind`, `react`, `nextjs`, `vue`, `svelte`, `swiftui`
 
 ### Step 2: Generate Design System (new design work only)
 
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness service elegant" --design-system -p "Serenity Spa"
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "beauty spa wellness service elegant" --design-system -p "Serenity Spa"
 ```
 
 **Output:** Complete design system with pattern, style, colors, typography, effects, and anti-patterns.
 
 ### Step 3: Supplement with Detailed Searches (as needed)
 
-```bash
+```powershell
 # Get UX guidelines for animation and accessibility
-python .claude/skills/ui-ux-pro-max/scripts/search.py "animation accessibility" --domain ux
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "animation accessibility" --domain ux
 
 # Get alternative typography options if needed
-python .claude/skills/ui-ux-pro-max/scripts/search.py "elegant luxury serif" --domain typography
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "elegant luxury serif" --domain typography
 ```
 
 ### Step 4: Stack Guidelines
 
-```bash
-python .claude/skills/ui-ux-pro-max/scripts/search.py "layout responsive form" --stack html-tailwind
+```powershell
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "layout responsive form" --stack html-tailwind
 ```
 
 **Then:** Synthesize design system + detailed searches and implement the design.
@@ -290,12 +285,12 @@ python .claude/skills/ui-ux-pro-max/scripts/search.py "layout responsive form" -
 
 The `--design-system` flag supports two output formats:
 
-```bash
+```powershell
 # ASCII box (default) - best for terminal display
-python .claude/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system
 
 # Markdown - best for documentation
-python .claude/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system -f markdown
+& $uiPython .claude/skills/ui-ux-pro-max/scripts/search.py "fintech crypto" --design-system -f markdown
 ```
 
 ---

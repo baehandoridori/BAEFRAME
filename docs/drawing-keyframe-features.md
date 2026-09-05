@@ -2,7 +2,7 @@
 
 > 갱신 기준: 2026-09-05, v2.9.0-beta, 점검 대상 커밋 `85fd0c2`. 코드와 구현 기록을 대조했으며 이번 문서 정리에서 앱 실기 검증은 재수행하지 않았다.
 >
-> 레거시는 `drawings`, mpv Fabric 경로는 `drawingsV3`를 사용한다. 레이어 모델은 `.bframe` 루트의 `drawingLayers`에 있다. 아래 기능표가 현재 상태의 기준이며, 과거 미구현 분석은 [보존 기록](history/drawing-keyframe-features-before-2026-09-05.md)으로 분리했다.
+> 레거시는 `drawings`, mpv Fabric 경로는 `drawingsV3`를 사용한다. 레이어 모델은 `.bframe` 루트의 `drawingLayersV1`에 있다. 아래 기능표가 현재 상태의 기준이며, 과거 미구현 분석은 [보존 기록](history/drawing-keyframe-features-before-2026-09-05.md)으로 분리했다.
 >
 > 작업 전 [드로잉 작업 규칙](drawing-work-guide.md)을 읽는다. 기능 변경 시 관련 상태·데이터 출처·검증 기준을 함께 갱신한다.
 
@@ -32,18 +32,18 @@
 | `frameCopy` | `Ctrl+Alt+C` | 프레임 복사 | ✅ 동작 (v2.6.4-beta) — `frame-copy`. 홀드 중이면 그 키프레임 내용을 뜬다. **영상 사이를 넘지 않는다** |
 | `framePaste` | `Ctrl+Alt+V` | 프레임 붙여넣기 | ✅ 동작 (v2.6.4-beta) — `frame-paste` |
 
-### 1.3 드로잉 레이어 조작 — 루트 drawingLayers와 오버레이의 연결
+### 1.3 드로잉 레이어 조작 — 루트 drawingLayersV1와 오버레이의 연결
 
 | 액션 id | 기본 키 | 라벨 | mpv 모드 상태 |
 |---|---|---|---|
-| `drawingLayerAdd` | `Shift+F1` | 드로잉 레이어 추가 | ✅ 동작 (v2.6.4-beta) — 루트 `drawingLayers` 에 저장 |
+| `drawingLayerAdd` | `Shift+F1` | 드로잉 레이어 추가 | ✅ 동작 (v2.6.4-beta) — 루트 `drawingLayersV1` 에 저장 |
 | `drawingLayerDelete` | ``Shift+` `` | 드로잉 레이어 삭제 | ✅ 동작 (v2.9.0-beta) — 오버레이가 **모든 키프레임**에서 그 레이어의 오브젝트를 걷는다. 한 번의 실행취소로 전부 돌아온다. 마지막 레이어는 지울 수 없다 |
 | `drawingLayerVisibilityToggle` | `` ` `` | 활성 레이어 표시 토글 | ✅ 동작 (v2.8.0-beta) — 렌더러가 숨길 오브젝트 id 집합을 오버레이로 밀어 넣는다. **문서는 그대로다**(뷰 상태). **토글은 그리기 모드에서만 받지만**, 저장된 숨김은 보는 중(passive 투영)에도 적용된다 — 그때는 세션 id 가 없으므로 영상 정체로 맞춘다 |
 | `drawingLayerLockToggle` | `Ctrl+2` | 활성 레이어 잠금 토글 | ✅ 동작 (v2.8.0-beta) — 잠근 획은 선택·이벤트에서 빠진다. 활성 레이어가 잠기거나 숨겨지면 새 획도 받지 않는다 |
 | `drawingLayerSelectUp` / `Down` | `Shift+X` / `Shift+C` | 위/아래 레이어 선택 | ✅ 동작 (v2.6.4-beta) — 헤더 클릭으로도 바뀐다 |
 | `drawingLayerMoveUp` / `Down` | `Ctrl+Shift+X` / `Ctrl+Shift+C` | 레이어 위/아래 이동 | ✅ 동작 (v2.9.0-beta) — 오버레이가 키프레임마다 오브젝트를 **랭크**(레이어 순서 인덱스)대로 다시 세운다. 새 획도 그리는 순간 제 층에 들어간다 |
 
-> `drawingsV3` 에는 여전히 레이어가 없다(스키마 불가침). 레이어 모델은 `.bframe` **루트의 `drawingLayers`** 에 따로 살고, 오브젝트 id → 레이어 id 배정으로 그림과 이어진다. 그래서 이렇게 갈린다:
+> `drawingsV3` 에는 여전히 레이어가 없다(스키마 불가침). 레이어 모델은 `.bframe` **루트의 `drawingLayersV1`** 에 따로 살고, 오브젝트 id → 레이어 id 배정으로 그림과 이어진다. 그래서 이렇게 갈린다:
 >
 > - **메타데이터만으로 완결되는 것**(추가·선택·이름·색) → 동작
 > - **뷰 상태로 완결되는 것**(표시·잠금) → 동작. 렌더러가 레이어 플래그와 배정으로 **오브젝트 id 집합**을 계산해 오버레이로 밀어 넣고, 오버레이는 그릴 때 그 집합만 본다. 레코드 키 집합이 고정이라 문서에는 쓸 수 없다 — 그래서 집합은 프레임 전환·실행취소·세션 재시작 때마다 다시 적용·재전송된다.
@@ -87,7 +87,7 @@
 | 항목 | 레거시 레이어 | 파일럿 투영 행 |
 |---|---|---|
 | 행 id | `layer-*` | `fabric-pilot-layer-<레이어 id>` (레이어마다 한 행) |
-| 이름 / 색 | 사용자 지정 | 레이어 모델의 이름·색 (`drawingLayers`) |
+| 이름 / 색 | 사용자 지정 | 레이어 모델의 이름·색 (`drawingLayersV1`) |
 | 키프레임 마커 | ● 채움 / ○ 빈 키프레임 | **동일하게 렌더됨** (`keyframe.isEmpty` 기준) |
 | 홀드 구간 | `getKeyframeRanges()` | **동일** (다음 키프레임 직전까지) |
 | 마커 클릭 선택 | 가능 | **가능** (시각 확인용) |
