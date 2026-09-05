@@ -8170,7 +8170,7 @@ function createFabricOverlayRuntime(options = {}) {
 
   function scheduleSelectGestureSettle(gesture) {
     const pointerId = gesture.pointerId;
-    queueMicrotaskRef(() => {
+    const settle = () => {
       if (selectGesture !== gesture || gesture.pointerId !== pointerId || gesture.phase !== 'settling') return;
       if (destroyed || !inputEnabled || !fabricCanvas ||
           currentSession?.sessionId !== gesture.sessionId ||
@@ -8185,6 +8185,16 @@ function createFabricOverlayRuntime(options = {}) {
       selectGesture = null;
       settleDeferredViewport(gesture.sessionId, gesture.inputRevision);
       settleArmedFramePreview();
+    };
+    queueMicrotaskRef(() => {
+      // Native browsers run microtasks between the capture listener and Fabric's
+      // bubbling pointerup. Preserve the group origin until object:modified has
+      // stored source coordinates, rather than its children's temporary local ones.
+      if (selectGesture === gesture && fabricCanvas?._currentTransform) {
+        setTimeoutRef(settle, 0);
+      } else {
+        settle();
+      }
     });
   }
 

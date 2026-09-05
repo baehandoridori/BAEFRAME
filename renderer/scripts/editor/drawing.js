@@ -61,6 +61,7 @@ export function createEditorDrawing(options = {}) {
   const documentRef = container?.ownerDocument;
   if (!container || !documentRef) throw new Error('드로잉 미리보기 영역이 필요합니다.');
   const windowRef = options.window || documentRef.defaultView;
+  const clipContainer = options.clipContainer || container.closest?.('#stageViewport, .stage-area');
   const fabric = options.fabric || browserFabric;
   const { createFabricOverlayRuntime } = runtimeModule;
   const onChange = typeof options.onChange === 'function' ? options.onChange : () => {};
@@ -192,21 +193,38 @@ export function createEditorDrawing(options = {}) {
   function updateLayerView() {
     if (!owner) return;
     const state = owner.layerState;
-    const ids = [...new Set(recordsOf(owner.store.exportRootValue()).map(record => record.id))];
-    const rank = new Map(state.layers.map((layer, index) => [layer.id, state.layers.length - 1 - index]));
-    const active = findLayer(state, state.activeLayerId);
+    const revision = owner.store.getRevision();
+    // Pan/zoom and playback change presentation only. Keep the document-wide ID
+    // list until a committed drawing edit, and layer masks until layer state changes.
+    let cache = owner.layerViewCache;
+    if (!cache || cache.revision !== revision) {
+      cache = owner.layerViewCache = { revision,
+        ids: [...new Set(recordsOf(owner.store.exportRootValue()).map(record => record.id))] };
+    }
+    if (cache.state !== state) {
+      const ids = cache.ids;
+      const rank = new Map(state.layers.map((layer, index) => [layer.id, state.layers.length - 1 - index]));
+      const active = findLayer(state, state.activeLayerId);
+      cache.state = state;
+      cache.view = {
+        hiddenObjectIds: ids.filter(id => !isObjectVisible(state, id)),
+        lockedObjectIds: ids.filter(id => !isObjectEditable(state, id)),
+        activeLayerDrawable: active?.visible !== false && active?.locked !== true,
+        objectRanks: ids.map(id => [id, rank.get(layerIdForObject(state, id)) ?? 0]),
+        defaultRank: rank.get(state.baseLayerId) ?? 0,
+        activeLayerRank: rank.get(state.activeLayerId) ?? 0
+      };
+    }
     runtime.updateDrawingLayerView({ ...(inputActive ? { sessionId: owner.sessionId } :
       { stableVideoIdentity: owner.envelope.stableVideoIdentity }),
-    hiddenObjectIds: ids.filter(id => !isObjectVisible(state, id)),
-    lockedObjectIds: ids.filter(id => !isObjectEditable(state, id)),
-    activeLayerDrawable: active?.visible !== false && active?.locked !== true,
-    objectRanks: ids.map(id => [id, rank.get(layerIdForObject(state, id)) ?? 0]),
-    defaultRank: rank.get(state.baseLayerId) ?? 0,
-    activeLayerRank: rank.get(state.activeLayerId) ?? 0,
-    layerHistoryBusy: transactionDepth > 0 });
+    ...cache.view, layerHistoryBusy: transactionDepth > 0 });
   }
   function showFrame() {
     if (!owner) return;
+    const clipRect = clipContainer?.getBoundingClientRect();
+    root.style.clipPath = clipRect
+      ? `inset(${Math.max(0, clipRect.top)}px ${Math.max(0, windowRef.innerWidth - clipRect.left - clipRect.width)}px ${Math.max(0, windowRef.innerHeight - clipRect.top - clipRect.height)}px ${Math.max(0, clipRect.left)}px)`
+      : '';
     const canvasRect = rect();
     if (!canvasRect) { if (inputActive) disableInput(); root.style.display = 'none'; paletteDock.hidden = true; return; }
     root.style.display = '';
@@ -241,12 +259,17 @@ export function createEditorDrawing(options = {}) {
     positionPalettePanel();
   }
   function refreshGeometry() {
-    if (!disposed && owner) {
-      try { showFrame(); } catch (error) { persistenceError = error; }
-    }
+    try { refreshViewport(); } catch (error) { persistenceError = error; }
+  }
+  function refreshViewport() {
+    if (disposed || !owner) return false;
+    if (persistenceError) throw persistenceError;
+    showFrame();
+    return true;
   }
   const resizeObserver = typeof windowRef.ResizeObserver === 'function' ? new windowRef.ResizeObserver(refreshGeometry) : null;
   resizeObserver?.observe(container);
+  if (clipContainer) resizeObserver?.observe(clipContainer);
   resizeObserver?.observe(paletteDock);
   windowRef.addEventListener('resize', refreshGeometry);
   windowRef.addEventListener('scroll', refreshGeometry, true);
@@ -401,7 +424,7 @@ export function createEditorDrawing(options = {}) {
     windowRef.removeEventListener('scroll', refreshGeometry, true);
     runtime.destroy(); paletteDock.remove(); root.remove(); owner = null;
   }
-  return { loadClip, seek, setTool, setEnabled, action, snapshot() {
+  return { loadClip, seek, setTool, setEnabled, refreshViewport, action, snapshot() {
     if (persistenceError) throw persistenceError;
     return owner ? snapshotFor(owner) : { drawingsV3: null, drawingLayersV1: null };
   }, keyframes, layers, addLayer, setActiveLayer, toggleLayer, exportOverlays, dispose };

@@ -7,14 +7,16 @@
   min-width: 0;
   max-width: 100%;
 }
-.editor-drawing-dock[hidden] { display: none !important; }
+.editor-drawing-dock[hidden] {
+  display: none !important;
+}
 .editor-drawing-palette.mpv-fabric-pilot-toolbar {
-  --fabric-palette-gap: 6px;
-  --text-primary: #f0f0ed;
-  --text-tertiary: #a5a5a0;
-  --text-faint: #b8b8b1;
-  --track-idle: #414141;
-  --accent-secondary: #ffd000;
+  --fabric-palette-gap: 4px;
+  --text-primary: #e4e5e8;
+  --text-tertiary: #a8abb3;
+  --text-faint: #b8bdc7;
+  --track-idle: #41454f;
+  --accent-secondary: #f4cb55;
   position: static !important;
   left: auto !important;
   top: auto !important;
@@ -27,9 +29,12 @@
 .editor-drawing-palette .mpv-fabric-pilot-toolbar-content {
   display: flex !important;
   align-items: center;
-  flex-flow: row wrap;
-  gap: 6px;
+  flex-flow: row nowrap;
+  gap: 4px;
   padding: 0;
+  min-height: 0 !important;
+  max-height: 28px !important;
+  overflow: visible !important;
 }
 .editor-drawing-palette .mpv-fabric-pilot-toolbar-header,
 .editor-drawing-palette .mpv-fabric-pilot-section-label,
@@ -37,40 +42,54 @@
 .editor-drawing-palette .mpv-fabric-pilot-badge,
 .editor-drawing-palette [data-fabric-pilot-section='tools'],
 .editor-drawing-palette [data-fabric-pilot-action='undo'],
-.editor-drawing-palette [data-fabric-pilot-action='redo'] { display: none !important; }
+.editor-drawing-palette [data-fabric-pilot-action='redo'] {
+  display: none !important;
+}
 .editor-drawing-palette .mpv-fabric-pilot-section-row {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
+  flex-wrap: nowrap;
+  gap: 4px;
 }
 .editor-drawing-palette button {
   min-width: 28px;
-  min-height: 32px;
-  border: 1px solid #414141;
-  border-radius: 5px;
-  padding: 6px 8px;
-  background: #242424;
-  color: #f0f0ed;
+  min-height: 25px;
+  border: 1px solid #464951;
+  border-radius: 3px;
+  padding: 3px 6px;
+  background: #292b30;
+  color: #d4d8e0;
   font: inherit;
-  font-size: 12px;
+  font-size: 10px;
   white-space: nowrap;
   cursor: pointer;
 }
-.editor-drawing-palette button:hover { background: #303030; border-color: #777; }
-.editor-drawing-palette button:focus-visible { outline: 2px solid #ffd000; outline-offset: 2px; }
+.editor-drawing-palette button:hover {
+  background: #303030;
+  border-color: #777;
+}
+.editor-drawing-palette button:focus-visible {
+  outline: 2px solid #ffd000;
+  outline-offset: 2px;
+}
 .editor-drawing-palette button[data-active='true'],
-.editor-drawing-palette button[aria-pressed='true'] { border-color: #ffd000; background: #342e15; color: #ffd000; }
+.editor-drawing-palette button[aria-pressed='true'] {
+  border-color: #88764c;
+  background: #454030;
+  color: #ffe292;
+}
 .editor-drawing-palette [data-fabric-pilot-action='brush-settings'] {
   width: auto !important;
-  min-height: 32px !important;
-  gap: 7px !important;
+  min-height: 25px !important;
+  height: 25px !important;
+  padding: 2px 6px !important;
+  gap: 4px !important;
 }
 .editor-drawing-palette [data-fabric-pilot-action='brush-settings']::after {
   content: '색·굵기';
   margin-left: 3px;
   color: #b8b8b1;
-  font-size: 11px;
+  font-size: 10px;
 }
 .editor-drawing-palette [data-fabric-pilot-panel='brush-settings'] {
   position: fixed !important;
@@ -87,7 +106,7 @@
   border: 1px solid #50504a;
   border-radius: 8px !important;
   background: #20201e !important;
-  box-shadow: 0 8px 28px #0008;
+  box-shadow: 0 3px 8px #0008;
   color: #f0f0ed;
 }
 .editor-drawing-palette [data-fabric-pilot-panel='brush-settings'] button[data-fabric-pilot-color] {
@@ -98,7 +117,11 @@
   padding: 0;
   border-radius: 4px;
 }
-.editor-drawing-palette .mpv-fabric-pilot-field { display: flex; flex-direction: column; gap: 6px; }
+.editor-drawing-palette .mpv-fabric-pilot-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
 .editor-drawing-palette .mpv-fabric-pilot-field-top {
   display: flex;
   justify-content: space-between;
@@ -106,7 +129,11 @@
   color: #b8b8b1;
   font-size: 12px;
 }
-.editor-drawing-palette .mpv-fabric-pilot-field-top b { color: #f0f0ed; font-weight: 500; font-variant-numeric: tabular-nums; }
+.editor-drawing-palette .mpv-fabric-pilot-field-top b {
+  color: #f0f0ed;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
 .editor-drawing-palette input[type='range'] {
   appearance: none;
   width: 100%;
@@ -119,7 +146,11 @@
 .editor-drawing-palette input[type='range']::-webkit-slider-runnable-track {
   height: 4px;
   border-radius: 3px;
-  background: linear-gradient(to right, #ffd000 0 var(--fabric-range-fill, 0%), #414141 var(--fabric-range-fill, 0%) 100%);
+  background: linear-gradient(
+    to right,
+    #ffd000 0 var(--fabric-range-fill, 0%),
+    #414141 var(--fabric-range-fill, 0%) 100%
+  );
 }
 .editor-drawing-palette input[type='range']::-webkit-slider-thumb {
   appearance: none;
@@ -130,4 +161,39 @@
   margin-top: -4px;
 }
 .editor-drawing-palette .mpv-fabric-pilot-eraser-mode,
-.editor-drawing-palette .mpv-fabric-pilot-recent-colors { display: flex; flex-flow: row wrap; gap: 6px; }
+.editor-drawing-palette .mpv-fabric-pilot-recent-colors {
+  display: flex;
+  flex-flow: row wrap;
+  gap: 6px;
+}
+
+/* Keep selection options on the same context row; tool changes cannot resize the viewer. */
+.editor-drawing-palette [data-fabric-pilot-group='selection-controls'] {
+  flex-direction: row !important;
+  align-items: center !important;
+  gap: 8px !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+  background: transparent !important;
+  height: 26px !important;
+  flex-shrink: 0;
+}
+.editor-drawing-palette [data-fabric-pilot-group='selection-target'],
+.editor-drawing-palette [data-fabric-pilot-group='selection-shape'] {
+  flex-flow: row nowrap !important;
+  gap: 3px !important;
+  padding: 0 !important;
+  border-bottom: 0 !important;
+}
+.editor-drawing-palette [data-fabric-pilot-label='selection-target'],
+.editor-drawing-palette [data-fabric-pilot-label='selection-shape'],
+.editor-drawing-palette [data-fabric-pilot-output='selection-summary'] {
+  display: none !important;
+}
+.editor-drawing-palette [data-fabric-pilot-group='selection-controls'] button {
+  width: auto !important;
+  min-height: 25px !important;
+  font-size: 10px !important;
+  line-height: 16px !important;
+  padding: 3px 5px !important;
+}

@@ -1,8 +1,9 @@
-/* global BAEEditProject, BAEEditorController, BAEEditorDrawing, BAEEditorPreview */
+/* global BAEEditProject, BAEEditorController, BAEEditorDrawing, BAEEditorPreview, BAEEditorTimeline */
 (function () {
   'use strict';
   const $ = (id) => document.getElementById(id);
   const core = BAEEditProject;
+  const timeline = BAEEditorTimeline;
   const api = window.editorAPI;
   const video = $('videoPreview');
   const music = $('musicPreview');
@@ -15,14 +16,25 @@
   let previewGeneration = 0;
   let lastVideoPath = '';
   let lastMusicPath = '';
-  let dragClipId = null;
-  let latestSeek = null;
   let seeking = false;
+  let scrubFrame = null;
   let operationDepth = 0;
   let lastTimelineKey = '';
   let compositePending = 0;
   let compositeReady = false;
   let musicReady = Promise.resolve();
+  let activeTool = 'select';
+  let timelineScale = null;
+  let timelineMode = 'fit';
+  let timelineRevision = 0;
+  let clipDrag = null;
+  let clipDragAnimation = null;
+  let stagePan = null;
+  let timelinePan = null;
+  let stageView = { zoom: 1, panX: 0, panY: 0 };
+  let stageBase = { width: 1, height: 1 };
+  let stageZoomMode = 'fit';
+  let stageGeometryKey = '';
 
   function status(message, error = false) {
     $('status').textContent = message;
@@ -41,9 +53,12 @@
   });
   controller = BAEEditorController.createEditorController({ core, api, drawing, onChange: render });
   transport = BAEEditorPreview.createPreviewTransport({
-    core, video, getProject: () => controller.state.project, getFrame: () => controller.state.frame,
+    core,
+    video,
+    getProject: () => controller.state.project,
+    getFrame: () => controller.state.frame,
     async onFrame(frame, { prepare }) {
-      const release = beginComposite();
+      const release = beginComposite(prepare);
       try {
         if (prepare) music.pause();
         await controller.seek(frame, { playback: true });
@@ -51,25 +66,64 @@
           if (await syncPreview()) compositeReady = true;
         } else compositeReady = true;
         if (!playing && operationDepth === 0) await drawing.setEnabled(drawingMode);
-      } finally { release(); }
+      } finally {
+        release();
+      }
     },
-    onTime(seconds) { void syncMusic(seconds, true).catch(error => status(error.message, true)); },
+    onTime(seconds) {
+      void syncMusic(seconds, true).catch((error) => status(error.message, true));
+    },
     onPlaying(value) {
       playing = value;
       $('playPause').textContent = value ? '일시정지' : '재생';
       if (!value) music.pause();
       render();
     },
-    onError(error) { status(error.message, true); }
+    onError(error) {
+      status(error.message, true);
+    }
   });
 
-  function beginComposite() {
+  function captureComposite() {
+    const still = $('previewStill');
+    if (!still || !compositeReady || video.readyState < 2 || !$('stage').clientWidth) return;
+    const project = controller.state.project;
+    still.width = Math.min(1280, project.width);
+    still.height = Math.round((still.width * project.height) / project.width);
+    const context = still.getContext('2d');
+    context.fillStyle = '#000';
+    context.fillRect(0, 0, still.width, still.height);
+    const factor =
+      video.style.objectFit === 'cover'
+        ? Math.max(still.width / video.videoWidth, still.height / video.videoHeight)
+        : Math.min(still.width / video.videoWidth, still.height / video.videoHeight);
+    const width = video.videoWidth * factor,
+      height = video.videoHeight * factor;
+    context.drawImage(video, (still.width - width) / 2, (still.height - height) / 2, width, height);
+    const canvas = document.querySelector('.editor-drawing-overlay canvas.lower-canvas');
+    if (canvas && canvas.width && canvas.height) {
+      const stageRect = $('stage').getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
+      context.drawImage(
+        canvas,
+        ((rect.left - stageRect.left) / stageRect.width) * still.width,
+        ((rect.top - stageRect.top) / stageRect.height) * still.height,
+        (rect.width / stageRect.width) * still.width,
+        (rect.height / stageRect.height) * still.height
+      );
+    }
+    still.dataset.ready = 'true';
+  }
+  function beginComposite(retain = false) {
+    if (retain && compositePending === 0) captureComposite();
     compositePending++;
     compositeReady = false;
     document.body.classList.add('editor-seeking');
     return () => {
       compositePending--;
       document.body.classList.toggle('editor-seeking', compositePending > 0 || !compositeReady);
+      if (compositePending === 0 && compositeReady && $('previewStill'))
+      {$('previewStill').dataset.ready = 'false';}
     };
   }
 
@@ -88,12 +142,29 @@
     return controller.state.project.clips.find((c) => c.id === controller.state.selectedId);
   }
   function bounds() {
-    const clip = selected();
-    if ($('timelineZoom').value === 'clip' && clip) {
-      const start = clipStart(clip.id);
-      return [start, start + clip.durationFrames];
-    }
     return [0, Math.max(1, core.durationFrames(controller.state.project))];
+  }
+  function timelineGeometry() {
+    const scroll = $('timelineScroll');
+    const labelWidth =
+      parseFloat(getComputedStyle(scroll).getPropertyValue('--track-label-width')) || 164;
+    const viewportWidth = Math.max(1, scroll.clientWidth - labelWidth);
+    const totalFrames = bounds()[1];
+    const limits = timeline.scaleLimits(totalFrames, viewportWidth);
+    if (timelineScale === null || timelineMode === 'fit') timelineScale = limits.min;
+    timelineScale = Math.max(limits.min, Math.min(limits.max, timelineScale));
+    return {
+      left: scroll.getBoundingClientRect().left,
+      labelWidth,
+      viewportWidth,
+      totalFrames,
+      scrollLeft: scroll.scrollLeft,
+      pxPerFrame: timelineScale,
+      limits
+    };
+  }
+  function frameAtPointer(clientX) {
+    return timeline.frameAtClientX(clientX, timelineGeometry());
   }
   function fileUrl(filePath) {
     const normalized = filePath.replace(/\\/g, '/');
@@ -125,7 +196,8 @@
     const state = controller.state;
     const project = state.project;
     const frame = state.frame;
-    const current = () => generation === previewGeneration && state.project === project && state.frame === frame;
+    const current = () =>
+      generation === previewGeneration && state.project === project && state.frame === frame;
     const resolved = core.resolveFrame(state.project, state.frame);
     if (!resolved) {
       video.pause();
@@ -175,11 +247,11 @@
       const position = outputSeconds - track.offsetFrames / project.fps;
       music.volume = Math.min(1, track.volume);
       if (position >= 0 && position < source.durationSeconds) {
-        if (Math.abs(music.currentTime - position) > (shouldPlay ? 0.05 : 0.000001)) music.currentTime = position;
+        if (Math.abs(music.currentTime - position) > (shouldPlay ? 0.05 : 0.000001))
+        {music.currentTime = position;}
         if (shouldPlay && playing) {
           if (music.paused) await music.play();
-        }
-        else music.pause();
+        } else music.pause();
       } else music.pause();
     } else music.pause();
   }
@@ -191,15 +263,15 @@
     music.pause();
     $('playPause').textContent = '재생';
   }
-  async function operation(action) {
+  async function operation(action, { sync = true } = {}) {
     pause();
     operationDepth += 1;
-    const release = beginComposite();
+    const release = beginComposite(true);
     render();
     try {
       await drawing.setEnabled(false);
       const result = await action();
-      if (await syncPreview()) compositeReady = true;
+      if (!sync || (await syncPreview())) compositeReady = true;
       return result;
     } catch (error) {
       status(error.message, true);
@@ -214,19 +286,42 @@
       render();
     }
   }
-  async function seek(frame) {
-    latestSeek = frame;
-    if (seeking) return;
-    seeking = true;
-    try {
-      while (latestSeek !== null) {
-        const target = latestSeek;
-        latestSeek = null;
-        await operation(() => controller.seek(target));
+  let finishSeekComposite = null;
+  const seekQueue = timeline.createLatestQueue(
+    async (frame, hasNewer) => {
+      await controller.seek(frame);
+      if (!hasNewer() && (await syncPreview())) compositeReady = !hasNewer();
+    },
+    {
+      async start() {
+        pause();
+        seeking = true;
+        operationDepth++;
+        finishSeekComposite = beginComposite(true);
+        render();
+        await drawing.setEnabled(false);
+      },
+      async finish() {
+        if (!seekQueue.hasPending) {
+          seeking = false;
+          scrubFrame = null;
+        }
+        try {
+          await drawing.setEnabled(!seeking && drawingMode && !exporting && !!selected());
+        } finally {
+          operationDepth--;
+          finishSeekComposite?.();
+          finishSeekComposite = null;
+          render();
+        }
       }
-    } finally {
-      seeking = false;
     }
+  );
+  function seek(frame) {
+    if (exporting || !selected()) return Promise.resolve();
+    scrubFrame = Math.max(0, Math.min(Math.round(frame), bounds()[1] - 1));
+    renderPlayheads();
+    return seekQueue.request(scrubFrame).catch((error) => status(error.message, true));
   }
   async function play() {
     if (playing) {
@@ -250,48 +345,34 @@
   }
   function renderTimeline() {
     const state = controller.state;
-    const [start, end] = bounds();
-    const pct = (frame) => ((frame - start) / (end - start)) * 100;
-    const ruler = $('ruler');
-    ruler.replaceChildren();
-    for (let i = 0; i <= 5; i++) {
-      const el = document.createElement('span');
-      el.className = 'tick';
-      el.style.left = `${i * 20}%`;
-      el.textContent = timecode(Math.floor(start + ((end - start) * i) / 5));
-      ruler.append(el);
-    }
+    const view = timelineGeometry();
+    const px = (frame) => frame * view.pxPerFrame;
+    $('timelineContent').style.width =
+      `${view.labelWidth + Math.max(view.viewportWidth, px(view.totalFrames))}px`;
     const track = $('clipTrack');
     track.replaceChildren();
     let offset = 0;
-    state.project.clips.forEach((clip, index) => {
-      const lo = Math.max(offset, start),
-        hi = Math.min(offset + clip.durationFrames, end);
-      offset += clip.durationFrames;
-      if (hi <= lo) return;
-      const source = state.project.sources.find((s) => s.id === clip.sourceId);
-      const el = button(
-        `${index + 1} · ${clip.kind === 'freeze' ? '정지 · ' : ''}${source.name}`,
-        () => operation(() => controller.selectClip(clip.id))
-      );
+    for (const [index, clip] of state.project.clips.entries()) {
+      const source = state.project.sources.find((item) => item.id === clip.sourceId);
+      const el = button('', (event) => {
+        if (event.detail === 0 && !clipDrag) void operation(() => controller.selectClip(clip.id));
+      });
       el.className = `video-clip${clip.id === state.selectedId ? ' selected' : ''}${clip.kind === 'freeze' ? ' hold' : ''}`;
-      el.title = `${source.name} · ${(clip.durationFrames / state.project.fps).toFixed(2)}초`;
+      const name = document.createElement('span');
+      name.className = 'clip-name';
+      name.textContent = `${index + 1} · ${clip.kind === 'freeze' ? '정지 · ' : ''}${source.name}`;
+      const length = document.createElement('span');
+      length.className = 'clip-duration';
+      length.textContent = `${clip.durationFrames}F · ${(clip.durationFrames / state.project.fps).toFixed(2)}초`;
+      el.append(name, length);
+      el.title = `${name.textContent} · ${length.textContent}`;
       el.dataset.clipId = clip.id;
-      el.style.left = `${pct(lo)}%`;
-      el.style.width = `calc(${((hi - lo) / (end - start)) * 100}% - 2px)`;
-      el.draggable = true;
-      el.addEventListener('dragstart', (e) => {
-        dragClipId = clip.id;
-        e.dataTransfer.setData('text/plain', clip.id);
-      });
-      el.addEventListener('dragover', (e) => e.preventDefault());
-      el.addEventListener('drop', (e) => {
-        e.preventDefault();
-        if (dragClipId) void operation(() => controller.edit('moveClip', dragClipId, index));
-        dragClipId = null;
-      });
+      el.dataset.startFrame = offset;
+      el.style.left = `${px(offset)}px`;
+      el.style.width = `${Math.max(1, px(clip.durationFrames) - 2)}px`;
       track.append(el);
-    });
+      offset += clip.durationFrames;
+    }
     const rows = $('drawingRows');
     rows.replaceChildren();
     rows.hidden = !expanded;
@@ -300,9 +381,11 @@
       const layers = drawing.layers();
       const keyframes = drawing.keyframes();
       const localStart = clipStart(clip.id);
+      const layerState = clip.drawingLayersV1 || { baseLayerId: layers[0]?.id, assignments: {} };
       for (const layer of Array.isArray(layers) ? layers : layers?.layers || []) {
         const row = document.createElement('div');
-        row.className = 'track';
+        row.className = 'track drawing-track';
+        row.dataset.layerId = layer.id;
         const label = document.createElement('div');
         label.className = `track-label layer-label${layer.active ? ' active' : ''}${layer.visible === false ? ' hidden-layer' : ''}`;
         const eye = button(
@@ -310,6 +393,7 @@
           () => operation(() => controller.layerAction('toggleLayer', layer.id)),
           `${layer.name} 표시 전환`
         );
+        eye.className = 'layer-visibility';
         const name = button(layer.name, () =>
           operation(() => controller.layerAction('setActiveLayer', layer.id))
         );
@@ -317,28 +401,34 @@
         label.append(eye, name);
         const axis = document.createElement('div');
         axis.className = 'axis';
-        const layerState = clip.drawingLayersV1 || { baseLayerId: layers[0]?.id, assignments: {} };
         const projected = BAEEditorPreview.layerKeyframes(keyframes, layer.id, layerState);
-        projected.forEach((key, i) => {
-          const lo = Math.max(start, localStart + key.frame);
-          const hi = Math.min(end, localStart + (projected[i + 1]?.frame ?? clip.durationFrames));
-          if (hi <= lo) return;
-          if (!key.isEmpty) {
+        for (const range of timeline.holdRanges(projected, clip.durationFrames)) {
+          const start = localStart + range.start;
+          const end = localStart + range.end;
+          if (!range.empty) {
             const span = document.createElement('span');
-            span.className = 'drawing-span';
-            span.style.left = `${pct(lo)}%`;
-            span.style.width = `${((hi - lo) / (end - start)) * 100}%`;
+            span.className = `drawing-span${range.held ? ' inherited' : ''}`;
+            span.style.left = `${px(start)}px`;
+            span.style.width = `${px(end - start)}px`;
+            span.dataset.startFrame = start;
+            span.dataset.endFrame = end;
+            span.title = `${start}–${end - 1}F · ${range.duration}프레임 유지`;
+            if (px(end - start) > 76) span.textContent = `${range.duration}F 유지`;
             axis.append(span);
           }
           const mark = button(
-            key.isEmpty ? '○' : '●',
-            () => seek(localStart + key.frame),
-            `${key.frame}프레임 ${key.isEmpty ? '빈 ' : ''}키프레임`
+            range.empty ? '○' : '●',
+            () => seek(start),
+            `${start}프레임 ${range.empty ? '빈 ' : ''}키프레임${range.held ? ' · 이전 그림 유지' : ''}`
           );
-          mark.className = 'drawing-key';
-          mark.style.left = `${pct(lo)}%`;
+          mark.className = `drawing-key${range.empty ? ' empty' : ''}${range.held ? ' held' : ''}`;
+          mark.dataset.frame = start;
+          mark.style.left = `${px(start)}px`;
+          mark.title = range.held
+            ? `${range.sourceFrame}F의 그림을 이어서 유지`
+            : `${start}F · ${range.empty ? '빈 그림' : `${range.duration}F 유지`}`;
           axis.append(mark);
-        });
+        }
         row.append(label, axis);
         rows.append(row);
       }
@@ -346,24 +436,137 @@
     const musicTrack = $('musicTrack');
     musicTrack.replaceChildren();
     if (state.project.music) {
-      const source = state.project.sources.find((s) => s.id === state.project.music.sourceId);
-      const bar = document.createElement('span');
-      bar.className = 'music-bar';
-      bar.textContent = source.name;
-      musicTrack.append(bar);
+      const source = state.project.sources.find((item) => item.id === state.project.music.sourceId);
+      const start = state.project.music.offsetFrames;
+      const end = Math.min(
+        view.totalFrames,
+        start + Math.ceil(source.durationSeconds * state.project.fps)
+      );
+      if (end > start) {
+        const bar = document.createElement('span');
+        bar.className = 'music-bar';
+        bar.textContent = source.name;
+        bar.style.left = `${px(start)}px`;
+        bar.style.width = `${px(end - start)}px`;
+        musicTrack.append(bar);
+      }
     }
+    renderOverview();
+    renderTimelineViewport();
+  }
+  function renderOverview() {
+    const total = bounds()[1];
+    const track = $('timelineOverviewClips');
+    track.replaceChildren();
+    let start = 0;
+    for (const clip of controller.state.project.clips) {
+      const mark = document.createElement('span');
+      mark.className = `overview-clip${clip.kind === 'freeze' ? ' hold' : ''}${clip.id === controller.state.selectedId ? ' selected' : ''}`;
+      mark.style.left = `${(start / total) * 100}%`;
+      mark.style.width = `${(clip.durationFrames / total) * 100}%`;
+      track.append(mark);
+      start += clip.durationFrames;
+    }
+  }
+  function renderTimelineViewport() {
+    const view = timelineGeometry();
+    const ruler = $('ruler');
+    ruler.replaceChildren();
+    const grid = timeline.rulerTicks({ fps: controller.state.project.fps, ...view });
+    $('timelineContent').style.setProperty(
+      '--ruler-step-px',
+      `${grid.majorStep * view.pxPerFrame}px`
+    );
+    for (const tick of grid.ticks) {
+      const el = document.createElement('span');
+      el.className = `tick ${tick.major ? 'major' : 'minor'}`;
+      el.style.left = `${tick.px}px`;
+      el.textContent = tick.label;
+      el.dataset.frame = tick.frame;
+      ruler.append(el);
+    }
+    const width = Math.max(view.viewportWidth, view.totalFrames * view.pxPerFrame);
+    $('timelineViewport').style.left = `${(view.scrollLeft / width) * 100}%`;
+    $('timelineViewport').style.width = `${Math.min(100, (view.viewportWidth / width) * 100)}%`;
+    $('timelineViewport').setAttribute(
+      'aria-valuenow',
+      String(Math.round(view.scrollLeft / view.pxPerFrame))
+    );
+    $('timelineViewport').setAttribute(
+      'aria-valuemax',
+      String(Math.max(0, view.totalFrames - Math.floor(view.viewportWidth / view.pxPerFrame)))
+    );
+    $('timelineZoomRange').value = timeline.scaleSlider(
+      view.pxPerFrame,
+      view.limits.min,
+      view.limits.max
+    );
+    const fps = controller.state.project.fps;
+    const tickLabel =
+      grid.majorStep < fps
+        ? `${grid.majorStep}F`
+        : `${Number((grid.majorStep / fps).toFixed(2))}초`;
+    $('timelineScale').textContent =
+      `눈금 ${tickLabel} · 표시 ${(Math.min(view.totalFrames, view.viewportWidth / view.pxPerFrame) / fps).toFixed(1)}초`;
+    $('timelineZoomOut').disabled = view.pxPerFrame <= view.limits.min + 1e-9;
+    $('timelineZoomIn').disabled = view.pxPerFrame >= view.limits.max - 1e-9;
     renderPlayheads();
   }
   function renderPlayheads() {
-    const [start, end] = bounds();
-    document.querySelectorAll('.playhead').forEach((e) => e.remove());
-    if (controller.state.frame < start || controller.state.frame >= end) return;
-    document.querySelectorAll('.track .axis').forEach((axis) => {
-      const mark = document.createElement('span');
-      mark.className = 'playhead';
-      mark.style.left = `${((controller.state.frame - start) / (end - start)) * 100}%`;
-      axis.append(mark);
+    if (!controller || !$('timelineScroll')) return;
+    const view = timelineGeometry();
+    const frame = scrubFrame ?? controller.state.frame;
+    const x = frame * view.pxPerFrame;
+    if (playing && (x < view.scrollLeft || x > view.scrollLeft + view.viewportWidth - 16)) {
+      $('timelineScroll').scrollLeft = Math.max(0, x - view.viewportWidth * 0.25);
+    }
+    document.querySelectorAll('#timelineContent .track .axis').forEach((axis) => {
+      let mark = axis.querySelector('.playhead');
+      if (!mark) {
+        mark = document.createElement('span');
+        mark.className = 'playhead';
+        axis.append(mark);
+      }
+      mark.style.left = `${x}px`;
+      mark.dataset.frame = frame;
     });
+    document
+      .querySelectorAll('.drawing-key')
+      .forEach((key) => key.classList.toggle('active', Number(key.dataset.frame) === frame));
+    $('scrub').value = frame;
+  }
+  function zoomTimeline(nextScale, anchorX) {
+    const view = timelineGeometry();
+    const result = timeline.zoomAt({
+      scale: view.pxPerFrame,
+      nextScale,
+      scrollLeft: view.scrollLeft,
+      anchorX: anchorX ?? view.viewportWidth / 2,
+      viewportWidth: view.viewportWidth,
+      totalFrames: view.totalFrames
+    });
+    timelineMode = 'manual';
+    timelineScale = result.scale;
+    timelineRevision++;
+    renderTimeline();
+    $('timelineScroll').scrollLeft = result.scrollLeft;
+    renderTimelineViewport();
+  }
+  function fitTimeline(mode = 'all') {
+    const view = timelineGeometry();
+    const clip = selected();
+    if (mode === 'clip' && clip) {
+      timelineMode = 'manual';
+      timelineScale = Math.min(view.limits.max, view.viewportWidth / clip.durationFrames);
+    } else {
+      timelineMode = 'fit';
+      timelineScale = view.limits.min;
+    }
+    timelineRevision++;
+    renderTimeline();
+    $('timelineScroll').scrollLeft =
+      mode === 'clip' && clip ? clipStart(clip.id) * timelineScale : 0;
+    renderTimelineViewport();
   }
   function render() {
     if (!controller) return;
@@ -387,7 +590,11 @@
       ? '선택한 컷의 드로잉 · 영상에 포함'
       : '드로잉 · 영상에 포함';
     if (document.activeElement !== $('projectName')) $('projectName').value = project.name;
-    retainSelectValue($('aspectRatio'), `${project.width}x${project.height}`, `현재 ${project.width} × ${project.height}`);
+    retainSelectValue(
+      $('aspectRatio'),
+      `${project.width}x${project.height}`,
+      `현재 ${project.width} × ${project.height}`
+    );
     retainSelectValue($('projectFps'), String(project.fps), `현재 ${project.fps}fps`);
     const hasDrawings = project.clips.some((c) =>
       c.drawingsV3?.keyframes?.some((k) => k.objects?.length)
@@ -398,7 +605,7 @@
     const [start, end] = bounds();
     $('scrub').min = start;
     $('scrub').max = Math.max(start, end - 1);
-    $('scrub').value = state.frame;
+    $('scrub').value = scrubFrame ?? state.frame;
     $('scrub').disabled = exporting || !clip;
     $('clipFit').value = clip?.fit || 'contain';
     $('clipVolume').value = Math.round((clip?.volume ?? 1) * 100);
@@ -440,10 +647,13 @@
     $('removeMusic').disabled = locked || !project.music;
     $('undo').disabled = locked || !state.canUndo;
     $('redo').disabled = locked || !state.canRedo;
-    document.querySelectorAll('[data-tool],[data-draw-action]').forEach((b) => {
-      b.disabled = locked || !clip;
-    });
-    const timelineKey = `${state.revision}:${state.selectedId}:${expanded}:${$('timelineZoom').value}`;
+    document
+      .querySelectorAll('button[data-tool],button[data-editor-tool],button[data-draw-action]')
+      .forEach((b) => {
+        b.disabled = locked || !clip;
+      });
+    renderToolState();
+    const timelineKey = `${state.revision}:${state.selectedId}:${expanded}:${timelineRevision}`;
     // The controller emits while a new clip is still loading. Rebuild only after
     // it finishes, and keep frame-only playback updates away from V3 cloning.
     if (!state.busy && timelineKey !== lastTimelineKey) {
@@ -453,8 +663,10 @@
     layoutStage();
   }
   function retainSelectValue(select, value, label) {
-    select.querySelectorAll('[data-project-custom]').forEach(option => { if (option.value !== value) option.remove(); });
-    if (![...select.options].some(option => option.value === value)) {
+    select.querySelectorAll('[data-project-custom]').forEach((option) => {
+      if (option.value !== value) option.remove();
+    });
+    if (![...select.options].some((option) => option.value === value)) {
       const option = document.createElement('option');
       option.value = value;
       option.textContent = label;
@@ -466,14 +678,452 @@
   function layoutStage() {
     const area = document.querySelector('.stage-area');
     const project = controller.state.project;
-    const width = Math.min(
-      area.clientWidth - 48,
-      ((area.clientHeight - 20) * project.width) / project.height
+    const style = getComputedStyle(area);
+    const contentWidth = Math.max(
+      1,
+      area.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)
     );
-    $('stage').style.width = `${Math.max(1, width)}px`;
+    const contentHeight = Math.max(
+      1,
+      area.clientHeight - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom)
+    );
+    const width = Math.min(contentWidth, (contentHeight * project.width) / project.height);
+    stageBase = {
+      width: Math.max(1, width),
+      height: (Math.max(1, width) * project.height) / project.width
+    };
+    $('stage').style.width = `${stageBase.width}px`;
     $('stage').style.aspectRatio = `${project.width}/${project.height}`;
+    stageView.zoom =
+      stageZoomMode === 'fit'
+        ? 1
+        : ((Number(stageZoomMode) / 100) * project.width) / stageBase.width;
+    applyStageTransform();
   }
+  function applyStageTransform() {
+    const area = $('stageViewport');
+    stageView = {
+      ...stageView,
+      ...timeline.clampPan({
+        ...stageView,
+        stageWidth: stageBase.width,
+        stageHeight: stageBase.height,
+        viewportWidth: area.clientWidth,
+        viewportHeight: area.clientHeight
+      })
+    };
+    const key = `${stageBase.width}:${stageView.zoom}:${stageView.panX}:${stageView.panY}`;
+    if (key === stageGeometryKey) return;
+    stageGeometryKey = key;
+    $('stage').style.transformOrigin = 'center center';
+    $('stage').style.transform =
+      `translate(${stageView.panX}px, ${stageView.panY}px) scale(${stageView.zoom})`;
+    document.body.dataset.previewZoom = stageZoomMode;
+    drawing.refreshViewport?.();
+  }
+  function setPreviewZoom(value, clientX, clientY) {
+    const area = $('stageViewport').getBoundingClientRect();
+    const nextZoom =
+      value === 'fit'
+        ? 1
+        : ((Number(value) / 100) * controller.state.project.width) / stageBase.width;
+    if (!Number.isFinite(nextZoom) || nextZoom <= 0) return;
+    stageView = timeline.zoomPreview({
+      ...stageView,
+      nextZoom,
+      anchorX: clientX === undefined ? 0 : clientX - area.left - area.width / 2,
+      anchorY: clientY === undefined ? 0 : clientY - area.top - area.height / 2
+    });
+    stageZoomMode = String(value);
+    if (value === 'fit') {
+      stageView.panX = 0;
+      stageView.panY = 0;
+    }
+    retainSelectValue($('previewZoom'), stageZoomMode, `${Math.round(Number(value))}%`);
+    applyStageTransform();
+  }
+  function renderToolState() {
+    document.body.dataset.editorTool = activeTool;
+    document.body.dataset.drawingMode = drawingMode ? 'true' : 'false';
+    const names = {
+      select: '선택',
+      razor: '자르기',
+      hand: '화면 이동',
+      brush: '브러시',
+      eraser: '지우개',
+      line: '직선',
+      rect: '사각형',
+      arrow: '화살표'
+    };
+    if ($('activeToolName')) $('activeToolName').textContent = names[activeTool] || activeTool;
+    document.querySelectorAll('button[data-tool],button[data-editor-tool]').forEach((button) => {
+      button.setAttribute(
+        'aria-pressed',
+        String((button.dataset.editorTool || button.dataset.tool) === activeTool)
+      );
+    });
+    $('drawMode').setAttribute('aria-pressed', String(drawingMode));
+  }
+  function setEditorTool(tool) {
+    if (!selected() || operationDepth || controller.state.busy || exporting)
+    {return Promise.resolve();}
+    return operation(
+      async () => {
+        activeTool = tool;
+        drawingMode = !['hand', 'razor'].includes(tool);
+        if (drawingMode) await drawing.setTool(tool);
+        renderToolState();
+      },
+      { sync: false }
+    );
+  }
+  function clearClipDrag() {
+    if (clipDragAnimation !== null) cancelAnimationFrame(clipDragAnimation);
+    clipDragAnimation = null;
+    document
+      .querySelectorAll('.clip-insertion-ghost,.clip-drag-preview')
+      .forEach((element) => element.remove());
+    document
+      .querySelectorAll('.video-clip.is-dragging')
+      .forEach((element) => element.classList.remove('is-dragging'));
+    document.body.classList.remove('editor-dragging-clip');
+  }
+  function paintClipDrag() {
+    if (!clipDrag?.dragging) return;
+    const view = timelineGeometry();
+    const contentX = clipDrag.clientX - view.left - view.labelWidth + view.scrollLeft;
+    const frame = Math.max(0, contentX / view.pxPerFrame);
+    clipDrag.target = timeline.insertionTarget(controller.state.project.clips, clipDrag.id, frame);
+    let ghost = $('clipTrack').querySelector('.clip-insertion-ghost');
+    if (!ghost) {
+      ghost = document.createElement('span');
+      ghost.className = 'clip-insertion-ghost';
+      $('clipTrack').append(ghost);
+    }
+    ghost.style.left = `${clipDrag.target.frame * view.pxPerFrame}px`;
+    ghost.dataset.index = clipDrag.target.index;
+    ghost.setAttribute('aria-label', `${clipDrag.target.index + 1}번째 위치로 이동`);
+    let preview = $('clipTrack').querySelector('.clip-drag-preview');
+    if (!preview) {
+      preview = document.createElement('div');
+      preview.className = 'clip-drag-preview';
+      preview.textContent = clipDrag.name;
+      preview.style.width = `${clipDrag.duration * view.pxPerFrame}px`;
+      $('clipTrack').append(preview);
+    }
+    preview.style.left = `${contentX - clipDrag.grabOffset}px`;
+  }
+  function scrollClipDrag() {
+    if (!clipDrag?.dragging) return;
+    const view = timelineGeometry();
+    const relative = clipDrag.clientX - view.left - view.labelWidth;
+    const speed =
+      relative < 36
+        ? -Math.min(24, (36 - relative) * 0.4)
+        : relative > view.viewportWidth - 36
+          ? Math.min(24, (relative - view.viewportWidth + 36) * 0.4)
+          : 0;
+    if (speed) $('timelineScroll').scrollLeft += speed;
+    paintClipDrag();
+    clipDragAnimation = requestAnimationFrame(scrollClipDrag);
+  }
+  $('clipTrack').addEventListener('pointerdown', (event) => {
+    const clipElement = event.target.closest('.video-clip');
+    if (event.button !== 0 || !clipElement || operationDepth || controller.state.busy || exporting)
+    {return;}
+    event.preventDefault();
+    const id = clipElement.dataset.clipId;
+    const clip = controller.state.project.clips.find((item) => item.id === id);
+    const frame = frameAtPointer(event.clientX);
+    if (activeTool === 'razor') {
+      const target = timeline.razorTarget(controller.state.project.clips, id, frame);
+      if (!target) {
+        status('컷 안쪽 프레임을 클릭하면 나눌 수 있습니다.');
+        return;
+      }
+      void operation(async () => {
+        await controller.seek(target.frame);
+        await controller.edit('splitClip', target.clipId, target.localFrame);
+      });
+      return;
+    }
+    if (activeTool === 'hand') return;
+    pause();
+    const view = timelineGeometry();
+    clipDrag = {
+      id,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      clientX: event.clientX,
+      frame,
+      dragging: false,
+      name: clipElement.textContent,
+      duration: clip.durationFrames,
+      grabOffset:
+        event.clientX -
+        view.left -
+        view.labelWidth +
+        view.scrollLeft -
+        clipStart(id) * view.pxPerFrame
+    };
+    $('clipTrack').setPointerCapture(event.pointerId);
+  });
+  $('clipTrack').addEventListener('pointermove', (event) => {
+    if (!clipDrag || event.pointerId !== clipDrag.pointerId) return;
+    clipDrag.clientX = event.clientX;
+    if (
+      !clipDrag.dragging &&
+      Math.hypot(event.clientX - clipDrag.startX, event.clientY - clipDrag.startY) >= 5
+    ) {
+      clipDrag.dragging = true;
+      document.body.classList.add('editor-dragging-clip');
+      [...$('clipTrack').querySelectorAll('[data-clip-id]')]
+        .find((element) => element.dataset.clipId === clipDrag.id)
+        ?.classList.add('is-dragging');
+      scrollClipDrag();
+    }
+    paintClipDrag();
+  });
+  function finishClipDrag(event, cancelled = false) {
+    if (!clipDrag || event.pointerId !== clipDrag.pointerId) return;
+    const drag = clipDrag;
+    clipDrag = null;
+    if ($('clipTrack').hasPointerCapture(event.pointerId))
+    {$('clipTrack').releasePointerCapture(event.pointerId);}
+    clearClipDrag();
+    if (cancelled) return;
+    if (drag.dragging && drag.target) {
+      const current = controller.state.project.clips.findIndex((clip) => clip.id === drag.id);
+      if (drag.target.index !== current) {
+        void operation(async () => {
+          if (controller.state.selectedId !== drag.id) await controller.selectClip(drag.id);
+          await controller.edit('moveClip', drag.id, drag.target.index);
+        });
+      }
+    } else void seek(drag.frame);
+  }
+  $('clipTrack').addEventListener('pointerup', (event) => finishClipDrag(event));
+  $('clipTrack').addEventListener('pointercancel', (event) => finishClipDrag(event, true));
+  $('clipTrack').addEventListener('lostpointercapture', (event) => finishClipDrag(event, true));
+  $('clipTrack').addEventListener('dragstart', (event) => event.preventDefault());
+  let rulerPointer = null;
+  $('ruler').addEventListener('pointerdown', (event) => {
+    if (event.button !== 0 || exporting || !selected()) return;
+    event.preventDefault();
+    rulerPointer = event.pointerId;
+    $('ruler').setPointerCapture(event.pointerId);
+    void seek(frameAtPointer(event.clientX));
+  });
+  $('ruler').addEventListener('pointermove', (event) => {
+    if (rulerPointer === event.pointerId) void seek(frameAtPointer(event.clientX));
+  });
+  $('ruler').addEventListener('pointerup', (event) => {
+    if (rulerPointer !== event.pointerId) return;
+    rulerPointer = null;
+    void seek(frameAtPointer(event.clientX));
+    if ($('ruler').hasPointerCapture(event.pointerId))
+    {$('ruler').releasePointerCapture(event.pointerId);}
+  });
+  $('ruler').addEventListener('pointercancel', () => {
+    rulerPointer = null;
+  });
+  $('timelineScroll').addEventListener(
+    'pointerdown',
+    (event) => {
+      if ((activeTool !== 'hand' || event.button !== 0) && event.button !== 1) return;
+      if (exporting || operationDepth) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pause();
+      timelinePan = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        left: $('timelineScroll').scrollLeft,
+        top: $('timelineScroll').scrollTop
+      };
+      $('timelineScroll').setPointerCapture(event.pointerId);
+      document.body.classList.add('editor-panning');
+    },
+    true
+  );
+  $('timelineScroll').addEventListener(
+    'pointermove',
+    (event) => {
+      if (!timelinePan || timelinePan.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      $('timelineScroll').scrollLeft = timelinePan.left + timelinePan.x - event.clientX;
+      $('timelineScroll').scrollTop = timelinePan.top + timelinePan.y - event.clientY;
+    },
+    true
+  );
+  function endTimelinePan(event) {
+    if (!timelinePan || timelinePan.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    timelinePan = null;
+    document.body.classList.remove('editor-panning');
+    if ($('timelineScroll').hasPointerCapture(event.pointerId))
+    {$('timelineScroll').releasePointerCapture(event.pointerId);}
+  }
+  $('timelineScroll').addEventListener('pointerup', endTimelinePan, true);
+  $('timelineScroll').addEventListener('pointercancel', endTimelinePan, true);
+  $('timelineScroll').addEventListener('lostpointercapture', endTimelinePan, true);
+  $('timelineScroll').addEventListener('scroll', renderTimelineViewport, { passive: true });
+  $('timelineScroll').addEventListener(
+    'wheel',
+    (event) => {
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const view = timelineGeometry();
+        zoomTimeline(
+          view.pxPerFrame * Math.exp(-event.deltaY * 0.003),
+          Math.max(0, event.clientX - view.left - view.labelWidth)
+        );
+      } else if (event.shiftKey) {
+        event.preventDefault();
+        $('timelineScroll').scrollLeft += event.deltaX || event.deltaY;
+      }
+    },
+    { passive: false }
+  );
+  $('timelineZoomIn').onclick = () => zoomTimeline(timelineGeometry().pxPerFrame * 1.5);
+  $('timelineZoomOut').onclick = () => zoomTimeline(timelineGeometry().pxPerFrame / 1.5);
+  $('timelineZoomRange').oninput = (event) => {
+    const view = timelineGeometry();
+    zoomTimeline(
+      timeline.sliderScale(Number(event.target.value), view.limits.min, view.limits.max)
+    );
+  };
+  $('timelineFit').onclick = () => fitTimeline();
+  let overviewDrag = null;
+  $('timelineOverview').addEventListener('pointerdown', (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const view = timelineGeometry();
+    const rect = $('timelineOverview').getBoundingClientRect();
+    const totalWidth = Math.max(view.viewportWidth, view.totalFrames * view.pxPerFrame);
+    const x = ((event.clientX - rect.left) / rect.width) * totalWidth;
+    const inside = event.target.closest('#timelineViewport');
+    overviewDrag = {
+      pointerId: event.pointerId,
+      grabOffset: inside ? x - view.scrollLeft : view.viewportWidth / 2
+    };
+    $('timelineOverview').setPointerCapture(event.pointerId);
+    $('timelineScroll').scrollLeft = x - overviewDrag.grabOffset;
+  });
+  $('timelineOverview').addEventListener('pointermove', (event) => {
+    if (!overviewDrag || event.pointerId !== overviewDrag.pointerId) return;
+    const view = timelineGeometry();
+    const rect = $('timelineOverview').getBoundingClientRect();
+    const totalWidth = Math.max(view.viewportWidth, view.totalFrames * view.pxPerFrame);
+    $('timelineScroll').scrollLeft =
+      ((event.clientX - rect.left) / rect.width) * totalWidth - overviewDrag.grabOffset;
+  });
+  const endOverview = (event) => {
+    if (overviewDrag?.pointerId !== event.pointerId) return;
+    overviewDrag = null;
+    if ($('timelineOverview').hasPointerCapture(event.pointerId))
+    {$('timelineOverview').releasePointerCapture(event.pointerId);}
+  };
+  $('timelineOverview').addEventListener('pointerup', endOverview);
+  $('timelineOverview').addEventListener('pointercancel', endOverview);
+  $('timelineViewport').addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const view = timelineGeometry();
+    $('timelineScroll').scrollLeft =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? view.totalFrames * view.pxPerFrame
+          : view.scrollLeft + (event.key === 'ArrowRight' ? 1 : -1) * view.viewportWidth * 0.25;
+  });
+  $('timelineViewport').tabIndex = 0;
+  $('timelineViewport').setAttribute('role', 'scrollbar');
+  $('timelineViewport').setAttribute('aria-orientation', 'horizontal');
+  $('timelineViewport').setAttribute('aria-label', '타임라인 표시 범위');
+  $('timelineViewport').setAttribute('aria-valuemin', '0');
+  function insideStage(event) {
+    const rect = $('stageViewport').getBoundingClientRect();
+    return (
+      event.clientX >= rect.left &&
+      event.clientX <= rect.right &&
+      event.clientY >= rect.top &&
+      event.clientY <= rect.bottom
+    );
+  }
+  document.addEventListener(
+    'pointerdown',
+    (event) => {
+      if ((!['hand'].includes(activeTool) || event.button !== 0) && event.button !== 1) return;
+      if (!insideStage(event) || !selected() || exporting || operationDepth) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      pause();
+      stagePan = {
+        pointerId: event.pointerId,
+        x: event.clientX,
+        y: event.clientY,
+        panX: stageView.panX,
+        panY: stageView.panY
+      };
+      document.body.classList.add('editor-panning');
+      document.documentElement.setPointerCapture(event.pointerId);
+      void drawing.setEnabled(false);
+    },
+    true
+  );
+  document.addEventListener(
+    'pointermove',
+    (event) => {
+      if (!stagePan || stagePan.pointerId !== event.pointerId) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      stageView.panX = stagePan.panX + event.clientX - stagePan.x;
+      stageView.panY = stagePan.panY + event.clientY - stagePan.y;
+      applyStageTransform();
+    },
+    true
+  );
+  function endStagePan(event) {
+    if (!stagePan || stagePan.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    stagePan = null;
+    document.body.classList.remove('editor-panning');
+    if (document.documentElement.hasPointerCapture(event.pointerId))
+    {document.documentElement.releasePointerCapture(event.pointerId);}
+    void drawing.setEnabled(drawingMode && !playing && !exporting);
+  }
+  document.addEventListener('pointerup', endStagePan, true);
+  document.addEventListener('pointercancel', endStagePan, true);
+  document.addEventListener('lostpointercapture', endStagePan, true);
+  document.addEventListener(
+    'wheel',
+    (event) => {
+      if (!insideStage(event) || !(event.ctrlKey || event.metaKey)) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      const current = ((stageBase.width * stageView.zoom) / controller.state.project.width) * 100;
+      const next = Math.round(
+        Math.max(10, Math.min(400, current * Math.exp(-event.deltaY * 0.002)))
+      );
+      setPreviewZoom(String(next), event.clientX, event.clientY);
+    },
+    { capture: true, passive: false }
+  );
+  $('previewZoom').onchange = (event) => setPreviewZoom(event.target.value);
+  $('resetPreview').onclick = () => setPreviewZoom('fit');
   new ResizeObserver(layoutStage).observe(document.querySelector('.stage-area'));
+  new ResizeObserver(() => {
+    if (!controller) return;
+    timelineRevision++;
+    renderTimeline();
+  }).observe($('timelineScroll'));
   $('importVideo').onclick = $('emptyImport').onclick = () =>
     operation(() => controller.importMedia());
   $('importMusic').onclick = () => operation(() => controller.importMedia('audio'));
@@ -494,13 +1144,6 @@
   $('previousFrame').onclick = () => seek(controller.state.frame - 1);
   $('nextFrame').onclick = () => seek(controller.state.frame + 1);
   $('scrub').oninput = (e) => seek(Number(e.target.value));
-  $('ruler').onclick = (e) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const [start, end] = bounds();
-    void seek(
-      Math.min(end - 1, Math.round(start + ((e.clientX - rect.left) / rect.width) * (end - start)))
-    );
-  };
   $('splitClip').onclick = () =>
     operation(() =>
       controller.edit('splitClip', selected().id, controller.state.frame - clipStart(selected().id))
@@ -554,20 +1197,22 @@
     $('expandLayers').setAttribute('aria-expanded', String(expanded));
     render();
   };
-  $('timelineZoom').onchange = render;
+  $('timelineZoom').onchange = (event) => fitTimeline(event.target.value);
   $('addLayer').onclick = () => operation(() => controller.layerAction('addLayer'));
   $('drawMode').onclick = () =>
-    operation(async () => {
-      drawingMode = !drawingMode;
-      $('drawMode').setAttribute('aria-pressed', String(drawingMode));
-    });
-  document.querySelectorAll('[data-tool]').forEach((b) => {
-    b.onclick = () =>
-      operation(async () => {
-        drawingMode = true;
-        $('drawMode').setAttribute('aria-pressed', 'true');
-        await drawing.setTool(b.dataset.tool);
-      });
+    operation(
+      async () => {
+        drawingMode = !drawingMode;
+        if (drawingMode) {
+          if (['hand', 'razor'].includes(activeTool)) activeTool = 'brush';
+          await drawing.setTool(activeTool);
+        }
+        renderToolState();
+      },
+      { sync: false }
+    );
+  document.querySelectorAll('button[data-tool],button[data-editor-tool]').forEach((b) => {
+    b.onclick = () => setEditorTool(b.dataset.editorTool || b.dataset.tool);
   });
   document.querySelectorAll('[data-draw-action]').forEach((b) => {
     b.onclick = () => operation(() => controller.drawingAction(b.dataset.drawAction));
@@ -642,13 +1287,19 @@
     status(progress.message || '영상 출력 중…');
   });
   document.addEventListener('keydown', (e) => {
-    if (e.target.closest('input,textarea,select,[contenteditable=true]')) return;
+    if (e.isComposing || e.target.closest('input,textarea,select,[contenteditable=true]')) return;
     if (e.code === 'Space') {
       e.preventDefault();
       void play();
       return;
     }
     if (controller.state.busy || exporting) return;
+    const tool = timeline.shortcutTool(e);
+    if (tool) {
+      e.preventDefault();
+      void setEditorTool(tool);
+      return;
+    }
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
       e.preventDefault();
       $('saveProject').click();
@@ -664,9 +1315,17 @@
     } else if (e.key === 'ArrowRight') {
       e.preventDefault();
       void seek(controller.state.frame + 1);
+    } else if (!e.ctrlKey && !e.metaKey && !e.altKey && ['+', '=', '-'].includes(e.key)) {
+      e.preventDefault();
+      zoomTimeline(timelineGeometry().pxPerFrame * (e.key === '-' ? 1 / 1.5 : 1.5));
+    } else if (e.key === 'Escape' && clipDrag) {
+      const pointerId = clipDrag.pointerId;
+      finishClipDrag({ pointerId }, true);
     }
   });
   window.addEventListener('beforeunload', () => {
+    clipDrag = null;
+    clearClipDrag();
     pause();
     drawing.dispose();
   });

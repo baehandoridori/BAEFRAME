@@ -1650,12 +1650,12 @@ test('package exposes focused Fabric pilot test and diagnostics commands', () =>
   );
   assert.equal(
     appPackage.scripts.prebuild,
-    'npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper',
+    'npm run bundle:mpv-fabric-overlay && npm run bundle:editor-drawing && npm run build:review-file-cas-helper',
     'npm run build must regenerate the browser bundle and native CAS helper before packaging'
   );
   assert.equal(
     appPackage.scripts['prebuild:installer'],
-    'npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper',
+    'npm run bundle:mpv-fabric-overlay && npm run bundle:editor-drawing && npm run build:review-file-cas-helper',
     'npm run build:installer must regenerate the browser bundle and native CAS helper before packaging'
   );
 });

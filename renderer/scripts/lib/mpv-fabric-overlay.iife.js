@@ -20243,7 +20243,7 @@ void main() {
         }
         function scheduleSelectGestureSettle(gesture) {
           const pointerId = gesture.pointerId;
-          queueMicrotaskRef(() => {
+          const settle = () => {
             if (selectGesture !== gesture || gesture.pointerId !== pointerId || gesture.phase !== "settling") return;
             if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== gesture.sessionId || tokenState.inputRevision !== gesture.inputRevision) {
               selectGesture = null;
@@ -20255,6 +20255,13 @@ void main() {
             selectGesture = null;
             settleDeferredViewport(gesture.sessionId, gesture.inputRevision);
             settleArmedFramePreview();
+          };
+          queueMicrotaskRef(() => {
+            if (selectGesture === gesture && fabricCanvas?._currentTransform) {
+              setTimeoutRef(settle, 0);
+            } else {
+              settle();
+            }
           });
         }
         function beginPointerDown(event, retargetArmed = true) {

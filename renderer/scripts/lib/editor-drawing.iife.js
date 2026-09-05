@@ -20268,7 +20268,7 @@ void main() {
         }
         function scheduleSelectGestureSettle(gesture) {
           const pointerId = gesture.pointerId;
-          queueMicrotaskRef(() => {
+          const settle = () => {
             if (selectGesture !== gesture || gesture.pointerId !== pointerId || gesture.phase !== "settling") return;
             if (destroyed || !inputEnabled || !fabricCanvas || currentSession?.sessionId !== gesture.sessionId || tokenState.inputRevision !== gesture.inputRevision) {
               selectGesture = null;
@@ -20280,6 +20280,13 @@ void main() {
             selectGesture = null;
             settleDeferredViewport(gesture.sessionId, gesture.inputRevision);
             settleArmedFramePreview();
+          };
+          queueMicrotaskRef(() => {
+            if (selectGesture === gesture && fabricCanvas?._currentTransform) {
+              setTimeoutRef(settle, 0);
+            } else {
+              settle();
+            }
           });
         }
         function beginPointerDown(event, retargetArmed = true) {
@@ -31294,6 +31301,7 @@ void main() {
     const documentRef = container?.ownerDocument;
     if (!container || !documentRef) throw new Error("\uB4DC\uB85C\uC789 \uBBF8\uB9AC\uBCF4\uAE30 \uC601\uC5ED\uC774 \uD544\uC694\uD569\uB2C8\uB2E4.");
     const windowRef = options.window || documentRef.defaultView;
+    const clipContainer = options.clipContainer || container.closest?.("#stageViewport, .stage-area");
     const fabric = options.fabric || index_min_exports;
     const { createFabricOverlayRuntime } = import_mpv_fabric_overlay_runtime.default;
     const onChange = typeof options.onChange === "function" ? options.onChange : () => {
@@ -31448,22 +31456,38 @@ void main() {
     function updateLayerView() {
       if (!owner) return;
       const state = owner.layerState;
-      const ids = [...new Set(recordsOf(owner.store.exportRootValue()).map((record) => record.id))];
-      const rank = new Map(state.layers.map((layer, index) => [layer.id, state.layers.length - 1 - index]));
-      const active = findLayer(state, state.activeLayerId);
+      const revision = owner.store.getRevision();
+      let cache = owner.layerViewCache;
+      if (!cache || cache.revision !== revision) {
+        cache = owner.layerViewCache = {
+          revision,
+          ids: [...new Set(recordsOf(owner.store.exportRootValue()).map((record) => record.id))]
+        };
+      }
+      if (cache.state !== state) {
+        const ids = cache.ids;
+        const rank = new Map(state.layers.map((layer, index) => [layer.id, state.layers.length - 1 - index]));
+        const active = findLayer(state, state.activeLayerId);
+        cache.state = state;
+        cache.view = {
+          hiddenObjectIds: ids.filter((id) => !isObjectVisible(state, id)),
+          lockedObjectIds: ids.filter((id) => !isObjectEditable(state, id)),
+          activeLayerDrawable: active?.visible !== false && active?.locked !== true,
+          objectRanks: ids.map((id) => [id, rank.get(layerIdForObject(state, id)) ?? 0]),
+          defaultRank: rank.get(state.baseLayerId) ?? 0,
+          activeLayerRank: rank.get(state.activeLayerId) ?? 0
+        };
+      }
       runtime.updateDrawingLayerView({
         ...inputActive ? { sessionId: owner.sessionId } : { stableVideoIdentity: owner.envelope.stableVideoIdentity },
-        hiddenObjectIds: ids.filter((id) => !isObjectVisible(state, id)),
-        lockedObjectIds: ids.filter((id) => !isObjectEditable(state, id)),
-        activeLayerDrawable: active?.visible !== false && active?.locked !== true,
-        objectRanks: ids.map((id) => [id, rank.get(layerIdForObject(state, id)) ?? 0]),
-        defaultRank: rank.get(state.baseLayerId) ?? 0,
-        activeLayerRank: rank.get(state.activeLayerId) ?? 0,
+        ...cache.view,
         layerHistoryBusy: transactionDepth > 0
       });
     }
     function showFrame() {
       if (!owner) return;
+      const clipRect = clipContainer?.getBoundingClientRect();
+      root.style.clipPath = clipRect ? `inset(${Math.max(0, clipRect.top)}px ${Math.max(0, windowRef.innerWidth - clipRect.left - clipRect.width)}px ${Math.max(0, windowRef.innerHeight - clipRect.top - clipRect.height)}px ${Math.max(0, clipRect.left)}px)` : "";
       const canvasRect = rect();
       if (!canvasRect) {
         if (inputActive) disableInput();
@@ -31529,16 +31553,21 @@ void main() {
       positionPalettePanel();
     }
     function refreshGeometry() {
-      if (!disposed && owner) {
-        try {
-          showFrame();
-        } catch (error) {
-          persistenceError = error;
-        }
+      try {
+        refreshViewport();
+      } catch (error) {
+        persistenceError = error;
       }
+    }
+    function refreshViewport() {
+      if (disposed || !owner) return false;
+      if (persistenceError) throw persistenceError;
+      showFrame();
+      return true;
     }
     const resizeObserver = typeof windowRef.ResizeObserver === "function" ? new windowRef.ResizeObserver(refreshGeometry) : null;
     resizeObserver?.observe(container);
+    if (clipContainer) resizeObserver?.observe(clipContainer);
     resizeObserver?.observe(paletteDock);
     windowRef.addEventListener("resize", refreshGeometry);
     windowRef.addEventListener("scroll", refreshGeometry, true);
@@ -31774,7 +31803,7 @@ void main() {
       root.remove();
       owner = null;
     }
-    return { loadClip, seek, setTool, setEnabled, action, snapshot() {
+    return { loadClip, seek, setTool, setEnabled, refreshViewport, action, snapshot() {
       if (persistenceError) throw persistenceError;
       return owner ? snapshotFor(owner) : { drawingsV3: null, drawingLayersV1: null };
     }, keyframes, layers, addLayer: addLayer2, setActiveLayer, toggleLayer, exportOverlays, dispose };
