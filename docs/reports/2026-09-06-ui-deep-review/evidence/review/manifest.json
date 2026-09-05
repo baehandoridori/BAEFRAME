@@ -1,0 +1,147 @@
+[
+  {
+    "file": ".gitignore",
+    "bytes": 10,
+    "sha256": "672d23c6bdf1ace45e33d1cb7b51b5291951abc1e8d7decbdd82ffa130c707b2"
+  },
+  {
+    "file": "00-required-name.json",
+    "bytes": 78274,
+    "sha256": "6814e5498fe1054f2dd07acdeb472746856d11fe47e1b98f8037914a5bb78c35"
+  },
+  {
+    "file": "00-required-name.png",
+    "bytes": 206878,
+    "sha256": "c270cb0dd2dca06d414c3416a22eee8c3dbdcce01a5aa9e077bf36bd0e8d263b"
+  },
+  {
+    "file": "01-empty.json",
+    "bytes": 82726,
+    "sha256": "a6c388bd81e244a38609a43afad780d0169dca3a4949046e4eb0a10e396d0738"
+  },
+  {
+    "file": "01-empty.png",
+    "bytes": 230353,
+    "sha256": "2466cb0aa90ac9311cb4a93beeac8a8e2aab2f654234be1bb303718aa3ccf17e"
+  },
+  {
+    "file": "02-video-comments.json",
+    "bytes": 95323,
+    "sha256": "e24bc08aab7ded6b0552d118e7356e785b9f305cd3dff1cfa5eeb6eb886ff3c6"
+  },
+  {
+    "file": "02-video-comments.png",
+    "bytes": 775128,
+    "sha256": "933e8ca2e18ae53b99bf00733dcc632653aeccece0698dd3b093801f84481a06"
+  },
+  {
+    "file": "03-settings-menu.json",
+    "bytes": 105049,
+    "sha256": "294b49751dbddc47e05d3599083e0a911b32ce4f6dff9b7d97bf71479e349dc7"
+  },
+  {
+    "file": "03-settings-menu.png",
+    "bytes": 781619,
+    "sha256": "7dc2184a0d82dcbd8f19a2aa94347766c1c4c9411a9dbf26e08c44c038df1c26"
+  },
+  {
+    "file": "04-app-settings.json",
+    "bytes": 117123,
+    "sha256": "ccfa9e59b28bee09c8a01a254f37226bd91ed78a9a2b4d465d81214f514f75db"
+  },
+  {
+    "file": "04-app-settings.png",
+    "bytes": 313744,
+    "sha256": "1caa4982590397c29e022a5a05037ba7a4b478093f6367c15c2b5fbd421715cc"
+  },
+  {
+    "file": "05-shortcuts.json",
+    "bytes": 166393,
+    "sha256": "9641ce24e1b3a5c0e856393b6149af08f98d664cbe91a2a91cdd8b3f3110ba22"
+  },
+  {
+    "file": "05-shortcuts.png",
+    "bytes": 324138,
+    "sha256": "282d6007c3a5b08c3d3c9af591c48eecaedb6b510202bac0dfafbed7c622a5c0"
+  },
+  {
+    "file": "06-drawing-tools.json",
+    "bytes": 95533,
+    "sha256": "86db190d474c796e24b4e74798df50f85c696ae5ea0b1c4dae1a231e8a452109"
+  },
+  {
+    "file": "06-drawing-tools.png",
+    "bytes": 774497,
+    "sha256": "50e9a1d6e29a7205927d2930eec87470553be522e3ebf20d394faa9964693c12"
+  },
+  {
+    "file": "07-selection-tools.json",
+    "bytes": 95533,
+    "sha256": "86db190d474c796e24b4e74798df50f85c696ae5ea0b1c4dae1a231e8a452109"
+  },
+  {
+    "file": "07-selection-tools.png",
+    "bytes": 775749,
+    "sha256": "08e6da3376c7fbe97eaabf699bc17e630a878038618c4482deca8c0ec3cdadfa"
+  },
+  {
+    "file": "08-layers-timeline.json",
+    "bytes": 98705,
+    "sha256": "eadde3c7f2fa46c623640d21f790dae93a5ae8cd4d02189baeb95110d66d8844"
+  },
+  {
+    "file": "08-layers-timeline.png",
+    "bytes": 779274,
+    "sha256": "2f31177b7450def44fdcf516cfe48579b4741169cd63a92a1d1c41269edb2d41"
+  },
+  {
+    "file": "09-narrow-panels.json",
+    "bytes": 99313,
+    "sha256": "fe65ed4d2f8260d401106b01a3cc57d42cf03db78a1c98e5306361cd3c080c81"
+  },
+  {
+    "file": "09-narrow-panels.png",
+    "bytes": 341809,
+    "sha256": "1b33b1b5056dbb9334b7c71bf1cf22983a5134cc65dd71a3d03ab5a7083760ae"
+  },
+  {
+    "file": "10-zoom125.json",
+    "bytes": 86771,
+    "sha256": "86d489415119b115b9b073da4121a01cb14dd2e4c0f6c2b10ab7e76838abb542"
+  },
+  {
+    "file": "10-zoom125.png",
+    "bytes": 474857,
+    "sha256": "9c9c39d2782e079d4a2d68f8fcd348d74af4b461528ebde5bbbc95d6c741bfae"
+  },
+  {
+    "file": "11-long-name.json",
+    "bytes": 96654,
+    "sha256": "77bf1b31f12795d479e4d10cd1977ce4be06cdef1f820a5830e1c8aa72fea4f6"
+  },
+  {
+    "file": "11-long-name.png",
+    "bytes": 609438,
+    "sha256": "7965016ba598b1dd9d29f815fd855e5ed023040433e114b5d6777f91aa044962"
+  },
+  {
+    "file": "12-save-share-ui.json",
+    "bytes": 98044,
+    "sha256": "ffa389e77576dea56a7dc413b47570ad10e946a71491b2d900ec8b9bd0a07563"
+  },
+  {
+    "file": "12-save-share-ui.png",
+    "bytes": 612384,
+    "sha256": "baa836e08012900e8f1148c237451c1532e39ff6e3a72b01fafdd7c672b0f56e"
+  },
+  {
+    "file": "capture-result.json",
+    "bytes": 28725,
+    "sha256": "f81e64058abe92ec92e4a71e1fcc49009fcb1795a7fbfd658a5892cfb3d7a4a0"
+  },
+  {
+    "file": "capture.cjs",
+    "bytes": 18901,
+    "sha256": "83d37a1e09c9b1699e1198a889e66294a297b29001f26cabb941e645f7875a43"
+  }
+]

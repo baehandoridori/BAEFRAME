@@ -1,0 +1,17 @@
+{
+  "baseline": "5d1cb89afcae21429c1e076a6964bc11cd990228",
+  "sourceHashes": {
+    "renderer/scripts/editor/editor.js": "99265ca3c4d81c7602acad6d192d6698c72c3efb5554d7f006c983a01aa9d016",
+    "renderer/styles/editor.css": "5f3cc3e20fd6b0efeeb2dbfcc80b608fc0a76185210b8c48079a643de5991672",
+    "main/editor-window.js": "442f7184b208d63ec6535fff3f30c55858ae4eb06ae2614b2f118095bb4451d2",
+    "main/editor-media.js": "d082c12ed42303a391703163f11f577b717c272c0d51502eeddf49cf9eae77f0",
+    "renderer/scripts/editor/preview-clock.js": "b6b3a6c43175cea92995539806a498f691332d26b71dabf36da71179551aa67c",
+    "renderer/editor.html": "2753332f5f398bf7f6a935a67dd20c964b2065cd0ed28b77f71e82af845fb05f",
+    "renderer/scripts/editor/controller.js": "9ebfb83439ab3da7d32b36a040ad19064cb152bee0e1f2cf559c6a8e1e6ac6f1",
+    "renderer/styles/main.css": "8cbab01a47e89862b5d9d6bb477bf588994d6d1678eb62010e0e53836cb477d2",
+    "renderer/scripts/app.js": "13fd32ecf86bdbaff4aac38b09c1e9896c32f0f157b659de13e5bc1a704d83a5"
+  },
+  "images": 14,
+  "findings": 13,
+  "missingEvidence": []
+}

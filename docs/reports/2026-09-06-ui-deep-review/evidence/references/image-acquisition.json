@@ -1,0 +1,70 @@
+[
+  {
+    "id": "I01",
+    "name": "premiere-tools.jpg",
+    "page": "https://helpx.adobe.com/premiere/desktop/get-started/tour-the-workspace/tools-panel-and-options-panel.html",
+    "url": "https://helpx-prod.scene7.com/is/image/HelpxProd/Premiere-Pro-s-Tools-panel--highlighting-editing-t?$pjpeg$&jpegSize=200&wid=1200",
+    "mime": "image/jpeg",
+    "bytes": 73238,
+    "sha256": "59ae1395c6b755205074674e9b1d9d9e7575738f195c1ebf26db67de60146fc7",
+    "downloadedAt": "2026-09-05T21:01:50.518Z",
+    "status": "downloaded"
+  },
+  {
+    "id": "I02",
+    "name": "animate-timeline.png",
+    "page": "https://helpx.adobe.com/animate/desktop/workspace-and-workflow/timeline.html",
+    "url": "https://helpx-prod.scene7.com/is/image/HelpxProd/new_timeline?$png$&jpegSize=300&wid=1920",
+    "mime": "image/png",
+    "bytes": 203366,
+    "sha256": "c78d1f2d234e5ef9553d5eb44b9bf84acb1bef339829cb344a072844289ba5df",
+    "downloadedAt": "2026-09-05T21:01:51.953Z",
+    "status": "downloaded"
+  },
+  {
+    "id": "I03",
+    "name": "resolve-dual-timeline.jpg",
+    "page": "https://www.blackmagicdesign.com/products/davinciresolve/cut",
+    "url": "https://images.blackmagicdesign.com/images/products/davinciresolve/cut/timelines/timelines-md.jpg?_v=1774493811",
+    "mime": "image/jpeg",
+    "bytes": 223373,
+    "sha256": "1a0b943d481a70f8861435396f61c634773dc5030b22c37133dc27fdaa80e49e",
+    "downloadedAt": "2026-09-05T21:01:52.018Z",
+    "status": "downloaded"
+  },
+  {
+    "id": "I04",
+    "name": "harmony-exposure-timeline.png",
+    "page": "https://helpcentre.toonboom.com/hc/en-ca/articles/41575716406547-How-do-I-change-my-drawings-to-all-have-the-same-exposure",
+    "url": "https://helpcentre.toonboom.com/hc/article_attachments/41575716404243",
+    "mime": "image/png",
+    "bytes": 5154,
+    "sha256": "7523d2c145da2cd045ae5bf432afc7c7a2f83b266bde9369ecd24adfe0a073ef",
+    "downloadedAt": "2026-09-05T21:01:52.418Z",
+    "status": "downloaded"
+  },
+  {
+    "id": "I05",
+    "name": "frameio-range-comments.png",
+    "page": "https://help.frame.io/en/articles/9105251-commenting-on-your-media",
+    "pattern": "f024d9e5-121f-42aa-ae27-8e3a09d171ed",
+    "url": "https://downloads.intercomcdn.com/i/o/999528020/f659675cb5740465e321f6c6/f024d9e5-121f-42aa-ae27-8e3a09d171ed?expires=1788643800&signature=1ab95e3fb63f784c51de35e5893823255da655271bb02660887cc8822235bfef&req=fSkuE8t2nYNfFb4f3HP0gDjmZFlFX3Z%2FI4WL%2BKv%2BLAiFfo2i%2FF%2FukQj1hGdm%0A9s67HArZ1Hhri16aig%3D%3D%0A",
+    "mime": "image/png",
+    "bytes": 2764885,
+    "sha256": "7a4450bdd40e7fbf45a7e15a682a1ad41e5236e22c81a4865144aef4c4896588",
+    "downloadedAt": "2026-09-05T21:01:57.168Z",
+    "status": "downloaded"
+  },
+  {
+    "id": "I06",
+    "name": "frameio-comparison.png",
+    "page": "https://help.frame.io/en/articles/9952618-comparison-viewer",
+    "pattern": "1202859917",
+    "url": "https://downloads.intercomcdn.com/i/o/mbz4oxgz/1202859917/d82f99ff621a0a844eff00c72bf5/Screenshot%2B2024-10-03%2Bat%2B10_36_03-E2-80-AFAM.png?expires=1788643800&signature=1486a5ef767179dbb13e145a7c6b12ed624fc2329ffa167d2c8bac331c6d92a8&req=dSInFMF7lIheXvMW1HO4zT9Lc1aaUlBma%2FEKyq1gye7wO1jzumqZ%2FCFnpK5C%0AXNdbfixYUZlM56%2BYNjM%3D%0A",
+    "mime": "image/png",
+    "bytes": 2386586,
+    "sha256": "9365373142e5c97391bb70808340acfcfd7ebba71deb6778dbc9a92504c632f5",
+    "downloadedAt": "2026-09-05T21:04:30.199Z",
+    "status": "downloaded"
+  }
+]

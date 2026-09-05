@@ -1,0 +1,955 @@
+{
+  "baseline": "5d1cb89",
+  "executable": "C:\\Users\\user\\.codex\\worktrees\\baeframe-reel-editor\\BAEFRAME\\dist\\win-unpacked\\BFRAME_alpha_v2.exe",
+  "scope": "Actual packaged review window. Synthetic local fixtures. No external sync or sharing.",
+  "states": [
+    {
+      "name": "00-required-name",
+      "state": "Fresh-profile required display name dialog blocks the media workspace",
+      "screenshot": "00-required-name.png",
+      "metrics": "00-required-name.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "01-empty",
+      "state": "Fresh isolated review window before opening any media",
+      "screenshot": "01-empty.png",
+      "metrics": "01-empty.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "02-video-comments",
+      "state": "Synthetic 6s video, saved synthetic comments and one V3 drawing loaded through real file picker",
+      "screenshot": "02-video-comments.png",
+      "metrics": "02-video-comments.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "03-settings-menu",
+      "state": "Comment gear menu containing app-wide settings",
+      "screenshot": "03-settings-menu.png",
+      "metrics": "03-settings-menu.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "04-app-settings",
+      "state": "Actual app settings modal opened from comment settings",
+      "screenshot": "04-app-settings.png",
+      "metrics": "04-app-settings.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "05-shortcuts",
+      "state": "Actual configurable shortcut settings",
+      "screenshot": "05-shortcuts.png",
+      "metrics": "05-shortcuts.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "06-drawing-tools",
+      "state": "Review drawing mode and live Fabric palette",
+      "screenshot": "06-drawing-tools.png",
+      "metrics": "06-drawing-tools.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "07-selection-tools",
+      "state": "Actual review selection tool; selected via real native Fabric overlay button",
+      "screenshot": "07-selection-tools.png",
+      "metrics": "07-selection-tools.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "08-layers-timeline",
+      "state": "Two layer-add keyboard actions via configured Shift+F1",
+      "screenshot": "08-layers-timeline.png",
+      "metrics": "08-layers-timeline.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "09-narrow-panels",
+      "state": "1100×720 CSS viewport with playlist and comments visible",
+      "screenshot": "09-narrow-panels.png",
+      "metrics": "09-narrow-panels.json",
+      "viewport": {
+        "width": 1100,
+        "height": 720,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "10-zoom125",
+      "state": "1440×900 content window with Electron page zoom 125%; current CSS viewport recorded",
+      "screenshot": "10-zoom125.png",
+      "metrics": "10-zoom125.json",
+      "viewport": {
+        "width": 1152,
+        "height": 720,
+        "dpr": 1.875
+      }
+    },
+    {
+      "name": "11-long-name",
+      "state": "Synthetic long filename loaded through actual file picker",
+      "screenshot": "11-long-name.png",
+      "metrics": "11-long-name.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    },
+    {
+      "name": "12-save-share-ui",
+      "state": "Saved synthetic local review; share controls observed without activating share",
+      "screenshot": "12-save-share-ui.png",
+      "metrics": "12-save-share-ui.json",
+      "viewport": {
+        "width": 1440,
+        "height": 900,
+        "dpr": 1.5
+      }
+    }
+  ],
+  "errors": [],
+  "blockedRequests": [
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.91.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.90.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.89.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.88.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.83.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.80.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.87.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.86.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.84.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.82.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.79.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.81.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.85.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.76.woff2",
+    "https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/packages/pretendard/dist/web/variable/woff2-dynamic-subset/PretendardVariable.subset.73.woff2"
+  ],
+  "pid": 5976,
+  "environment": {
+    "userData": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\docs\\reports\\2026-09-06-ui-deep-review\\evidence\\review\\_runtime\\user-data-final",
+    "sessionData": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\docs\\reports\\2026-09-06-ui-deep-review\\evidence\\review\\_runtime\\user-data-final",
+    "isPackaged": true,
+    "version": "2.9.0-beta"
+  },
+  "overlayControls": [
+    {
+      "text": "\n              \n                \n              \n            ",
+      "title": "댓글 범위 표시 토글",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(255, 255, 255)",
+      "background": "rgb(255, 208, 0)",
+      "rect": {
+        "x": 16,
+        "y": 448,
+        "width": 36,
+        "height": 36,
+        "top": 448,
+        "right": 52,
+        "bottom": 484,
+        "left": 16
+      }
+    },
+    {
+      "text": "\n              \n                \n                \n              \n            ",
+      "title": "위치 전환 (상단/하단)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgba(255, 255, 255, 0.8)",
+      "background": "rgba(30, 30, 30, 0.9)",
+      "rect": {
+        "x": 16,
+        "y": 490,
+        "width": 36,
+        "height": 36,
+        "top": 490,
+        "right": 52,
+        "bottom": 526,
+        "left": 16
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "처음으로 (Home)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "14px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 16,
+        "y": 574.3229370117188,
+        "width": 32,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 48,
+        "bottom": 606.3229370117188,
+        "left": 16
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "이전 프레임 (←)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "14px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 52,
+        "y": 574.3229370117188,
+        "width": 32,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 84,
+        "bottom": 606.3229370117188,
+        "left": 52
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "재생/일시정지 (Space)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "18px",
+      "color": "rgb(10, 10, 10)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 88,
+        "y": 568.3229370117188,
+        "width": 44,
+        "height": 44,
+        "top": 568.3229370117188,
+        "right": 132,
+        "bottom": 612.3229370117188,
+        "left": 88
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "다음 프레임 (→)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "14px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 136,
+        "y": 574.3229370117188,
+        "width": 32,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 168,
+        "bottom": 606.3229370117188,
+        "left": 136
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "끝으로 (End)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "14px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 172,
+        "y": 574.3229370117188,
+        "width": 32,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 204,
+        "bottom": 606.3229370117188,
+        "left": 172
+      }
+    },
+    {
+      "text": "\n            \n            그리기\n            B\n          ",
+      "title": "",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13px",
+      "color": "rgb(255, 208, 0)",
+      "background": "rgba(255, 208, 0, 0.15)",
+      "rect": {
+        "x": 438.71875,
+        "y": 572.9896240234375,
+        "width": 107.82292175292969,
+        "height": 34.66666793823242,
+        "top": 572.9896240234375,
+        "right": 546.5416717529297,
+        "bottom": 607.6562919616699,
+        "left": 438.71875
+      }
+    },
+    {
+      "text": "\n              \n            ",
+      "title": "이전 댓글 (Shift+←)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgb(26, 26, 26)",
+      "rect": {
+        "x": 554.5416870117188,
+        "y": 574.3229370117188,
+        "width": 24,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 578.5416870117188,
+        "bottom": 606.3229370117188,
+        "left": 554.5416870117188
+      }
+    },
+    {
+      "text": "\n              \n              댓글\n              C\n            ",
+      "title": "",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(26, 26, 26, 0.7)",
+      "rect": {
+        "x": 580.5416870117188,
+        "y": 572.9896240234375,
+        "width": 94.82292175292969,
+        "height": 34.66666793823242,
+        "top": 572.9896240234375,
+        "right": 675.3646087646484,
+        "bottom": 607.6562919616699,
+        "left": 580.5416870117188
+      }
+    },
+    {
+      "text": "\n              \n            ",
+      "title": "다음 댓글 (Shift+→)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgb(26, 26, 26)",
+      "rect": {
+        "x": 677.3646240234375,
+        "y": 574.3229370117188,
+        "width": 24,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 701.3646240234375,
+        "bottom": 606.3229370117188,
+        "left": 677.3646240234375
+      }
+    },
+    {
+      "text": "\n            \n              \n              \n              \n            \n            레이어 합성\n          ",
+      "title": "레이어 합성",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(26, 26, 26, 0.7)",
+      "rect": {
+        "x": 709.3646240234375,
+        "y": 572.9896240234375,
+        "width": 116.89583587646484,
+        "height": 34.66666793823242,
+        "top": 572.9896240234375,
+        "right": 826.2604598999023,
+        "bottom": 607.6562919616699,
+        "left": 709.3646240234375
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "구간 반복 컨트롤 열기/닫기",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgba(26, 26, 26, 0.6)",
+      "rect": {
+        "x": 854.2604370117188,
+        "y": 576.6666870117188,
+        "width": 27.322917938232422,
+        "height": 27.322917938232422,
+        "top": 576.6666870117188,
+        "right": 881.5833549499512,
+        "bottom": 603.9896049499512,
+        "left": 854.2604370117188
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "이전 하이라이트 (Alt+←)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgb(26, 26, 26)",
+      "rect": {
+        "x": 910.25,
+        "y": 574.3229370117188,
+        "width": 24,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 934.25,
+        "bottom": 606.3229370117188,
+        "left": 910.25
+      }
+    },
+    {
+      "text": "\n            \n              \n              \n              \n            \n          ",
+      "title": "하이라이트 추가 (H)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgb(26, 26, 26)",
+      "rect": {
+        "x": 942.25,
+        "y": 576.65625,
+        "width": 31.322917938232422,
+        "height": 27.322917938232422,
+        "top": 576.65625,
+        "right": 973.5729179382324,
+        "bottom": 603.9791679382324,
+        "left": 942.25
+      }
+    },
+    {
+      "text": "\n            \n          ",
+      "title": "다음 하이라이트 (Alt+→)",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgb(26, 26, 26)",
+      "rect": {
+        "x": 981.5729370117188,
+        "y": 574.3229370117188,
+        "width": 24,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 1005.5729370117188,
+        "bottom": 606.3229370117188,
+        "left": 981.5729370117188
+      }
+    },
+    {
+      "text": "\n            \n              \n              \n              \n            \n          ",
+      "title": "음소거 토글",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "14px",
+      "color": "rgb(160, 160, 160)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 1041.572998046875,
+        "y": 574.3229370117188,
+        "width": 32,
+        "height": 32,
+        "top": 574.3229370117188,
+        "right": 1073.572998046875,
+        "bottom": 606.3229370117188,
+        "left": 1041.572998046875
+      }
+    },
+    {
+      "text": "",
+      "title": "볼륨",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "13.3333px",
+      "color": "rgb(16, 16, 16)",
+      "background": "rgb(26, 26, 26)",
+      "rect": {
+        "x": 1079.572998046875,
+        "y": 588.3229370117188,
+        "width": 70,
+        "height": 4,
+        "top": 588.3229370117188,
+        "right": 1149.572998046875,
+        "bottom": 592.3229370117188,
+        "left": 1079.572998046875
+      }
+    },
+    {
+      "text": "\n          ✓\n        ",
+      "title": "해결됨으로 변경",
+      "ariaLabel": "해결됨으로 변경",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 12.666666984558105,
+        "y": 889.0625,
+        "width": 26.322917938232422,
+        "height": 25.33333396911621,
+        "top": 889.0625,
+        "right": 38.98958492279053,
+        "bottom": 914.3958339691162,
+        "left": 12.666666984558105
+      }
+    },
+    {
+      "text": "🗑️",
+      "title": "삭제",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 44.989585876464844,
+        "y": 889.0625,
+        "width": 33.8125,
+        "height": 25.33333396911621,
+        "top": 889.0625,
+        "right": 78.80208587646484,
+        "bottom": 914.3958339691162,
+        "left": 44.989585876464844
+      }
+    },
+    {
+      "text": "\n          ↩️\n        ",
+      "title": "해결한 사람 기록 없음 - 미해결로 변경",
+      "ariaLabel": "해결한 사람 기록 없음 - 미해결로 변경",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 12.666666984558105,
+        "y": 861.7604370117188,
+        "width": 33.8125,
+        "height": 25.33333396911621,
+        "top": 861.7604370117188,
+        "right": 46.479166984558105,
+        "bottom": 887.093770980835,
+        "left": 12.666666984558105
+      }
+    },
+    {
+      "text": "🗑️",
+      "title": "삭제",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 52.47916793823242,
+        "y": 861.7604370117188,
+        "width": 33.8125,
+        "height": 25.33333396911621,
+        "top": 861.7604370117188,
+        "right": 86.29166793823242,
+        "bottom": 887.093770980835,
+        "left": 52.47916793823242
+      }
+    },
+    {
+      "text": "\n          ✓\n        ",
+      "title": "해결됨으로 변경",
+      "ariaLabel": "해결됨으로 변경",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 12.666666984558105,
+        "y": 870.8646240234375,
+        "width": 26.322917938232422,
+        "height": 25.33333396911621,
+        "top": 870.8646240234375,
+        "right": 38.98958492279053,
+        "bottom": 896.1979579925537,
+        "left": 12.666666984558105
+      }
+    },
+    {
+      "text": "🗑️",
+      "title": "삭제",
+      "ariaLabel": null,
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 44.989585876464844,
+        "y": 870.8646240234375,
+        "width": 33.8125,
+        "height": 25.33333396911621,
+        "top": 870.8646240234375,
+        "right": 78.80208587646484,
+        "bottom": 896.1979579925537,
+        "left": 44.989585876464844
+      }
+    },
+    {
+      "text": "⌄",
+      "title": "",
+      "ariaLabel": "접기/펼치기",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgba(255, 255, 255, 0.55)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 1361.3333740234375,
+        "y": 599.1666870117188,
+        "width": 20,
+        "height": 20,
+        "top": 599.1666870117188,
+        "right": 1381.3333740234375,
+        "bottom": 619.1666870117188,
+        "left": 1361.3333740234375
+      }
+    },
+    {
+      "text": "×",
+      "title": "",
+      "ariaLabel": "패널 닫기",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgba(255, 255, 255, 0.55)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 1387.3333740234375,
+        "y": 599.1666870117188,
+        "width": 20,
+        "height": 20,
+        "top": 599.1666870117188,
+        "right": 1407.3333740234375,
+        "bottom": 619.1666870117188,
+        "left": 1387.3333740234375
+      }
+    },
+    {
+      "action": "toggle-collapse",
+      "text": "",
+      "title": "그리기 도구 접기/펴기",
+      "ariaLabel": "그리기 도구 접기/펴기",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgba(255, 255, 255, 0.55)",
+      "background": "rgba(0, 0, 0, 0)",
+      "rect": {
+        "x": 197.33334350585938,
+        "y": 20.666667938232422,
+        "width": 24,
+        "height": 24,
+        "top": 20.666667938232422,
+        "right": 221.33334350585938,
+        "bottom": 44.66666793823242,
+        "left": 197.33334350585938
+      }
+    },
+    {
+      "action": "brush",
+      "text": "",
+      "title": "브러시 도구 (B)",
+      "ariaLabel": "브러시 도구 (B)",
+      "ariaPressed": "false",
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 22.666667938232422,
+        "y": 84,
+        "width": 35.72916793823242,
+        "height": 40,
+        "top": 84,
+        "right": 58.395835876464844,
+        "bottom": 124,
+        "left": 22.666667938232422
+      }
+    },
+    {
+      "action": "pen",
+      "text": "",
+      "title": "펜 도구",
+      "ariaLabel": "펜 도구",
+      "ariaPressed": "false",
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 61.395835876464844,
+        "y": 84,
+        "width": 35.72916793823242,
+        "height": 40,
+        "top": 84,
+        "right": 97.12500381469727,
+        "bottom": 124,
+        "left": 61.395835876464844
+      }
+    },
+    {
+      "action": "eraser",
+      "text": "",
+      "title": "지우개 도구",
+      "ariaLabel": "지우개 도구",
+      "ariaPressed": "false",
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 100.125,
+        "y": 84,
+        "width": 35.739585876464844,
+        "height": 40,
+        "top": 84,
+        "right": 135.86458587646484,
+        "bottom": 124,
+        "left": 100.125
+      }
+    },
+    {
+      "action": "shape-menu",
+      "text": "",
+      "title": "도형 도구 (사각형)",
+      "ariaLabel": "도형 도구 (사각형)",
+      "ariaPressed": "false",
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 138.86459350585938,
+        "y": 84,
+        "width": 35.72916793823242,
+        "height": 40,
+        "top": 84,
+        "right": 174.5937614440918,
+        "bottom": 124,
+        "left": 138.86459350585938
+      }
+    },
+    {
+      "action": "select",
+      "text": "",
+      "title": "선택 도구 (V)",
+      "ariaLabel": "선택 도구 (V)",
+      "ariaPressed": "true",
+      "fontSize": "12px",
+      "color": "rgb(255, 255, 255)",
+      "background": "rgba(255, 85, 85, 0.22)",
+      "rect": {
+        "x": 177.59375,
+        "y": 84,
+        "width": 35.739585876464844,
+        "height": 40,
+        "top": 84,
+        "right": 213.33333587646484,
+        "bottom": 124,
+        "left": 177.59375
+      }
+    },
+    {
+      "action": "select-target-stroke",
+      "text": "획 전체",
+      "title": "획 전체 선택",
+      "ariaLabel": "획 전체 선택",
+      "ariaPressed": "true",
+      "fontSize": "12px",
+      "color": "rgb(255, 255, 255)",
+      "background": "rgba(255, 85, 85, 0.22)",
+      "rect": {
+        "x": 28.666667938232422,
+        "y": 183.33334350585938,
+        "width": 62.79166793823242,
+        "height": 40,
+        "top": 183.33334350585938,
+        "right": 91.45833587646484,
+        "bottom": 223.33334350585938,
+        "left": 28.666667938232422
+      }
+    },
+    {
+      "action": "select-target-partial",
+      "text": "부분 자르기",
+      "title": "획 일부 선택",
+      "ariaLabel": "획 일부 선택",
+      "ariaPressed": "false",
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 95.45833587646484,
+        "y": 183.33334350585938,
+        "width": 86.79167175292969,
+        "height": 40,
+        "top": 183.33334350585938,
+        "right": 182.25000762939453,
+        "bottom": 223.33334350585938,
+        "left": 95.45833587646484
+      }
+    },
+    {
+      "action": "select-shape-rectangle",
+      "text": "사각 영역",
+      "title": "사각형 선택",
+      "ariaLabel": "사각형 선택",
+      "ariaPressed": "true",
+      "fontSize": "12px",
+      "color": "rgb(255, 255, 255)",
+      "background": "rgba(255, 85, 85, 0.22)",
+      "rect": {
+        "x": 28.666667938232422,
+        "y": 254.6666717529297,
+        "width": 74.79167175292969,
+        "height": 40,
+        "top": 254.6666717529297,
+        "right": 103.45833969116211,
+        "bottom": 294.6666717529297,
+        "left": 28.666667938232422
+      }
+    },
+    {
+      "action": "select-shape-lasso",
+      "text": "라쏘 영역",
+      "title": "라쏘 선택",
+      "ariaLabel": "라쏘 선택",
+      "ariaPressed": "false",
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 107.45833587646484,
+        "y": 254.6666717529297,
+        "width": 74.79167175292969,
+        "height": 40,
+        "top": 254.6666717529297,
+        "right": 182.25000762939453,
+        "bottom": 294.6666717529297,
+        "left": 107.45833587646484
+      }
+    },
+    {
+      "action": "undo",
+      "text": "실행 취소",
+      "title": "실행 취소 (Ctrl+Z)",
+      "ariaLabel": "실행 취소 (Ctrl+Z)",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 22.666667938232422,
+        "y": 352,
+        "width": 74.79167175292969,
+        "height": 40,
+        "top": 352,
+        "right": 97.45833969116211,
+        "bottom": 392,
+        "left": 22.666667938232422
+      }
+    },
+    {
+      "action": "redo",
+      "text": "다시 실행",
+      "title": "다시 실행 (Ctrl+Y)",
+      "ariaLabel": "다시 실행 (Ctrl+Y)",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 103.45833587646484,
+        "y": 352,
+        "width": 74.79167175292969,
+        "height": 40,
+        "top": 352,
+        "right": 178.25000762939453,
+        "bottom": 392,
+        "left": 103.45833587646484
+      }
+    },
+    {
+      "action": "delete-selection",
+      "text": "선택 삭제",
+      "title": "선택한 획 삭제 (Delete)",
+      "ariaLabel": "선택한 획 삭제 (Delete)",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 22.666667938232422,
+        "y": 398,
+        "width": 74.79167175292969,
+        "height": 40,
+        "top": 398,
+        "right": 97.45833969116211,
+        "bottom": 438,
+        "left": 22.666667938232422
+      }
+    },
+    {
+      "action": "clear-session",
+      "text": "전체 지우기",
+      "title": "현재 프레임 드로잉 전체 삭제",
+      "ariaLabel": "현재 프레임 드로잉 전체 삭제",
+      "ariaPressed": null,
+      "fontSize": "12px",
+      "color": "rgb(245, 245, 245)",
+      "background": "rgba(255, 255, 255, 0.08)",
+      "rect": {
+        "x": 103.45833587646484,
+        "y": 398,
+        "width": 86.79167175292969,
+        "height": 40,
+        "top": 398,
+        "right": 190.25000762939453,
+        "bottom": 438,
+        "left": 103.45833587646484
+      }
+    }
+  ],
+  "exit": {
+    "code": 0,
+    "signal": null
+  }
+}

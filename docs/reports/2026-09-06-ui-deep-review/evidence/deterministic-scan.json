@@ -1,0 +1,29 @@
+[
+  {
+    "antipattern": "broken-image",
+    "name": "Broken or placeholder image",
+    "description": "<img> tags with empty src, missing src, or placeholder values ship as broken-image boxes. Use real images, generated assets, or remove the tag.",
+    "severity": "warning",
+    "file": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\renderer\\index.html",
+    "line": 1200,
+    "snippet": "<img id=\"commentPreviewImg\" src=\"\""
+  },
+  {
+    "antipattern": "broken-image",
+    "name": "Broken or placeholder image",
+    "description": "<img> tags with empty src, missing src, or placeholder values ship as broken-image boxes. Use real images, generated assets, or remove the tag.",
+    "severity": "warning",
+    "file": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\renderer\\index.html",
+    "line": 1994,
+    "snippet": "<img id=\"threadPreviewImg\" src=\"\""
+  },
+  {
+    "antipattern": "broken-image",
+    "name": "Broken or placeholder image",
+    "description": "<img> tags with empty src, missing src, or placeholder values ship as broken-image boxes. Use real images, generated assets, or remove the tag.",
+    "severity": "warning",
+    "file": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\renderer\\index.html",
+    "line": 2022,
+    "snippet": "<img class=\"image-viewer-img\" id=\"imageViewerImg\" src=\"\""
+  }
+]

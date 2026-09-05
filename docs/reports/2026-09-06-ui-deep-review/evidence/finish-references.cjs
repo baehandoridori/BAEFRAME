@@ -1,0 +1,10 @@
+const fs=require('node:fs');
+const path=require('node:path');
+const root=path.resolve(__dirname,'..');
+const ledger=JSON.parse(fs.readFileSync(path.join(__dirname,'references/reference-ledger.json'),'utf8'));
+const rows=['| 자료 | 공식 출처 | 문서 시점·범위 |','|---|---|---|'];
+for(const s of ledger.sources) rows.push(`| ${s.id} · ${s.product} | [${s.title}](${s.url}) | ${s.updatedAt||'갱신일 미표기'} · ${s.versionScope.replaceAll('|','/')} |`);
+const file=path.join(root,'report-source.md');
+const md=fs.readFileSync(file,'utf8');
+if(md.includes('<!-- REFERENCE_TABLE -->'))fs.writeFileSync(file,md.replace('<!-- REFERENCE_TABLE -->',rows.join('\n')));
+console.log(JSON.stringify({sources:ledger.sources.length,placeholderRemaining:fs.readFileSync(file,'utf8').includes('<!-- REFERENCE_TABLE -->')}));

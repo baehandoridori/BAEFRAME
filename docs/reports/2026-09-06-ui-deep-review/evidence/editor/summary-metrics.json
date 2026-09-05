@@ -1,0 +1,538 @@
+{
+  "baseline": "5d1cb89afcae21429c1e076a6964bc11cd990228",
+  "runComplete": true,
+  "consoleErrors": [],
+  "methodology": "Actual getBoundingClientRect/getComputedStyle. Text contrast samples below use opaque nearest-ancestor backgrounds, opacity1 only; excludes disabled controls. This is a focused sampling, not full WCAG conformance certification. Marker size alone is not deemed a target-size failure.",
+  "geometry": {
+    "portrait1050": {
+      "x": 349.625,
+      "y": 81,
+      "width": 150.75,
+      "height": 267.609375
+    },
+    "landscape1440": {
+      "x": 272.328125,
+      "y": 88,
+      "width": 661.328125,
+      "height": 371.984375
+    },
+    "inspector1050": {
+      "x": 804,
+      "y": 40,
+      "width": 246,
+      "height": 389.609375
+    },
+    "timeline1050": {
+      "x": 0,
+      "y": 429.609375,
+      "width": 1050,
+      "height": 266.390625
+    },
+    "timelineScroll1050": {
+      "x": 0,
+      "y": 499.609375,
+      "width": 1050,
+      "height": 172.390625
+    },
+    "trackHeight": 32,
+    "keysFirstRow": [
+      {
+        "label": "0프레임 빈 키프레임",
+        "x": 159,
+        "width": 18,
+        "height": 20,
+        "centerHit": false
+      },
+      {
+        "label": "12프레임 빈 키프레임",
+        "x": 160.21875,
+        "width": 18,
+        "height": 20,
+        "centerHit": false
+      },
+      {
+        "label": "24프레임 빈 키프레임",
+        "x": 161.453125,
+        "width": 18,
+        "height": 20,
+        "centerHit": false
+      },
+      {
+        "label": "36프레임 빈 키프레임",
+        "x": 162.6875,
+        "width": 18,
+        "height": 20,
+        "centerHit": true
+      }
+    ],
+    "clipWidth": 71.828125,
+    "layerCount": 9
+  },
+  "textSamples": [
+    {
+      "selector": "#timeDisplay",
+      "text": "00:01:12 / 06:00:00",
+      "fontPx": 11,
+      "foreground": "rgb(220, 224, 231)",
+      "background": "rgb(32, 33, 36)",
+      "contrast": 12.16
+    },
+    {
+      "selector": "#timelineScale",
+      "text": "눈금 60초 · 표시 360.0초",
+      "fontPx": 10,
+      "foreground": "rgb(190, 196, 207)",
+      "background": "rgb(37, 38, 43)",
+      "contrast": 8.62
+    },
+    {
+      "selector": "#projectTitle",
+      "text": "제작팀_에피소드_12_클라이맥스_액션_수정사항_최종검토_감독피드백_반영본_2026년_9월_6일",
+      "fontPx": 12,
+      "foreground": "rgb(168, 171, 179)",
+      "background": "rgb(32, 33, 36)",
+      "contrast": 7.01
+    },
+    {
+      "selector": "#outputInfo",
+      "text": "1920 × 1080 · 24fps",
+      "fontPx": 10,
+      "foreground": "rgb(168, 171, 179)",
+      "background": "rgb(32, 33, 36)",
+      "contrast": 7.01
+    },
+    {
+      "selector": "#activeToolName",
+      "text": "브러시",
+      "fontPx": 11,
+      "foreground": "rgb(228, 229, 232)",
+      "background": "rgb(36, 37, 41)",
+      "contrast": 12.15
+    },
+    {
+      "selector": "#addLayer",
+      "text": "+ 레이어",
+      "fontPx": 10,
+      "foreground": "rgb(209, 193, 232)",
+      "background": "rgb(52, 49, 62)",
+      "contrast": 7.56
+    },
+    {
+      "selector": ".video-clip",
+      "text": "1 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4\n720F · 30.00초",
+      "fontPx": 11,
+      "foreground": "rgb(255, 244, 210)",
+      "background": "rgb(74, 95, 124)",
+      "contrast": 5.94
+    },
+    {
+      "selector": ".drawing-key",
+      "text": "○",
+      "fontPx": 12,
+      "foreground": "rgb(174, 159, 194)",
+      "background": "rgb(28, 29, 33)",
+      "contrast": 6.85
+    },
+    {
+      "selector": "#status",
+      "text": "저장 완료 · review-fixture.bedit",
+      "fontPx": 10,
+      "foreground": "rgb(169, 176, 188)",
+      "background": "rgb(32, 33, 37)",
+      "contrast": 7.37
+    }
+  ],
+  "controls": [
+    {
+      "label": "편집 프로젝트 열기",
+      "width": 62,
+      "height": 28,
+      "font": "11px"
+    },
+    {
+      "label": "프로젝트 저장 · Ctrl+S",
+      "width": 62,
+      "height": 28,
+      "font": "11px"
+    },
+    {
+      "label": "다른 이름으로 저장",
+      "width": 112.03125,
+      "height": 28,
+      "font": "11px"
+    },
+    {
+      "label": "MP4 내보내기",
+      "width": 109.96875,
+      "height": 28,
+      "font": "11px"
+    },
+    {
+      "label": "선택 도구 V",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "자르기 도구 C",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "화면 이동 도구 H",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "펜 도구 B",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "지우개 도구 E",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "선 도구",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "사각형 도구",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "화살표 도구",
+      "width": 36,
+      "height": 30,
+      "font": "12px"
+    },
+    {
+      "label": "이전 프레임",
+      "width": 38,
+      "height": 25,
+      "font": "12px"
+    },
+    {
+      "label": "재생 / 일시정지 · Space",
+      "width": 52,
+      "height": 25,
+      "font": "12px"
+    },
+    {
+      "label": "다음 프레임",
+      "width": 38,
+      "height": 25,
+      "font": "12px"
+    },
+    {
+      "label": "영상 위 드로잉 입력 켜기 / 끄기",
+      "width": 46,
+      "height": 24,
+      "font": "10px"
+    },
+    {
+      "label": "브러시 설정",
+      "width": 123.046875,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "선택한 획 삭제 (Delete)",
+      "width": 56.75,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "현재 프레임 드로잉 전체 삭제",
+      "width": 66.75,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "영상 가져오기",
+      "width": 76.75,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "재생 위치에서 컷 나누기",
+      "width": 54,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "컷 삭제",
+      "width": 28,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "컷 앞으로 이동",
+      "width": 22.640625,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "컷 뒤로 이동",
+      "width": 22.640625,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "실행취소",
+      "width": 28,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "그림 키프레임 추가",
+      "width": 20.046875,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "빈 그림 키프레임 추가",
+      "width": 22.625,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "그림 유지 1프레임 추가",
+      "width": 31.125,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "드로잉 레이어 접기",
+      "width": 66.75,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "타임라인 확대",
+      "width": 21,
+      "height": 25,
+      "font": "15px"
+    },
+    {
+      "label": "전체 타임라인 맞춤",
+      "width": 34,
+      "height": 25,
+      "font": "10px"
+    },
+    {
+      "label": "1 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "2 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "3 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "4 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "5 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "6 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "7 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "8 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "9 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "10 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "11 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "12 · SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4 · 720F · 30.00초",
+      "width": 71.828125,
+      "height": 45,
+      "font": "11px"
+    },
+    {
+      "label": "드로잉 레이어 추가",
+      "width": 53.59375,
+      "height": 21,
+      "font": "10px"
+    },
+    {
+      "label": "드로잉 9 표시 전환",
+      "width": 12.65625,
+      "height": 24,
+      "font": "11px"
+    },
+    {
+      "label": "드로잉 9",
+      "width": 122.34375,
+      "height": 24,
+      "font": "11px"
+    },
+    {
+      "label": "36프레임 빈 키프레임",
+      "width": 18,
+      "height": 20,
+      "font": "12px"
+    },
+    {
+      "label": "드로잉 8 표시 전환",
+      "width": 12.65625,
+      "height": 24,
+      "font": "11px"
+    },
+    {
+      "label": "드로잉 8",
+      "width": 122.34375,
+      "height": 24,
+      "font": "11px"
+    },
+    {
+      "label": "36프레임 빈 키프레임",
+      "width": 18,
+      "height": 20,
+      "font": "12px"
+    }
+  ],
+  "verifiedChecks": {
+    "nameShortcut": {
+      "calls": 0,
+      "projectName": "제작팀_에피소드_12_클라이맥스_액션_수정사항_최종검토_감독피드백_반영본_2026년_9월_6일",
+      "input": "입력 중 저장 동작 확인"
+    },
+    "nameFirstSave": {
+      "calls": 1,
+      "projectName": "입력 중 저장 동작 확인",
+      "dirty": false
+    },
+    "nameSecondSave": {
+      "calls": 2,
+      "dirty": false
+    },
+    "initialSelect": {
+      "tool": "select",
+      "pressed": "true",
+      "drawingMode": "false",
+      "canvasPointerEvents": "none",
+      "overlayPointerEvents": "none"
+    },
+    "panPreservesDrawing": true,
+    "timelineZoomBefore": "all",
+    "timelineZoomAfter": "all",
+    "focusSpace": {
+      "before": {
+        "open": 3,
+        "save": 1,
+        "pick": 0,
+        "export": 0,
+        "playing": false
+      },
+      "after": {
+        "open": 3,
+        "save": 1,
+        "pick": 0,
+        "export": 0,
+        "playing": true
+      }
+    },
+    "afterError": {
+      "seeking": true,
+      "busy": false,
+      "still": "true",
+      "drawModeDisabled": false
+    },
+    "missingMediaError": "ENOENT: no such file or directory, realpath 'C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\evidence\\editor\\fixtures\\missing-original.mp4'",
+    "sourceFile": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ui-deep-review\\BAEFRAME\\evidence\\editor\\fixtures\\SC012_SH034_anim_layout_camera_character_final_review_2026-09-06_v008_approved_take_03.mp4"
+  },
+  "viewStability": [
+    {
+      "image": "03-reopened-drawing-selection-1440.png",
+      "rect": {
+        "x": 272.328125,
+        "y": 88,
+        "width": 661.328125,
+        "height": 371.984375
+      }
+    },
+    {
+      "image": "04-v-selection-1440.png",
+      "rect": {
+        "x": 272.328125,
+        "y": 88,
+        "width": 661.328125,
+        "height": 371.984375
+      }
+    },
+    {
+      "image": "05-razor-1440.png",
+      "rect": {
+        "x": 272.328125,
+        "y": 88,
+        "width": 661.328125,
+        "height": 371.984375
+      }
+    },
+    {
+      "image": "06-hand-1440.png",
+      "rect": {
+        "x": 297.328125,
+        "y": 93,
+        "width": 661.328125,
+        "height": 371.984375
+      }
+    }
+  ],
+  "textScale": "11 screenshot doubles computed text size while leaving layout dimensions unchanged. It is a controlled text-only stress test, not native Windows accessibility-setting coverage.",
+  "media": "Two generated30s testsrc2 H264/AAC videos, landscape320x180 and portrait180x320, probed by the production media function. 12 appended landscape clips total360s. No user media read, modified, exported, or deleted.",
+  "limits": "Dialog/export IPC is simulated. Renderer, video decode, drawings, tool inputs, save snapshot generation, and overlay export prep are production modules. Export progress43% is injected, not measured encoding. Main review-window comparison is source-level only in this subtask."
+}
