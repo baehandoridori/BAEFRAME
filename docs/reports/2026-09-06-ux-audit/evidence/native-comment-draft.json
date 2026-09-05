@@ -1,0 +1,19 @@
+{
+  "before": {
+    "input": "UX 점검: 취소 뒤에도 이 초안이 남아야 합니다.",
+    "count": "0",
+    "body": "fabric-drawing-pilot-enabled mpv-pilot-mode mpv-native-host-visible fabric-drawing-pilot-engaged"
+  },
+  "afterSubmit": {
+    "input": "",
+    "count": "0",
+    "body": "fabric-drawing-pilot-enabled",
+    "commentButton": "action-btn preparing"
+  },
+  "afterCancel": {
+    "input": "",
+    "count": "0",
+    "body": "fabric-drawing-pilot-enabled",
+    "commentButton": "action-btn"
+  }
+}

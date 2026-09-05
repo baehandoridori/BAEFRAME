@@ -1,0 +1,190 @@
+{
+  "result": "PASS",
+  "exitCode": 0,
+  "checkedAt": "2026-09-05T17:59:24.351Z",
+  "browser": {
+    "name": "Chrome headless",
+    "version": "152.0.7977.76"
+  },
+  "source": {
+    "file": "report.md",
+    "sha256": "401337964d40d04e4cd09ee77a3cc6b4d1d6cf165e9c642b47debb442b4508c3",
+    "embeddedHashMatches": true,
+    "textPreserved": true
+  },
+  "html": {
+    "file": "report.html",
+    "bytes": 74939,
+    "sha256": "3dde334fd5610ff772cb0655db389a53d9ae687c9fd4814e33dd40cfaf31cb20"
+  },
+  "renderer": {
+    "file": "render-report.cjs",
+    "bytes": 23144,
+    "sha256": "2cf8570ebefcffc7fe4b311fcdeb7e467815c20724e6f10aa8fabfc8adb2bcad"
+  },
+  "structure": {
+    "issues": 15,
+    "toc": 10,
+    "tables": 6,
+    "namedAnchors": 15,
+    "duplicateIds": 0
+  },
+  "links": {
+    "total": 97,
+    "localChecked": 86,
+    "missingFiles": [],
+    "brokenAnchors": [],
+    "externalAvailabilityChecked": false
+  },
+  "images": [
+    {
+      "src": "assets/09-continuous-review.png",
+      "width": 1588,
+      "height": 994,
+      "opensNewTab": true
+    },
+    {
+      "src": "assets/07-comment-hybrid.png",
+      "width": 1588,
+      "height": 994,
+      "opensNewTab": true
+    },
+    {
+      "src": "assets/08-comment-cancel.png",
+      "width": 1588,
+      "height": 994,
+      "opensNewTab": true
+    }
+  ],
+  "viewportChecks": [
+    {
+      "width": 1440,
+      "area": ".table-scroll",
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "area": "img",
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "overflow": false
+    },
+    {
+      "width": 1440,
+      "area": "#i10",
+      "viewport": 1440,
+      "scrollWidth": 1440,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "area": ".table-scroll",
+      "viewport": 390,
+      "scrollWidth": 390,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "area": "img",
+      "viewport": 390,
+      "scrollWidth": 390,
+      "overflow": false
+    },
+    {
+      "width": 390,
+      "area": "#i10",
+      "viewport": 390,
+      "scrollWidth": 390,
+      "overflow": false
+    }
+  ],
+  "searchChecks": [
+    {
+      "width": 1440,
+      "query": "P1",
+      "visible": 6
+    },
+    {
+      "width": 1440,
+      "query": "P2",
+      "visible": 8
+    },
+    {
+      "width": 1440,
+      "query": "P3",
+      "visible": 1
+    },
+    {
+      "width": 1440,
+      "query": "zz-report-no-match",
+      "visible": 0
+    },
+    {
+      "width": 390,
+      "query": "P1",
+      "visible": 6
+    },
+    {
+      "width": 390,
+      "query": "P2",
+      "visible": 8
+    },
+    {
+      "width": 390,
+      "query": "P3",
+      "visible": 1
+    },
+    {
+      "width": 390,
+      "query": "zz-report-no-match",
+      "visible": 0
+    }
+  ],
+  "interaction": {
+    "collapseAll": true,
+    "expandAll": true,
+    "hashLinkOpensIssue": true,
+    "escapeClearsSearch": true,
+    "mobileToc": true,
+    "tocCurrentSectionAfterDeepScroll": true,
+    "printRestoresState": true
+  },
+  "print": {
+    "visibleIssues": 15,
+    "toolbar": "none",
+    "sidebar": "none",
+    "tableOverflow": [
+      "visible",
+      "visible",
+      "visible",
+      "visible",
+      "visible",
+      "visible"
+    ]
+  },
+  "browserErrors": [],
+  "screenshots": [
+    {
+      "file": "evidence/report-desktop.png",
+      "bytes": 96563,
+      "sha256": "2255a74c2b8591baba3e363e98af0b7491fba256568b1cacda749437ba5fefc0"
+    },
+    {
+      "file": "evidence/report-mobile.png",
+      "bytes": 35697,
+      "sha256": "683f9adc5a6e65fdcded9aaf00ee466fc9868ca804a2588435d093c0d921ce49"
+    }
+  ],
+  "cleanup": {
+    "launchedBrowserClosed": true,
+    "httpServerCreated": false,
+    "usedFileUrl": true
+  },
+  "testAdjustment": "앵커 이동은 hashchange 이벤트 완료 후 펼침 상태를 확인했습니다. 클릭 직후의 이전 assertion은 이벤트 이전 값을 읽었습니다.",
+  "limits": [
+    "외부 웹 링크의 응답 상태는 이 렌더링 검사에서 재요청하지 않았습니다.",
+    "인쇄 CSS와 펼침 상태를 검사했으며 PDF 파일 자체를 생성하지 않았습니다."
+  ]
+}

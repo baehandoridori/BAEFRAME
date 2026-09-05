@@ -1,0 +1,17 @@
+{
+  "url": "https://baeframe-ux-report-20260906.animators1.chatgpt.site",
+  "access": "owner-only",
+  "projectId": "appgprj_6a9c5995a8b08191a55c0b0acc82d878",
+  "versionId": "appgprj_6a9c5995a8b08191a55c0b0acc82d878~appgver_73734d1f37308191b11ae3aa4609b056",
+  "version": 2,
+  "deploymentId": "appgdep_6a9c603d3218819181d59343f13b5250",
+  "deploymentStatus": "succeeded",
+  "sourceCommit": "ece3666b2f5ae3ece68ad3150bd1a541bb3d13b2",
+  "archiveSha256": "41dbc4e76e11d2f4f76bd15c0298a20262eb1b2418c9dc2f50a9098caa2841f7",
+  "verifiedHttpStatus": 200,
+  "verifiedReportIssues": 19,
+  "verifiedJpegImages": 3,
+  "verifiedRawEvidenceLinks": false,
+  "sourceDirectory": "C:/Users/user/Documents/Codex/Sites/baeframe-ux-report-20260906",
+  "note": "Version 2 adds four findings. Deployment succeeded; authenticated HTML and all three JPEG image responses returned HTTP 200. Access remains owner-only."
+}

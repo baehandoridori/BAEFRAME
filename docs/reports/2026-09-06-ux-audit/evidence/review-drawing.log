@@ -1,0 +1,2643 @@
+
+> baeframe@2.9.0-beta test:drawing
+> node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/drawing-stroke-records.test.js scripts/tests/drawing-layers.test.mjs scripts/tests/drawing-layers-persistence.test.js scripts/tests/drawing-layer-partition.test.js scripts/tests/drawing-layer-convergence.test.js scripts/tests/drawing-sync-remote-overlay.test.js scripts/tests/drawing-runtime-source.test.js scripts/tests/keyframe-multi-select-source.test.js scripts/tests/keyframe-shortcuts-source.test.js scripts/tests/brush-settings-source.test.js scripts/tests/drawing-v3-command-history.test.js scripts/tests/drawing-v3-document.test.js scripts/tests/drawing-v3-document-cow.test.js
+
+TAP version 13
+# Subtest: brush and eraser settings are persisted through user settings
+ok 1 - brush and eraser settings are persisted through user settings
+  ---
+  duration_ms: 1.6063
+  type: 'test'
+  ...
+# Subtest: drawing toolbar restores persisted brush state and saves changes deliberately
+ok 2 - drawing toolbar restores persisted brush state and saves changes deliberately
+  ---
+  duration_ms: 1.905
+  type: 'test'
+  ...
+# Subtest: alt drag adjusts brush size before drawing or ctrl eraser handling
+ok 3 - alt drag adjusts brush size before drawing or ctrl eraser handling
+  ---
+  duration_ms: 0.4904
+  type: 'test'
+  ...
+# Subtest: alt modifier fallback tracks keyboard state and resets on blur
+ok 4 - alt modifier fallback tracks keyboard state and resets on blur
+  ---
+  duration_ms: 0.3434
+  type: 'test'
+  ...
+# Subtest: alt drag size adjustment follows pen pointer events until pointer release
+ok 5 - alt drag size adjustment follows pen pointer events until pointer release
+  ---
+  duration_ms: 0.257
+  type: 'test'
+  ...
+# Subtest: brush size HUD and bracket shortcuts are wired for drawing mode only
+ok 6 - brush size HUD and bracket shortcuts are wired for drawing mode only
+  ---
+  duration_ms: 2.6242
+  type: 'test'
+  ...
+# Subtest: drawing test script includes the brush settings source coverage
+ok 7 - drawing test script includes the brush settings source coverage
+  ---
+  duration_ms: 0.1673
+  type: 'test'
+  ...
+# [17:34:56.801] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.803] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.804] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.805] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.805] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.808] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.809] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.809] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.809] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.809] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.809] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.809] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.809] [DrawingLayer] 레이어 생성됨 { id: 'layer-peer-a', name: 'A' }
+# [17:34:56.810] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.810] [DrawingManager] 새 레이어 생성됨 { id: 'layer-peer-a', name: 'A' }
+# [17:34:56.810] [DrawingLayer] 레이어 생성됨 { id: 'layer-peer-b', name: 'B' }
+# [17:34:56.810] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.810] [DrawingManager] 새 레이어 생성됨 { id: 'layer-peer-b', name: 'B' }
+# [17:34:56.811] [DrawingLayer] 레이어 생성됨 { id: 'layer-peer-b', name: 'B' }
+# [17:34:56.811] [DrawingManager] 새 레이어 생성됨 { id: 'layer-peer-b', name: 'B' }
+# [17:34:56.811] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-peer-b' }
+# [17:34:56.812] [DrawingLayer] 레이어 생성됨 { id: 'layer-peer-a', name: 'A' }
+# [17:34:56.812] [DrawingManager] 새 레이어 생성됨 { id: 'layer-peer-a', name: 'A' }
+# [17:34:56.812] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-peer-a' }
+# [17:34:56.813] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.813] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.816] [DrawingLayer] 레이어 생성됨 { id: 'layer-ee5042a6-3ca7-4973-baa2-cadcb348dd4d', name: '드로잉 1' }
+# [17:34:56.816] [DrawingLayer] 레이어 생성됨 { id: 'layer-ab1706b7-2875-4bec-a2bd-ce7ac1b613fe', name: '드로잉 1' }
+# [17:34:56.817] [DrawingLayer] 레이어 생성됨 { id: 'layer-uuid-a', name: '드로잉 2' }
+# [17:34:56.817] [DrawingLayer] 레이어 생성됨 { id: 'layer-uuid-b', name: '드로잉 7' }
+# [17:34:56.817] [DrawingLayer] 레이어 생성됨 { id: 'layer-uuid-c', name: '참고선' }
+# [17:34:56.817] [DrawingLayer] 레이어 생성됨 { id: 'layer-21478474-394e-4c29-9a71-f2990df39459', name: '드로잉 8' }
+# [17:34:56.820] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.820] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.820] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.820] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.820] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.820] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.820] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.820] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.821] [DrawingLayer] 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.821] [DrawingManager] 새 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.821] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-a' }
+# [17:34:56.821] [DrawingLayer] 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.821] [DrawingManager] 새 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.821] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-b' }
+# [17:34:56.821] [DrawingLayer] 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.821] [DrawingManager] 새 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.821] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-b' }
+# [17:34:56.821] [DrawingLayer] 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.821] [DrawingManager] 새 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.821] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-a' }
+# [17:34:56.821] [DrawingLayer] 레이어 생성됨 { id: 'late-anchor', name: 'Anchor' }
+# [17:34:56.821] [DrawingManager] 새 레이어 생성됨 { id: 'late-anchor', name: 'Anchor' }
+# [17:34:56.821] [DrawingSync] 원격 레이어 생성 적용 { id: 'late-anchor' }
+# [17:34:56.821] [DrawingLayer] 레이어 생성됨 { id: 'late-anchor', name: 'Anchor' }
+# [17:34:56.821] [DrawingManager] 새 레이어 생성됨 { id: 'late-anchor', name: 'Anchor' }
+# [17:34:56.822] [DrawingSync] 원격 레이어 생성 적용 { id: 'late-anchor' }
+# [17:34:56.822] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.822] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.823] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.823] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.823] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.823] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.823] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.823] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.823] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.823] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.823] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.823] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.824] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.824] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.824] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.824] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.824] [DrawingLayer] 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.824] [DrawingManager] 새 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.824] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-a' }
+# [17:34:56.824] [DrawingLayer] 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.824] [DrawingManager] 새 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.824] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-b' }
+# [17:34:56.824] [DrawingLayer] 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.824] [DrawingManager] 새 레이어 생성됨 { id: 'layer-b', name: 'B' }
+# [17:34:56.824] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-b' }
+# [17:34:56.824] [DrawingLayer] 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.824] [DrawingManager] 새 레이어 생성됨 { id: 'layer-a', name: 'A' }
+# [17:34:56.824] [DrawingSync] 원격 레이어 생성 적용 { id: 'layer-a' }
+# [17:34:56.825] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.825] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.825] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.825] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.825] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.825] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.825] [DrawingLayer] 레이어 생성됨 { id: 'layer-old', name: 'Old' }
+# [17:34:56.825] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.825] [DrawingManager] 새 레이어 생성됨 { id: 'layer-old', name: 'Old' }
+# [17:34:56.825] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.826] [DrawingManager] 활성 레이어 변경 { id: 'anchor' }
+# [17:34:56.827] [DrawingLayer] 레이어 생성됨 { id: 'layer-new', name: 'New' }
+# [17:34:56.827] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.827] [DrawingManager] 새 레이어 생성됨 { id: 'layer-new', name: 'New' }
+# [17:34:56.828] [DrawingSync] 현재 그리기 상태 브로드캐스트 완료 { layers: 3 }
+# [17:34:56.828] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.828] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.828] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.828] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.829] [DrawingLayer] 레이어 생성됨 { id: 'layer-new', name: 'New' }
+# [17:34:56.829] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.829] [DrawingLayer] 레이어 생성됨 { id: 'layer-old', name: 'Old' }
+# [17:34:56.830] [DrawingSync] 원격 레이어 순서 적용 { count: 3 }
+# [17:34:56.832] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.832] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.832] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.832] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.832] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.832] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.832] [DrawingLayer] 레이어 생성됨 { id: 'state-seed-secondary', name: 'Secondary' }
+# [17:34:56.832] [DrawingManager] 새 레이어 생성됨 { id: 'state-seed-secondary', name: 'Secondary' }
+# [17:34:56.832] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 27 }
+# [17:34:56.836] [DrawingSync] 키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도 { size: '1024KB' }
+# [17:34:56.902] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 27, size: '1024KB' }
+# [17:34:56.903] [DrawingSync] 현재 그리기 상태 브로드캐스트 완료 { layers: 2 }
+# [17:34:56.909] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.909] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.909] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.909] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.909] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.909] [DrawingLayer] 레이어 생성됨 { id: 'state-seed-secondary', name: 'Secondary' }
+# [17:34:56.909] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 27 }
+# [17:34:56.909] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 27 }
+# [17:34:56.922] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 27 }
+# [17:34:56.922] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.923] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.924] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.924] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.924] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.924] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.924] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.924] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 31 }
+# [17:34:56.924] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 32 }
+# [17:34:56.924] [DrawingSync] 현재 상태 키프레임 브로드캐스트 실패 { layerId: 'anchor', frame: 31, error: 'expected state seed failure' }
+# [17:34:56.924] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 32, size: '0KB' }
+# [17:34:56.924] [DrawingSync] 현재 그리기 상태 브로드캐스트 완료 { layers: 1 }
+# [17:34:56.925] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.925] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.925] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.925] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.925] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.925] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.925] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.925] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.925] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.925] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.925] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.925] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.925] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 33 }
+# [17:34:56.925] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.926] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.928] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 33, size: '0KB' }
+# [17:34:56.928] [DrawingSync] 현재 그리기 상태 브로드캐스트 완료 { layers: 1 }
+# [17:34:56.928] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.928] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 33 }
+# [17:34:56.928] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 33 }
+# [17:34:56.929] [DrawingSync] 원격 레이어 순서 적용 { count: 1 }
+# [17:34:56.930] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.930] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.930] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.930] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.930] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.930] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.930] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 41 }
+# [17:34:56.933] [DrawingSync] 키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도 { size: '1024KB' }
+# [17:34:56.934] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.934] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.934] [DrawingSync] 오래된 현재 상태 브로드캐스트 취소됨
+# [17:34:56.935] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.935] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.935] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.935] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.935] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.935] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.935] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 42 }
+# [17:34:56.939] [DrawingSync] 키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도 { size: '1024KB' }
+# [17:34:56.940] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.940] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.942] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.942] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.942] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.942] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.942] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.942] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.942] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.942] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.943] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.943] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.944] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.944] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.944] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.944] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.944] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.944] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.944] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.944] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.944] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.944] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.944] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.944] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'missing-layer' }
+# [17:34:56.945] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.945] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.945] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.945] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.945] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.945] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.945] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.945] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.945] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.945] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.945] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.945] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.946] [DrawingLayer] 빈 키프레임 추가됨 { layerId: 'anchor', frame: 7 }
+# [17:34:56.946] [DrawingLayer] 빈 키프레임 추가됨 { layerId: 'anchor', frame: 7 }
+# [17:34:56.946] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.946] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.946] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.946] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.946] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.946] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 7, size: '0KB' }
+# [17:34:56.946] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.946] [DrawingSync] 원격 레이어 복원 적용 { id: 'anchor' }
+# [17:34:56.946] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 7 }
+# [17:34:56.946] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 7 }
+# [17:34:56.946] [DrawingSync] 원격 레이어 순서 적용 { count: 1 }
+# [17:34:56.946] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.946] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.946] [DrawingSync] 원격 레이어 순서 적용 { count: 0 }
+# [17:34:56.947] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.947] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.947] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.947] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.947] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.947] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.948] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.948] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.948] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.948] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.948] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.948] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.948] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.948] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.948] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.948] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.948] [DrawingLayer] 레이어 생성됨 { id: 'unrelated', name: 'Unrelated' }
+# [17:34:56.948] [DrawingManager] 새 레이어 생성됨 { id: 'unrelated', name: 'Unrelated' }
+# [17:34:56.948] [DrawingLayer] 레이어 생성됨 { id: 'unrelated', name: 'Unrelated' }
+# [17:34:56.948] [DrawingManager] 새 레이어 생성됨 { id: 'unrelated', name: 'Unrelated' }
+# [17:34:56.948] [DrawingSync] 원격 레이어 생성 적용 { id: 'unrelated' }
+# [17:34:56.948] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.948] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.948] [DrawingSync] 원격 레이어 복원 적용 { id: 'anchor' }
+# [17:34:56.948] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.949] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.949] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.949] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.949] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.949] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.949] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.949] [DrawingLayer] 레이어 생성됨 { id: 'editable', name: 'Editable' }
+# [17:34:56.949] [DrawingManager] 새 레이어 생성됨 { id: 'editable', name: 'Editable' }
+# [17:34:56.949] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.949] [DrawingLayer] 빈 키프레임 추가됨 { layerId: 'editable', frame: 0 }
+# [17:34:56.949] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.950] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.950] [DrawingLayer] 레이어 생성됨 { id: 'editable', name: 'Editable' }
+# [17:34:56.950] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.950] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.950] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.950] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.951] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.951] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.951] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.951] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.951] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.951] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.951] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.951] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.951] [DrawingLayer] 레이어 생성됨 { id: 'created', name: 'Created' }
+# [17:34:56.951] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.952] [DrawingManager] 새 레이어 생성됨 { id: 'created', name: 'Created' }
+# [17:34:56.952] [DrawingLayer] 레이어 생성됨 { id: 'created', name: 'Created' }
+# [17:34:56.952] [DrawingManager] 새 레이어 생성됨 { id: 'created', name: 'Created' }
+# [17:34:56.952] [DrawingSync] 원격 레이어 생성 적용 { id: 'created' }
+# [17:34:56.952] [DrawingManager] 레이어 삭제됨 { id: 'created', name: 'Created' }
+# [17:34:56.952] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'created' }
+# [17:34:56.952] [DrawingSync] 원격 레이어 순서 적용 { count: 1 }
+# [17:34:56.952] [DrawingLayer] 레이어 생성됨 { id: 'created', name: 'Created' }
+# [17:34:56.952] [DrawingLayer] 레이어 생성됨 { id: 'created', name: 'Created' }
+# [17:34:56.952] [DrawingSync] 원격 레이어 복원 적용 { id: 'created' }
+# [17:34:56.953] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.953] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.953] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.953] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.954] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.954] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.954] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.955] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.955] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.955] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.955] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.955] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.955] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.955] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.955] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.955] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.955] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.955] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.955] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.956] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.956] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.957] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.957] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.957] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.957] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.957] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.957] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.958] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.958] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.958] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.958] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.958] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.958] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.958] [DrawingLayer] 레이어 생성됨 { id: 'other', name: 'Other' }
+# [17:34:56.958] [DrawingManager] 새 레이어 생성됨 { id: 'other', name: 'Other' }
+# [17:34:56.958] [DrawingLayer] 레이어 생성됨 { id: 'other', name: 'Other' }
+# [17:34:56.958] [DrawingManager] 새 레이어 생성됨 { id: 'other', name: 'Other' }
+# [17:34:56.958] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.958] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.958] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.958] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.958] [DrawingLayer] 키프레임 생성됨 { layerId: 'other', frame: 3 }
+# [17:34:56.958] [DrawingLayer] 키프레임 생성됨 { layerId: 'other', frame: 3 }
+# [17:34:56.959] [DrawingSync] 원격 키프레임 적용 { layerId: 'other', frame: 3 }
+# [17:34:56.959] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.959] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.959] [DrawingSync] 원격 레이어 복원 적용 { id: 'anchor' }
+# [17:34:56.959] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.959] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.959] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.959] [DrawingSync] 원격 레이어 순서 적용 { count: 1 }
+# [17:34:56.960] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.960] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.960] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.960] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.960] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.961] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.961] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.961] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.961] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.961] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.961] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.961] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.961] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.961] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.962] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.962] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.962] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.962] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.962] [DrawingLayer] 키프레임 생성됨 { layerId: 'second', frame: 4 }
+# [17:34:56.962] [DrawingLayer] 키프레임 생성됨 { layerId: 'second', frame: 4 }
+# [17:34:56.962] [DrawingSync] 원격 키프레임 적용 { layerId: 'second', frame: 4 }
+# [17:34:56.962] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.962] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.963] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.963] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.963] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.963] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.963] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.963] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.964] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.964] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.964] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.964] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.964] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.964] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.964] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.964] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.964] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.964] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.964] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.964] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.965] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.965] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.965] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.965] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.965] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.965] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.966] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.966] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.966] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.966] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.966] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.966] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.966] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.966] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.966] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.966] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.966] [DrawingLayer] 레이어 생성됨 { id: 'unknown', name: 'Unknown' }
+# [17:34:56.966] [DrawingManager] 새 레이어 생성됨 { id: 'unknown', name: 'Unknown' }
+# [17:34:56.966] [DrawingSync] 현재 그리기 상태 브로드캐스트 완료 { layers: 2 }
+# [17:34:56.966] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.967] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.967] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.967] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.967] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.967] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.967] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.967] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.968] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.968] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.968] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.968] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.968] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.968] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.968] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.968] [DrawingLayer] 레이어 생성됨 { id: 'third', name: 'Third' }
+# [17:34:56.968] [DrawingManager] 새 레이어 생성됨 { id: 'third', name: 'Third' }
+# [17:34:56.968] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.968] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.968] [DrawingLayer] 레이어 생성됨 { id: 'third', name: 'Third' }
+# [17:34:56.968] [DrawingManager] 새 레이어 생성됨 { id: 'third', name: 'Third' }
+# [17:34:56.968] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.968] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.968] [DrawingSync] 원격 레이어 순서 적용 { count: 3 }
+# [17:34:56.969] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.969] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.969] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.969] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.969] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.969] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.969] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.969] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.970] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.971] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.971] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.971] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.972] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.972] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.972] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.972] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.972] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.972] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.972] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.972] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.972] [DrawingLayer] 레이어 생성됨 { id: 'late-layer', name: 'Late Layer' }
+# [17:34:56.973] [DrawingManager] 새 레이어 생성됨 { id: 'late-layer', name: 'Late Layer' }
+# [17:34:56.973] [DrawingSync] 원격 레이어 생성 적용 { id: 'late-layer' }
+# [17:34:56.973] [DrawingSync] 원격 레이어 순서 적용 { count: 3 }
+# [17:34:56.973] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.973] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.973] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.973] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.973] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.973] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.973] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.973] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.974] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'deleted-before-arrival' }
+# [17:34:56.974] [DrawingSync] 원격 레이어 순서 적용 { count: 3 }
+# [17:34:56.974] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.974] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.974] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.974] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.975] [DrawingLayer] 레이어 생성됨 { id: 'known-a', name: 'Known A' }
+# [17:34:56.975] [DrawingManager] 새 레이어 생성됨 { id: 'known-a', name: 'Known A' }
+# [17:34:56.975] [DrawingSync] 원격 레이어 생성 적용 { id: 'known-a' }
+# [17:34:56.975] [DrawingLayer] 레이어 생성됨 { id: 'known-b', name: 'Known B' }
+# [17:34:56.975] [DrawingManager] 새 레이어 생성됨 { id: 'known-b', name: 'Known B' }
+# [17:34:56.975] [DrawingSync] 원격 레이어 생성 적용 { id: 'known-b' }
+# [17:34:56.975] [DrawingLayer] 레이어 생성됨 { id: 'waiting-x', name: 'Waiting X' }
+# [17:34:56.975] [DrawingManager] 새 레이어 생성됨 { id: 'waiting-x', name: 'Waiting X' }
+# [17:34:56.975] [DrawingSync] 원격 레이어 생성 적용 { id: 'waiting-x' }
+# [17:34:56.975] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.975] [DrawingLayer] 레이어 생성됨 { id: 'late-z', name: 'Late Z' }
+# [17:34:56.975] [DrawingManager] 새 레이어 생성됨 { id: 'late-z', name: 'Late Z' }
+# [17:34:56.975] [DrawingSync] 원격 레이어 생성 적용 { id: 'late-z' }
+# [17:34:56.976] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.976] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.976] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.976] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.976] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.976] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.976] [DrawingLayer] 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.976] [DrawingManager] 새 레이어 생성됨 { id: 'second', name: 'Second' }
+# [17:34:56.976] [DrawingSync] 원격 레이어 순서 적용 { count: 2 }
+# [17:34:56.978] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.978] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.978] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.978] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.978] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.978] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.978] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 9 }
+# [17:34:56.978] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.978] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.978] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.978] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 9, size: '0KB' }
+# [17:34:56.979] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.979] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.979] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.979] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.979] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.979] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.979] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.979] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.979] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.979] [DrawingSync] 원격 레이어 복원 적용 { id: 'anchor' }
+# [17:34:56.979] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 9 }
+# [17:34:56.979] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 9 }
+# [17:34:56.979] [DrawingSync] 원격 레이어 순서 적용 { count: 1 }
+# [17:34:56.979] [DrawingSync] 원격 레이어 복원 적용 { id: 'anchor' }
+# [17:34:56.979] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 9 }
+# [17:34:56.980] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.980] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.980] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.980] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.981] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.981] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.981] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:56.981] [DrawingManager] DrawingManager 초기화됨
+# [17:34:56.981] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.981] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.981] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.981] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 11 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 12 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 13 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 14 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 11 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 12 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 13 }
+# [17:34:56.981] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 14 }
+# [17:34:56.981] [DrawingManager] 히스토리 저장 (통합 스택)
+# [17:34:56.981] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.982] [DrawingManager] 레이어 삭제됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.982] [DrawingSync] 원격 레이어 삭제 적용 { layerId: 'anchor' }
+# [17:34:56.982] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:56.985] [DrawingSync] 키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도 { size: '1024KB' }
+# [17:34:56.986] [DrawingSync] 키프레임 축소 처리 실패 { error: 'reducer failed' }
+# [17:34:57.050] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 11, size: '1024KB' }
+# [17:34:57.053] [DrawingSync] 키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도 { size: '1024KB' }
+# [17:34:57.116] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 12, size: '1024KB' }
+# [17:34:57.119] [DrawingSync] 키프레임 이벤트가 1MB 초과, 품질 낮춰서 전송 시도 { size: '1024KB' }
+# [17:34:57.189] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 13, size: '1024KB' }
+# [17:34:57.189] [DrawingSync] 그리기 브로드캐스트 전송 { layerId: 'anchor', frame: 14, size: '0KB' }
+# [17:34:57.201] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:57.201] [DrawingSync] 원격 레이어 복원 적용 { id: 'anchor' }
+# [17:34:57.210] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 11 }
+# [17:34:57.210] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 11 }
+# [17:34:57.220] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 12 }
+# [17:34:57.220] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 12 }
+# [17:34:57.228] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 13 }
+# [17:34:57.228] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 13 }
+# [17:34:57.228] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 14 }
+# [17:34:57.229] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 14 }
+# [17:34:57.229] [DrawingSync] 원격 레이어 순서 적용 { count: 1 }
+# [17:34:57.230] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:57.230] [DrawingManager] DrawingManager 초기화됨
+# [17:34:57.230] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:57.230] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:57.230] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:57.230] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:57.231] [DrawingCanvas] DrawingCanvas 초기화됨
+# [17:34:57.231] [DrawingManager] DrawingManager 초기화됨
+# [17:34:57.231] [DrawingLayer] 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:57.231] [DrawingManager] 새 레이어 생성됨 { id: 'anchor', name: 'Anchor' }
+# [17:34:57.231] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:57.231] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:57.563] [DrawingLayer] 키프레임 생성됨 { layerId: 'anchor', frame: 99 }
+# [17:34:57.564] [DrawingSync] 원격 키프레임 적용 { layerId: 'anchor', frame: 99 }
+# Subtest: concurrent layers created before the same anchor converge regardless of event order
+ok 8 - concurrent layers created before the same anchor converge regardless of event order
+  ---
+  duration_ms: 46.3131
+  type: 'test'
+  ...
+# Subtest: new layer ids remain unique even when peers start from the same legacy counter state
+ok 9 - new layer ids remain unique even when peers start from the same legacy counter state
+  ---
+  duration_ms: 1.9462
+  type: 'test'
+  ...
+# Subtest: default layer names continue after loaded UUID layer names
+ok 10 - default layer names continue after loaded UUID layer names
+  ---
+  duration_ms: 1.1484
+  type: 'test'
+  ...
+# Subtest: siblings converge before a missing anchor and move directly before it when it arrives
+ok 11 - siblings converge before a missing anchor and move directly before it when it arrives
+  ---
+  duration_ms: 4.0222
+  type: 'test'
+  ...
+# Subtest: deleted anchor tombstone keeps delayed siblings convergent and rejects delayed anchor creation
+ok 12 - deleted anchor tombstone keeps delayed siblings convergent and rejects delayed anchor creation
+  ---
+  duration_ms: 2.5594
+  type: 'test'
+  ...
+# Subtest: manual reorder clears stale anchors and current-state round-trip preserves visible order
+ok 13 - manual reorder clears stale anchors and current-state round-trip preserves visible order
+  ---
+  duration_ms: 5.3843
+  type: 'test'
+  ...
+# Subtest: current-state seed sends bounded legacy preview before exact chunk convergence
+ok 14 - current-state seed sends bounded legacy preview before exact chunk convergence
+  ---
+  duration_ms: 91.9945
+  type: 'test'
+  ...
+# Subtest: current-state seed continues after one keyframe failure and sends order last
+ok 15 - current-state seed continues after one keyframe failure and sends order last
+  ---
+  duration_ms: 1.2979
+  type: 'test'
+  ...
+# Subtest: current-state seed restores a live layer over a stale deletion tombstone
+ok 16 - current-state seed restores a live layer over a stale deletion tombstone
+  ---
+  duration_ms: 4.4429
+  type: 'test'
+  ...
+# Subtest: stopped current-state seed cannot broadcast old keyframes after restart
+ok 17 - stopped current-state seed cannot broadcast old keyframes after restart
+  ---
+  duration_ms: 5.4229
+  type: 'test'
+  ...
+# Subtest: stopped layer restore cannot finish broadcasting into a restarted session
+ok 18 - stopped layer restore cannot finish broadcasting into a restarted session
+  ---
+  duration_ms: 5.4329
+  type: 'test'
+  ...
+# Subtest: layer id generation fails explicitly when Web Crypto is unavailable
+ok 19 - layer id generation fails explicitly when Web Crypto is unavailable
+  ---
+  duration_ms: 1.0144
+  type: 'test'
+  ...
+# Subtest: local deletion snapshots an existing layer before recording its tombstone
+ok 20 - local deletion snapshots an existing layer before recording its tombstone
+  ---
+  duration_ms: 2.0192
+  type: 'test'
+  ...
+# Subtest: remote deletion does not push into local undo history
+ok 21 - remote deletion does not push into local undo history
+  ---
+  duration_ms: 0.7632
+  type: 'test'
+  ...
+# Subtest: remote deletion records a tombstone when the layer is already missing
+ok 22 - remote deletion records a tombstone when the layer is already missing
+  ---
+  duration_ms: 0.4629
+  type: 'test'
+  ...
+# Subtest: local delete undo redo converges both peers without dropping restored keyframes
+ok 23 - local delete undo redo converges both peers without dropping restored keyframes
+  ---
+  duration_ms: 2.0861
+  type: 'test'
+  ...
+# Subtest: remote restore preserves an unrelated concurrent layer
+ok 24 - remote restore preserves an unrelated concurrent layer
+  ---
+  duration_ms: 2.0815
+  type: 'test'
+  ...
+# Subtest: unrelated drawing undo does not resurrect a remotely deleted layer
+ok 25 - unrelated drawing undo does not resurrect a remotely deleted layer
+  ---
+  duration_ms: 1.1235
+  type: 'test'
+  ...
+# Subtest: local create undo redo converges action target only
+ok 26 - local create undo redo converges action target only
+  ---
+  duration_ms: 2.9465
+  type: 'test'
+  ...
+# Subtest: local order undo redo converges through action-scoped order delta
+ok 27 - local order undo redo converges through action-scoped order delta
+  ---
+  duration_ms: 3.5697
+  type: 'test'
+  ...
+# Subtest: delete undo redo preserves current non-target object and remote keyframe data
+ok 28 - delete undo redo preserves current non-target object and remote keyframe data
+  ---
+  duration_ms: 2.8459
+  type: 'test'
+  ...
+# Subtest: order undo redo preserves current objects and remote keyframe data
+ok 29 - order undo redo preserves current objects and remote keyframe data
+  ---
+  duration_ms: 3.0948
+  type: 'test'
+  ...
+# Subtest: manual layer move broadcasts order and converges existing peer objects
+ok 30 - manual layer move broadcasts order and converges existing peer objects
+  ---
+  duration_ms: 1.9129
+  type: 'test'
+  ...
+# Subtest: current-state broadcast corrects existing receiver order and preserves unknown layers
+ok 31 - current-state broadcast corrects existing receiver order and preserves unknown layers
+  ---
+  duration_ms: 1.7931
+  type: 'test'
+  ...
+# Subtest: simultaneous layer orders converge by Lamport clock and actor tie-break
+ok 32 - simultaneous layer orders converge by Lamport clock and actor tie-break
+  ---
+  duration_ms: 2.2463
+  type: 'test'
+  ...
+# Subtest: stopping sync resets layer-order clocks for the next collaboration room
+ok 33 - stopping sync resets layer-order clocks for the next collaboration room
+  ---
+  duration_ms: 2.5195
+  type: 'test'
+  ...
+# Subtest: layer order waits for a referenced layer and applies when that layer arrives
+ok 34 - layer order waits for a referenced layer and applies when that layer arrives
+  ---
+  duration_ms: 1.3859
+  type: 'test'
+  ...
+# Subtest: pending layer order completes when a missing layer is learned to be deleted
+ok 35 - pending layer order completes when a missing layer is learned to be deleted
+  ---
+  duration_ms: 0.9014
+  type: 'test'
+  ...
+# Subtest: partial remote order preserves an omitted layer anchor until its anchor arrives
+ok 36 - partial remote order preserves an omitted layer anchor until its anchor arrives
+  ---
+  duration_ms: 1.6768
+  type: 'test'
+  ...
+# Subtest: applied remote order emits one persistence-facing order event
+ok 37 - applied remote order emits one persistence-facing order event
+  ---
+  duration_ms: 1.1279
+  type: 'test'
+  ...
+# Subtest: restore emits legacy create and keyframe fallbacks for old receivers
+ok 38 - restore emits legacy create and keyframe fallbacks for old receivers
+  ---
+  duration_ms: 3.0366
+  type: 'test'
+  ...
+# Subtest: oversized restore chunks full keyframes when reduction fails or stays oversized
+ok 39 - oversized restore chunks full keyframes when reduction fails or stays oversized
+  ---
+  duration_ms: 249.6802
+  type: 'test'
+  ...
+# Subtest: malformed and stale keyframe chunks are ignored and pruned safely
+ok 40 - malformed and stale keyframe chunks are ignored and pruned safely
+  ---
+  duration_ms: 0.9935
+  type: 'test'
+  ...
+# Subtest: chunk receiver enforces active, transfer, and global byte caps then recovers
+ok 41 - chunk receiver enforces active, transfer, and global byte caps then recovers
+  ---
+  duration_ms: 333.3875
+  type: 'test'
+  ...
+# [17:34:56.811] [DrawingLayer] 레이어 생성됨 { id: 'layer-tail', name: 'Tail' }
+# [17:34:56.814] [DrawingLayer] 프레임 삭제됨 { layerId: 'layer-tail', frame: 10 }
+# [17:34:56.815] [DrawingLayer] 레이어 생성됨 { id: 'layer-tail-held', name: 'Tail Held' }
+# [17:34:56.815] [DrawingLayer] 프레임 삭제됨 { layerId: 'layer-tail-held', frame: 12 }
+# [17:34:56.816] [DrawingLayer] 레이어 생성됨 { id: 'layer-tail-boundary', name: 'Tail Boundary' }
+# [17:34:56.816] [DrawingLayer] 프레임 삭제됨 { layerId: 'layer-tail-boundary', frame: 14 }
+# [17:34:56.816] [DrawingLayer] 레이어 생성됨 { id: 'layer-blank-tail', name: 'Blank Tail' }
+# [17:34:56.817] [DrawingLayer] 프레임 삭제됨 { layerId: 'layer-blank-tail', frame: 13 }
+# [17:34:56.817] [DrawingLayer] 레이어 생성됨 { id: 'layer-adjacent', name: 'Adjacent' }
+# [17:34:56.818] [DrawingLayer] 프레임 삭제됨 { layerId: 'layer-adjacent', frame: 10 }
+# Subtest: drawing manager partition helper loads
+ok 42 - drawing manager partition helper loads
+  ---
+  duration_ms: 37.5319
+  type: 'test'
+  ...
+# Subtest: partition splits layers below active layer and above active layer
+ok 43 - partition splits layers below active layer and above active layer
+  ---
+  duration_ms: 1.0124
+  type: 'test'
+  ...
+# Subtest: partition keeps all higher layers above when active layer is first
+ok 44 - partition keeps all higher layers above when active layer is first
+  ---
+  duration_ms: 0.1952
+  type: 'test'
+  ...
+# Subtest: partition keeps all lower layers below when active layer is last
+ok 45 - partition keeps all lower layers below when active layer is last
+  ---
+  duration_ms: 0.1714
+  type: 'test'
+  ...
+# Subtest: partition treats every layer as static when active layer is missing
+ok 46 - partition treats every layer as static when active layer is missing
+  ---
+  duration_ms: 0.3026
+  type: 'test'
+  ...
+# Subtest: deleteFrame shortens a tail-held final keyframe by adding a blank boundary
+ok 47 - deleteFrame shortens a tail-held final keyframe by adding a blank boundary
+  ---
+  duration_ms: 4.4148
+  type: 'test'
+  ...
+# Subtest: deleteFrame shortens an ordinary frame in the final held range
+ok 48 - deleteFrame shortens an ordinary frame in the final held range
+  ---
+  duration_ms: 0.5413
+  type: 'test'
+  ...
+# Subtest: deleteFrame preserves a blank final boundary after a tail hold was shortened
+ok 49 - deleteFrame preserves a blank final boundary after a tail hold was shortened
+  ---
+  duration_ms: 0.5933
+  type: 'test'
+  ...
+# Subtest: deleteFrame does not duplicate blank tail boundary keyframes
+ok 50 - deleteFrame does not duplicate blank tail boundary keyframes
+  ---
+  duration_ms: 0.8282
+  type: 'test'
+  ...
+# Subtest: deleteFrame removes a one-frame keyframe when the next keyframe starts immediately
+ok 51 - deleteFrame removes a one-frame keyframe when the next keyframe starts immediately
+  ---
+  duration_ms: 1.2114
+  type: 'test'
+  ...
+# [17:34:56.806] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.811] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.816] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.817] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.822] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.824] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.826] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.827] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.828] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.831] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.839] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# [17:34:56.840] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 500 }
+# Subtest: 레이어는 drawingsV3 와 같은 opaque 루트 자리에 산다
+ok 52 - 레이어는 drawingsV3 와 같은 opaque 루트 자리에 산다
+  ---
+  duration_ms: 25.739
+  type: 'test'
+  ...
+# Subtest: 레이어 상태는 실제로 달라졌을 때만 변경으로 표시된다
+ok 53 - 레이어 상태는 실제로 달라졌을 때만 변경으로 표시된다
+  ---
+  duration_ms: 5.6429
+  type: 'test'
+  ...
+# Subtest: 상한 값을 넣어도 쓸 수 있는 상태로 정규화된다
+ok 54 - 상한 값을 넣어도 쓸 수 있는 상태로 정규화된다
+  ---
+  duration_ms: 1.2757
+  type: 'test'
+  ...
+# Subtest: 저장 직전 새로고침이 로컬 레이어 변경을 되돌리지 않는다
+ok 55 - 저장 직전 새로고침이 로컬 레이어 변경을 되돌리지 않는다
+  ---
+  duration_ms: 2.9853
+  type: 'test'
+  ...
+# Subtest: 레이어 변경은 저장 대상으로 표시된다
+ok 56 - 레이어 변경은 저장 대상으로 표시된다
+  ---
+  duration_ms: 3.6468
+  type: 'test'
+  ...
+# Subtest: 로컬 변경이 없으면 다른 인스턴스의 레이어 변경을 채택한다
+ok 57 - 로컬 변경이 없으면 다른 인스턴스의 레이어 변경을 채택한다
+  ---
+  duration_ms: 1.8413
+  type: 'test'
+  ...
+# Subtest: 저장 중에 들어온 레이어 변경은 살아남는다
+ok 58 - 저장 중에 들어온 레이어 변경은 살아남는다
+  ---
+  duration_ms: 1.8436
+  type: 'test'
+  ...
+# Subtest: 강제 덮어쓰기는 레이어도 원격으로 맞춘다
+ok 59 - 강제 덮어쓰기는 레이어도 원격으로 맞춘다
+  ---
+  duration_ms: 0.7289
+  type: 'test'
+  ...
+# Subtest: 동시 레이어 편집은 서로를 지우지 않는다
+ok 60 - 동시 레이어 편집은 서로를 지우지 않는다
+  ---
+  duration_ms: 1.7209
+  type: 'test'
+  ...
+# Subtest: 병합으로 흡수한 원격 값이 새 기준선이 된다
+ok 61 - 병합으로 흡수한 원격 값이 새 기준선이 된다
+  ---
+  duration_ms: 2.6591
+  type: 'test'
+  ...
+# Subtest: 기준선은 IPC 쓰기가 성공할 때마다 즉시 전진한다
+ok 62 - 기준선은 IPC 쓰기가 성공할 때마다 즉시 전진한다
+  ---
+  duration_ms: 4.3024
+  type: 'test'
+  ...
+# Subtest: 덮어쓰기가 완전히 끝나기 전 실패는 로컬 레이어를 되돌린다
+ok 63 - 덮어쓰기가 완전히 끝나기 전 실패는 로컬 레이어를 되돌린다
+  ---
+  duration_ms: 2.3106
+  type: 'test'
+  ...
+# Subtest: 레이어만 바꾼 것도 저장할 내용으로 센다
+ok 64 - 레이어만 바꾼 것도 저장할 내용으로 센다
+  ---
+  duration_ms: 0.759
+  type: 'test'
+  ...
+# Subtest: 다룰 수 없는 판의 레이어 데이터는 손대지 않는다
+ok 65 - 다룰 수 없는 판의 레이어 데이터는 손대지 않는다
+  ---
+  duration_ms: 0.7625
+  type: 'test'
+  ...
+# [17:34:57.322] [ReviewDataManager] 자동 저장 실행
+# [17:34:57.322] [ReviewDataManager] 저장할 파일 경로가 없음
+# [17:34:57.322] [ReviewDataManager] 자동 저장 실행
+# [17:34:57.322] [ReviewDataManager] 저장할 파일 경로가 없음
+# [17:34:57.337] [ReviewDataManager] 자동 저장 실행
+# [17:34:57.337] [ReviewDataManager] 저장할 파일 경로가 없음
+# [17:34:57.337] [ReviewDataManager] 자동 저장 실행
+# [17:34:57.338] [ReviewDataManager] 저장할 파일 경로가 없음
+# [17:34:57.338] [ReviewDataManager] 자동 저장 실행
+# [17:34:57.338] [ReviewDataManager] 저장할 파일 경로가 없음
+# [17:34:57.351] [ReviewDataManager] 자동 저장 실행
+# [17:34:57.352] [ReviewDataManager] 저장할 파일 경로가 없음
+# Subtest: 레이어를 모르는 파일은 마이그레이션 없이 기본 레이어 하나로 열린다
+ok 66 - 레이어를 모르는 파일은 마이그레이션 없이 기본 레이어 하나로 열린다
+  ---
+  duration_ms: 3.524
+  type: 'test'
+  ...
+# Subtest: 새 레이어를 맨 위에 넣어도 기존 그림이 딸려 올라가지 않는다
+ok 67 - 새 레이어를 맨 위에 넣어도 기존 그림이 딸려 올라가지 않는다
+  ---
+  duration_ms: 4.176
+  type: 'test'
+  ...
+# Subtest: 레이어를 지우면 그 위의 그림만 함께 지운다
+ok 68 - 레이어를 지우면 그 위의 그림만 함께 지운다
+  ---
+  duration_ms: 0.8164
+  type: 'test'
+  ...
+# Subtest: 기준 레이어를 지우면 남은 맨 아래가 새 기준이 된다
+ok 69 - 기준 레이어를 지우면 남은 맨 아래가 새 기준이 된다
+  ---
+  duration_ms: 0.1736
+  type: 'test'
+  ...
+# Subtest: 선택과 이동은 끝에서 멈춘다
+ok 70 - 선택과 이동은 끝에서 멈춘다
+  ---
+  duration_ms: 0.423
+  type: 'test'
+  ...
+# Subtest: 숨김과 잠금이 그리기 판정을 바꾼다
+ok 71 - 숨김과 잠금이 그리기 판정을 바꾼다
+  ---
+  duration_ms: 0.4606
+  type: 'test'
+  ...
+# Subtest: 상한 게 파일은 거부하지 않고 알아볼 수 있는 만큼만 살린다
+ok 72 - 상한 게 파일은 거부하지 않고 알아볼 수 있는 만큼만 살린다
+  ---
+  duration_ms: 0.6274
+  type: 'test'
+  ...
+# Subtest: 레이어 수에 상한이 있고 사라진 배정은 걷어낸다
+ok 73 - 레이어 수에 상한이 있고 사라진 배정은 걷어낸다
+  ---
+  duration_ms: 11.5206
+  type: 'test'
+  ...
+# Subtest: 저장한 값을 다시 읽으면 같은 상태가 된다
+ok 74 - 저장한 값을 다시 읽으면 같은 상태가 된다
+  ---
+  duration_ms: 0.7334
+  type: 'test'
+  ...
+# Subtest: 레이어 id 는 개수에서 유도하지 않는다
+ok 75 - 레이어 id 는 개수에서 유도하지 않는다
+  ---
+  duration_ms: 0.6423
+  type: 'test'
+  ...
+# Subtest: 이름·색만 다른 한 장짜리 상태도 저장한다
+ok 76 - 이름·색만 다른 한 장짜리 상태도 저장한다
+  ---
+  duration_ms: 0.3465
+  type: 'test'
+  ...
+# Subtest: 오브젝트 id 는 레이어 id 한도로 재지 않는다
+ok 77 - 오브젝트 id 는 레이어 id 한도로 재지 않는다
+  ---
+  duration_ms: 0.3854
+  type: 'test'
+  ...
+# Subtest: 호출자가 준 중복 id 는 새 id 로 갈아 끼운다
+ok 78 - 호출자가 준 중복 id 는 새 id 로 갈아 끼운다
+  ---
+  duration_ms: 0.5131
+  type: 'test'
+  ...
+# Subtest: __proto__ 같은 오브젝트 id 도 배정을 잃지 않는다
+ok 79 - __proto__ 같은 오브젝트 id 도 배정을 잃지 않는다
+  ---
+  duration_ms: 0.8019
+  type: 'test'
+  ...
+# Subtest: 세 갈래 병합은 양쪽이 각자 바꾼 것을 둘 다 살린다
+ok 80 - 세 갈래 병합은 양쪽이 각자 바꾼 것을 둘 다 살린다
+  ---
+  duration_ms: 1.0321
+  type: 'test'
+  ...
+# Subtest: 병합은 로컬 순서 바꾸기도 지킨다
+ok 81 - 병합은 로컬 순서 바꾸기도 지킨다
+  ---
+  duration_ms: 0.2561
+  type: 'test'
+  ...
+# Subtest: 같은 레이어의 다른 속성을 각자 바꾸면 둘 다 살린다
+ok 82 - 같은 레이어의 다른 속성을 각자 바꾸면 둘 다 살린다
+  ---
+  duration_ms: 0.3318
+  type: 'test'
+  ...
+# Subtest: 순서 비교는 id 에 든 구분자에 속지 않는다
+ok 83 - 순서 비교는 id 에 든 구분자에 속지 않는다
+  ---
+  duration_ms: 0.1582
+  type: 'test'
+  ...
+# Subtest: 서로 다른 레이어를 지워도 진짜 레이어가 남는다
+ok 84 - 서로 다른 레이어를 지워도 진짜 레이어가 남는다
+  ---
+  duration_ms: 0.1794
+  type: 'test'
+  ...
+# Subtest: 양쪽이 다른 자리에 추가해도 합성 순서가 뒤바뀌지 않는다
+ok 85 - 양쪽이 다른 자리에 추가해도 합성 순서가 뒤바뀌지 않는다
+  ---
+  duration_ms: 0.2246
+  type: 'test'
+  ...
+# Subtest: 상한을 넘겨도 기존 레이어와 그 배정을 지키다
+ok 86 - 상한을 넘겨도 기존 레이어와 그 배정을 지키다
+  ---
+  duration_ms: 1.3682
+  type: 'test'
+  ...
+# Subtest: 양쪽이 같은 id 로 각자 만든 레이어를 둘 다 살린다
+ok 87 - 양쪽이 같은 id 로 각자 만든 레이어를 둘 다 살린다
+  ---
+  duration_ms: 0.3752
+  type: 'test'
+  ...
+# Subtest: 같은 id·같은 메타데이터로 각자 만든 레이어도 구분한다
+ok 88 - 같은 id·같은 메타데이터로 각자 만든 레이어도 구분한다
+  ---
+  duration_ms: 0.2784
+  type: 'test'
+  ...
+# Subtest: 표식이 같으면 이름이 달라져도 한 레이어다
+ok 89 - 표식이 같으면 이름이 달라져도 한 레이어다
+  ---
+  duration_ms: 0.2099
+  type: 'test'
+  ...
+# Subtest: drawing tools expose a persisted eraser mode segmented control
+ok 90 - drawing tools expose a persisted eraser mode segmented control
+  ---
+  duration_ms: 1.4629
+  type: 'test'
+  ...
+# Subtest: eraser tool hides color-only controls and uses a neutral size preview
+ok 91 - eraser tool hides color-only controls and uses a neutral size preview
+  ---
+  duration_ms: 0.5425
+  type: 'test'
+  ...
+# Subtest: drawing canvas resolves Ctrl pen and brush strokes as eraser at stroke start
+ok 92 - drawing canvas resolves Ctrl pen and brush strokes as eraser at stroke start
+  ---
+  duration_ms: 0.2658
+  type: 'test'
+  ...
+# Subtest: drawing input is blocked before stroke events when the active layer is locked or hidden
+ok 93 - drawing input is blocked before stroke events when the active layer is locked or hidden
+  ---
+  duration_ms: 0.4165
+  type: 'test'
+  ...
+# Subtest: drawing mode makes video comment overlays click-through for uninterrupted strokes
+ok 94 - drawing mode makes video comment overlays click-through for uninterrupted strokes
+  ---
+  duration_ms: 2.9508
+  type: 'test'
+  ...
+# Subtest: non-toggle draw-mode shutdown paths clear drawing overlay state
+ok 95 - non-toggle draw-mode shutdown paths clear drawing overlay state
+  ---
+  duration_ms: 3.3138
+  type: 'test'
+  ...
+# Subtest: clearing the current drawing frame respects locked and hidden layers
+ok 96 - clearing the current drawing frame respects locked and hidden layers
+  ---
+  duration_ms: 0.5324
+  type: 'test'
+  ...
+# Subtest: drawing manager skips stroke record persistence when a save is blocked
+ok 97 - drawing manager skips stroke record persistence when a save is blocked
+  ---
+  duration_ms: 0.1888
+  type: 'test'
+  ...
+# Subtest: drawing layer rendering uses static below and above canvases around the active layer
+ok 98 - drawing layer rendering uses static below and above canvases around the active layer
+  ---
+  duration_ms: 1.1884
+  type: 'test'
+  ...
+# Subtest: drawing manager records freehand strokes and erases intersecting stroke records
+ok 99 - drawing manager records freehand strokes and erases intersecting stroke records
+  ---
+  duration_ms: 0.453
+  type: 'test'
+  ...
+# Subtest: stroke eraser edits the held source keyframe instead of creating a new frame
+ok 100 - stroke eraser edits the held source keyframe instead of creating a new frame
+  ---
+  duration_ms: 0.2529
+  type: 'test'
+  ...
+# Subtest: stroke eraser gestures do not stream as live pixel eraser strokes to collaborators
+ok 101 - stroke eraser gestures do not stream as live pixel eraser strokes to collaborators
+  ---
+  duration_ms: 0.1312
+  type: 'test'
+  ...
+# Subtest: stroke eraser explains unavailable bitmap-only frames instead of silently doing nothing
+ok 102 - stroke eraser explains unavailable bitmap-only frames instead of silently doing nothing
+  ---
+  duration_ms: 0.163
+  type: 'test'
+  ...
+# Subtest: stroke eraser redraw loads base image before clearing the visible canvas
+ok 103 - stroke eraser redraw loads base image before clearing the visible canvas
+  ---
+  duration_ms: 0.2326
+  type: 'test'
+  ...
+# Subtest: drawing playback avoids noisy per-frame canvas clears and preload churn
+ok 104 - drawing playback avoids noisy per-frame canvas clears and preload churn
+  ---
+  duration_ms: 0.2749
+  type: 'test'
+  ...
+# Subtest: pen and brush strokes use bundled perfect-freehand smoothing without changing record storage
+ok 105 - pen and brush strokes use bundled perfect-freehand smoothing without changing record storage
+  ---
+  duration_ms: 0.3159
+  type: 'test'
+  ...
+# Subtest: drawing select tool supports marquee selection, move, copy and paste
+ok 106 - drawing select tool supports marquee selection, move, copy and paste
+  ---
+  duration_ms: 0.3454
+  type: 'test'
+  ...
+# Subtest: floating drawing selections are resolved before context changes, not during render
+ok 107 - floating drawing selections are resolved before context changes, not during render
+  ---
+  duration_ms: 1.3905
+  type: 'test'
+  ...
+# Subtest: pasted drawing frames are published to sync and save listeners
+ok 108 - pasted drawing frames are published to sync and save listeners
+  ---
+  duration_ms: 0.4412
+  type: 'test'
+  ...
+# Subtest: global drawing redo forwards action-scoped lifecycle metadata
+ok 109 - global drawing redo forwards action-scoped lifecycle metadata
+  ---
+  duration_ms: 0.9855
+  type: 'test'
+  ...
+# Subtest: 드로잉 매니저가 실제 페인트 변화에서만 paintStamp를 올린다 (피드백 32)
+ok 110 - 드로잉 매니저가 실제 페인트 변화에서만 paintStamp를 올린다 (피드백 32)
+  ---
+  duration_ms: 0.383
+  type: 'test'
+  ...
+# Subtest: 피드백 35 v2: 획 선택 벡터 커밋·다중 선택·hover가 배선되어 있다
+ok 111 - 피드백 35 v2: 획 선택 벡터 커밋·다중 선택·hover가 배선되어 있다
+  ---
+  duration_ms: 0.4917
+  type: 'test'
+  ...
+# Subtest: 하이라이트 undo/redo 콜백은 getter 전용 colorInfo에 대입하지 않는다
+ok 112 - 하이라이트 undo/redo 콜백은 getter 전용 colorInfo에 대입하지 않는다
+  ---
+  duration_ms: 0.5091
+  type: 'test'
+  ...
+# Subtest: fabric 히스토리 폴백은 renderer 단일 경로에서 처리한다
+ok 113 - fabric 히스토리 폴백은 renderer 단일 경로에서 처리한다
+  ---
+  duration_ms: 6.2843
+  type: 'test'
+  ...
+# Subtest: 저장 상태 칩은 재시도 소진 후에만 저장 실패를 알린다
+ok 114 - 저장 상태 칩은 재시도 소진 후에만 저장 실패를 알린다
+  ---
+  duration_ms: 0.8978
+  type: 'test'
+  ...
+# Subtest: 저장 차단 래치는 일시 실패로 분류되지 않는다
+ok 115 - 저장 차단 래치는 일시 실패로 분류되지 않는다
+  ---
+  duration_ms: 0.4286
+  type: 'test'
+  ...
+# Subtest: drawing stroke helper module loads
+ok 116 - drawing stroke helper module loads
+  ---
+  duration_ms: 9.895
+  type: 'test'
+  ...
+# Subtest: eraser mode defaults to pixel for unknown values
+ok 117 - eraser mode defaults to pixel for unknown values
+  ---
+  duration_ms: 0.2481
+  type: 'test'
+  ...
+# Subtest: recordable stroke copies points and style fields
+ok 118 - recordable stroke copies points and style fields
+  ---
+  duration_ms: 0.9947
+  type: 'test'
+  ...
+# Subtest: stroke eraser removes every stroke intersecting the eraser path
+ok 119 - stroke eraser removes every stroke intersecting the eraser path
+  ---
+  duration_ms: 0.6494
+  type: 'test'
+  ...
+# Subtest: stroke eraser ignores strokes outside the eraser radius
+ok 120 - stroke eraser ignores strokes outside the eraser radius
+  ---
+  duration_ms: 0.1965
+  type: 'test'
+  ...
+# Subtest: keyframe JSON preserves stroke metadata for reopen
+ok 121 - keyframe JSON preserves stroke metadata for reopen
+  ---
+  duration_ms: 4.5925
+  type: 'test'
+  ...
+# Subtest: findStrokeAtPoint는 선폭 허용 오차 안의 최신 획을 반환한다
+ok 122 - findStrokeAtPoint는 선폭 허용 오차 안의 최신 획을 반환한다
+  ---
+  duration_ms: 0.5018
+  type: 'test'
+  ...
+# Subtest: strokesInRect는 교차·포함 획을 모두 찾고 밖의 획은 제외한다
+ok 123 - strokesInRect는 교차·포함 획을 모두 찾고 밖의 획은 제외한다
+  ---
+  duration_ms: 0.4764
+  type: 'test'
+  ...
+# [17:34:56.835] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.837] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.837] [DrawingSync] 원격 스트로크 오버레이 캔버스 생성
+# [17:34:56.838] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.839] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.840] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.840] [DrawingSync] 원격 스트로크 오버레이 캔버스 생성
+# [17:34:56.840] [DrawingSync] 원격 스트로크 오버레이 변경 알림 실패 { phase: 'start', error: 'consumer failed' }
+# [17:34:56.840] [DrawingSync] 원격 스트로크 오버레이 변경 알림 실패 { phase: 'move', error: 'consumer failed' }
+# [17:34:56.840] [DrawingSync] 원격 스트로크 오버레이 변경 알림 실패 { phase: 'end', error: 'consumer failed' }
+# [17:34:56.841] [DrawingSync] 원격 스트로크 오버레이 변경 알림 실패 { phase: 'clear', error: 'consumer failed' }
+# [17:34:56.841] [DrawingSync] 그리기 동기화 중지됨
+# [17:34:56.841] [DrawingSync] DrawingSync 초기화됨 (Broadcast 모드)
+# [17:34:56.841] [DrawingSync] 그리기 동기화 시작됨 (Broadcast 모드)
+# [17:34:56.841] [DrawingSync] 원격 스트로크 오버레이 캔버스 생성
+# [17:34:56.841] [DrawingSync] 그리기 동기화 중지됨
+# Subtest: remote stroke broadcasts notify start, move, and end after each overlay mutation
+ok 124 - remote stroke broadcasts notify start, move, and end after each overlay mutation
+  ---
+  duration_ms: 16.9243
+  type: 'test'
+  ...
+# Subtest: remote stroke change callback errors never interrupt broadcast processing
+ok 125 - remote stroke change callback errors never interrupt broadcast processing
+  ---
+  duration_ms: 1.5633
+  type: 'test'
+  ...
+# Subtest: stop clears the remote overlay and emits a clear notification
+ok 126 - stop clears the remote overlay and emits a clear notification
+  ---
+  duration_ms: 0.7407
+  type: 'test'
+  ...
+# Subtest: record undo and redo preserve command order
+ok 127 - record undo and redo preserve command order
+  ---
+  duration_ms: 2.8597
+  type: 'test'
+  ...
+# Subtest: new record clears redo but keeps older undo entries
+ok 128 - new record clears redo but keeps older undo entries
+  ---
+  duration_ms: 0.3856
+  type: 'test'
+  ...
+# Subtest: failed apply leaves the entry on its original stack
+ok 129 - failed apply leaves the entry on its original stack
+  ---
+  duration_ms: 1.4317
+  type: 'test'
+  ...
+# Subtest: throwing apply leaves the entry on its original stack
+ok 130 - throwing apply leaves the entry on its original stack
+  ---
+  duration_ms: 0.2091
+  type: 'test'
+  ...
+# Subtest: oldest undo entries are evicted at maxEntries
+ok 131 - oldest undo entries are evicted at maxEntries
+  ---
+  duration_ms: 0.4005
+  type: 'test'
+  ...
+# Subtest: undo and redo bytes are both included in historyBytes
+ok 132 - undo and redo bytes are both included in historyBytes
+  ---
+  duration_ms: 0.315
+  type: 'test'
+  ...
+# Subtest: one command larger than maxBytes is rejected without changing stacks
+ok 133 - one command larger than maxBytes is rejected without changing stacks
+  ---
+  duration_ms: 0.2017
+  type: 'test'
+  ...
+# Subtest: invalid and duplicate command ids are rejected
+ok 134 - invalid and duplicate command ids are rejected
+  ---
+  duration_ms: 0.2135
+  type: 'test'
+  ...
+# Subtest: clear removes both stacks and bytes
+ok 135 - clear removes both stacks and bytes
+  ---
+  duration_ms: 0.4391
+  type: 'test'
+  ...
+# Subtest: record는 용량 초과로 축출한 undo id를 보고한다
+ok 136 - record는 용량 초과로 축출한 undo id를 보고한다
+  ---
+  duration_ms: 0.4493
+  type: 'test'
+  ...
+# Subtest: record는 성공·실패 양쪽에서 폐기한 redo id를 보고한다
+ok 137 - record는 성공·실패 양쪽에서 폐기한 redo id를 보고한다
+  ---
+  duration_ms: 0.2909
+  type: 'test'
+  ...
+# Subtest: clearRedo는 redo 스택만 비우고 버린 id를 돌려준다
+ok 138 - clearRedo는 redo 스택만 비우고 버린 id를 돌려준다
+  ---
+  duration_ms: 0.4119
+  type: 'test'
+  ...
+# Subtest: apply clones no root and unrelated 4,000 objects add no clone-node work
+ok 139 - apply clones no root and unrelated 4,000 objects add no clone-node work
+  ---
+  duration_ms: 148.4421
+  type: 'test'
+  ...
+# Subtest: the apply source guard forbids full-document clone and scan helpers
+ok 140 - the apply source guard forbids full-document clone and scan helpers
+  ---
+  duration_ms: 3.9526
+  type: 'test'
+  ...
+# Subtest: 512 insert groups do only target-sized persistent Map writes
+ok 141 - 512 insert groups do only target-sized persistent Map writes
+  ---
+  duration_ms: 208.2158
+  type: 'test'
+  ...
+# Subtest: the 512-group inverse removes in near-linear indexed work
+ok 142 - the 512-group inverse removes in near-linear indexed work
+  ---
+  duration_ms: 234.4326
+  type: 'test'
+  ...
+# Subtest: 1,023 alternating structural operations stay near-linear and round-trip
+ok 143 - 1,023 alternating structural operations stay near-linear and round-trip
+  ---
+  duration_ms: 222.9191
+  type: 'test'
+  ...
+# Subtest: 10,000 valid history inserts cannot create a call-stack-shaped sequence
+ok 144 - 10,000 valid history inserts cannot create a call-stack-shaped sequence
+  ---
+  duration_ms: 730.4081
+  type: 'test'
+  ...
+# Subtest: failed and no-op drafts never leak object index transitions
+ok 145 - failed and no-op drafts never leak object index transitions
+  ---
+  duration_ms: 3.2352
+  type: 'test'
+  ...
+# Subtest: a valid transform followed by a late failure never touches shared state
+ok 146 - a valid transform followed by a late failure never touches shared state
+  ---
+  duration_ms: 0.4518
+  type: 'test'
+  ...
+# Subtest: a failed split cannot leak caps, content, or object index mutations
+ok 147 - a failed split cannot leak caps, content, or object index mutations
+  ---
+  duration_ms: 0.57
+  type: 'test'
+  ...
+# Subtest: insert-before plus unordered removal keeps exact inverse indices
+ok 148 - insert-before plus unordered removal keeps exact inverse indices
+  ---
+  duration_ms: 0.949
+  type: 'test'
+  ...
+# Subtest: successful structural edits refresh first, middle, and last locations
+ok 149 - successful structural edits refresh first, middle, and last locations
+  ---
+  duration_ms: 0.6412
+  type: 'test'
+  ...
+# Subtest: transaction-local IDs survive remove, reinsert, and new-ID transitions
+ok 150 - transaction-local IDs survive remove, reinsert, and new-ID transitions
+  ---
+  duration_ms: 1.2569
+  type: 'test'
+  ...
+# Subtest: indexed target lookup rejects wrong layer and frame combinations
+ok 151 - indexed target lookup rejects wrong layer and frame combinations
+  ---
+  duration_ms: 0.4891
+  type: 'test'
+  ...
+# Subtest: 100 sequential transforms preserve inverse order and round-trip semantics
+ok 152 - 100 sequential transforms preserve inverse order and round-trip semantics
+  ---
+  duration_ms: 7.2122
+  type: 'test'
+  ...
+# Subtest: clone failure while materializing an insert is atomic and ID-reusable
+ok 153 - clone failure while materializing an insert is atomic and ID-reusable
+  ---
+  duration_ms: 0.8124
+  type: 'test'
+  ...
+# Subtest: drawing regression script includes the COW safety suite
+ok 154 - drawing regression script includes the COW safety suite
+  ---
+  duration_ms: 0.1795
+  type: 'test'
+  ...
+# Subtest: drawing hardening and benchmark commands stay isolated
+ok 155 - drawing hardening and benchmark commands stay isolated
+  ---
+  duration_ms: 0.0742
+  type: 'test'
+  ...
+# Subtest: document snapshots are isolated from constructor input and returned mutations
+ok 156 - document snapshots are isolated from constructor input and returned mutations
+  ---
+  duration_ms: 6.407
+  type: 'test'
+  ...
+# Subtest: constructor snapshots preserve full-stroke caps without input aliases
+ok 157 - constructor snapshots preserve full-stroke caps without input aliases
+  ---
+  duration_ms: 1.069
+  type: 'test'
+  ...
+# Subtest: resolveFrame distinguishes exact, held, empty-break, and no-source frames
+ok 158 - resolveFrame distinguishes exact, held, empty-break, and no-source frames
+  ---
+  duration_ms: 0.8755
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing documentId without mutating input
+ok 159 - initial validator rejects missing documentId without mutating input
+  ---
+  duration_ms: 0.5545
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown create option without mutating input
+ok 160 - initial validator rejects unknown create option without mutating input
+  ---
+  duration_ms: 0.3977
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty documentId without mutating input
+ok 161 - initial validator rejects empty documentId without mutating input
+  ---
+  duration_ms: 0.1782
+  type: 'test'
+  ...
+# Subtest: initial validator rejects negative revisionSequence without mutating input
+ok 162 - initial validator rejects negative revisionSequence without mutating input
+  ---
+  duration_ms: 0.2416
+  type: 'test'
+  ...
+# Subtest: initial validator rejects fractional revisionSequence without mutating input
+ok 163 - initial validator rejects fractional revisionSequence without mutating input
+  ---
+  duration_ms: 0.1871
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsafe revisionSequence without mutating input
+ok 164 - initial validator rejects unsafe revisionSequence without mutating input
+  ---
+  duration_ms: 0.6178
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown coordinateSpace key without mutating input
+ok 165 - initial validator rejects unknown coordinateSpace key without mutating input
+  ---
+  duration_ms: 0.5135
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing coordinateSpace key without mutating input
+ok 166 - initial validator rejects missing coordinateSpace key without mutating input
+  ---
+  duration_ms: 0.2624
+  type: 'test'
+  ...
+# Subtest: initial validator rejects wrong coordinate unit without mutating input
+ok 167 - initial validator rejects wrong coordinate unit without mutating input
+  ---
+  duration_ms: 0.2253
+  type: 'test'
+  ...
+# Subtest: initial validator rejects wrong coordinate origin without mutating input
+ok 168 - initial validator rejects wrong coordinate origin without mutating input
+  ---
+  duration_ms: 0.4135
+  type: 'test'
+  ...
+# Subtest: initial validator rejects wrong coordinate yAxis without mutating input
+ok 169 - initial validator rejects wrong coordinate yAxis without mutating input
+  ---
+  duration_ms: 0.1553
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite source width without mutating input
+ok 170 - initial validator rejects non-finite source width without mutating input
+  ---
+  duration_ms: 0.1483
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-positive source height without mutating input
+ok 171 - initial validator rejects non-positive source height without mutating input
+  ---
+  duration_ms: 0.1496
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite pixelRatio without mutating input
+ok 172 - initial validator rejects non-finite pixelRatio without mutating input
+  ---
+  duration_ms: 0.1346
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-positive pixelRatio without mutating input
+ok 173 - initial validator rejects non-positive pixelRatio without mutating input
+  ---
+  duration_ms: 0.2834
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown timebase key without mutating input
+ok 174 - initial validator rejects unknown timebase key without mutating input
+  ---
+  duration_ms: 0.1487
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing timebase key without mutating input
+ok 175 - initial validator rejects missing timebase key without mutating input
+  ---
+  duration_ms: 0.1629
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-positive fps numerator without mutating input
+ok 176 - initial validator rejects non-positive fps numerator without mutating input
+  ---
+  duration_ms: 0.1204
+  type: 'test'
+  ...
+# Subtest: initial validator rejects fractional fps numerator without mutating input
+ok 177 - initial validator rejects fractional fps numerator without mutating input
+  ---
+  duration_ms: 0.2051
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsafe fps numerator without mutating input
+ok 178 - initial validator rejects unsafe fps numerator without mutating input
+  ---
+  duration_ms: 0.1973
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-positive fps denominator without mutating input
+ok 179 - initial validator rejects non-positive fps denominator without mutating input
+  ---
+  duration_ms: 0.1755
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsafe fps denominator without mutating input
+ok 180 - initial validator rejects unsafe fps denominator without mutating input
+  ---
+  duration_ms: 0.1533
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-integer totalFrames without mutating input
+ok 181 - initial validator rejects non-integer totalFrames without mutating input
+  ---
+  duration_ms: 0.1722
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-positive totalFrames without mutating input
+ok 182 - initial validator rejects non-positive totalFrames without mutating input
+  ---
+  duration_ms: 0.1275
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsafe totalFrames without mutating input
+ok 183 - initial validator rejects unsafe totalFrames without mutating input
+  ---
+  duration_ms: 0.1513
+  type: 'test'
+  ...
+# Subtest: initial validator rejects sparse initialLayers without mutating input
+ok 184 - initial validator rejects sparse initialLayers without mutating input
+  ---
+  duration_ms: 0.2591
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown layer key without mutating input
+ok 185 - initial validator rejects unknown layer key without mutating input
+  ---
+  duration_ms: 0.3921
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing layer key without mutating input
+ok 186 - initial validator rejects missing layer key without mutating input
+  ---
+  duration_ms: 0.3035
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty layer id without mutating input
+ok 187 - initial validator rejects empty layer id without mutating input
+  ---
+  duration_ms: 0.2066
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty layer name without mutating input
+ok 188 - initial validator rejects empty layer name without mutating input
+  ---
+  duration_ms: 0.2023
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean layer visible without mutating input
+ok 189 - initial validator rejects non-boolean layer visible without mutating input
+  ---
+  duration_ms: 0.2183
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean layer locked without mutating input
+ok 190 - initial validator rejects non-boolean layer locked without mutating input
+  ---
+  duration_ms: 0.2293
+  type: 'test'
+  ...
+# Subtest: initial validator rejects layer opacity below zero without mutating input
+ok 191 - initial validator rejects layer opacity below zero without mutating input
+  ---
+  duration_ms: 0.2476
+  type: 'test'
+  ...
+# Subtest: initial validator rejects layer opacity above one without mutating input
+ok 192 - initial validator rejects layer opacity above one without mutating input
+  ---
+  duration_ms: 0.4094
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite layer opacity without mutating input
+ok 193 - initial validator rejects non-finite layer opacity without mutating input
+  ---
+  duration_ms: 0.3329
+  type: 'test'
+  ...
+# Subtest: initial validator rejects sparse keyframes without mutating input
+ok 194 - initial validator rejects sparse keyframes without mutating input
+  ---
+  duration_ms: 0.2082
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown keyframe key without mutating input
+ok 195 - initial validator rejects unknown keyframe key without mutating input
+  ---
+  duration_ms: 1.7425
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing keyframe key without mutating input
+ok 196 - initial validator rejects missing keyframe key without mutating input
+  ---
+  duration_ms: 0.3007
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty keyframe id without mutating input
+ok 197 - initial validator rejects empty keyframe id without mutating input
+  ---
+  duration_ms: 0.2034
+  type: 'test'
+  ...
+# Subtest: initial validator rejects negative frame without mutating input
+ok 198 - initial validator rejects negative frame without mutating input
+  ---
+  duration_ms: 0.2453
+  type: 'test'
+  ...
+# Subtest: initial validator rejects fractional frame without mutating input
+ok 199 - initial validator rejects fractional frame without mutating input
+  ---
+  duration_ms: 0.2349
+  type: 'test'
+  ...
+# Subtest: initial validator rejects frame at totalFrames without mutating input
+ok 200 - initial validator rejects frame at totalFrames without mutating input
+  ---
+  duration_ms: 0.1897
+  type: 'test'
+  ...
+# Subtest: initial validator rejects negative keyframe revision without mutating input
+ok 201 - initial validator rejects negative keyframe revision without mutating input
+  ---
+  duration_ms: 0.1969
+  type: 'test'
+  ...
+# Subtest: initial validator rejects fractional keyframe revision without mutating input
+ok 202 - initial validator rejects fractional keyframe revision without mutating input
+  ---
+  duration_ms: 0.1803
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsafe keyframe revision without mutating input
+ok 203 - initial validator rejects unsafe keyframe revision without mutating input
+  ---
+  duration_ms: 0.1859
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean keyframe empty without mutating input
+ok 204 - initial validator rejects non-boolean keyframe empty without mutating input
+  ---
+  duration_ms: 0.1692
+  type: 'test'
+  ...
+# Subtest: initial validator rejects sparse keyframe objects without mutating input
+ok 205 - initial validator rejects sparse keyframe objects without mutating input
+  ---
+  duration_ms: 0.1696
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty keyframe with objects without mutating input
+ok 206 - initial validator rejects empty keyframe with objects without mutating input
+  ---
+  duration_ms: 0.1983
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown stroke key without mutating input
+ok 207 - initial validator rejects unknown stroke key without mutating input
+  ---
+  duration_ms: 0.2251
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing stroke key without mutating input
+ok 208 - initial validator rejects missing stroke key without mutating input
+  ---
+  duration_ms: 0.2235
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing stroke caps without mutating input
+ok 209 - initial validator rejects missing stroke caps without mutating input
+  ---
+  duration_ms: 0.2029
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown stroke caps key without mutating input
+ok 210 - initial validator rejects unknown stroke caps key without mutating input
+  ---
+  duration_ms: 0.2734
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean stroke caps start without mutating input
+ok 211 - initial validator rejects non-boolean stroke caps start without mutating input
+  ---
+  duration_ms: 0.2565
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean stroke caps end without mutating input
+ok 212 - initial validator rejects non-boolean stroke caps end without mutating input
+  ---
+  duration_ms: 0.2141
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty stroke id without mutating input
+ok 213 - initial validator rejects empty stroke id without mutating input
+  ---
+  duration_ms: 0.2724
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsupported object type without mutating input
+ok 214 - initial validator rejects unsupported object type without mutating input
+  ---
+  duration_ms: 0.2198
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsupported stroke tool without mutating input
+ok 215 - initial validator rejects unsupported stroke tool without mutating input
+  ---
+  duration_ms: 0.4495
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean stroke visible without mutating input
+ok 216 - initial validator rejects non-boolean stroke visible without mutating input
+  ---
+  duration_ms: 0.831
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-boolean stroke locked without mutating input
+ok 217 - initial validator rejects non-boolean stroke locked without mutating input
+  ---
+  duration_ms: 0.2662
+  type: 'test'
+  ...
+# Subtest: initial validator rejects stroke opacity below zero without mutating input
+ok 218 - initial validator rejects stroke opacity below zero without mutating input
+  ---
+  duration_ms: 0.5272
+  type: 'test'
+  ...
+# Subtest: initial validator rejects stroke opacity above one without mutating input
+ok 219 - initial validator rejects stroke opacity above one without mutating input
+  ---
+  duration_ms: 0.3189
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite stroke opacity without mutating input
+ok 220 - initial validator rejects non-finite stroke opacity without mutating input
+  ---
+  duration_ms: 0.2492
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsupported blend mode without mutating input
+ok 221 - initial validator rejects unsupported blend mode without mutating input
+  ---
+  duration_ms: 0.2517
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing transform without mutating input
+ok 222 - initial validator rejects missing transform without mutating input
+  ---
+  duration_ms: 0.2943
+  type: 'test'
+  ...
+# Subtest: initial validator rejects sparse transform without mutating input
+ok 223 - initial validator rejects sparse transform without mutating input
+  ---
+  duration_ms: 0.3823
+  type: 'test'
+  ...
+# Subtest: initial validator rejects wrong transform length without mutating input
+ok 224 - initial validator rejects wrong transform length without mutating input
+  ---
+  duration_ms: 0.3088
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite transform value without mutating input
+ok 225 - initial validator rejects non-finite transform value without mutating input
+  ---
+  duration_ms: 0.2567
+  type: 'test'
+  ...
+# Subtest: initial validator rejects singular transform without mutating input
+ok 226 - initial validator rejects singular transform without mutating input
+  ---
+  duration_ms: 0.2404
+  type: 'test'
+  ...
+# Subtest: initial validator rejects empty stroke points without mutating input
+ok 227 - initial validator rejects empty stroke points without mutating input
+  ---
+  duration_ms: 0.1794
+  type: 'test'
+  ...
+# Subtest: initial validator rejects sparse stroke points without mutating input
+ok 228 - initial validator rejects sparse stroke points without mutating input
+  ---
+  duration_ms: 0.2744
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown point key without mutating input
+ok 229 - initial validator rejects unknown point key without mutating input
+  ---
+  duration_ms: 0.2772
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing point key without mutating input
+ok 230 - initial validator rejects missing point key without mutating input
+  ---
+  duration_ms: 0.2821
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite point x without mutating input
+ok 231 - initial validator rejects non-finite point x without mutating input
+  ---
+  duration_ms: 0.3277
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite point y without mutating input
+ok 232 - initial validator rejects non-finite point y without mutating input
+  ---
+  duration_ms: 1.2827
+  type: 'test'
+  ...
+# Subtest: initial validator rejects pressure below zero without mutating input
+ok 233 - initial validator rejects pressure below zero without mutating input
+  ---
+  duration_ms: 0.206
+  type: 'test'
+  ...
+# Subtest: initial validator rejects pressure above one without mutating input
+ok 234 - initial validator rejects pressure above one without mutating input
+  ---
+  duration_ms: 0.2023
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-finite point time without mutating input
+ok 235 - initial validator rejects non-finite point time without mutating input
+  ---
+  duration_ms: 0.2492
+  type: 'test'
+  ...
+# Subtest: initial validator rejects negative point time without mutating input
+ok 236 - initial validator rejects negative point time without mutating input
+  ---
+  duration_ms: 0.2003
+  type: 'test'
+  ...
+# Subtest: initial validator rejects decreasing point time without mutating input
+ok 237 - initial validator rejects decreasing point time without mutating input
+  ---
+  duration_ms: 0.2638
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unknown style key without mutating input
+ok 238 - initial validator rejects unknown style key without mutating input
+  ---
+  duration_ms: 0.245
+  type: 'test'
+  ...
+# Subtest: initial validator rejects missing style key without mutating input
+ok 239 - initial validator rejects missing style key without mutating input
+  ---
+  duration_ms: 0.412
+  type: 'test'
+  ...
+# Subtest: initial validator rejects uppercase style color without mutating input
+ok 240 - initial validator rejects uppercase style color without mutating input
+  ---
+  duration_ms: 0.2839
+  type: 'test'
+  ...
+# Subtest: initial validator rejects invalid style color without mutating input
+ok 241 - initial validator rejects invalid style color without mutating input
+  ---
+  duration_ms: 0.256
+  type: 'test'
+  ...
+# Subtest: initial validator rejects boxed style color without mutating input
+ok 242 - initial validator rejects boxed style color without mutating input
+  ---
+  duration_ms: 0.3298
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-positive style size without mutating input
+ok 243 - initial validator rejects non-positive style size without mutating input
+  ---
+  duration_ms: 0.218
+  type: 'test'
+  ...
+# Subtest: initial validator rejects thinning outside range without mutating input
+ok 244 - initial validator rejects thinning outside range without mutating input
+  ---
+  duration_ms: 0.2238
+  type: 'test'
+  ...
+# Subtest: initial validator rejects smoothing outside range without mutating input
+ok 245 - initial validator rejects smoothing outside range without mutating input
+  ---
+  duration_ms: 0.1833
+  type: 'test'
+  ...
+# Subtest: initial validator rejects streamline outside range without mutating input
+ok 246 - initial validator rejects streamline outside range without mutating input
+  ---
+  duration_ms: 0.1672
+  type: 'test'
+  ...
+# Subtest: initial validator rejects invalid outline color without mutating input
+ok 247 - initial validator rejects invalid outline color without mutating input
+  ---
+  duration_ms: 0.184
+  type: 'test'
+  ...
+# Subtest: initial validator rejects boxed outline color without mutating input
+ok 248 - initial validator rejects boxed outline color without mutating input
+  ---
+  duration_ms: 0.1703
+  type: 'test'
+  ...
+# Subtest: initial validator rejects negative outline width without mutating input
+ok 249 - initial validator rejects negative outline width without mutating input
+  ---
+  duration_ms: 0.1729
+  type: 'test'
+  ...
+# Subtest: initial validator rejects duplicate layer id without mutating input
+ok 250 - initial validator rejects duplicate layer id without mutating input
+  ---
+  duration_ms: 0.2236
+  type: 'test'
+  ...
+# Subtest: initial validator rejects duplicate keyframe id without mutating input
+ok 251 - initial validator rejects duplicate keyframe id without mutating input
+  ---
+  duration_ms: 0.2379
+  type: 'test'
+  ...
+# Subtest: initial validator rejects duplicate object id across keyframes without mutating input
+ok 252 - initial validator rejects duplicate object id across keyframes without mutating input
+  ---
+  duration_ms: 0.2243
+  type: 'test'
+  ...
+# Subtest: initial validator rejects unsorted keyframe frames without mutating input
+ok 253 - initial validator rejects unsorted keyframe frames without mutating input
+  ---
+  duration_ms: 0.1478
+  type: 'test'
+  ...
+# Subtest: initial validator rejects duplicate keyframe frame without mutating input
+ok 254 - initial validator rejects duplicate keyframe frame without mutating input
+  ---
+  duration_ms: 0.2198
+  type: 'test'
+  ...
+# Subtest: optional render geometry is validated and isolated across document snapshots
+ok 255 - optional render geometry is validated and isolated across document snapshots
+  ---
+  duration_ms: 1.3737
+  type: 'test'
+  ...
+# Subtest: render geometry validator rejects unknown key
+ok 256 - render geometry validator rejects unknown key
+  ---
+  duration_ms: 0.2402
+  type: 'test'
+  ...
+# Subtest: render geometry validator rejects missing key
+ok 257 - render geometry validator rejects missing key
+  ---
+  duration_ms: 0.1347
+  type: 'test'
+  ...
+# Subtest: render geometry validator rejects unsupported version
+ok 258 - render geometry validator rejects unsupported version
+  ---
+  duration_ms: 0.1593
+  type: 'test'
+  ...
+# Subtest: render geometry validator rejects unsupported fill rule
+ok 259 - render geometry validator rejects unsupported fill rule
+  ---
+  duration_ms: 0.1813
+  type: 'test'
+  ...
+# Subtest: render geometry validator rejects invalid path data
+ok 260 - render geometry validator rejects invalid path data
+  ---
+  duration_ms: 0.1905
+  type: 'test'
+  ...
+# Subtest: initial validator rejects non-plain records and accessors without invoking getters
+ok 261 - initial validator rejects non-plain records and accessors without invoking getters
+  ---
+  duration_ms: 0.2991
+  type: 'test'
+  ...
+# Subtest: initial validator rejects dense array class instances
+ok 262 - initial validator rejects dense array class instances
+  ---
+  duration_ms: 0.2242
+  type: 'test'
+  ...
+# Subtest: initial validator accepts canonical boundary values and off-canvas points
+ok 263 - initial validator accepts canonical boundary values and off-canvas points
+  ---
+  duration_ms: 0.3967
+  type: 'test'
+  ...
+# Subtest: initial validator accepts safe-integer maxima and rejects an unsafe frame request
+ok 264 - initial validator accepts safe-integer maxima and rejects an unsafe frame request
+  ---
+  duration_ms: 0.4095
+  type: 'test'
+  ...
+# Subtest: initial validator enforces lowered positive integer limits
+ok 265 - initial validator enforces lowered positive integer limits
+  ---
+  duration_ms: 1.9304
+  type: 'test'
+  ...
+# Subtest: insert command increments revisions once and returns an isolated inverse removal
+ok 266 - insert command increments revisions once and returns an isolated inverse removal
+  ---
+  duration_ms: 2.3038
+  type: 'test'
+  ...
+# Subtest: insert boundary separates non-canonical strokes from malformed transforms
+ok 267 - insert boundary separates non-canonical strokes from malformed transforms
+  ---
+  duration_ms: 1.901
+  type: 'test'
+  ...
+# Subtest: object limit takes precedence over defects in an extra object
+ok 268 - object limit takes precedence over defects in an extra object
+  ---
+  duration_ms: 0.6522
+  type: 'test'
+  ...
+# Subtest: point limit takes precedence over nested defects past the input cap
+ok 269 - point limit takes precedence over nested defects past the input cap
+  ---
+  duration_ms: 0.3961
+  type: 'test'
+  ...
+# Subtest: command envelope and kind mapping reject malformed commands atomically
+ok 270 - command envelope and kind mapping reject malformed commands atomically
+  ---
+  duration_ms: 6.6979
+  type: 'test'
+  ...
+# Subtest: operation payload validation is exact, safe-integer based, and atomic
+ok 271 - operation payload validation is exact, safe-integer based, and atomic
+  ---
+  duration_ms: 4.9145
+  type: 'test'
+  ...
+# Subtest: sequential insert indices use the current draft length
+ok 272 - sequential insert indices use the current draft length
+  ---
+  duration_ms: 0.8035
+  type: 'test'
+  ...
+# Subtest: exact target mismatch and empty-break keyframes are not editable
+ok 273 - exact target mismatch and empty-break keyframes are not editable
+  ---
+  duration_ms: 1.0098
+  type: 'test'
+  ...
+# Subtest: affine transform changes only transform and identical transform is a no-op
+ok 274 - affine transform changes only transform and identical transform is a no-op
+  ---
+  duration_ms: 1.0392
+  type: 'test'
+  ...
+# Subtest: invalid affine and Fabric-style transforms fail atomically
+ok 275 - invalid affine and Fabric-style transforms fail atomically
+  ---
+  duration_ms: 0.6659
+  type: 'test'
+  ...
+# Subtest: a command whose final canonical objects equal the start is a no-op
+ok 276 - a command whose final canonical objects equal the start is a no-op
+  ---
+  duration_ms: 1.1369
+  type: 'test'
+  ...
+# Subtest: compound split preserves z-order and its derived inverse round-trips canonical objects
+ok 277 - compound split preserves z-order and its derived inverse round-trips canonical objects
+  ---
+  duration_ms: 2.7359
+  type: 'test'
+  ...
+# Subtest: unordered removal returns ascending-index inserts and restores original order
+ok 278 - unordered removal returns ascending-index inserts and restores original order
+  ---
+  duration_ms: 1.4667
+  type: 'test'
+  ...
+# Subtest: insert and transform inverse operations derive delete and transform kinds
+ok 279 - insert and transform inverse operations derive delete and transform kinds
+  ---
+  duration_ms: 1.2492
+  type: 'test'
+  ...
+# Subtest: stale, locked, duplicate, missing object, and invalid object failures are atomic
+ok 280 - stale, locked, duplicate, missing object, and invalid object failures are atomic
+  ---
+  duration_ms: 1.479
+  type: 'test'
+  ...
+# Subtest: successful command IDs dedupe but failed and no-op IDs stay reusable
+ok 281 - successful command IDs dedupe but failed and no-op IDs stay reusable
+  ---
+  duration_ms: 0.9516
+  type: 'test'
+  ...
+# Subtest: invalid command source is rejected atomically
+ok 282 - invalid command source is rejected atomically
+  ---
+  duration_ms: 0.2465
+  type: 'test'
+  ...
+# Subtest: revision limits reject net changes after validation without consuming IDs
+ok 283 - revision limits reject net changes after validation without consuming IDs
+  ---
+  duration_ms: 1.5117
+  type: 'test'
+  ...
+# Subtest: a no-op takes precedence over revision overflow
+ok 284 - a no-op takes precedence over revision overflow
+  ---
+  duration_ms: 0.3867
+  type: 'test'
+  ...
+# Subtest: object IDs stay unique across the live draft and the entire document
+ok 285 - object IDs stay unique across the live draft and the entire document
+  ---
+  duration_ms: 1.6931
+  type: 'test'
+  ...
+# Subtest: malformed input wins before dedupe, dedupe wins before stale, and target wins before lock
+ok 286 - malformed input wins before dedupe, dedupe wins before stale, and target wins before lock
+  ---
+  duration_ms: 0.7891
+  type: 'test'
+  ...
+# Subtest: final-state no-op spans sequential transforms while real net changes still commit
+ok 287 - final-state no-op spans sequential transforms while real net changes still commit
+  ---
+  duration_ms: 0.962
+  type: 'test'
+  ...
+# Subtest: inverse operation groups reverse while each multi-remove group stays index-sorted
+ok 288 - inverse operation groups reverse while each multi-remove group stays index-sorted
+  ---
+  duration_ms: 0.9158
+  type: 'test'
+  ...
+# Subtest: transform command and inverse outputs do not alias caller-owned matrices
+ok 289 - transform command and inverse outputs do not alias caller-owned matrices
+  ---
+  duration_ms: 0.3106
+  type: 'test'
+  ...
+# Subtest: MAX_SAFE_INTEGER minus one can commit once, then only no-ops remain possible
+ok 290 - MAX_SAFE_INTEGER minus one can commit once, then only no-ops remain possible
+  ---
+  duration_ms: 0.6998
+  type: 'test'
+  ...
+# Subtest: lowered point and object limits reject whole commands without truncation
+ok 291 - lowered point and object limits reject whole commands without truncation
+  ---
+  duration_ms: 1.0776
+  type: 'test'
+  ...
+# Subtest: lowered limits accept values exactly at every configured boundary
+ok 292 - lowered limits accept values exactly at every configured boundary
+  ---
+  duration_ms: 1.0764
+  type: 'test'
+  ...
+# Subtest: hard limits accept exact user, stored, history, and object boundaries
+ok 293 - hard limits accept exact user, stored, history, and object boundaries
+  ---
+  duration_ms: 1659.4512
+  type: 'test'
+  ...
+# Subtest: hard point limits distinguish stored content from user input
+ok 294 - hard point limits distinguish stored content from user input
+  ---
+  duration_ms: 91.4033
+  type: 'test'
+  ...
+# Subtest: history restores a large stored stroke without weakening the user limit
+ok 295 - history restores a large stored stroke without weakening the user limit
+  ---
+  duration_ms: 438.3231
+  type: 'test'
+  ...
+# Subtest: user and history command count budgets accept exact boundaries and reject +1
+ok 296 - user and history command count budgets accept exact boundaries and reject +1
+  ---
+  duration_ms: 0.885
+  type: 'test'
+  ...
+# Subtest: user and history occurrence budgets cover insert, remove, and transform payloads
+ok 297 - user and history occurrence budgets cover insert, remove, and transform payloads
+  ---
+  duration_ms: 2.3471
+  type: 'test'
+  ...
+# Subtest: combined references count repeated IDs by occurrence for both sources
+ok 298 - combined references count repeated IDs by occurrence for both sources
+  ---
+  duration_ms: 0.8447
+  type: 'test'
+  ...
+# Subtest: aggregate inserted point budgets accept exact boundaries and reject +1
+ok 299 - aggregate inserted point budgets accept exact boundaries and reject +1
+  ---
+  duration_ms: 0.5577
+  type: 'test'
+  ...
+# Subtest: single-stroke source caps keep point-limit reason at exact and +1
+ok 300 - single-stroke source caps keep point-limit reason at exact and +1
+  ---
+  duration_ms: 1.1876
+  type: 'test'
+  ...
+# Subtest: approximate command bytes count UTF-16 and shared occurrences at exact boundaries
+ok 301 - approximate command bytes count UTF-16 and shared occurrences at exact boundaries
+  ---
+  duration_ms: 1.3701
+  type: 'test'
+  ...
+# Subtest: count-first gates reject oversized sparse arrays without deep inspection
+ok 302 - count-first gates reject oversized sparse arrays without deep inspection
+  ---
+  duration_ms: 1.3658
+  type: 'test'
+  ...
+# Subtest: at-limit sparse, accessor, and class payloads keep malformed reasons
+ok 303 - at-limit sparse, accessor, and class payloads keep malformed reasons
+  ---
+  duration_ms: 0.8897
+  type: 'test'
+  ...
+# Subtest: the 512-fragment split shape fits while 1,025 operations are rejected
+ok 304 - the 512-fragment split shape fits while 1,025 operations are rejected
+  ---
+  duration_ms: 40.4543
+  type: 'test'
+  ...
+# Subtest: byte estimation is deferred behind dedupe, stale, target, lock, and semantics
+ok 305 - byte estimation is deferred behind dedupe, stale, target, lock, and semantics
+  ---
+  duration_ms: 0.9882
+  type: 'test'
+  ...
+# Subtest: byte and revision precedence is fixed before inverse admission
+ok 306 - byte and revision precedence is fixed before inverse admission
+  ---
+  duration_ms: 0.7496
+  type: 'test'
+  ...
+# Subtest: cyclic and accessor records keep field-specific invalid reasons without getters
+ok 307 - cyclic and accessor records keep field-specific invalid reasons without getters
+  ---
+  duration_ms: 0.5414
+  type: 'test'
+  ...
+# Subtest: generated inverse operation and point budgets fail atomically and keep IDs reusable
+ok 308 - generated inverse operation and point budgets fail atomically and keep IDs reusable
+  ---
+  duration_ms: 1.7784
+  type: 'test'
+  ...
+# Subtest: generated inverse byte budget is checked before commit
+ok 309 - generated inverse byte budget is checked before commit
+  ---
+  duration_ms: 0.2362
+  type: 'test'
+  ...
+# Subtest: public inverse clone failure cannot partially commit or consume the command ID
+ok 310 - public inverse clone failure cannot partially commit or consume the command ID
+  ---
+  duration_ms: 0.3518
+  type: 'test'
+  ...
+# Subtest: new limit overrides enforce hard caps and cross-profile relationships
+ok 311 - new limit overrides enforce hard caps and cross-profile relationships
+  ---
+  duration_ms: 0.2868
+  type: 'test'
+  ...
+# Subtest: drawing regression suite includes DrawingDocumentV3 coverage
+ok 312 - drawing regression suite includes DrawingDocumentV3 coverage
+  ---
+  duration_ms: 0.1772
+  type: 'test'
+  ...
+# Subtest: drawing timeline box-selects the rendered keyframe markers
+ok 313 - drawing timeline box-selects the rendered keyframe markers
+  ---
+  duration_ms: 1.336
+  type: 'test'
+  ...
+# Subtest: timeline lasso can start from the timeline body while panning stays video-only
+ok 314 - timeline lasso can start from the timeline body while panning stays video-only
+  ---
+  duration_ms: 0.788
+  type: 'test'
+  ...
+# Subtest: timeline rows expose taller video and keyframe interaction targets
+ok 315 - timeline rows expose taller video and keyframe interaction targets
+  ---
+  duration_ms: 0.4791
+  type: 'test'
+  ...
+# Subtest: timeline lasso coordinates use scrolled content coordinates only once
+ok 316 - timeline lasso coordinates use scrolled content coordinates only once
+  ---
+  duration_ms: 0.3064
+  type: 'test'
+  ...
+# Subtest: plain keyframe click selects without immediately toggling the only selected keyframe off
+ok 317 - plain keyframe click selects without immediately toggling the only selected keyframe off
+  ---
+  duration_ms: 0.2061
+  type: 'test'
+  ...
+# Subtest: shift and ctrl keyframe clicks update selection before any drag ghost is created
+ok 318 - shift and ctrl keyframe clicks update selection before any drag ghost is created
+  ---
+  duration_ms: 0.4804
+  type: 'test'
+  ...
+# Subtest: shift range selection is limited to the clicked drawing layer keyframes
+ok 319 - shift range selection is limited to the clicked drawing layer keyframes
+  ---
+  duration_ms: 0.1683
+  type: 'test'
+  ...
+# Subtest: selected keyframes can be deleted through the drawing manager
+ok 320 - selected keyframes can be deleted through the drawing manager
+  ---
+  duration_ms: 0.1636
+  type: 'test'
+  ...
+# Subtest: selected keyframe moves are ordered by drag direction to keep adjacent moves together
+ok 321 - selected keyframe moves are ordered by drag direction to keep adjacent moves together
+  ---
+  duration_ms: 0.3404
+  type: 'test'
+  ...
+# Subtest: moved keyframes refresh selection through the timeline setter
+ok 322 - moved keyframes refresh selection through the timeline setter
+  ---
+  duration_ms: 0.7585
+  type: 'test'
+  ...
+# Subtest: single remaining keyframe can be deleted
+ok 323 - single remaining keyframe can be deleted
+  ---
+  duration_ms: 0.1569
+  type: 'test'
+  ...
+# Subtest: lasso selection selects keyframes that intersect the drag box
+ok 324 - lasso selection selects keyframes that intersect the drag box
+  ---
+  duration_ms: 0.196
+  type: 'test'
+  ...
+# Subtest: selection state is normalized through the shared setter
+ok 325 - selection state is normalized through the shared setter
+  ---
+  duration_ms: 0.1829
+  type: 'test'
+  ...
+# Subtest: Animate-style drawing layer shortcuts are configured and handled
+ok 326 - Animate-style drawing layer shortcuts are configured and handled
+  ---
+  duration_ms: 2.048
+  type: 'test'
+  ...
+# Subtest: new drawing layers are inserted above the active layer in the timeline list
+ok 327 - new drawing layers are inserted above the active layer in the timeline list
+  ---
+  duration_ms: 0.9803
+  type: 'test'
+  ...
+# Subtest: layer settings popup deletes the layer that was right-clicked
+ok 328 - layer settings popup deletes the layer that was right-clicked
+  ---
+  duration_ms: 0.4856
+  type: 'test'
+  ...
+# Subtest: DrawingManager supports selecting and moving active layers by offset
+ok 329 - DrawingManager supports selecting and moving active layers by offset
+  ---
+  duration_ms: 0.3538
+  type: 'test'
+  ...
+# Subtest: frame and keyframe conversion shortcuts are configured and handled
+ok 330 - frame and keyframe conversion shortcuts are configured and handled
+  ---
+  duration_ms: 0.7714
+  type: 'test'
+  ...
+# Subtest: delete frame removes a frame cell without deleting a held keyframe marker
+ok 331 - delete frame removes a frame cell without deleting a held keyframe marker
+  ---
+  duration_ms: 0.3339
+  type: 'test'
+  ...
+# Subtest: timeline can center the viewport on the current playhead
+ok 332 - timeline can center the viewport on the current playhead
+  ---
+  duration_ms: 0.2417
+  type: 'test'
+  ...
+# Subtest: keyframe shortcut source coverage is part of the drawing test command
+ok 333 - keyframe shortcut source coverage is part of the drawing test command
+  ---
+  duration_ms: 0.1292
+  type: 'test'
+  ...
+# Subtest: Animate-style playback, layer toggle, and frame clipboard shortcuts are configured
+ok 334 - Animate-style playback, layer toggle, and frame clipboard shortcuts are configured
+  ---
+  duration_ms: 2.7801
+  type: 'test'
+  ...
+1..334
+# tests 334
+# suites 0
+# pass 334
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 2585.911

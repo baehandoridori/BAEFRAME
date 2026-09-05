@@ -1,0 +1,42 @@
+{
+  "scenario": "save_returns_false",
+  "copied": "C:\\audit\\example.bframe",
+  "toasts": [
+    {
+      "message": ".bframe 파일이 자동 저장되었습니다.",
+      "type": "info"
+    },
+    {
+      "message": ".bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기",
+      "type": "success"
+    }
+  ]
+}
+{
+  "scenario": "sidebar_submit_then_cancel",
+  "before": {
+    "input": "",
+    "pending": "검토 중인 중요 피드백",
+    "registered": 0
+  },
+  "after": {
+    "input": "",
+    "pending": null,
+    "registered": 0
+  }
+}
+{
+  "scenario": "next_comment_ignores_unresolved_filter",
+  "visibleUnresolvedFrames": [
+    96
+  ],
+  "nextFrame": 24
+}
+{
+  "scenario": "web_viewer_v3_only",
+  "clears": 1,
+  "paints": 0,
+  "sourceContainsDrawingsV3": false
+}
+AUDIT_REPRODUCTIONS=4 EXPECTED_LIMITATIONS_CONFIRMED=4
+AUDIT_EXIT=0

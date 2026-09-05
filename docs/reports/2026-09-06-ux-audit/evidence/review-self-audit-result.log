@@ -1,0 +1,53 @@
+{
+  "scope": "Counterexamples and positive controls; no Electron UI or remote IO",
+  "sourceTransform": "Line endings normalized; comments source ESM import/export declarations removed; function bodies unchanged",
+  "extractedSourceSha256": {
+    "share": "d4ada7f8bdb26358336a56a95a2af33d0f325f9b164887b991042b69baaa14f3",
+    "sidebar": "dbcaa0ae0a5fc8f1395c279c1eaf745456618edb643c9d6ca4961b0112db0934",
+    "webRender": "9e99b0fb0c807c603fc688c306ec3e3cdcb4fc900e7722c7f4a96d8c24a7e4ec",
+    "commentManagerModule": "7957835bfd2d3dad4a231c4732b5494097bf1ea3572e74ac058077543616f389"
+  },
+  "controls": [
+    {
+      "case": "share_without_path_is_blocked",
+      "events": [
+        "먼저 파일을 열어주세요."
+      ]
+    },
+    {
+      "case": "existing_clean_file_skips_unneeded_save",
+      "events": [
+        "copy",
+        ".bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기"
+      ]
+    },
+    {
+      "case": "successful_save_has_expected_success_notice",
+      "events": [
+        "save",
+        ".bframe 파일이 자동 저장되었습니다.",
+        "copy",
+        ".bframe 경로가 복사되었습니다! Slack에서 Ctrl+Shift+V로 하이퍼링크 붙여넣기"
+      ]
+    },
+    {
+      "case": "target_not_ready_preserves_sidebar_input",
+      "input": "보존 확인용 본문"
+    },
+    {
+      "case": "normal_position_selection_registers_comment",
+      "count": 1
+    },
+    {
+      "case": "unfiltered_navigation_correctly_includes_resolved_comment",
+      "nextFrame": 24
+    },
+    {
+      "case": "web_legacy_positive_control_draws_one_stroke",
+      "clears": 1,
+      "paints": 1
+    }
+  ],
+  "passedControls": 7
+}
+AUDIT_EXIT=0

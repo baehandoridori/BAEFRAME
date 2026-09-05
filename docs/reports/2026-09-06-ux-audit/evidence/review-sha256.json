@@ -1,0 +1,72 @@
+[
+  {
+    "file": "review-cluster.log",
+    "bytes": 9724,
+    "sha256": "3f82fe1a0f29240416f42e887819156af8d59a111374c1dcc6e9aa310d131c74"
+  },
+  {
+    "file": "review-collaboration.log",
+    "bytes": 2040,
+    "sha256": "3653eb053425411f918bb333cda072de230aad80656b408edf958f0218f21353"
+  },
+  {
+    "file": "review-comment-input.log",
+    "bytes": 4426,
+    "sha256": "c5785bab026177b0212bda22ce9eb7d4e6bd358a3ed1303c82f2f91b447faff6"
+  },
+  {
+    "file": "review-drawing.log",
+    "bytes": 123874,
+    "sha256": "4b51411a6b0a845be9f12492f86b2a9a174cc05547485577e3704f203c7144d6"
+  },
+  {
+    "file": "review-fabric-drawing-pilot.log",
+    "bytes": 144512,
+    "sha256": "5264d0a3f802adcc8eb568a45c505b7b8f13a45157c707f9d59be711071530c4"
+  },
+  {
+    "file": "review-findings.md",
+    "bytes": 29756,
+    "sha256": "16481fc4564bfe50039c49d55a06e849ea6c18d6daf5b265c98e8721f857be9e"
+  },
+  {
+    "file": "review-native-sample-check-result.log",
+    "bytes": 395,
+    "sha256": "2e9be1ed5ec7fc49f00aab2bc1ca4cb34ebbda10b218b63d7a9d45ad4676cb4a"
+  },
+  {
+    "file": "review-native-sample-check.cjs",
+    "bytes": 2631,
+    "sha256": "59a0edbd4fc880e109a16acd76b3a6ea54243733d4e597d211c9ceb89ec13e70"
+  },
+  {
+    "file": "review-persistence.log",
+    "bytes": 160695,
+    "sha256": "a82a0be557e238dca29a2bd013e5740816553edcab8c71beabf0544a6d8987d8"
+  },
+  {
+    "file": "review-reproduce-result.log",
+    "bytes": 920,
+    "sha256": "52620dcd347de279a7465d2c26a666a9140c7070e1132da5059d410fb4b8e1ba"
+  },
+  {
+    "file": "review-reproduce.cjs",
+    "bytes": 4112,
+    "sha256": "dbd2ac82db64f2e5a85064c8767bf31476381d519bec8dabc1682e690e7bb9b5"
+  },
+  {
+    "file": "review-self-audit-result.log",
+    "bytes": 1776,
+    "sha256": "2c1d704efed38504f953c79657ac6d99357601c2154b367bed70b1c762664f64"
+  },
+  {
+    "file": "review-self-audit.cjs",
+    "bytes": 6068,
+    "sha256": "e9808072d343073a310159f756a08530f7c5b6decca863ba190f2dd55d5aaeba"
+  },
+  {
+    "file": "review-test-results.json",
+    "bytes": 2634,
+    "sha256": "b2daeae90efb7f6f1c7302cd680f94cae2a85af3b6ce7deee3066f182749cea0"
+  }
+]

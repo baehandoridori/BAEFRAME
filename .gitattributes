@@ -1,2 +1,5 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Archived audit evidence keeps original bytes for its SHA-256 manifest.
+docs/reports/2026-09-06-ux-audit/** -text

@@ -1,0 +1,90 @@
+{
+  "totalFail": 0,
+  "sourceCommit": "d72f6b7a87af9e5805eb03a0e0a6017bba999f32",
+  "totalCancelled": 0,
+  "version": "2.9.0-beta",
+  "timezone": "Asia/Seoul",
+  "date": "2026-09-06",
+  "tests": [
+    {
+      "cancelled": 0,
+      "command": "npm.cmd run test:drawing",
+      "pass": 334,
+      "fail": 0,
+      "log": "review-drawing.log",
+      "exitCode": 0
+    },
+    {
+      "cancelled": 0,
+      "command": "npm.cmd run test:fabric-drawing-pilot",
+      "pass": 628,
+      "fail": 0,
+      "log": "review-fabric-drawing-pilot.log",
+      "exitCode": 0
+    },
+    {
+      "cancelled": 0,
+      "command": "npm.cmd run test:fabric-drawing-persistence",
+      "pass": 164,
+      "fail": 0,
+      "log": "review-persistence.log",
+      "exitCode": 0
+    },
+    {
+      "cancelled": 0,
+      "command": "npm.cmd run test:comment-input",
+      "pass": 19,
+      "fail": 0,
+      "log": "review-comment-input.log",
+      "exitCode": 0
+    },
+    {
+      "cancelled": 0,
+      "command": "npm.cmd run test:cluster",
+      "pass": 43,
+      "fail": 0,
+      "log": "review-cluster.log",
+      "exitCode": 0
+    },
+    {
+      "cancelled": 0,
+      "command": "npm.cmd run test:collaboration",
+      "pass": 8,
+      "fail": 0,
+      "log": "review-collaboration.log",
+      "exitCode": 0
+    }
+  ],
+  "reproduction": {
+    "scope": "Extracted source functions with stubbed UI, filesystem, clipboard, and network boundaries; not Electron UI E2E",
+    "cases": 4,
+    "exitCode": 0,
+    "script": "review-reproduce.cjs",
+    "result": "review-reproduce-result.log"
+  },
+  "totalPass": 1196,
+  "selfAudit": {
+    "positiveControls": 7,
+    "exitCode": 0,
+    "result": "review-self-audit-result.log",
+    "priorityAdjustment": "R4: P1 behavior mismatch -> P2 design improvement; no existing spec requiring filter-based navigation was established",
+    "script": "review-self-audit.cjs"
+  },
+  "nativeSupplement": {
+    "acceptedByCurrentV3Store": true,
+    "nativeScreenshotsInspected": [
+      "../assets/07-comment-hybrid.png",
+      "../assets/08-comment-cancel.png"
+    ],
+    "fixture": "native-drawing-sample.bframe",
+    "result": "review-native-sample-check-result.log",
+    "exitCode": 0,
+    "draftObservation": "native-comment-draft.json",
+    "keyframe": 33,
+    "script": "review-native-sample-check.cjs",
+    "scope": "Native evidence captured by report author, inspected here and compared with current source; no native UI input performed by this sub-investigator",
+    "objects": 1,
+    "fps": 24,
+    "localWebRenderPaints": 0
+  }
+}

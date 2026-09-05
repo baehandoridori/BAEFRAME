@@ -1,0 +1,103 @@
+{
+  "measuredAt": "2026-09-05T17:43:28.426Z",
+  "measurements": [
+    {
+      "kind": "absent",
+      "ms": 828.256,
+      "dataNull": true
+    },
+    {
+      "kind": "present",
+      "ms": 0.99,
+      "dataNull": false
+    },
+    {
+      "kind": "absent",
+      "ms": 818.909,
+      "dataNull": true
+    },
+    {
+      "kind": "present",
+      "ms": 0.849,
+      "dataNull": false
+    },
+    {
+      "kind": "absent",
+      "ms": 822.136,
+      "dataNull": true
+    },
+    {
+      "kind": "present",
+      "ms": 1.413,
+      "dataNull": false
+    }
+  ],
+  "switches": [
+    {
+      "at": 1788630124456,
+      "from": "review-A-3s.mp4",
+      "to": "review-B-3s.mp4",
+      "controls": "전체 00:00:03:00 / 00:00:09:00 · 컷 00:00:00:00 / 00:00:03:00 / 24fps · Frame 0 / 72"
+    },
+    {
+      "at": 1788630128600,
+      "from": "review-B-3s.mp4",
+      "to": "review-C-3s.mp4",
+      "controls": "전체 00:00:05:23 / 00:00:09:00 · 컷 00:00:02:23 / 00:00:03:00 / 24fps · Frame 71 / 72"
+    },
+    {
+      "at": 1788630133242,
+      "from": "review-C-3s.mp4",
+      "to": "review-A-3s.mp4",
+      "controls": "전체 00:00:00:00 / 00:00:09:00 · 컷 00:00:00:00 / 00:00:03:00 / 24fps · Frame 0 / 72"
+    },
+    {
+      "at": 1788630137402,
+      "from": "review-A-3s.mp4",
+      "to": "review-B-3s.mp4",
+      "controls": "전체 00:00:02:23 / 00:00:09:00 · 컷 00:00:02:23 / 00:00:03:00 / 24fps · Frame 71 / 72"
+    },
+    {
+      "at": 1788630142086,
+      "from": "review-B-3s.mp4",
+      "to": "review-C-3s.mp4",
+      "controls": "전체 00:00:06:00 / 00:00:09:00 · 컷 00:00:00:00 / 00:00:03:00 / 24fps · Frame 0 / 72"
+    }
+  ],
+  "intervals": [
+    {
+      "from": "review-B-3s.mp4",
+      "to": "review-C-3s.mp4",
+      "intervalMs": 4144
+    },
+    {
+      "from": "review-C-3s.mp4",
+      "to": "review-A-3s.mp4",
+      "intervalMs": 4642
+    },
+    {
+      "from": "review-A-3s.mp4",
+      "to": "review-B-3s.mp4",
+      "intervalMs": 4160
+    },
+    {
+      "from": "review-B-3s.mp4",
+      "to": "review-C-3s.mp4",
+      "intervalMs": 4684
+    }
+  ],
+  "reviewLog": {
+    "count": 20,
+    "min": 818,
+    "max": 979,
+    "median": 863
+  },
+  "mpvLog": {
+    "count": 20,
+    "min": 62,
+    "max": 2792,
+    "median": 75
+  },
+  "absent": "C:\\Users\\user\\AppData\\Local\\Temp\\baeframe-ux-20260906\\playback-audit-absent-1788630205952.bframe",
+  "present": "C:\\Users\\user\\AppData\\Local\\Temp\\baeframe-ux-20260906\\playback-audit-present-1788630205952.bframe"
+}

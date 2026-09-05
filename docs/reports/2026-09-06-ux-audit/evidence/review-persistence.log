@@ -1,0 +1,3152 @@
+
+> baeframe@2.9.0-beta test:fabric-drawing-persistence
+> npm run build:review-file-cas-helper && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test --test-concurrency=1 scripts/tests/fabric-drawing-persistence-store.test.mjs scripts/tests/review-data-manager-save.test.js scripts/tests/review-save-version-token-source.test.js scripts/tests/review-save-version-token-ipc.test.js scripts/tests/lazy-bframe-creation-source.test.js scripts/tests/review-file-cas-helper.test.js scripts/tests/review-file-store-contract.test.js scripts/tests/review-file-store-cross-process.test.js scripts/tests/review-file-store-recovery.test.js
+
+
+> baeframe@2.9.0-beta build:review-file-cas-helper
+> node scripts/build-review-file-cas-helper.js
+
+[review-file-cas] built C:\BAEframe\BAEFRAME\native\review-file-cas-helper\bin\ReviewFileCasHelper.exe (b5540550e61cd822e4894c6d2a9e0ae65e5b71569359584e00ed690760826ed0)
+TAP version 13
+# Subtest: reset creates an empty canonical document without reporting a user change
+ok 1 - reset creates an empty canonical document without reporting a user change
+  ---
+  duration_ms: 4.3056
+  type: 'test'
+  ...
+# Subtest: source-frame resolver preserves empty hold breaks without cloning keyframe payloads
+ok 2 - source-frame resolver preserves empty hold breaks without cloning keyframe payloads
+  ---
+  duration_ms: 2.7373
+  type: 'test'
+  ...
+# Subtest: source epoch changes only when a review root is installed or invalidated
+ok 3 - source epoch changes only when a review root is installed or invalidated
+  ---
+  duration_ms: 4.7489
+  type: 'test'
+  ...
+# Subtest: multiple frames and every Fabric record field round-trip exactly without aliases
+ok 4 - multiple frames and every Fabric record field round-trip exactly without aliases
+  ---
+  duration_ms: 3.5957
+  type: 'test'
+  ...
+# Subtest: render geometry persistence is optional and strictly versioned
+ok 5 - render geometry persistence is optional and strictly versioned
+  ---
+  duration_ms: 4.9092
+  type: 'test'
+  ...
+# Subtest: shared and persistence render geometry validators stay in parity
+ok 6 - shared and persistence render geometry validators stay in parity
+  ---
+  duration_ms: 4.8574
+  type: 'test'
+  ...
+# Subtest: fabric drawing limits stay in parity across persistence layers
+ok 7 - fabric drawing limits stay in parity across persistence layers
+  ---
+  duration_ms: 5.5831
+  type: 'test'
+  ...
+# Subtest: delta byte accounting never stringifies untouched records in the active frame
+ok 8 - delta byte accounting never stringifies untouched records in the active frame
+  ---
+  duration_ms: 31.8839
+  type: 'test'
+  ...
+# Subtest: add, move, split, delete, Undo, Redo, and clear deltas preserve final order
+ok 9 - add, move, split, delete, Undo, Redo, and clear deltas preserve final order
+  ---
+  duration_ms: 4.3508
+  type: 'test'
+  ...
+# Subtest: independent frame scenes track their own mutation sequence
+ok 10 - independent frame scenes track their own mutation sequence
+  ---
+  duration_ms: 4.6983
+  type: 'test'
+  ...
+# Subtest: identical transforms are ignored alone and beside a real insertion
+ok 11 - identical transforms are ignored alone and beside a real insertion
+  ---
+  duration_ms: 3.3887
+  type: 'test'
+  ...
+# Subtest: duplicate, stale, and sequence-gap events are rejected atomically
+ok 12 - duplicate, stale, and sequence-gap events are rejected atomically
+  ---
+  duration_ms: 2.9006
+  type: 'test'
+  ...
+# Subtest: stale host, video, persistence session, identity, and scene fences reject atomically
+ok 13 - stale host, video, persistence session, identity, and scene fences reject atomically
+  ---
+  duration_ms: 2.9918
+  type: 'test'
+  ...
+# Subtest: unsupported or malformed deltas reject without partial removals or insertions
+ok 14 - unsupported or malformed deltas reject without partial removals or insertions
+  ---
+  duration_ms: 3.25
+  type: 'test'
+  ...
+# Subtest: configured transition and document limits reject oversize input atomically
+ok 15 - configured transition and document limits reject oversize input atomically
+  ---
+  duration_ms: 2.3505
+  type: 'test'
+  ...
+# Subtest: future and malformed root values are preserved opaquely and never hydrated
+ok 16 - future and malformed root values are preserved opaquely and never hydrated
+  ---
+  duration_ms: 2.3812
+  type: 'test'
+  ...
+# Subtest: replaceFromOverlay installs an authoritative clone without a user-change event
+ok 17 - replaceFromOverlay installs an authoritative clone without a user-change event
+  ---
+  duration_ms: 2.6834
+  type: 'test'
+  ...
+# Subtest: numeric ceilings and exact active timeline reject hostile finite values
+ok 18 - numeric ceilings and exact active timeline reject hostile finite values
+  ---
+  duration_ms: 2.9294
+  type: 'test'
+  ...
+# Subtest: overlay snapshot persistence session requires exact match or explicit one-shot adoption
+ok 19 - overlay snapshot persistence session requires exact match or explicit one-shot adoption
+  ---
+  duration_ms: 3.4885
+  type: 'test'
+  ...
+# Subtest: resync replacement reports one real lost delta while identical resync is silent
+ok 20 - resync replacement reports one real lost delta while identical resync is silent
+  ---
+  duration_ms: 3.1979
+  type: 'test'
+  ...
+# Subtest: malformed overlay replacement and subscriber exceptions cannot corrupt the store
+ok 21 - malformed overlay replacement and subscriber exceptions cannot corrupt the store
+  ---
+  duration_ms: 3.2681
+  type: 'test'
+  ...
+# Subtest: unsubscribe stops isolated change delivery and returned values stay owned by the store
+ok 22 - unsubscribe stops isolated change delivery and returned values stay owned by the store
+  ---
+  duration_ms: 2.5761
+  type: 'test'
+  ...
+# Subtest: invalidate makes prior-video content unavailable without reporting a drawing change
+ok 23 - invalidate makes prior-video content unavailable without reporting a drawing change
+  ---
+  duration_ms: 2.4659
+  type: 'test'
+  ...
+# Subtest: missing .bframe loads enter deferred discovery instead of immediate collaboration save
+ok 24 - missing .bframe loads enter deferred discovery instead of immediate collaboration save
+  ---
+  duration_ms: 2.72
+  type: 'test'
+  ...
+# Subtest: new review room can be attached to first save without recursively saving at load time
+ok 25 - new review room can be attached to first save without recursively saving at load time
+  ---
+  duration_ms: 0.7079
+  type: 'test'
+  ...
+# Subtest: all collaboration seeds exclude additive legacy snapshots while preserving causal Fabric seed
+ok 26 - all collaboration seeds exclude additive legacy snapshots while preserving causal Fabric seed
+  ---
+  duration_ms: 0.5247
+  type: 'test'
+  ...
+# Subtest: first .bframe save is protected against another user creating the file first
+ok 27 - first .bframe save is protected against another user creating the file first
+  ---
+  duration_ms: 2.5807
+  type: 'test'
+  ...
+# Subtest: metadata-only dirty state does not create a bframe file
+ok 28 - metadata-only dirty state does not create a bframe file
+  ---
+  duration_ms: 0.2448
+  type: 'test'
+  ...
+# Subtest: playlist aggregate direct save protects identity and uses a version token without touching future majors
+ok 29 - playlist aggregate direct save protects identity and uses a version token without touching future majors
+  ---
+  duration_ms: 3.352
+  type: 'test'
+  ...
+# Subtest: Fabric 드로잉(drawingsV3) 동기화가 배선되어 있다
+ok 30 - Fabric 드로잉(drawingsV3) 동기화가 배선되어 있다
+  ---
+  duration_ms: 2.3274
+  type: 'test'
+  ...
+# Subtest: connected drawingsV3 file notifications keep one latest trailing reload
+ok 31 - connected drawingsV3 file notifications keep one latest trailing reload
+  ---
+  duration_ms: 1.428
+  type: 'test'
+  ...
+# [17:35:21.281] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.282] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/second.mp4',
+#   bframePath: 'C:/reviews/second.bframe'
+# }
+# [17:35:21.282] [ReviewDataManager] .bframe 파일 없음 (새 리뷰) { path: 'C:/reviews/second.bframe' }
+# [17:35:21.283] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# Subtest: new metadata-only review skips save while switching videos
+ok 32 - new metadata-only review skips save while switching videos
+  ---
+  duration_ms: 11.744
+  type: 'test'
+  ...
+# [17:35:21.325] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.327] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/commented.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.328] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.329] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.329] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.330] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.332] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.332] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.333] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.333] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.335] [ReviewDataManager] reloadAndMerge 실패 Error: 다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2771:13)
+#     at ReviewDataManager.reloadAndMerge (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1970:16)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:410:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.335] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.336] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.336] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.336] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.336] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.337] [ReviewDataManager] .bframe 저장 실패 Error: 다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2771:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:488:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.337] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.338] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.338] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.338] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.338] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.338] [ReviewDataManager] reloadAndMerge: 데이터 덮어쓰기 완료
+# [17:35:21.338] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.339] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.339] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.339] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/load-owner-a.mp4',
+#   bframePath: 'C:/reviews/load-owner-a.bframe'
+# }
+# [17:35:21.339] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/load-owner-b.mp4',
+#   bframePath: 'C:/reviews/load-owner-b.bframe'
+# }
+# [17:35:21.339] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/load-owner-b.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.340] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.340] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.340] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.340] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/load-owner-a.mp4',
+#   bframePath: 'C:/reviews/load-owner-a.bframe'
+# }
+# [17:35:21.340] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/load-owner-b.mp4',
+#   bframePath: 'C:/reviews/load-owner-b.bframe'
+# }
+# [17:35:21.340] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/load-owner-b.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.341] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.341] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.341] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.341] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/reload-owner-a.mp4',
+#   bframePath: 'C:/reviews/reload-owner-a.bframe'
+# }
+# [17:35:21.341] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/reload-owner-a.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.341] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/reload-owner-b.mp4',
+#   bframePath: 'C:/reviews/reload-owner-b.bframe'
+# }
+# [17:35:21.342] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/reload-owner-b.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.342] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.342] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.342] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.342] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/save-refresh-owner-a.mp4',
+#   bframePath: 'C:/reviews/save-refresh-owner-a.bframe'
+# }
+# [17:35:21.343] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/save-refresh-owner-a.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# Subtest: new metadata-only review skips scheduled automatic save
+ok 33 - new metadata-only review skips scheduled automatic save
+  ---
+  duration_ms: 41.4379
+  type: 'test'
+  ...
+# Subtest: first substantive comment makes a new review save once
+ok 34 - first substantive comment makes a new review save once
+  ---
+  duration_ms: 3.4492
+  type: 'test'
+  ...
+# Subtest: new review with only a soft-deleted comment does not create a file
+ok 35 - new review with only a soft-deleted comment does not create a file
+  ---
+  duration_ms: 0.5247
+  type: 'test'
+  ...
+# Subtest: persisted review keeps metadata-only dirty state as unsaved
+ok 36 - persisted review keeps metadata-only dirty state as unsaved
+  ---
+  duration_ms: 1.1606
+  type: 'test'
+  ...
+# Subtest: reload waits for Fabric source refresh and rechecks local dirty before external import
+ok 37 - reload waits for Fabric source refresh and rechecks local dirty before external import
+  ---
+  duration_ms: 5.3672
+  type: 'test'
+  ...
+# Subtest: save preflight waits for Fabric source refresh and rechecks local dirty before write
+ok 38 - save preflight waits for Fabric source refresh and rechecks local dirty before write
+  ---
+  duration_ms: 2.2306
+  type: 'test'
+  ...
+# Subtest: merge false reload still routes Fabric replacement through the awaited source refresh transaction
+ok 39 - merge false reload still routes Fabric replacement through the awaited source refresh transaction
+  ---
+  duration_ms: 1.0724
+  type: 'test'
+  ...
+# Subtest: overlapping video loads never let video A install into video B regardless of completion order
+    # Subtest: b-first
+    ok 1 - b-first
+      ---
+      duration_ms: 0.8465
+      type: 'test'
+      ...
+    # Subtest: a-first
+    ok 2 - a-first
+      ---
+      duration_ms: 0.7566
+      type: 'test'
+      ...
+    1..2
+ok 40 - overlapping video loads never let video A install into video B regardless of completion order
+  ---
+  duration_ms: 2.1523
+  type: 'test'
+  ...
+# Subtest: stale reload source refresh cannot contaminate video B after a video switch
+ok 41 - stale reload source refresh cannot contaminate video B after a video switch
+  ---
+  duration_ms: 1.1738
+  type: 'test'
+  ...
+# [17:35:21.346] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/save-refresh-owner-a.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.346] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/save-refresh-owner-b.mp4',
+#   bframePath: 'C:/reviews/save-refresh-owner-b.bframe'
+# }
+# [17:35:21.347] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/save-refresh-owner-b.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.347] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.347] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.347] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.347] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/save-owner-a.mp4',
+#   bframePath: 'C:/reviews/save-owner-a.bframe'
+# }
+# [17:35:21.347] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/save-owner-a.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# Subtest: a pending save source refresh remains owned by video A until video B can install
+ok 42 - a pending save source refresh remains owned by video A until video B can install
+  ---
+  duration_ms: 4.9218
+  type: 'test'
+  ...
+# [17:35:21.348] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/save-owner-a.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.348] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/save-owner-b.mp4',
+#   bframePath: 'C:/reviews/save-owner-b.bframe'
+# }
+# [17:35:21.348] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/save-owner-b.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.348] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/save-owner-b.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.349] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.349] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.349] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.349] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.349] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.350] [ReviewDataManager] .bframe 저장 실패 Error: 저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1462:17)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1057:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.350] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.350] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.350] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.350] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/retryable-lock.mp4',
+#   bframePath: 'C:/reviews/retryable-lock.bframe'
+# }
+# [17:35:21.350] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/retryable-lock.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.350] [ReviewDataManager] .bframe 저장이 잠시 지연됨 { path: 'C:/reviews/retryable-lock.bframe', reason: 'lock-timeout' }
+# [17:35:21.350] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.351] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.351] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.351] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/snapshot-lock-timeout.mp4',
+#   bframePath: 'C:/reviews/snapshot-lock-timeout.bframe'
+# }
+# [17:35:21.351] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/snapshot-lock-timeout.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.351] [ReviewDataManager] .bframe 저장이 잠시 지연됨 {
+#   path: 'C:/reviews/snapshot-lock-timeout.bframe',
+#   reason: 'review-snapshot-lock-timeout'
+# }
+# [17:35:21.351] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.351] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.351] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.351] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.352] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.352] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.352] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.352] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.352] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.352] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.352] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.353] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.353] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.353] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.354] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 2,
+#   liveblocksConnected: false
+# }
+# [17:35:21.354] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.354] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.354] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 1
+# }
+# [17:35:21.355] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 2,
+#   liveblocksConnected: false
+# }
+# [17:35:21.355] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.355] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.356] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 1
+# }
+# [17:35:21.357] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 1,
+#   liveblocksConnected: false
+# }
+# [17:35:21.357] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 1,
+#   liveblocksConnected: false
+# }
+# [17:35:21.357] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.357] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.358] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 1
+# }
+# [17:35:21.358] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 1,
+#   liveblocksConnected: false
+# }
+# [17:35:21.358] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 1,
+#   liveblocksConnected: false
+# }
+# [17:35:21.358] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.358] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.359] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 1
+# }
+# [17:35:21.359] [ReviewDataManager] reloadAndMerge: 미저장 작업 있음 - 안전 머지 모드
+# [17:35:21.359] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.359] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.359] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.359] [ReviewDataManager] .bframe 저장 실패 Error: 최신 .bframe의 reviewDocumentId가 달라 계보 충돌로 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2767:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1765:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.360] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.360] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.360] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.360] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.360] [ReviewDataManager] .bframe 저장 실패 Error: 최신 .bframe에서 reviewDocumentId가 사라져 계보 충돌로 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2763:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1794:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.360] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.360] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.360] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.360] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.361] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.361] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.361] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.361] [ReviewDataManager] .bframe 저장 실패 Error: injected failure
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1526:30)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1856:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   saveFailureReason: 'review-file-write-failed'
+# }
+# [17:35:21.361] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.361] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.361] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.361] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.361] [ReviewDataManager] .bframe 저장 실패 Error: injected failure
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1526:30)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1889:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   saveFailureReason: 'review-file-write-failed'
+# }
+# [17:35:21.362] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.362] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.362] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.362] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.362] [ReviewDataManager] .bframe 저장 실패 Error: 최신 .bframe root를 다시 읽지 못해 저장을 중단했습니다.
+#     at ReviewDataManager._refreshRootEnvelopeBeforeSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2733:13)
+#     at async ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1379:24)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1920:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.362] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.362] [ReviewDataManager] 첫 .bframe 저장 충돌 감지, 기존 파일과 병합 시도 { path: 'C:/reviews/conflict.bframe' }
+# [17:35:21.363] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/conflict.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.363] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.363] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/future.mp4',
+#   bframePath: 'C:/reviews/future.bframe'
+# }
+# [17:35:21.363] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: '3.0', supportedVersion: '2.0' }
+# [17:35:21.363] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/future.bframe',
+#   version: '3.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.363] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe 3.0 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:1987:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.363] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.363] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.363] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: '', supportedVersion: '2.0' }
+# [17:35:21.363] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: undefined,
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.364] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe  파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.364] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.364] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.364] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: 'v3.0', supportedVersion: '2.0' }
+# [17:35:21.364] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: 'v3.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.364] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe v3.0 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.364] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.364] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.364] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: 'legacy', supportedVersion: '2.0' }
+# [17:35:21.364] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: 'legacy',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.364] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe legacy 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.364] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.364] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.364] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: '2.', supportedVersion: '2.0' }
+# [17:35:21.364] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: '2.',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.364] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe 2. 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.364] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.364] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.364] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: '2.future', supportedVersion: '2.0' }
+# [17:35:21.364] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: '2.future',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.364] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe 2.future 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.364] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.364] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.364] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: '2...', supportedVersion: '2.0' }
+# [17:35:21.364] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: '2...',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.365] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe 2... 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.365] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.365] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.365] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: { major: 3 }, supportedVersion: '2.0' }
+# [17:35:21.365] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: { major: 3 },
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.365] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe [object Object] 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.365] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.365] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.365] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: null, supportedVersion: '2.0' }
+# [17:35:21.365] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: undefined,
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.365] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe null 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.365] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.365] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed-version.mp4',
+#   bframePath: 'C:/reviews/malformed-version.bframe'
+# }
+# [17:35:21.365] [ReviewDataManager] 지원하지 않는 미래 .bframe 버전은 읽기 전용으로 엽니다 { version: 0, supportedVersion: '2.0' }
+# [17:35:21.365] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed-version.bframe',
+#   version: undefined,
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.365] [ReviewDataManager] .bframe 저장 실패 Error: 지원하지 않는 .bframe 0 파일은 이 버전에서 저장할 수 없습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2753:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2024:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.365] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.365] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/invalid-id.mp4',
+#   bframePath: 'C:/reviews/invalid-id.bframe'
+# }
+# [17:35:21.365] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/invalid-id.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.365] [ReviewDataManager] .bframe 저장 실패 Error: 유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2759:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2049:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.366] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.366] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.366] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 1
+# }
+# [17:35:21.367] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.367] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.367] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.367] [ReviewDataManager] .bframe 파일 없음 (새 리뷰) { path: 'C:/reviews/fabric.bframe' }
+# [17:35:21.367] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.367] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.367] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:21.367] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.367] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.368] [ReviewDataManager] .bframe 파일 없음 (새 리뷰) { path: 'C:/reviews/fabric.bframe' }
+# Subtest: an in-flight save stays owned by video A until completion before setVideoFile can install video B
+ok 43 - an in-flight save stays owned by video A until completion before setVideoFile can install video B
+  ---
+  duration_ms: 1.6236
+  type: 'test'
+  ...
+# Subtest: stale version-token conflict never acknowledges or cleans a Fabric save
+ok 44 - stale version-token conflict never acknowledges or cleans a Fabric save
+  ---
+  duration_ms: 1.1557
+  type: 'test'
+  ...
+# Subtest: retryable review lock contention keeps changes dirty without a save error alert
+ok 45 - retryable review lock contention keeps changes dirty without a save error alert
+  ---
+  duration_ms: 0.7432
+  type: 'test'
+  ...
+# Subtest: a review snapshot lock timeout defers the save without a save error alert
+ok 46 - a review snapshot lock timeout defers the save without a save error alert
+  ---
+  duration_ms: 0.6664
+  type: 'test'
+  ...
+# Subtest: remote drawing layer order event marks a persisted review as unsaved
+ok 47 - remote drawing layer order event marks a persisted review as unsaved
+  ---
+  duration_ms: 0.2933
+  type: 'test'
+  ...
+# Subtest: remote empty layer restore marks a persisted review as unsaved
+ok 48 - remote empty layer restore marks a persisted review as unsaved
+  ---
+  duration_ms: 0.1972
+  type: 'test'
+  ...
+# Subtest: persisted save preserves the latest opaque root fields and review identity
+ok 49 - persisted save preserves the latest opaque root fields and review identity
+  ---
+  duration_ms: 0.8655
+  type: 'test'
+  ...
+# Subtest: persisted save merges latest external review data with local unsaved changes
+ok 50 - persisted save merges latest external review data with local unsaved changes
+  ---
+  duration_ms: 1.3654
+  type: 'test'
+  ...
+# Subtest: save without review managers preserves loaded and externally added review collections
+ok 51 - save without review managers preserves loaded and externally added review collections
+  ---
+  duration_ms: 1.048
+  type: 'test'
+  ...
+# Subtest: three-way save keeps local deletions and remote additions across repeated saves
+ok 52 - three-way save keeps local deletions and remote additions across repeated saves
+  ---
+  duration_ms: 2.0394
+  type: 'test'
+  ...
+# Subtest: three-way save preserves both sides of edit and delete conflicts without duplicate retries
+ok 53 - three-way save preserves both sides of edit and delete conflicts without duplicate retries
+  ---
+  duration_ms: 1.0828
+  type: 'test'
+  ...
+# Subtest: reloadAndMerge keeps local collection deletions while adopting remote additions
+ok 54 - reloadAndMerge keeps local collection deletions while adopting remote additions
+  ---
+  duration_ms: 0.7574
+  type: 'test'
+  ...
+# Subtest: persisted review identity mismatch blocks save instead of mixing two lineages
+ok 55 - persisted review identity mismatch blocks save instead of mixing two lineages
+  ---
+  duration_ms: 0.6809
+  type: 'test'
+  ...
+# Subtest: persisted review identity disappearance blocks save until an explicit reload
+ok 56 - persisted review identity disappearance blocks save until an explicit reload
+  ---
+  duration_ms: 0.339
+  type: 'test'
+  ...
+# Subtest: latest disk root deletion is not undone from a stale opaque snapshot
+ok 57 - latest disk root deletion is not undone from a stale opaque snapshot
+  ---
+  duration_ms: 0.4246
+  type: 'test'
+  ...
+# Subtest: missing review identity is generated once and reused after a failed save
+ok 58 - missing review identity is generated once and reused after a failed save
+  ---
+  duration_ms: 0.5959
+  type: 'test'
+  ...
+# Subtest: missing review identity survives a realtime reload between a failed save and retry
+ok 59 - missing review identity survives a realtime reload between a failed save and retry
+  ---
+  duration_ms: 0.6539
+  type: 'test'
+  ...
+# Subtest: persisted save stops when the latest disk root cannot be refreshed
+ok 60 - persisted save stops when the latest disk root cannot be refreshed
+  ---
+  duration_ms: 0.3299
+  type: 'test'
+  ...
+# Subtest: first-save conflict adopts the remote review identity and opaque root
+ok 61 - first-save conflict adopts the remote review identity and opaque root
+  ---
+  duration_ms: 0.6742
+  type: 'test'
+  ...
+# Subtest: unsupported future bframe major stays read-only and is never downgraded
+ok 62 - unsupported future bframe major stays read-only and is never downgraded
+  ---
+  duration_ms: 0.4695
+  type: 'test'
+  ...
+# Subtest: explicit but unparseable bframe versions stay read-only
+ok 63 - explicit but unparseable bframe versions stay read-only
+  ---
+  duration_ms: 1.8696
+  type: 'test'
+  ...
+# Subtest: invalid persisted review identity blocks saving instead of silently replacing it
+ok 64 - invalid persisted review identity blocks saving instead of silently replacing it
+  ---
+  duration_ms: 0.4117
+  type: 'test'
+  ...
+# Subtest: valid drawingsV3 loads into the shared provider while legacy drawings stay unchanged
+ok 65 - valid drawingsV3 loads into the shared provider while legacy drawings stay unchanged
+  ---
+  duration_ms: 0.9008
+  type: 'test'
+  ...
+# Subtest: new review resets the shared provider and a first Fabric-only stroke creates a bframe
+ok 66 - new review resets the shared provider and a first Fabric-only stroke creates a bframe
+  ---
+  duration_ms: 0.801
+  type: 'test'
+  ...
+# [17:35:21.386] [ReviewDataManager] 자동 저장 실행
+# [17:35:21.386] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.416] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.447] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.447] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.447] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.447] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.448] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.448] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.448] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.449] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.449] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.449] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/future.mp4',
+#   bframePath: 'C:/reviews/future.bframe'
+# }
+# [17:35:21.449] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/future.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.449] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/future.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.449] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.449] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.449] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.449] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/malformed.mp4',
+#   bframePath: 'C:/reviews/malformed.bframe'
+# }
+# [17:35:21.449] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/malformed.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.450] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/malformed.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.450] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.450] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.450] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.450] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.450] [ReviewDataManager] .bframe 파일 없음 (새 리뷰) { path: 'C:/reviews/fabric.bframe' }
+# [17:35:21.450] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.450] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.451] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:21.451] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/concurrent.mp4',
+#   bframePath: 'C:/reviews/concurrent.bframe'
+# }
+# [17:35:21.451] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/concurrent.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.451] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/concurrent.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# Subtest: provider changes use the normal autosave path and disconnect removes the subscription
+ok 67 - provider changes use the normal autosave path and disconnect removes the subscription
+  ---
+  duration_ms: 79.2395
+  type: 'test'
+  ...
+# Subtest: latest opaque drawingsV3 is preserved until a real local Fabric change replaces it
+ok 68 - latest opaque drawingsV3 is preserved until a real local Fabric change replaces it
+  ---
+  duration_ms: 1.9118
+  type: 'test'
+  ...
+# Subtest: future or malformed drawingsV3 stays byte-equivalent through unrelated saves
+ok 69 - future or malformed drawingsV3 stays byte-equivalent through unrelated saves
+  ---
+  duration_ms: 1.1335
+  type: 'test'
+  ...
+# Subtest: before-save hook can update the provider before data collection
+ok 70 - before-save hook can update the provider before data collection
+  ---
+  duration_ms: 0.7351
+  type: 'test'
+  ...
+# [17:35:21.462] [ReviewDataManager] 자동 저장 실행
+# [17:35:21.462] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/concurrent.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.538] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:21.538] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.538] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.538] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.539] [ReviewDataManager] .bframe 저장 실패 Error: injected Fabric save failure
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1526:30)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2411:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   saveFailureReason: 'review-file-write-failed'
+# }
+# [17:35:21.539] [ReviewDataManager] .bframe 저장 일시 실패, 재시도 예약됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   reason: 'review-file-write-failed',
+#   attempt: 1
+# }
+# Subtest: successful save with a concurrent manager change schedules exactly one trailing autosave
+ok 71 - successful save with a concurrent manager change schedules exactly one trailing autosave
+  ---
+  duration_ms: 86.9815
+  type: 'test'
+  ...
+# [17:35:21.598] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.599] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:21.599] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.599] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.599] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.600] [ReviewDataManager] .bframe 저장 실패 Error: injected before-save failure
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1526:30)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2449:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   saveFailureReason: 'review-file-write-failed'
+# }
+# [17:35:21.600] [ReviewDataManager] .bframe 저장 일시 실패, 재시도 예약됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   reason: 'review-file-write-failed',
+#   attempt: 1
+# }
+# Subtest: failed save with a concurrent provider mutation stays dirty without automatic retry
+ok 72 - failed save with a concurrent provider mutation stays dirty without automatic retry
+  ---
+  duration_ms: 60.9789
+  type: 'test'
+  ...
+# [17:35:21.659] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.660] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.660] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.660] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.660] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.661] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.661] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.661] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.661] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.661] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.661] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.662] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.662] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.662] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.662] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.662] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.663] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.663] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.663] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/external-future.mp4',
+#   bframePath: 'C:/reviews/external-future.bframe'
+# }
+# [17:35:21.663] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/external-future.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.663] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/external-future.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.663] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.663] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.663] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.663] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/external-malformed.mp4',
+#   bframePath: 'C:/reviews/external-malformed.bframe'
+# }
+# [17:35:21.664] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/external-malformed.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.664] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/external-malformed.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.664] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.664] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.664] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.664] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/external-missing.mp4',
+#   bframePath: 'C:/reviews/external-missing.bframe'
+# }
+# [17:35:21.664] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/external-missing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.664] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/external-missing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.664] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.665] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.665] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.665] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/conflict-supported.mp4',
+#   bframePath: 'C:/reviews/conflict-supported.bframe'
+# }
+# [17:35:21.665] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/conflict-supported.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.665] [ReviewDataManager] .bframe 저장 실패 Error: 다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2771:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2748:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.666] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.666] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.666] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.666] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/conflict-future.mp4',
+#   bframePath: 'C:/reviews/conflict-future.bframe'
+# }
+# [17:35:21.666] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/conflict-future.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.666] [ReviewDataManager] .bframe 저장 실패 Error: 다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2771:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2748:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.667] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.667] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.667] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.667] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/conflict-missing.mp4',
+#   bframePath: 'C:/reviews/conflict-missing.bframe'
+# }
+# [17:35:21.667] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/conflict-missing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.667] [ReviewDataManager] .bframe 저장 실패 Error: 다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2771:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2748:18)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.667] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.667] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.667] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.667] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.668] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.668] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.668] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.668] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.668] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.668] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.668] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.668] [ReviewDataManager] reloadAndMerge 실패 Error: 다른 변경과 로컬 Fabric 드로잉이 충돌해 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2771:13)
+#     at ReviewDataManager.reloadAndMerge (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1970:16)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2847:19)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.669] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.669] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.669] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/prior.mp4',
+#   bframePath: 'C:/reviews/prior.bframe'
+# }
+# [17:35:21.669] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/prior.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.669] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/failing.mp4',
+#   bframePath: 'C:/reviews/failing.bframe'
+# }
+# [17:35:21.669] [ReviewDataManager] .bframe 로드 실패 Error: injected load failure
+#     at TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:2902:37)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.669] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.669] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.669] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.671] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.671] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.671] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.671] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.671] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.671] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.671] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.671] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.671] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.671] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.672] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.672] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.672] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric.mp4',
+#   bframePath: 'C:/reviews/fabric.bframe'
+# }
+# [17:35:21.672] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.672] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/fabric.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.672] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.673] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.673] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/final-hook-failure.mp4',
+#   bframePath: 'C:/reviews/final-hook-failure.bframe'
+# }
+# [17:35:21.673] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/final-hook-failure.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.673] [ReviewDataManager] .bframe 저장 실패 Error: injected final snapshot failure
+#     at ReviewDataManager._finalFabricSnapshotHandler (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:3065:11)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1410:50)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:3068:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:21.673] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.673] [ReviewDataManager] 백업 저장이 완료되지 않음 { path: 'C:/reviews/backup-result.bframe.bak', reason: 'lock-timeout' }
+# [17:35:21.673] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.673] [ReviewDataManager] 백업 생성됨 { path: 'C:/reviews/backup-result.bframe.bak' }
+# [17:35:21.674] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.674] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/legacy.mp4',
+#   bframePath: 'C:/reviews/legacy.bframe'
+# }
+# [17:35:21.674] [ReviewDataManager] 마이그레이션 필요 { from: 'legacy', to: '2.0' }
+# [17:35:21.674] [ReviewDataManager] 백업 생성됨 { path: 'C:/reviews/legacy.bframe.bak' }
+# [17:35:21.674] [ReviewDataManager] 마이그레이션 성공 { version: '2.0' }
+# [17:35:21.674] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/legacy.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 0
+# }
+# Subtest: provider change inside a failing before-save hook never arms an automatic retry
+ok 73 - provider change inside a failing before-save hook never arms an automatic retry
+  ---
+  duration_ms: 60.793
+  type: 'test'
+  ...
+# Subtest: external supported drawingsV3 is re-imported before an unrelated save when local Fabric is clean
+ok 74 - external supported drawingsV3 is re-imported before an unrelated save when local Fabric is clean
+  ---
+  duration_ms: 1.2725
+  type: 'test'
+  ...
+# Subtest: accepted broadcast drawingsV3 remains the save baseline while disk replication is stale
+ok 75 - accepted broadcast drawingsV3 remains the save baseline while disk replication is stale
+  ---
+  duration_ms: 1.2872
+  type: 'test'
+  ...
+# Subtest: failed external drawingsV3 installation retries the same payload instead of accepting it early
+ok 76 - failed external drawingsV3 installation retries the same payload instead of accepting it early
+  ---
+  duration_ms: 0.6619
+  type: 'test'
+  ...
+# Subtest: external future, malformed, and missing drawingsV3 are adopted opaquely when local Fabric is clean
+ok 77 - external future, malformed, and missing drawingsV3 are adopted opaquely when local Fabric is clean
+  ---
+  duration_ms: 1.5675
+  type: 'test'
+  ...
+# Subtest: local Fabric edits block external supported, future, or missing drawingsV3 replacements
+ok 78 - local Fabric edits block external supported, future, or missing drawingsV3 replacements
+  ---
+  duration_ms: 2.9379
+  type: 'test'
+  ...
+# Subtest: drawingsV3 fingerprint ignores JSON object key order without hiding real local edits
+ok 79 - drawingsV3 fingerprint ignores JSON object key order without hiding real local edits
+  ---
+  duration_ms: 0.6897
+  type: 'test'
+  ...
+# Subtest: reload merge applies external Fabric only when no local Fabric edit exists
+ok 80 - reload merge applies external Fabric only when no local Fabric edit exists
+  ---
+  duration_ms: 0.6294
+  type: 'test'
+  ...
+# Subtest: new video invalidates prior Fabric immediately and load failure stays unavailable
+ok 81 - new video invalidates prior Fabric immediately and load failure stays unavailable
+  ---
+  duration_ms: 0.5697
+  type: 'test'
+  ...
+# Subtest: provider replacement restores current disk raw or remains unavailable before a real load
+ok 82 - provider replacement restores current disk raw or remains unavailable before a real load
+  ---
+  duration_ms: 1.7097
+  type: 'test'
+  ...
+# Subtest: provider replacement preserves a current unsaved Fabric snapshot and dirty ownership
+ok 83 - provider replacement preserves a current unsaved Fabric snapshot and dirty ownership
+  ---
+  duration_ms: 0.6203
+  type: 'test'
+  ...
+# Subtest: preflight, latest-root refresh, final Fabric snapshot, collect, and write run in order
+ok 84 - preflight, latest-root refresh, final Fabric snapshot, collect, and write run in order
+  ---
+  duration_ms: 0.9313
+  type: 'test'
+  ...
+# Subtest: final Fabric snapshot failure blocks disk write and keeps dirty state
+ok 85 - final Fabric snapshot failure blocks disk write and keeps dirty state
+  ---
+  duration_ms: 0.4121
+  type: 'test'
+  ...
+# Subtest: backup fallback reports failure when transactional backup save is deferred
+ok 86 - backup fallback reports failure when transactional backup save is deferred
+  ---
+  duration_ms: 0.2596
+  type: 'test'
+  ...
+# Subtest: backup fallback succeeds only after the backup file is confirmed saved
+ok 87 - backup fallback succeeds only after the backup file is confirmed saved
+  ---
+  duration_ms: 0.2192
+  type: 'test'
+  ...
+# [17:35:21.782] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/legacy.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.843] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.843] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.844] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 0
+# }
+# [17:35:21.844] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.845] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.845] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.845] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 0
+# }
+# [17:35:21.845] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.845] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.846] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.846] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.846] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 2,
+#   drawingLayers: 2
+# }
+# [17:35:21.846] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 2,
+#   drawingLayers: 3,
+#   liveblocksConnected: false
+# }
+# [17:35:21.846] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.847] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.847] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 3
+# }
+# [17:35:21.847] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 3,
+#   liveblocksConnected: false
+# }
+# [17:35:21.849] [HighlightManager] HighlightManager 초기화됨
+# [17:35:21.849] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.849] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.849] [HighlightManager] 하이라이트 데이터 로드됨 { count: 1 }
+# [17:35:21.849] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.850] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.850] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.850] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.850] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 0
+# }
+# [17:35:21.850] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.851] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.851] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.851] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.851] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 0
+# }
+# [17:35:21.851] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.852] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.852] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.852] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.852] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 1,
+#   drawingLayers: 0
+# }
+# [17:35:21.852] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.852] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.853] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.853] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.853] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 1
+# }
+# [17:35:21.853] [ReviewDataManager] reloadAndMerge: 미저장 작업 있음 - 안전 머지 모드
+# [17:35:21.853] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 1,
+#   liveblocksConnected: false
+# }
+# [17:35:21.853] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.853] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.854] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.854] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.854] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.854] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.854] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.854] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/existing.mp4',
+#   bframePath: 'C:/reviews/existing.bframe'
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.854] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/existing.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.855] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.855] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.855] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/drawings-v3-disk-owner-a.mp4',
+#   bframePath: 'C:/reviews/drawings-v3-disk-owner-a.bframe'
+# }
+# [17:35:21.855] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/drawings-v3-disk-owner-a.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.855] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/drawings-v3-disk-owner-b.mp4',
+#   bframePath: 'C:/reviews/drawings-v3-disk-owner-b.bframe'
+# }
+# [17:35:21.855] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/drawings-v3-disk-owner-b.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.856] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/drawings-v3-disk-owner-b.bframe',
+#   commentLayers: 0,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:21.856] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.856] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.856] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.856] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/same-file-reload-order.mp4',
+#   bframePath: 'C:/reviews/same-file-reload-order.bframe'
+# }
+# [17:35:21.856] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/same-file-reload-order.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.856] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.857] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.857] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.857] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric-cross-channel.mp4',
+#   bframePath: 'C:/reviews/fabric-cross-channel.bframe'
+# }
+# [17:35:21.857] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric-cross-channel.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.858] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.860] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:21.860] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:21.860] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric-same-root-epoch.mp4',
+#   bframePath: 'C:/reviews/fabric-same-root-epoch.bframe'
+# }
+# [17:35:21.860] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric-same-root-epoch.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:21.860] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.860] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# Subtest: scheduled legacy migration save preserves migrated comments and manual versions
+ok 88 - scheduled legacy migration save preserves migrated comments and manual versions
+  ---
+  duration_ms: 169.4562
+  type: 'test'
+  ...
+# Subtest: three-way save preserves replies concurrently added to the same marker
+ok 89 - three-way save preserves replies concurrently added to the same marker
+  ---
+  duration_ms: 1.2208
+  type: 'test'
+  ...
+# Subtest: soft-deleted marker stays deleted when a concurrent newer reply arrives
+ok 90 - soft-deleted marker stays deleted when a concurrent newer reply arrives
+  ---
+  duration_ms: 1.2381
+  type: 'test'
+  ...
+# Subtest: unrelated save preserves the latest remote order of review layers
+ok 91 - unrelated save preserves the latest remote order of review layers
+  ---
+  duration_ms: 0.8333
+  type: 'test'
+  ...
+# Subtest: conflicting local and remote reorders deterministically keep remote order and all layers
+ok 92 - conflicting local and remote reorders deterministically keep remote order and all layers
+  ---
+  duration_ms: 0.6677
+  type: 'test'
+  ...
+# Subtest: array-form highlights load into HighlightManager and survive an unrelated save
+ok 93 - array-form highlights load into HighlightManager and survive an unrelated save
+  ---
+  duration_ms: 2.6137
+  type: 'test'
+  ...
+# Subtest: concurrent edits to the same reply create one deterministic conflict copy
+ok 94 - concurrent edits to the same reply create one deterministic conflict copy
+  ---
+  duration_ms: 0.9816
+  type: 'test'
+  ...
+# Subtest: concurrent marker metadata edits keep both parents and independently merged replies
+ok 95 - concurrent marker metadata edits keep both parents and independently merged replies
+  ---
+  duration_ms: 0.9636
+  type: 'test'
+  ...
+# Subtest: soft delete and concurrent marker edit preserve tombstone plus one conflict copy
+ok 96 - soft delete and concurrent marker edit preserve tombstone plus one conflict copy
+  ---
+  duration_ms: 0.8554
+  type: 'test'
+  ...
+# Subtest: reload merge keeps latest remote as base so delete-edit conflicts do not resurrect on save
+ok 97 - reload merge keeps latest remote as base so delete-edit conflicts do not resurrect on save
+  ---
+  duration_ms: 0.7103
+  type: 'test'
+  ...
+# Subtest: scalar metadata uses three-way merge and keeps remote on concurrent conflicts
+ok 98 - scalar metadata uses three-way merge and keeps remote on concurrent conflicts
+  ---
+  duration_ms: 1.2956
+  type: 'test'
+  ...
+# Subtest: drawingsV3 disk reload cannot install video A after switching to video B
+ok 99 - drawingsV3 disk reload cannot install video A after switching to video B
+  ---
+  duration_ms: 1.2073
+  type: 'test'
+  ...
+# Subtest: newer same-file drawingsV3 reload wins when an older hydration finishes later
+ok 100 - newer same-file drawingsV3 reload wins when an older hydration finishes later
+  ---
+  duration_ms: 0.5956
+  type: 'test'
+  ...
+# Subtest: an accepted Broadcast invalidates an older pending drawingsV3 disk reload
+ok 101 - an accepted Broadcast invalidates an older pending drawingsV3 disk reload
+  ---
+  duration_ms: 1.4154
+  type: 'test'
+  ...
+# [17:35:21.863] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.863] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:21.863] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.863] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.863] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.863] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.863] [FabricDrawingSync] 원격 drawingsV3 폐기 (협업 세션 종료·재시작)
+# Subtest: a higher-version same-root Broadcast invalidates an older pending disk reload
+ok 102 - a higher-version same-root Broadcast invalidates an older pending disk reload
+  ---
+  duration_ms: 4.8094
+  type: 'test'
+  ...
+# [17:35:21.863] [FabricDrawingSync] 원격 drawingsV3 반영 뒤 폐기 (현재 루트 불일치)
+# [17:35:21.864] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.864] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.864] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.864] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.865] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721865-sej0tnwq', bytes: 191 }
+# [17:35:21.865] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.865] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# Subtest: Fabric drawing sync drops queued roots from a stopped session after restart
+ok 103 - Fabric drawing sync drops queued roots from a stopped session after restart
+  ---
+  duration_ms: 0.9165
+  type: 'test'
+  ...
+# [17:35:21.865] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721865-48ehaghx', bytes: 191 }
+# [17:35:21.865] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.865] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.866] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.866] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.867] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.867] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# Subtest: Fabric drawing sync requests a stable peer seed after an earlier join broadcast was missed
+ok 104 - Fabric drawing sync requests a stable peer seed after an earlier join broadcast was missed
+  ---
+  duration_ms: 1.7417
+  type: 'test'
+  ...
+# [17:35:21.867] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721867-egog8a3c', bytes: 184 }
+# [17:35:21.867] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.868] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.868] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.868] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.868] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.868] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.868] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.868] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.868] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.868] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.868] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.869] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.869] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.869] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.869] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.869] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.870] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.870] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.870] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.870] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.870] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.870] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.870] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.871] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.871] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.871] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721871-0hfy6yyb', bytes: 182 }
+# [17:35:21.871] [FabricDrawingSync] 원격 drawingsV3 폐기 (결정적 버전 패자)
+# [17:35:21.871] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721871-9tc5wqhf', bytes: 182 }
+# [17:35:21.871] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.871] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.871] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.871] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.871] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.871] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.871] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.871] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721871-xr4n4q4q', bytes: 182 }
+# [17:35:21.871] [FabricDrawingSync] 원격 drawingsV3 폐기 (결정적 버전 패자)
+# [17:35:21.872] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721872-6zefdsg5', bytes: 182 }
+# [17:35:21.872] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.872] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.872] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.872] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.872] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.872] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.872] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721872-igvpxelw', bytes: 185 }
+# [17:35:21.872] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.872] [FabricDrawingSync] 원격 drawingsV3 반영 생략 (로컬 변경 보호 또는 동일 상태)
+# [17:35:21.872] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721872-mf4ou9qv', bytes: 184 }
+# [17:35:21.872] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.873] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.873] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.873] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721873-j22krshx', bytes: 179 }
+# [17:35:21.873] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.873] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721873-2dir7qc9', bytes: 179 }
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.873] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.873] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.873] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721873-7svfhgtv', bytes: 187 }
+# [17:35:21.873] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.873] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.874] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721874-ri6pymyq', bytes: 187 }
+# [17:35:21.874] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.874] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.874] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.874] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721874-lz5wcjko', bytes: 176 }
+# [17:35:21.874] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.874] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.874] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.874] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.875] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721875-qrzm9m2o', bytes: 176 }
+# [17:35:21.875] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.875] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.875] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.875] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.875] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.875] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.875] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721875-dputjb43', bytes: 184 }
+# [17:35:21.875] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.875] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.875] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.875] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.875] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.875] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.875] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.876] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.876] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.876] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.876] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721876-wxjtsmmr', bytes: 177 }
+# [17:35:21.876] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721876-st5twksz', bytes: 177 }
+# [17:35:21.876] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.876] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.877] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.877] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.877] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.878] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.878] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.878] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.878] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721878-5w2lej05', bytes: 179 }
+# [17:35:21.878] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.878] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721878-q0hdygax', bytes: 184 }
+# [17:35:21.878] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.878] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.878] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.878] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.878] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.878] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.879] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721879-7t9euvyv', bytes: 179 }
+# [17:35:21.879] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.879] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721879-qt8xrpmy', bytes: 184 }
+# [17:35:21.879] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.879] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.879] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.879] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.879] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721879-tufvm3eh', bytes: 175 }
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.879] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.879] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.879] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.879] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.879] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.880] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.880] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.880] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721880-flaenll3', bytes: 178 }
+# [17:35:21.880] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.880] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.880] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.880] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.880] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.880] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721880-dv5mst7z', bytes: 0 }
+# [17:35:21.909] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721884-wzv3bbim', bytes: 737477 }
+# [17:35:21.909] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.909] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.910] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.910] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.910] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.910] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.910] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.910] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.911] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.911] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.911] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721911-pg1gnei4', bytes: 86 }
+# [17:35:21.911] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721911-095ygzwy', bytes: 86 }
+# [17:35:21.911] [FabricDrawingSync] 원격 drawingsV3 폐기 (결정적 버전 패자)
+# [17:35:21.911] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# Subtest: Fabric drawing sync retries once after simultaneous fresh joins and fences stale retry timers
+ok 105 - Fabric drawing sync retries once after simultaneous fresh joins and fences stale retry timers
+  ---
+  duration_ms: 44.3101
+  type: 'test'
+  ...
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.912] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.912] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.912] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721912-5w4pllx8', bytes: 86 }
+# [17:35:21.912] [FabricDrawingSync] 원격 drawingsV3 반영 생략 (로컬 변경 보호 또는 동일 상태)
+# [17:35:21.912] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721912-gz4pdbls', bytes: 86 }
+# [17:35:21.912] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.912] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.912] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.912] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.912] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721912-qyuyx4vs', bytes: 86 }
+# [17:35:21.912] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721912-x7s1xs2g', bytes: 92 }
+# [17:35:21.912] [FabricDrawingSync] 원격 drawingsV3 반영 뒤 폐기 (현재 루트 불일치)
+# [17:35:21.913] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721913-nkakrktb', bytes: 92 }
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.913] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.913] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.913] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721913-npcsy9fh', bytes: 99 }
+# [17:35:21.913] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721913-6yvkrgz6', bytes: 102 }
+# [17:35:21.913] [FabricDrawingSync] 원격 drawingsV3 폐기 (결정적 버전 패자)
+# [17:35:21.913] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.913] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.913] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.913] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.943] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721919-han5ih3w', bytes: 737379 }
+# [17:35:21.952] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:21.987] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721962-fe7oqm8h', bytes: 737379 }
+# [17:35:21.987] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.987] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:21.987] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.987] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:21.987] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:21.988] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.014] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629721992-l6j7x246', bytes: 737379 }
+# [17:35:22.014] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629722014-zlmlsp8v', bytes: 99 }
+# [17:35:22.017] [FabricDrawingSync] 원격 drawingsV3 폐기 (결정적 버전 패자)
+# [17:35:22.018] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.018] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.018] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.018] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.018] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.018] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.019] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.019] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.047] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629722024-al19710t', bytes: 737379 }
+# [17:35:22.075] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629722053-7zhcj5bi', bytes: 737379 }
+# [17:35:22.105] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629722080-dit7efy7', bytes: 737379 }
+# [17:35:22.123] [FabricDrawingSync] 원격 drawingsV3 폐기 (결정적 버전 패자)
+# [17:35:22.126] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:22.128] [FabricDrawingSync] 원격 drawingsV3 반영됨
+# [17:35:22.128] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.128] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.128] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.129] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.129] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.129] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/causal-disk-winner.mp4',
+#   bframePath: 'C:/reviews/causal-disk-winner.bframe'
+# }
+# [17:35:22.129] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/causal-disk-winner.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.130] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.130] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.130] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.130] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/observed-disk-cap.mp4',
+#   bframePath: 'C:/reviews/observed-disk-cap.bframe'
+# }
+# [17:35:22.130] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/observed-disk-cap.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.132] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.132] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.132] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.132] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/delayed-intermediate.mp4',
+#   bframePath: 'C:/reviews/delayed-intermediate.bframe'
+# }
+# [17:35:22.132] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/delayed-intermediate.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.132] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.133] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.133] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.133] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric-tombstone-stable-missing.mp4',
+#   bframePath: 'C:/reviews/fabric-tombstone-stable-missing.bframe'
+# }
+# [17:35:22.133] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric-tombstone-stable-missing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.133] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.134] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.134] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric-tombstone-joining-old.mp4',
+#   bframePath: 'C:/reviews/fabric-tombstone-joining-old.bframe'
+# }
+# [17:35:22.134] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric-tombstone-joining-old.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.134] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.134] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.134] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.134] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# Subtest: Fabric drawing sync causally converges concurrent and dirty-overlap saves
+ok 106 - Fabric drawing sync causally converges concurrent and dirty-overlap saves
+  ---
+  duration_ms: 218.8723
+  type: 'test'
+  ...
+# Subtest: a causally superseded Fabric root cannot return through disk reload
+ok 107 - a causally superseded Fabric root cannot return through disk reload
+  ---
+  duration_ms: 1.2058
+  type: 'test'
+  ...
+# Subtest: the currently observed disk root stays protected beyond the stale history cap
+ok 108 - the currently observed disk root stays protected beyond the stale history cap
+  ---
+  duration_ms: 1.7063
+  type: 'test'
+  ...
+# Subtest: an accepted intermediate root stays blocked when Drive exposes it after later broadcasts
+ok 109 - an accepted intermediate root stays blocked when Drive exposes it after later broadcasts
+  ---
+  duration_ms: 0.8797
+  type: 'test'
+  ...
+# [17:35:22.135] [ReviewDataManager] .bframe 저장 실패 Error: 협업 드로잉 기준이 서로 달라 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2776:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:6485:5)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:22.135] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629722135-pprg76hx', bytes: 0 }
+# [17:35:22.135] [FabricDrawingSync] drawingsV3 브로드캐스트 전송 { transferId: '1788629722135-ufbvopln', bytes: 0 }
+# [17:35:22.135] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.135] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.135] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.135] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.135] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.135] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.135] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric-tombstone-stable-present.mp4',
+#   bframePath: 'C:/reviews/fabric-tombstone-stable-present.bframe'
+# }
+# [17:35:22.136] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric-tombstone-stable-present.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.136] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.136] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.136] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/fabric-tombstone-joining-missing.mp4',
+#   bframePath: 'C:/reviews/fabric-tombstone-joining-missing.bframe'
+# }
+# [17:35:22.136] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/fabric-tombstone-joining-missing.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.136] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.136] [FabricDrawingSync] FabricDrawingSync 초기화됨 (Broadcast 모드)
+# [17:35:22.136] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.136] [FabricDrawingSync] Fabric 드로잉 동기화 시작됨
+# [17:35:22.136] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.136] [FabricDrawingSync] Fabric 드로잉 동기화 중지됨
+# [17:35:22.136] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.136] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.136] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.136] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.136] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/baseline-conflict-await.mp4',
+#   bframePath: 'C:/reviews/baseline-conflict-await.bframe'
+# }
+# [17:35:22.136] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/baseline-conflict-await.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.136] [ReviewDataManager] .bframe 저장 실패 Error: 협업 드로잉 기준이 서로 달라 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2776:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1422:14)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:6591:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:22.136] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.136] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.136] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.136] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/baseline-conflict-ipc.mp4',
+#   bframePath: 'C:/reviews/baseline-conflict-ipc.bframe'
+# }
+# [17:35:22.137] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/baseline-conflict-ipc.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.137] [ReviewDataManager] .bframe 저장 중 Fabric 권위 변경 감지, 최신 상태로 재시도 { path: 'C:/reviews/baseline-conflict-ipc.bframe' }
+# [17:35:22.137] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.137] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.137] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.137] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/external-root-during-ipc.mp4',
+#   bframePath: 'C:/reviews/external-root-during-ipc.bframe'
+# }
+# [17:35:22.137] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/external-root-during-ipc.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.137] [ReviewDataManager] .bframe 저장 중 Fabric 권위 변경 감지, 최신 상태로 재시도 { path: 'C:/reviews/external-root-during-ipc.bframe' }
+# [17:35:22.138] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/external-root-during-ipc.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:22.138] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.138] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.138] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.138] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/external-root-hydration-during-ipc.mp4',
+#   bframePath: 'C:/reviews/external-root-hydration-during-ipc.bframe'
+# }
+# [17:35:22.138] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/external-root-hydration-during-ipc.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.138] [ReviewDataManager] .bframe 저장 중 Fabric 권위 변경 감지, 최신 상태로 재시도 { path: 'C:/reviews/external-root-hydration-during-ipc.bframe' }
+# [17:35:22.138] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/external-root-hydration-during-ipc.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:22.139] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.139] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.139] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.139] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/local-fabric-change-during-ipc.mp4',
+#   bframePath: 'C:/reviews/local-fabric-change-during-ipc.bframe'
+# }
+# [17:35:22.139] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/local-fabric-change-during-ipc.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.139] [ReviewDataManager] .bframe 저장 중 Fabric 권위 변경 감지, 최신 상태로 재시도 { path: 'C:/reviews/local-fabric-change-during-ipc.bframe' }
+# [17:35:22.139] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/local-fabric-change-during-ipc.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:22.139] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.140] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:22.140] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.140] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/baseline-conflict-autosave.mp4',
+#   bframePath: 'C:/reviews/baseline-conflict-autosave.bframe'
+# }
+# [17:35:22.140] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/baseline-conflict-autosave.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.146] [ReviewDataManager] 자동 저장 실행
+# [17:35:22.146] [ReviewDataManager] .bframe 저장 실패 Error: 협업 드로잉 기준이 서로 달라 원본 보호를 위해 저장을 중단했습니다.
+#     at ReviewDataManager._assertRootEnvelopeWritable (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:2776:13)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1407:14)
+#     at process.processTicksAndRejections (node:internal/process/task_queues:105:5)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async Timeout.<anonymous> (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:3145:9)
+# [17:35:22.191] [ReviewDataManager] 자동 저장 실행
+# [17:35:22.192] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/baseline-conflict-autosave.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:22.237] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.238] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:22.238] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.238] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/authority-autosave-pause.mp4',
+#   bframePath: 'C:/reviews/authority-autosave-pause.bframe'
+# }
+# [17:35:22.238] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/authority-autosave-pause.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.238] [ReviewDataManager] 자동 저장 일시 중지
+# [17:35:22.313] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.313] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: true, autoSaveDelay: 5 }
+# [17:35:22.313] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.313] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/authority-autosave-disconnect.mp4',
+#   bframePath: 'C:/reviews/authority-autosave-disconnect.bframe'
+# }
+# [17:35:22.313] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/authority-autosave-disconnect.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.313] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.357] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.358] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.358] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.358] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/save-retry.mp4',
+#   bframePath: 'C:/reviews/save-retry.bframe'
+# }
+# [17:35:22.358] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/save-retry.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.358] [ReviewDataManager] .bframe 저장 실패 Error: Fabric 드로잉 최신 상태를 가져오지 못했습니다.
+#     at ReviewDataManager._finalFabricSnapshotHandler (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:6998:11)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1410:50)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:7001:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:22.359] [ReviewDataManager] .bframe 저장 일시 실패, 재시도 예약됨 {
+#   path: 'C:/reviews/save-retry.bframe',
+#   reason: 'fabric-snapshot-unavailable',
+#   attempt: 1
+# }
+# Subtest: Fabric drawing sync propagates causal tombstones without trusting incomparable startup baselines
+ok 110 - Fabric drawing sync propagates causal tombstones without trusting incomparable startup baselines
+  ---
+  duration_ms: 225.1353
+  type: 'test'
+  ...
+# [17:35:22.372] [ReviewDataManager] .bframe 저장 재시도 {
+#   path: 'C:/reviews/save-retry.bframe',
+#   attempt: 1,
+#   reason: 'fabric-snapshot-unavailable'
+# }
+# [17:35:22.373] [ReviewDataManager] .bframe 파일 저장됨 {
+#   path: 'C:/reviews/save-retry.bframe',
+#   commentLayers: 1,
+#   drawingLayers: 0,
+#   liveblocksConnected: false
+# }
+# [17:35:22.418] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.418] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.419] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.419] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/save-hard-failure.mp4',
+#   bframePath: 'C:/reviews/save-hard-failure.bframe'
+# }
+# [17:35:22.419] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/save-hard-failure.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.419] [ReviewDataManager] .bframe 저장 실패 Error: 재시도 불가 실패
+#     at ReviewDataManager._finalFabricSnapshotHandler (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:7039:11)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1410:50)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:7042:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7)
+# [17:35:22.419] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# [17:35:22.419] [ReviewDataManager] ReviewDataManager 초기화됨 { autoSave: false, autoSaveDelay: 500 }
+# [17:35:22.419] [ReviewDataManager] 데이터 변경 이벤트 연결됨
+# [17:35:22.419] [ReviewDataManager] 영상 파일 설정됨 {
+#   videoPath: 'C:/reviews/drawing-blocked.mp4',
+#   bframePath: 'C:/reviews/drawing-blocked.bframe'
+# }
+# [17:35:22.419] [ReviewDataManager] .bframe 파일 로드됨 {
+#   path: 'C:/reviews/drawing-blocked.bframe',
+#   version: '2.0',
+#   commentLayers: 0,
+#   drawingLayers: 0
+# }
+# [17:35:22.419] [ReviewDataManager] .bframe 저장 실패 Error: Fabric 드로잉 저장이 차단된 상태입니다.
+#     at ReviewDataManager._finalFabricSnapshotHandler (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:7084:21)
+#     at ReviewDataManager._doSave (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1410:50)
+#     at async ReviewDataManager.save (file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/review-data-manager.js:1283:21)
+#     at async TestContext.<anonymous> (C:\\BAEframe\\BAEFRAME\\scripts\\tests\\review-data-manager-save.test.js:7089:16)
+#     at async Test.run (node:internal/test_runner/test:1054:7)
+#     at async Test.processPendingSubtests (node:internal/test_runner/test:744:7) {
+#   saveFailureReason: 'fabric-drawing-blocked'
+# }
+# Subtest: 일시적 저장 실패는 백오프 재시도로 복구되고 실패 토스트를 미룬다
+ok 111 - 일시적 저장 실패는 백오프 재시도로 복구되고 실패 토스트를 미룬다
+  ---
+  duration_ms: 60.3584
+  type: 'test'
+  ...
+# Subtest: 재시도 불가능한 저장 실패는 즉시 save-failed로 통보한다
+ok 112 - 재시도 불가능한 저장 실패는 즉시 save-failed로 통보한다
+  ---
+  duration_ms: 0.8887
+  type: 'test'
+  ...
+# [17:35:22.480] [ReviewDataManager] 데이터 변경 이벤트 해제됨
+# Subtest: 드로잉 저장 차단은 재시도하지 않고 즉시 save-blocked로 통보한다
+ok 113 - 드로잉 저장 차단은 재시도하지 않고 즉시 save-blocked로 통보한다
+  ---
+  duration_ms: 61.4599
+  type: 'test'
+  ...
+# Subtest: an external atomic rename after the guarded hash is preserved as a conflict
+ok 114 - an external atomic rename after the guarded hash is preserved as a conflict
+  ---
+  duration_ms: 1574.8581
+  type: 'test'
+  ...
+# Subtest: an existing direct writer maps the sharing violation to busy
+ok 115 - an existing direct writer maps the sharing violation to busy
+  ---
+  duration_ms: 51.4501
+  type: 'test'
+  ...
+# Subtest: a concurrent helper lock owner maps to busy without changing the target
+ok 116 - a concurrent helper lock owner maps to busy without changing the target
+  ---
+  duration_ms: 215.0775
+  type: 'test'
+  ...
+# Subtest: review file store exposes the transactional save API
+ok 117 - review file store exposes the transactional save API
+  ---
+  duration_ms: 8.0183
+  type: 'test'
+  ...
+# Subtest: transient Windows rename errors retry before committing the verified temp
+ok 118 - transient Windows rename errors retry before committing the verified temp
+  ---
+  duration_ms: 138.0724
+  type: 'test'
+  ...
+# Subtest: exhausted Windows rename retries preserve main and report target-busy
+ok 119 - exhausted Windows rename retries preserve main and report target-busy
+  ---
+  duration_ms: 74.5119
+  type: 'test'
+  ...
+# Subtest: an external edit during rename backoff stops later retries as stale
+ok 120 - an external edit during rename backoff stops later retries as stale
+  ---
+  duration_ms: 74.3134
+  type: 'test'
+  ...
+# Subtest: a recovery sidecar is never exposed before its complete JSON is synced
+ok 121 - a recovery sidecar is never exposed before its complete JSON is synced
+  ---
+  duration_ms: 16.092
+  type: 'test'
+  ...
+# Subtest: orphan cleanup removes only exact generated temp names and preserves live owners
+ok 122 - orphan cleanup removes only exact generated temp names and preserves live owners
+  ---
+  duration_ms: 129.3016
+  type: 'test'
+  ...
+# Subtest: a short Windows path recovers the same transaction through different casing
+ok 123 - a short Windows path recovers the same transaction through different casing
+  ---
+  duration_ms: 70.7782
+  type: 'test'
+  ...
+# Subtest: a long Windows path recovers the same transaction through different casing
+ok 124 - a long Windows path recovers the same transaction through different casing
+  ---
+  duration_ms: 69.4494
+  type: 'test'
+  ...
+# Subtest: distinct NFC and NFD Windows files never consume each other recovery state
+ok 125 - distinct NFC and NFD Windows files never consume each other recovery state
+  ---
+  duration_ms: 72.2705
+  type: 'test'
+  ...
+# Subtest: distinct Kelvin sign and ASCII k Windows files never consume each other recovery state
+ok 126 - distinct Kelvin sign and ASCII k Windows files never consume each other recovery state
+  ---
+  duration_ms: 73.8117
+  type: 'test'
+  ...
+# Subtest: ASCII case variants in a case-sensitive Windows directory keep separate recovery state
+ok 127 - ASCII case variants in a case-sensitive Windows directory keep separate recovery state
+  ---
+  duration_ms: 100.0193
+  type: 'test'
+  ...
+# Subtest: a Windows junction alias recovers the same long-name transaction
+ok 128 - a Windows junction alias recovers the same long-name transaction
+  ---
+  duration_ms: 84.3945
+  type: 'test'
+  ...
+# Subtest: a long valid Windows file name uses compact sibling transaction files
+ok 129 - a long valid Windows file name uses compact sibling transaction files
+  ---
+  duration_ms: 131.1088
+  type: 'test'
+  ...
+# Subtest: two Node processes using one version token allow exactly one commit
+ok 130 - two Node processes using one version token allow exactly one commit
+  ---
+  duration_ms: 251.6687
+  type: 'test'
+  ...
+# Subtest: the named-pipe lock stays held until post-replace verification finishes
+ok 131 - the named-pipe lock stays held until post-replace verification finishes
+  ---
+  duration_ms: 366.1077
+  type: 'test'
+  ...
+# Subtest: malformed backup recovery holds the named-pipe lock through post-verify
+ok 132 - malformed backup recovery holds the named-pipe lock through post-verify
+  ---
+  duration_ms: 372.2349
+  type: 'test'
+  ...
+# Subtest: two Node processes creating one review file never overwrite the first creator
+ok 133 - two Node processes creating one review file never overwrite the first creator
+  ---
+  duration_ms: 228.6492
+  type: 'test'
+  ...
+# Subtest: a waiting Node process times out without stealing another process lock
+ok 134 - a waiting Node process times out without stealing another process lock
+  ---
+  duration_ms: 389.1642
+  type: 'test'
+  ...
+# Subtest: a crashed named-pipe lock owner cannot leave a stale lock
+ok 135 - a crashed named-pipe lock owner cannot leave a stale lock
+  ---
+  duration_ms: 238.7103
+  type: 'test'
+  ...
+# Subtest: an external edit after temp sync wins the final token recheck
+ok 136 - an external edit after temp sync wins the final token recheck
+  ---
+  duration_ms: 183.4394
+  type: 'test'
+  ...
+# Subtest: a crash after temp sync preserves main and the next save removes the orphan
+ok 137 - a crash after temp sync preserves main and the next save removes the orphan
+  ---
+  duration_ms: 247.4862
+  type: 'test'
+  ...
+# Subtest: a crash after replace leaves one complete target and releases the pipe lock
+ok 138 - a crash after replace leaves one complete target and releases the pipe lock
+  ---
+  duration_ms: 242.1819
+  type: 'test'
+  ...
+# Subtest: readers observe only complete old or new JSON during replacement
+ok 139 - readers observe only complete old or new JSON during replacement
+  ---
+  duration_ms: 239.7028
+  type: 'test'
+  ...
+# Subtest: an external write at the final commit boundary is never overwritten
+ok 140 - an external write at the final commit boundary is never overwritten
+  ---
+  duration_ms: 143.5301
+  type: 'test'
+  ...
+# Subtest: a live commit restores an unexpected external CAS backup before success
+ok 141 - a live commit restores an unexpected external CAS backup before success
+  ---
+  duration_ms: 184.5749
+  type: 'test'
+  ...
+# Subtest: a pre-existing CAS backup from another transaction is never restored
+ok 142 - a pre-existing CAS backup from another transaction is never restored
+  ---
+  duration_ms: 139.3206
+  type: 'test'
+  ...
+# Subtest: a save waits for an active recovery sidecar then reports the completed write as stale
+ok 143 - a save waits for an active recovery sidecar then reports the completed write as stale
+  ---
+  duration_ms: 123.8139
+  type: 'test'
+  ...
+# Subtest: a corrupted post-verify target restores the verified base
+ok 144 - a corrupted post-verify target restores the verified base
+  ---
+  duration_ms: 190.0117
+  type: 'test'
+  ...
+# Subtest: a missing post-verify target restores the verified base
+ok 145 - a missing post-verify target restores the verified base
+  ---
+  duration_ms: 1010.136
+  type: 'test'
+  ...
+# Subtest: a rollback failure is fatal and preserves every recovery artifact
+ok 146 - a rollback failure is fatal and preserves every recovery artifact
+  ---
+  duration_ms: 136.8749
+  type: 'test'
+  ...
+# Subtest: the next read restores a prepared transaction whose main is missing
+ok 147 - the next read restores a prepared transaction whose main is missing
+  ---
+  duration_ms: 888.9762
+  type: 'test'
+  ...
+# Subtest: a valid external version supersedes an interrupted prepared transaction
+ok 148 - a valid external version supersedes an interrupted prepared transaction
+  ---
+  duration_ms: 6.2706
+  type: 'test'
+  ...
+# Subtest: a displaced external CAS backup is restored after a helper crash
+ok 149 - a displaced external CAS backup is restored after a helper crash
+  ---
+  duration_ms: 63.2885
+  type: 'test'
+  ...
+# Subtest: a stale malformed sidecar is quarantined without hiding valid review data
+ok 150 - a stale malformed sidecar is quarantined without hiding valid review data
+  ---
+  duration_ms: 53.5555
+  type: 'test'
+  ...
+# Subtest: a stale unsupported sidecar is also quarantined with its bytes intact
+ok 151 - a stale unsupported sidecar is also quarantined with its bytes intact
+  ---
+  duration_ms: 52.5266
+  type: 'test'
+  ...
+# Subtest: a stale foreign-computer sidecar recovers a complete committed target
+ok 152 - a stale foreign-computer sidecar recovers a complete committed target
+  ---
+  duration_ms: 6.0499
+  type: 'test'
+  ...
+# Subtest: a malformed main is restored from valid .bak through the store transaction
+ok 153 - a malformed main is restored from valid .bak through the store transaction
+  ---
+  duration_ms: 132.6626
+  type: 'test'
+  ...
+# Subtest: a malformed target defers the save instead of throwing out of the lock
+ok 154 - a malformed target defers the save instead of throwing out of the lock
+  ---
+  duration_ms: 3.632
+  type: 'test'
+  ...
+# Subtest: a malformed target with failIfExists reports exists without parsing
+ok 155 - a malformed target with failIfExists reports exists without parsing
+  ---
+  duration_ms: 3.2567
+  type: 'test'
+  ...
+# Subtest: two writes with one review version token serialize so exactly one can replace the file
+ok 156 - two writes with one review version token serialize so exactly one can replace the file
+  ---
+  duration_ms: 152.7497
+  type: 'test'
+  ...
+# Subtest: an external write makes an old review version token conflict without changing disk
+ok 157 - an external write makes an old review version token conflict without changing disk
+  ---
+  duration_ms: 5.0175
+  type: 'test'
+  ...
+# Subtest: an existing bframe refuses a blind overwrite when no version token is provided
+ok 158 - an existing bframe refuses a blind overwrite when no version token is provided
+  ---
+  duration_ms: 2.9877
+  type: 'test'
+  ...
+# Subtest: preload exposes a separate review snapshot API without changing loadReview
+ok 159 - preload exposes a separate review snapshot API without changing loadReview
+  ---
+  duration_ms: 0.6574
+  type: 'test'
+  ...
+# Subtest: main review IPC delegates versioned snapshots and transactional saves to the review file store
+ok 160 - main review IPC delegates versioned snapshots and transactional saves to the review file store
+  ---
+  duration_ms: 0.1868
+  type: 'test'
+  ...
+# Subtest: review file store checks the token before preparing and uses guarded CAS at commit
+ok 161 - review file store checks the token before preparing and uses guarded CAS at commit
+  ---
+  duration_ms: 0.3043
+  type: 'test'
+  ...
+# Subtest: review file store labels lock timeouts, malformed targets and unsupported CAS for the renderer
+ok 162 - review file store labels lock timeouts, malformed targets and unsupported CAS for the renderer
+  ---
+  duration_ms: 0.1959
+  type: 'test'
+  ...
+1..162
+# tests 164
+# suites 0
+# pass 164
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 12732.8905

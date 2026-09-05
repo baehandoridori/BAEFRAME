@@ -1,0 +1,14 @@
+{
+  "source": "Native app drawing fixture captured by the report author",
+  "nativeFixtureAcceptedByCurrentV3Store": true,
+  "keyframe": 33,
+  "objects": 1,
+  "fps": 24,
+  "legacyDrawingsIsArray": false,
+  "localWebViewerAtSameFrame": {
+    "clears": 1,
+    "paints": 0
+  },
+  "scope": "Valid fixture and extracted local renderer; not a network or native UI replay"
+}
+AUDIT_EXIT=0
