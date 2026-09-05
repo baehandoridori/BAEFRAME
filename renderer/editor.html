@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; media-src 'self' file: blob:; connect-src 'none';"
+    />
+    <title>영상 편집 · BAEFRAME</title>
+    <link rel="stylesheet" href="styles/editor.css" />
+    <link rel="stylesheet" href="styles/editor-drawing.css" />
+    <script defer src="../shared/edit-project.js"></script>
+    <script defer src="scripts/lib/editor-drawing.iife.js"></script>
+    <script defer src="scripts/editor/controller.js"></script>
+    <script defer src="scripts/editor/preview-clock.js"></script>
+    <script defer src="scripts/editor/editor.js"></script>
+  </head>
+  <body>
+    <header class="editor-header">
+      <div class="brand">
+        <span class="brand-mark">B</span><strong>baeframe</strong><span>영상 편집</span>
+      </div>
+      <div class="header-actions">
+        <button id="openProject">프로젝트 열기</button><button id="saveProject">저장</button
+        ><button id="saveAsProject">다른 이름으로 저장</button>
+        <button id="exportVideo" class="primary">MP4 내보내기</button>
+      </div>
+    </header>
+    <main class="workspace">
+      <section class="viewer" aria-label="영상과 드로잉 미리보기">
+        <div class="viewer-top">
+          <span id="projectTitle">새 편집</span><span id="outputInfo">1920 × 1080 · 24fps</span>
+        </div>
+        <div class="stage-area">
+          <div class="stage" id="stage">
+            <video id="videoPreview" playsinline preload="auto"></video>
+            <div id="drawingContainer"></div>
+          </div>
+          <div class="empty-state" id="emptyState">
+            <strong>영상에서 릴까지</strong>
+            <p>영상을 가져와 자르고, 멈추고, 그림을 더하세요.</p>
+            <button id="emptyImport" class="primary">영상 가져오기</button>
+          </div>
+        </div>
+        <div class="transport">
+          <div>
+            <button id="previousFrame" aria-label="이전 프레임">−1F</button
+            ><button id="playPause">재생</button
+            ><button id="nextFrame" aria-label="다음 프레임">+1F</button>
+          </div>
+          <output id="timeDisplay">00:00:00 / 00:00:00</output>
+          <span id="sourceTime" class="muted">원본 —</span>
+        </div>
+        <div class="drawing-tools" aria-label="그리기">
+          <button id="drawMode" aria-pressed="false">그리기</button>
+          <button data-tool="brush">펜</button><button data-tool="select">선택</button
+          ><button data-tool="eraser">지우개</button><button data-tool="line">선</button
+          ><button data-tool="rect">사각형</button><button data-tool="arrow">화살표</button>
+          <span class="separator"></span><button data-draw-action="keyframe">● 키프레임</button
+          ><button data-draw-action="blank">○ 빈 키프레임</button
+          ><button data-draw-action="hold">그림 유지 +1F</button>
+        </div>
+      </section>
+      <aside class="inspector" aria-label="편집 설정">
+        <section>
+          <h2>완성 영상</h2>
+          <label>이름<input id="projectName" maxlength="120" value="새 편집" /></label>
+          <div class="field-pair">
+            <label
+              >화면<select id="aspectRatio">
+                <option value="1920x1080">가로 16:9</option>
+                <option value="1080x1920">세로 9:16</option>
+                <option value="1080x1080">정사각형 1:1</option>
+              </select></label
+            ><label
+              >프레임<select id="projectFps">
+                <option>24</option>
+                <option>25</option>
+                <option>30</option>
+                <option>60</option>
+              </select></label
+            >
+          </div>
+        </section>
+        <section id="clipInspector">
+          <h2>선택한 컷 <span id="selectedClipName"></span></h2>
+          <label
+            >화면 맞춤<select id="clipFit">
+              <option value="contain">전체 보이기</option>
+              <option value="cover">화면 채우기</option>
+            </select></label
+          >
+          <label
+            >원본 소리 <output id="clipVolumeValue">100%</output
+            ><input id="clipVolume" type="range" min="0" max="100" value="100"
+          /></label>
+          <div class="field-pair">
+            <label
+              >앞에서 제거 (초)<input
+                id="trimStart"
+                type="number"
+                min="0"
+                step="0.05"
+                value="0" /></label
+            ><label
+              >뒤에서 제거 (초)<input id="trimEnd" type="number" min="0" step="0.05" value="0"
+            /></label>
+          </div>
+          <button id="applyTrim" class="wide">자르기 적용</button>
+          <div class="field-pair">
+            <label
+              >정지 길이 (초)<input
+                id="holdSeconds"
+                type="number"
+                min="0.05"
+                max="300"
+                step="0.25"
+                value="2" /></label
+            ><label
+              >정지 방식<select id="holdType">
+                <option value="insert">시간 추가</option>
+                <option value="replace">현재부터 대체</option>
+              </select></label
+            >
+          </div>
+          <button id="insertHold" class="wide">현재 화면으로 정지 구간 만들기</button>
+        </section>
+        <section>
+          <h2>배경음악</h2>
+          <button id="importMusic" class="wide">음악 가져오기</button>
+          <p id="musicName" class="muted">추가된 음악 없음</p>
+          <label>음량<input id="musicVolume" type="range" min="0" max="100" value="50" /></label
+          ><button id="removeMusic">음악 제거</button>
+        </section>
+      </aside>
+    </main>
+    <section class="timeline" aria-label="편집 타임라인">
+      <div class="timeline-tools">
+        <div>
+          <button id="importVideo">+ 영상 가져오기</button><button id="splitClip">컷 나누기</button
+          ><button id="deleteClip">컷 삭제</button
+          ><button id="moveLeft" aria-label="컷 앞으로 이동">←</button
+          ><button id="moveRight" aria-label="컷 뒤로 이동">→</button><span class="separator"></span
+          ><button id="undo" aria-label="실행취소">↶</button
+          ><button id="redo" aria-label="다시실행">↷</button>
+        </div>
+        <div>
+          <button id="expandLayers" aria-expanded="true">드로잉 접기</button
+          ><select id="timelineZoom" aria-label="타임라인 확대">
+            <option value="all">전체 보기</option>
+            <option value="clip">현재 컷 확대</option>
+          </select>
+        </div>
+      </div>
+      <div class="scrub-row">
+        <label for="scrub">재생 위치</label
+        ><input id="scrub" type="range" min="0" max="0" step="1" value="0" />
+      </div>
+      <div class="track ruler">
+        <span class="track-label">레이어</span>
+        <div id="ruler" class="axis"></div>
+      </div>
+      <div class="track video-track">
+        <span class="track-label">영상</span>
+        <div id="clipTrack" class="axis"></div>
+      </div>
+      <div class="drawing-group">
+        <span id="drawingClipLabel">드로잉 · 영상에 포함</span
+        ><button id="addLayer">+ 레이어</button>
+      </div>
+      <div id="drawingRows"></div>
+      <div class="track music-track">
+        <span class="track-label">배경음악</span>
+        <div id="musicTrack" class="axis"></div>
+      </div>
+    </section>
+    <footer>
+      <span id="status" role="status">영상 편집 프로젝트는 원본과 별도로 저장됩니다.</span>
+      <div id="exportProgress" hidden>
+        <progress id="progress" max="1" value="0"></progress
+        ><button id="cancelExport">출력 취소</button>
+      </div>
+      <span class="shortcut-note">Space 재생 · Ctrl+S 저장 · Ctrl+Z 실행취소</span>
+    </footer>
+    <audio id="musicPreview" preload="auto"></audio>
+  </body>
+</html>

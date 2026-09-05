@@ -231,7 +231,7 @@ test('release build scripts pin stable while trial build scripts pin trial regar
   );
   assert.equal(
     packageJson.scripts['prebuild:trial'],
-    'npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper'
+    'npm run bundle:mpv-fabric-overlay && npm run bundle:editor-drawing && npm run build:review-file-cas-helper'
   );
   assert.equal(
     packageJson.scripts['build:trial'],

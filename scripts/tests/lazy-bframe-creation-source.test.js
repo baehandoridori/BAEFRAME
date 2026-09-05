@@ -112,12 +112,12 @@ test('all collaboration seeds exclude additive legacy snapshots while preserving
   const mergeSeedHandlers = appSource.slice(mergeSeedStart, mergeSeedEnd);
   assert.equal((mergeSeedHandlers.match(/seedCurrentState:\s*true/g) || []).length, 3);
 
-  const quitHandlerStart = appSource.indexOf('window.electronAPI.onRequestSaveBeforeQuit');
+  const quitHandlerStart = appSource.indexOf('// ====== 앱 종료 전 저장 처리 ======');
   const quitHandlerEnd = appSource.indexOf('// ====== 사용자 이름 초기화', quitHandlerStart);
   assert.ok(quitHandlerStart >= 0 && quitHandlerEnd > quitHandlerStart);
   const quitHandler = appSource.slice(quitHandlerStart, quitHandlerEnd);
   assert.doesNotMatch(quitHandler, /seedCurrentState:\s*true/);
-  assert.equal((quitHandler.match(/seedCurrentState:\s*false/g) || []).length, 2);
+  assert.equal((quitHandler.match(/seedCurrentState:\s*false/g) || []).length, 1);
 });
 
 test('first .bframe save is protected against another user creating the file first', () => {

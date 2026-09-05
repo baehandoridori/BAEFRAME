@@ -760,6 +760,7 @@ async function initApp() {
 
     // 컷 묶음 관련
     btnCutlist: document.getElementById('btnCutlist'),
+    btnOpenEditor: document.getElementById('btnOpenEditor'),
     cutlistSidebar: document.getElementById('cutlistSidebar'),
     cutlistNameInput: document.getElementById('cutlistNameInput'),
     btnCutlistAdd: document.getElementById('btnCutlistAdd'),
@@ -15417,99 +15418,119 @@ async function initApp() {
   });
 
   // ====== 앱 종료 전 저장 처리 ======
-  let saveBeforeQuitInProgress = false;
-  window.electronAPI.onRequestSaveBeforeQuit(async () => {
-    if (saveBeforeQuitInProgress) return;
-    saveBeforeQuitInProgress = true;
-    log.info('앱 종료 전 저장 요청 수신');
-    const savingOverlay = document.getElementById('appSavingOverlay');
-    savingOverlay?.classList.add('active');
-    const fabricPersistenceReadyToLeave =
-      await fabricDrawingPilotController.preparePersistenceForQuit();
-    if (!fabricPersistenceReadyToLeave) {
-      const forceQuit = confirm(
-        '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
-      );
-      if (forceQuit) {
-        await window.electronAPI.confirmQuit();
-      } else {
-        savingOverlay?.classList.remove('active');
-        await window.electronAPI.cancelQuit();
+  let reviewQuitWork = Promise.resolve();
+  const reviewQuitAttempts = new Map();
+
+  function resumeCancelledQuit(attempt) {
+    if (attempt.recovery) return attempt.recovery;
+    attempt.recovery = (async () => {
+      // The caller waits for the attempt's save/preparation before releasing input.
+      try {
         await fabricDrawingPilotController.resumeAfterQuitCancelled();
-        saveBeforeQuitInProgress = false;
+      } finally {
+        if (attempt.autoSavePaused) reviewDataManager.resumeAutoSave();
+        attempt.savingOverlay?.classList.remove('active');
       }
-      return;
-    }
-
-    reviewDataManager.pauseAutoSave();
-    await reviewDataManager.waitForPendingSave();
-
-    // 협업 세션 종료 (presence 제거)
-    commentSync.stop();
-    drawingSync.stop();
-    fabricDrawingSync.stop();
-    try {
-      await liveblocksManager.stop();
-    } catch (error) {
-      log.warn('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행', {
-        error: error.message
-      });
-    }
-
-    // 미저장 변경사항 확인
-    if (!reviewDataManager.hasUnsavedChanges()) {
-      log.info('저장할 변경사항 없음, 바로 종료');
-      await window.electronAPI.confirmQuit();
-      return;
-    }
-
-    try {
-      log.info('종료 전 저장 시작');
-      const saved = await reviewDataManager.save();
-
-      if (saved) {
-        log.info('저장 완료, 앱 종료 진행');
-        await window.electronAPI.confirmQuit();
-      } else {
-        // 저장 실패 - 사용자 선택
-        savingOverlay?.classList.remove('active');
-        const forceQuit = confirm(
-          '저장에 실패했습니다.\n\n저장하지 않고 종료하시겠습니까?'
-        );
-        if (forceQuit) {
-          await window.electronAPI.confirmQuit();
-        } else {
-          await window.electronAPI.cancelQuit();
-          await fabricDrawingPilotController.resumeAfterQuitCancelled();
-          reviewDataManager.resumeAutoSave();
-          await startCollaborationForVideoLoad(
-            latestVideoLoadToken,
-            reviewDataManager.currentBframePath,
-            { persistNewRoom: false, seedCurrentState: false }
-          );
-          saveBeforeQuitInProgress = false;
-        }
-      }
-    } catch (error) {
-      log.error('종료 전 저장 오류', error);
-      savingOverlay?.classList.remove('active');
-      const forceQuit = confirm(
-        `저장 중 오류가 발생했습니다: ${error.message}\n\n저장하지 않고 종료하시겠습니까?`
-      );
-      if (forceQuit) {
-        await window.electronAPI.confirmQuit();
-      } else {
-        await window.electronAPI.cancelQuit();
-        await fabricDrawingPilotController.resumeAfterQuitCancelled();
-        reviewDataManager.resumeAutoSave();
+      if (attempt.collaborationStopped) {
         await startCollaborationForVideoLoad(
           latestVideoLoadToken,
           reviewDataManager.currentBframePath,
           { persistNewRoom: false, seedCurrentState: false }
         );
-        saveBeforeQuitInProgress = false;
       }
-    }
+      reviewQuitAttempts.delete(attempt.id);
+    })();
+    return attempt.recovery;
+  }
+
+  window.electronAPI.onQuitAborted((attemptId) => {
+    const attempt = reviewQuitAttempts.get(attemptId);
+    if (!attempt) return reviewQuitWork;
+    attempt.cancelled = true;
+    const recovery = reviewQuitWork.then(() => resumeCancelledQuit(attempt));
+    reviewQuitWork = recovery.catch((error) => log.error('종료 취소 후 복구 실패', error));
+    return recovery;
+  });
+
+  window.electronAPI.onRequestSaveBeforeQuit(async (attemptId) => {
+    if (!Number.isSafeInteger(attemptId) || reviewQuitAttempts.has(attemptId)) return;
+    const attempt = {
+      id: attemptId, cancelled: false, autoSavePaused: false, collaborationStopped: false,
+      savingOverlay: document.getElementById('appSavingOverlay'), recovery: null
+    };
+    reviewQuitAttempts.set(attemptId, attempt);
+    // A new attempt waits for the cancelled attempt's save and input recovery.
+    const work = reviewQuitWork.then(async () => {
+      if (attempt.cancelled) return;
+      log.info('앱 종료 전 저장 요청 수신', { attemptId });
+      attempt.savingOverlay?.classList.add('active');
+      const cancel = async () => {
+        attempt.cancelled = true;
+        await window.electronAPI.cancelQuit(attemptId);
+      };
+      try {
+        const fabricPersistenceReadyToLeave =
+          await fabricDrawingPilotController.preparePersistenceForQuit();
+        if (attempt.cancelled) return;
+        if (!fabricPersistenceReadyToLeave) {
+          const forceQuit = confirm(
+            '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
+          );
+          if (forceQuit) await window.electronAPI.confirmQuit(attemptId);
+          else await cancel();
+          return;
+        }
+
+        reviewDataManager.pauseAutoSave();
+        attempt.autoSavePaused = true;
+        await reviewDataManager.waitForPendingSave();
+        if (attempt.cancelled) return;
+
+        // 협업 세션 종료 (presence 제거)
+        attempt.collaborationStopped = true;
+        commentSync.stop();
+        drawingSync.stop();
+        fabricDrawingSync.stop();
+        try {
+          await liveblocksManager.stop();
+        } catch (error) {
+          log.warn('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행', {
+            error: error.message
+          });
+        }
+        if (attempt.cancelled) return;
+
+        if (!reviewDataManager.hasUnsavedChanges()) {
+          log.info('저장할 변경사항 없음, 바로 종료');
+          await window.electronAPI.confirmQuit(attemptId);
+          return;
+        }
+        log.info('종료 전 저장 시작');
+        const saved = await reviewDataManager.save();
+        if (attempt.cancelled) return;
+        if (saved) {
+          log.info('저장 완료, 앱 종료 진행');
+          await window.electronAPI.confirmQuit(attemptId);
+        } else {
+          attempt.savingOverlay?.classList.remove('active');
+          if (confirm('저장에 실패했습니다.\n\n저장하지 않고 종료하시겠습니까?')) {
+            await window.electronAPI.confirmQuit(attemptId);
+          } else await cancel();
+        }
+      } catch (error) {
+        if (!attempt.cancelled) {
+          log.error('종료 전 저장 오류', error);
+          attempt.savingOverlay?.classList.remove('active');
+          if (confirm(`저장 중 오류가 발생했습니다: ${error.message}\n\n저장하지 않고 종료하시겠습니까?`)) {
+            await window.electronAPI.confirmQuit(attemptId);
+          } else await cancel();
+        }
+      } finally {
+        if (attempt.cancelled) await resumeCancelledQuit(attempt);
+      }
+    });
+    reviewQuitWork = work.catch((error) => log.error('종료 저장 처리 실패', error));
+    return work;
   });
 
   // ====== 사용자 이름 초기화 ======
@@ -20431,6 +20452,13 @@ async function initApp() {
   }
 
   function initCutlistFeature() {
+    elements.btnOpenEditor?.addEventListener('click', async () => {
+      try {
+        await window.electronAPI.openEditor();
+      } catch (error) {
+        showToast(`영상 편집창을 열 수 없습니다: ${error.message}`, 'error');
+      }
+    });
     const cutlistManager = getCutlistManager();
 
     cutlistManager.onCutlistLoaded = () => {

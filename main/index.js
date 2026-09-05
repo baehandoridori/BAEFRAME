@@ -77,6 +77,9 @@ let shutdownCleanupStarted = false;
 const { createLogger } = require('./logger');
 const { createMainWindow, getMainWindow, createLoadingWindow, closeLoadingWindow } = require('./window');
 const { setupIpcHandlers } = require('./ipc-handlers');
+const { setupEditorIpc } = require('./editor-window');
+let editorWorkspace = null;
+let editorQuitCheck = false;
 const {
   resolveFabricDrawingPilot,
   resolveFabricDrawingV3Shadow,
@@ -490,6 +493,7 @@ if (!gotTheLock) {
     }
 
     setupIpcHandlers({ fabricDrawingPilot });
+    editorWorkspace = setupEditorIpc({ getMainWindow });
 
     // 최근 파일 목록 정리 (경로가 없어진 항목 제거)
     // 비동기로 실행하고 실패해도 앱 시작을 막지 않는다
@@ -563,9 +567,77 @@ if (!gotTheLock) {
 
   // 앱 종료 전 - 저장 확인
   let quitTimeout = null;
+  let quitAttemptSequence = 0;
+  let activeQuitAttempt = null;
+  let quitLockedEditor = null;
+
+  function unlockEditorAfterQuit() {
+    if (quitLockedEditor && !quitLockedEditor.isDestroyed()) quitLockedEditor.setEnabled(true);
+    quitLockedEditor = null;
+  }
+
+  function cancelQuitAttempt(attemptId) {
+    if (attemptId !== activeQuitAttempt) return;
+    activeQuitAttempt = null;
+    isQuitting = false;
+    forceQuit = false;
+    shutdownCleanupStarted = false;
+    if (quitTimeout) clearTimeout(quitTimeout);
+    quitTimeout = null;
+    editorWorkspace?.revokeCloseApproval();
+    unlockEditorAfterQuit();
+    const mainWindow = getMainWindow();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('app:quit-aborted', attemptId);
+    }
+  }
+
+  function isCurrentQuitResponse(event, attemptId) {
+    const mainWindow = getMainWindow();
+    return Number.isSafeInteger(attemptId) && attemptId === activeQuitAttempt &&
+      !!mainWindow && !mainWindow.isDestroyed() && event.sender === mainWindow.webContents &&
+      event.senderFrame === mainWindow.webContents.mainFrame;
+  }
+
+  function guardMainWindowClose(window) {
+    if (!window) return;
+    window.on('close', (event) => {
+      if (window !== getMainWindow() || (forceQuit && shutdownCleanupStarted)) return;
+      // Native X/Alt+F4 and window:close must keep the review renderer alive to save.
+      event.preventDefault();
+      app.quit();
+    });
+  }
+  guardMainWindowClose(getMainWindow());
+  app.on('browser-window-created', (_event, window) => guardMainWindowClose(window));
 
   app.on('before-quit', (event) => {
+    if (activeQuitAttempt === null) activeQuitAttempt = ++quitAttemptSequence;
+    const attemptId = activeQuitAttempt;
+    if (editorQuitCheck || editorWorkspace?.needsCloseConfirmation()) {
+      event.preventDefault();
+      if (!editorQuitCheck) {
+        editorQuitCheck = true;
+        unlockEditorAfterQuit();
+        editorWorkspace.confirmClose().then((confirmed) => {
+          editorQuitCheck = false;
+          if (attemptId !== activeQuitAttempt) return;
+          if (confirmed) app.quit();
+          else cancelQuitAttempt(attemptId);
+        }).catch((error) => {
+          editorQuitCheck = false;
+          cancelQuitAttempt(attemptId);
+          log.warn('영상 편집 종료 확인 실패', { error: error.message });
+        });
+      }
+      return;
+    }
     log.info('앱 종료 요청', { isQuitting, forceQuit });
+    const editorWindow = editorWorkspace?.getWindow?.();
+    if (!quitLockedEditor && editorWindow && !editorWindow.isDestroyed() && editorWindow.isEnabled()) {
+      editorWindow.setEnabled(false);
+      quitLockedEditor = editorWindow;
+    }
 
     if (forceQuit && !shutdownCleanupStarted) {
       event.preventDefault();
@@ -580,7 +652,7 @@ if (!gotTheLock) {
           log.warn('강제 종료 전 mpv 정리 예외', { error: error.message });
         })
         .finally(() => {
-          app.quit();
+          if (attemptId === activeQuitAttempt) app.quit();
         });
       return;
     }
@@ -603,10 +675,11 @@ if (!gotTheLock) {
       const mainWindow = getMainWindow();
       if (mainWindow && !mainWindow.isDestroyed()) {
         log.info('Renderer에 저장 확인 요청');
-        mainWindow.webContents.send('app:request-save-before-quit');
+        mainWindow.webContents.send('app:request-save-before-quit', attemptId);
 
         // 30초 타임아웃 - 렌더러가 응답하지 않으면 강제 종료
         quitTimeout = setTimeout(() => {
+          if (attemptId !== activeQuitAttempt) return;
           log.warn('종료 타임아웃 - 렌더러 응답 없음, 강제 종료');
           forceQuit = true;
           app.quit();
@@ -616,11 +689,15 @@ if (!gotTheLock) {
         forceQuit = true;
         app.quit();
       }
+    } else {
+      // Repeated close requests must wait for the same renderer save transaction.
+      event.preventDefault();
     }
   });
 
   // Renderer에서 종료 확인 응답 처리
-  ipcMain.handle('app:quit-confirmed', () => {
+  ipcMain.handle('app:quit-confirmed', (event, attemptId) => {
+    if (!isCurrentQuitResponse(event, attemptId)) return;
     log.info('Renderer 저장 완료, 앱 종료');
     if (quitTimeout) {
       clearTimeout(quitTimeout);
@@ -630,14 +707,10 @@ if (!gotTheLock) {
     app.quit();
   });
 
-  ipcMain.handle('app:quit-cancelled', () => {
+  ipcMain.handle('app:quit-cancelled', (event, attemptId) => {
+    if (!isCurrentQuitResponse(event, attemptId)) return;
     log.info('사용자가 종료 취소');
-    if (quitTimeout) {
-      clearTimeout(quitTimeout);
-      quitTimeout = null;
-    }
-    isQuitting = false;
-    forceQuit = false;
+    cancelQuitAttempt(attemptId);
   });
 
   // 앱 종료 완료 - 프로세스 강제 종료

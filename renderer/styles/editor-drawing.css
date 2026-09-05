@@ -1,0 +1,133 @@
+/* The editor owns this dock. Native review-player palettes keep their original styles. */
+.editor-drawing-dock {
+  display: inline-flex;
+  align-items: center;
+  position: relative;
+  z-index: 45;
+  min-width: 0;
+  max-width: 100%;
+}
+.editor-drawing-dock[hidden] { display: none !important; }
+.editor-drawing-palette.mpv-fabric-pilot-toolbar {
+  --fabric-palette-gap: 6px;
+  --text-primary: #f0f0ed;
+  --text-tertiary: #a5a5a0;
+  --text-faint: #b8b8b1;
+  --track-idle: #414141;
+  --accent-secondary: #ffd000;
+  position: static !important;
+  left: auto !important;
+  top: auto !important;
+  width: auto !important;
+  max-width: 100%;
+  color: var(--text-primary);
+  font: inherit;
+  user-select: none;
+}
+.editor-drawing-palette .mpv-fabric-pilot-toolbar-content {
+  display: flex !important;
+  align-items: center;
+  flex-flow: row wrap;
+  gap: 6px;
+  padding: 0;
+}
+.editor-drawing-palette .mpv-fabric-pilot-toolbar-header,
+.editor-drawing-palette .mpv-fabric-pilot-section-label,
+.editor-drawing-palette .mpv-fabric-pilot-brush-status,
+.editor-drawing-palette .mpv-fabric-pilot-badge,
+.editor-drawing-palette [data-fabric-pilot-section='tools'],
+.editor-drawing-palette [data-fabric-pilot-action='undo'],
+.editor-drawing-palette [data-fabric-pilot-action='redo'] { display: none !important; }
+.editor-drawing-palette .mpv-fabric-pilot-section-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.editor-drawing-palette button {
+  min-width: 28px;
+  min-height: 32px;
+  border: 1px solid #414141;
+  border-radius: 5px;
+  padding: 6px 8px;
+  background: #242424;
+  color: #f0f0ed;
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.editor-drawing-palette button:hover { background: #303030; border-color: #777; }
+.editor-drawing-palette button:focus-visible { outline: 2px solid #ffd000; outline-offset: 2px; }
+.editor-drawing-palette button[data-active='true'],
+.editor-drawing-palette button[aria-pressed='true'] { border-color: #ffd000; background: #342e15; color: #ffd000; }
+.editor-drawing-palette [data-fabric-pilot-action='brush-settings'] {
+  width: auto !important;
+  min-height: 32px !important;
+  gap: 7px !important;
+}
+.editor-drawing-palette [data-fabric-pilot-action='brush-settings']::after {
+  content: '색·굵기';
+  margin-left: 3px;
+  color: #b8b8b1;
+  font-size: 11px;
+}
+.editor-drawing-palette [data-fabric-pilot-panel='brush-settings'] {
+  position: fixed !important;
+  left: var(--editor-palette-left, 12px) !important;
+  bottom: var(--editor-palette-bottom, 80px) !important;
+  top: auto !important;
+  width: var(--editor-palette-width, 280px) !important;
+  max-height: min(420px, var(--editor-palette-height, 420px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  z-index: 46;
+  margin: 0 !important;
+  padding: 14px !important;
+  border: 1px solid #50504a;
+  border-radius: 8px !important;
+  background: #20201e !important;
+  box-shadow: 0 8px 28px #0008;
+  color: #f0f0ed;
+}
+.editor-drawing-palette [data-fabric-pilot-panel='brush-settings'] button[data-fabric-pilot-color] {
+  width: 26px;
+  min-width: 26px;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+}
+.editor-drawing-palette .mpv-fabric-pilot-field { display: flex; flex-direction: column; gap: 6px; }
+.editor-drawing-palette .mpv-fabric-pilot-field-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: #b8b8b1;
+  font-size: 12px;
+}
+.editor-drawing-palette .mpv-fabric-pilot-field-top b { color: #f0f0ed; font-weight: 500; font-variant-numeric: tabular-nums; }
+.editor-drawing-palette input[type='range'] {
+  appearance: none;
+  width: 100%;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.editor-drawing-palette input[type='range']::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 3px;
+  background: linear-gradient(to right, #ffd000 0 var(--fabric-range-fill, 0%), #414141 var(--fabric-range-fill, 0%) 100%);
+}
+.editor-drawing-palette input[type='range']::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #f0f0ed;
+  margin-top: -4px;
+}
+.editor-drawing-palette .mpv-fabric-pilot-eraser-mode,
+.editor-drawing-palette .mpv-fabric-pilot-recent-colors { display: flex; flex-flow: row wrap; gap: 6px; }

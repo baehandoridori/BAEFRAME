@@ -234,9 +234,10 @@ test('Fabric persistence is pulled after root refresh and before save and video 
 });
 
 test('quit transaction disables Fabric before dirty/save decisions and resumes every cancelled quit path', () => {
-  const quitHandler = appSource.match(
-    /window\.electronAPI\.onRequestSaveBeforeQuit\(async \(\) => \{([\s\S]*?)\n  \}\);/
-  )?.[1] || '';
+  const quitHandler = appSource.slice(
+    appSource.indexOf('// ====== 앱 종료 전 저장 처리 ======'),
+    appSource.indexOf('// ====== 사용자 이름 초기화')
+  );
   const prepareIndex = quitHandler.indexOf(
     'await fabricDrawingPilotController.preparePersistenceForQuit()'
   );
@@ -252,32 +253,21 @@ test('quit transaction disables Fabric before dirty/save decisions and resumes e
   assert.ok(dirtyIndex < saveIndex, 'dirty state must be checked before a quit save');
   assert.match(
     quitHandler,
-    /await fabricDrawingPilotController\.preparePersistenceForQuit\(\)[\s\S]+if \(!reviewDataManager\.hasUnsavedChanges\(\)\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(\);/
+    /await fabricDrawingPilotController\.preparePersistenceForQuit\(\)[\s\S]+if \(!reviewDataManager\.hasUnsavedChanges\(\)\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(attemptId\);/
   );
   assert.match(
     quitHandler,
-    /await reviewDataManager\.save\(\);[\s\S]+if \(saved\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(\);/
+    /await reviewDataManager\.save\(\);[\s\S]+if \(saved\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(attemptId\);/
   );
   assert.match(
     quitHandler,
     /commentSync\.stop\(\);[\s\S]+drawingSync\.stop\(\);[\s\S]+try \{[\s\S]+await liveblocksManager\.stop\(\);[\s\S]+\} catch \(error\) \{[\s\S]+log\.warn\('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행'/
   );
 
-  const cancelCalls = [
-    ...quitHandler.matchAll(/await window\.electronAPI\.cancelQuit\(\);/g)
-  ];
-  assert.ok(cancelCalls.length > 0, 'quit handler must expose at least one cancellation path');
-  for (const cancelCall of cancelCalls) {
-    const cancellationPath = quitHandler.slice(
-      cancelCall.index,
-      cancelCall.index + 240
-    );
-    assert.match(
-      cancellationPath,
-      /await fabricDrawingPilotController\.resumeAfterQuitCancelled\(\);/,
-      'every cancelQuit branch must await Fabric input restoration'
-    );
-  }
+  assert.match(quitHandler, /attempt\.cancelled = true;\s*await window\.electronAPI\.cancelQuit\(attemptId\);/);
+  assert.match(quitHandler, /finally \{\s*if \(attempt\.cancelled\) await resumeCancelledQuit\(attempt\);/);
+  assert.match(quitHandler, /function resumeCancelledQuit\(attempt\)[\s\S]+await fabricDrawingPilotController\.resumeAfterQuitCancelled\(\);/);
+  assert.match(quitHandler, /onQuitAborted\([\s\S]+reviewQuitWork\.then\(\(\) => resumeCancelledQuit\(attempt\)\)/);
 });
 
 test('video teardown drains any late autosave after pausing it and before clearing review managers', () => {
