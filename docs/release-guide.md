@@ -15,11 +15,32 @@ PR 생성 요청이면 제목·본문을 작성한 뒤 `gh pr create`를 실행�
 
 ## 리뷰 완료 기준
 
-- `codex-review-loop` 스킬로 issue comments, line comments, reviews, trigger reactions를 모두 확인한다.
+- `codex-review-loop` 스킬이 있으면 사용한다. 없어도 아래 gh 명령으로 issue comments, line comments, reviews, trigger reactions를 모두 확인할 수 있다.
 - 트리거 시각·댓글 id·대상 head SHA를 기록한다. 승인 신호의 작성자와 해당 라운드를 확인한다.
 - **최종 수정 커밋에 대한 명시적 완료 신호와 미해결 지적 없음**이 필요하다. `APPROVED`, 명시적인 문제 없음 응답, 해당 트리거에 대한 리뷰 봇의 `+1` 등이 완료 신호다.
 - 무응답, eyes 소멸, COMMENTED wrapper만으로 통과시키지 않는다. 새 커밋을 올렸으면 이전 승인을 재사용하지 않는다.
 - 검토 지적은 실제 코드와 대조해 해결하고 관련 테스트 후 재리뷰한다. 사용자 예외 승인이 있으면 일반 통과와 구분해 기록한다.
+
+### 개인 스킬이 없는 환경에서 리뷰하기
+
+GitHub CLI 인증이 된 저장소의 PR 브랜치에서 실행한다. PR 리뷰가 승인된 작업에서만 트리거 댓글을 작성한다.
+
+```powershell
+$reviewRepo = gh repo view --json nameWithOwner --jq .nameWithOwner
+$reviewPr = gh pr view --json number --jq .number
+$reviewHead = gh pr view --json headRefOid --jq .headRefOid
+$reviewTrigger = gh api "repos/$reviewRepo/issues/$reviewPr/comments" --method POST -f 'body=@codex review' | ConvertFrom-Json
+$reviewTriggerId = $reviewTrigger.id
+$reviewTriggerTime = $reviewTrigger.created_at
+
+gh api "repos/$reviewRepo/issues/$reviewPr/comments" --paginate
+gh api "repos/$reviewRepo/pulls/$reviewPr/comments" --paginate
+gh api "repos/$reviewRepo/pulls/$reviewPr/reviews" --paginate
+gh api "repos/$reviewRepo/issues/comments/$reviewTriggerId/reactions" --paginate
+gh pr view --json headRefOid --jq .headRefOid
+```
+
+각 명령의 종료 코드를 확인한다. 마지막 head가 `$reviewHead`와 같고, `chatgpt-codex-connector` 또는 `chatgpt-codex-connector[bot]`이 해당 트리거 이후 남긴 완료 신호인지 확인한다. Running 상태 요약은 지적이나 완료 신호가 아니다. 새 지적뿐 아니라 이전 라운드에서 미해결인 지적도 확인한다. 수정·푸시 뒤에는 트리거와 head를 새로 기록한다. 기다릴 때 네 조회 명령을 다시 실행하고 무응답을 통과로 바꾸지 않는다.
 
 ## 빌드와 배포
 
@@ -27,7 +48,7 @@ PR 생성 요청이면 제목·본문을 작성한 뒤 `gh pr create`를 실행�
 2. 머지가 승인됐으면 리뷰 완료를 확인한 뒤 머지한다. 원격 merged 상태와 merge SHA를 기록한다.
 3. 해당 merge SHA의 깨끗한 체크아웃에서 빌드한다. 다른 작업이 있는 main을 강제 변경하지 않는다. 의존성 설치 후 생성 파일 diff를 확인한다.
 4. `scripts/electron-builder-before-pack.js`의 필수 파일을 확인한다. Windows에서 FFmpeg의 `ffmpeg.exe`·`ffprobe.exe`, mpv의 `mpv.exe`·`mpv.com`·`d3dcompiler_43.dll`·`mpv/fonts.conf`가 필요하다. mpv 자동 준비는 이 스크립트의 기준을 따르고 다른 버전 파일을 혼합하지 않는다.
-5. 저장소 루트에서 **`npm run build`**를 실행한다. prebuild가 번들과 저장 보조 도구를 준비한다. `electron-builder --dir`를 별도 추가 실행하지 않는다. 설치 파일 요청만 `npm run build:installer`를 사용한다.
+5. 저장소 루트에서 **`npm run build`**를 실행한다. prebuild가 번들과 저장 보조 도구를 준비한다. `electron-builder --dir`를 별도 추가 실행하지 않는다. 현재 `electron-builder.yml`의 Windows target은 `dir`이며, `build:installer`도 설치 프로그램을 만들지 않는다. 설치 프로그램이 요청되면 별도 target 설정·구현·검증 범위를 먼저 정한다.
 6. `dist/win-unpacked`의 버전·실행 프로필·필수 리소스를 확인한다. 앱 실행 점검을 수행한 경우 실제 경로도 기록한다.
 7. 배포가 승인됐으면 기존 배포본을 백업하고 별도 staging에서 새 파일을 검증한 뒤 교체한다. 실행 중 잠금이 있으면 강제로 덮지 않는다. Windows 폴더 이동·삭제 전 대상 절대 경로가 의도한 배포 영역인지 검증한다.
 8. 빌드 원본과 최종 배포 폴더 전체를 상대 경로·파일 수·바이트 수·SHA-256으로 비교한다. 누락·추가·빈 필수 파일도 확인한다. `MismatchCount=0`을 확인한 뒤 배포 완료로 보고한다. 로컬 공유드라이브 검증과 다른 팀원 PC의 동기화 완료는 구분한다.

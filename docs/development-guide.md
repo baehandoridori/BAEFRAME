@@ -13,7 +13,7 @@
 | `npm run dev` | 개발 모드 실행 |
 | `npm run build` | stable 프로필로 `dist/win-unpacked` 생성 |
 | `npm run build:trial` | 격리된 trial 프로필로 `dist-trial`에 생성 |
-| `npm run build:installer` | 설치 파일이 요청된 경우 사용 |
+| `npm run build:installer` | 이름과 달리 현재 Windows target이 `dir`이므로 폴더 출력. 설치 프로그램 생성 명령으로 안내하지 않음 |
 | `npm run bundle:mpv-fabric-overlay` | 오버레이 원본을 브라우저용 번들로 생성 |
 
 소스 실행과 배포 실행은 동일한 조건이 아니다. `main/runtime-profile.js`는 패키징된 앱의 `resources/baeframe-runtime-profile.json`을 읽는다. 실험 플래그의 실제 판정은 `main/experiment-flags.js`를 확인한다. 문제 재현 시 실행 경로·프로필·활성 엔진을 기록한다.
