@@ -49,6 +49,8 @@
 | 재생목록·연속 재생·영상 전환 | `test:playlist` |
 | 타임라인·키프레임 표시 | `test:frame-grid`, 드로잉 변경이면 위 드로잉 테스트 추가 |
 | 합성 레이어 | `test:composition` |
+| 편집기·영상 출력 | `test:editor` (로컬 FFmpeg 필요) |
+| UX 회귀: 댓글 초안·공유 저장·붙여넣기·목록 저장 경합·편집 입력 | `test:ux`, 변경 영역의 기존 검사도 함께 실행 |
 | 댓글·협업 | `test:comment-input`, `test:cluster`, `test:collaboration` 중 관련 항목 |
 | Drawing V3 문서·어댑터·관찰자 | `test:drawing-v3-hardening`, `test:drawing-v3-adapter`, `test:drawing-v3-store-observer` 중 관련 항목 |
 

@@ -584,7 +584,7 @@ function setupIpcHandlers({
     try {
       // 보안: 경로 검증 (.bframe, .json, .bak만 허용)
       const validatedPath = validateFilePath(filePath);
-      const { data } = await readReviewSnapshot(validatedPath);
+      const { data } = await readReviewSnapshot(validatedPath, { allowMissing: true });
       if (!data) {
         trace.end({ filePath, exists: false });
         return null;

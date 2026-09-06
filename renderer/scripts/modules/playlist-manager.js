@@ -55,6 +55,12 @@ function sanitizeFileName(name) {
   return name.replace(/[<>:"/\\|?*]/g, '_').trim() || '재생목록';
 }
 
+// 저장 완료 시각만 제외하고 실제 저장 내용이 여전히 같은지 비교한다.
+// app 등 외부에서 직접 수정하는 아이템 필드도 변경으로 감지한다.
+function playlistContentSignature(playlist) {
+  return JSON.stringify({ ...playlist, modifiedAt: undefined });
+}
+
 /**
  * 미디어 파일 확인 (비디오 + 오디오)
  */
@@ -145,6 +151,10 @@ export class PlaylistManager {
     this.openOperationToken = 0;
     this.lastCommittedOpenToken = 0;
     this.thumbnailValidationToken = 0;
+    this.saveQueue = Promise.resolve();
+    this.pendingSave = null;
+    this.saveDestinations = new WeakMap();
+    this.completedSaveRevision = 0;
 
     // 이벤트 콜백
     this.onPlaylistLoaded = null;     // (playlist) => {}
@@ -200,40 +210,58 @@ export class PlaylistManager {
     try {
       // 기존 재생목록이 수정되었으면 저장
       if (this.isModified && this.playlistPath && this.currentPlaylist) {
-        const playlistToSave = this.currentPlaylist;
-        const pathToSave = this.playlistPath;
-        playlistToSave.modifiedAt = new Date().toISOString();
-        await window.electronAPI.writePlaylist(pathToSave, playlistToSave);
+        await this.save();
+      } else if (this.pendingSave) {
+        // 최초 저장의 경로 조회/쓰기가 끝나기 전에 다른 목록으로 교체하지 않는다.
+        await this.pendingSave;
+      }
+      if (!shouldContinueOpen()) return null;
+
+      let data, repairedBframeCount;
+      // 재읽기는 원래 열기 요청의 우선순위를 유지한다.
+      while (true) {
+        const readSaveRevision = this.completedSaveRevision;
+        data = await window.electronAPI.readPlaylist(filePath);
         if (!shouldContinueOpen()) return null;
-        if (this.currentPlaylist === playlistToSave && this.playlistPath === pathToSave) {
-          this.isModified = false;
+
+        if (!data) {
+          throw new Error('재생목록 파일을 찾을 수 없습니다.');
         }
-      }
 
-      const data = await window.electronAPI.readPlaylist(filePath);
-      if (!shouldContinueOpen()) return null;
+        if (!validatePlaylistData(data)) {
+          throw new Error('유효하지 않은 재생목록 파일입니다.');
+        }
 
-      if (!data) {
-        throw new Error('재생목록 파일을 찾을 수 없습니다.');
-      }
+        data.settings = normalizePlaylistSettings(data);
+        data.items = normalizeItemOrders(data.items);
 
-      if (!validatePlaylistData(data)) {
-        throw new Error('유효하지 않은 재생목록 파일입니다.');
-      }
-
-      data.settings = normalizePlaylistSettings(data);
-      data.items = normalizeItemOrders(data.items);
-
-      const repairedBframeCount = await this._repairMissingBframePaths({
-        playlist: data,
-        shouldContinue: shouldContinueOpen
-      });
-      if (!shouldContinueOpen()) return null;
-
-      if (repairedBframeCount > 0) {
-        data.modifiedAt = new Date().toISOString();
-        await window.electronAPI.writePlaylist(filePath, data);
+        repairedBframeCount = await this._repairMissingBframePaths({
+          playlist: data,
+          shouldContinue: shouldContinueOpen
+        });
         if (!shouldContinueOpen()) return null;
+
+        if (repairedBframeCount > 0) {
+          data.modifiedAt = new Date().toISOString();
+          // 자동 경로 복구도 저장 큐를 사용한다. 오래된 읽기로 새 사용자 저장을 덮지 않는다.
+          const repair = this.saveQueue.then(async () => {
+            if (!shouldContinueOpen() || this.completedSaveRevision !== readSaveRevision) return;
+            await window.electronAPI.writePlaylist(filePath, data);
+          });
+          this.saveQueue = repair.then(() => {}, () => {});
+          await repair;
+          if (!shouldContinueOpen()) return null;
+        }
+
+        // 읽기/저장 대기 중 기존 목록에 더해진 수정도 교체 전에 저장한다.
+        while (this.pendingSave || (this.isModified && this.playlistPath && this.currentPlaylist)) {
+          if (!shouldContinueOpen()) return null;
+          if (this.pendingSave) await this.pendingSave;
+          else await this.save();
+          if (!shouldContinueOpen()) return null;
+        }
+        // pending/dirty가 이미 해제된 저장도 읽기 시작 이후라면 다시 읽는다.
+        if (this.completedSaveRevision === readSaveRevision) break;
       }
 
       const previousCommittedState = {
@@ -306,30 +334,51 @@ export class PlaylistManager {
       return false;
     }
 
-    let targetPath = savePath || this.playlistPath;
+    // 첫 await 전에 대상과 내용을 고정한다. 경로 조회 중 열린 목록이 바뀔 수 있다.
+    const playlist = this.currentPlaylist;
+    const ownerToken = this.lastCommittedOpenToken;
+    const snapshot = JSON.parse(JSON.stringify(playlist));
+    const signature = playlistContentSignature(snapshot);
+    let destination = this.saveDestinations.get(playlist);
+    if (!destination) {
+      destination = { path: this.playlistPath };
+      this.saveDestinations.set(playlist, destination);
+    }
+    snapshot.modifiedAt = new Date().toISOString();
 
-    if (!targetPath) {
-      // 새 재생목록: 첫 번째 아이템의 폴더에 저장
-      if (this.currentPlaylist.items.length === 0) {
-        throw new Error('저장할 아이템이 없습니다. 먼저 영상을 추가해주세요.');
+    // 경로 조회부터 직렬화해 느린 이전 저장이 최신 내용을 덮어쓰지 않게 한다.
+    const saving = this.saveQueue.then(async () => {
+      // 일반 저장은 같은 목록의 선행 Save As/최초 저장이 성공한 경로를 따른다.
+      let targetPath = savePath || destination.path;
+      if (!targetPath) {
+        if (snapshot.items.length === 0) {
+          throw new Error('저장할 아이템이 없습니다. 먼저 영상을 추가해주세요.');
+        }
+        const folderPath = await window.electronAPI.pathDirname(snapshot.items[0].videoPath);
+        const fileName = sanitizeFileName(snapshot.name);
+        targetPath = await window.electronAPI.pathJoin(folderPath, `${fileName}.bplaylist`);
       }
 
-      const firstItemPath = this.currentPlaylist.items[0].videoPath;
-      const folderPath = await window.electronAPI.pathDirname(firstItemPath);
-      const fileName = sanitizeFileName(this.currentPlaylist.name);
-      targetPath = await window.electronAPI.pathJoin(folderPath, `${fileName}.bplaylist`);
-    }
-
-    log.info('재생목록 저장', { path: targetPath });
-
-    this.currentPlaylist.modifiedAt = new Date().toISOString();
-
-    await window.electronAPI.writePlaylist(targetPath, this.currentPlaylist);
-    this.playlistPath = targetPath;
-    this.isModified = false;
-
-    log.info('재생목록 저장 완료');
-    return true;
+      log.info('재생목록 저장', { path: targetPath });
+      await window.electronAPI.writePlaylist(targetPath, snapshot);
+      this.completedSaveRevision += 1;
+      destination.path = targetPath;
+      if (this.currentPlaylist === playlist && this.lastCommittedOpenToken === ownerToken) {
+        this.playlistPath = targetPath;
+        this.isModified = playlistContentSignature(playlist) !== signature;
+        playlist.modifiedAt = snapshot.modifiedAt;
+      }
+      log.info('재생목록 저장 완료');
+      return true;
+    });
+    this.pendingSave = saving;
+    // 실패는 호출자에게 전달하되 다음 저장 요청은 계속 실행할 수 있다.
+    this.saveQueue = saving.then(() => {}, () => {});
+    const clearPending = () => {
+      if (this.pendingSave === saving) this.pendingSave = null;
+    };
+    saving.then(clearPending, clearPending);
+    return saving;
   }
 
   /**

@@ -2488,6 +2488,9 @@ async function initApp() {
   let commentModePreparationToken = 0;
   let drawModePreparationToken = 0;
   let suppressReviewFreezeReleaseForMediaChange = false;
+  let sidebarCommentDraft = null;
+  let sidebarCommentSubmissionToken = 0;
+  let sidebarCommentSubmissionPending = false;
 
   function setCommentModeReadyState(ready) {
     elements.videoWrapper.classList.toggle('comment-mode', ready);
@@ -2527,6 +2530,8 @@ async function initApp() {
   commentManager.addEventListener('commentModeChanged', (e) => {
     const { isCommentMode } = e.detail;
     const preparationToken = ++commentModePreparationToken;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
     state.isCommentMode = isCommentMode;
     if (isCommentMode && (state.isDrawMode || isFabricDrawingPilotControllerEngaged())) {
       exitDrawModeForSystemPath();
@@ -2536,11 +2541,14 @@ async function initApp() {
     if (isCommentMode) {
       if (isMpvPilotPlaybackActive()) {
         videoPlayer.pause();
+        setCommentModeReadyState(false);
+        setCommentModePreparingState(true);
         // 작업 4: 하이브리드 우선 — 성공 시 직접 ready, 실패 시 기존 freeze 준비로 폴백.
         // (c-0)의 skipReviewTransition 없이는 전이 헬퍼가 댓글 모드를 강제 종료해 자멸한다.
         void enterHybridReviewEngineIfPossible().then((swapped) => {
           // 전환 중 사용자가 모드를 껐으면 mpv 복귀만 정리
-          if (!state.isCommentMode) {
+          if (!state.isCommentMode || preparationToken !== commentModePreparationToken ||
+            filePath !== state.currentFile || loadIntent !== videoLoadIntentGeneration) {
             void exitHybridReviewEngineIfNeeded();
             return;
           }
@@ -2558,6 +2566,7 @@ async function initApp() {
         showCommentModeGuidance();
       }
     } else {
+      cancelSidebarCommentDraft();
       setCommentModePreparingState(false);
       setCommentModeReadyState(false);
       removePendingMarkerUI();
@@ -2582,6 +2591,7 @@ async function initApp() {
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', async (e) => {
     const { marker, remote, restored, imported } = e.detail;
+    finishSidebarCommentDraft(e.detail);
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
@@ -2994,15 +3004,38 @@ async function initApp() {
       return;
     }
     e.preventDefault();
+    if (activeVideoLoadToken !== null) {
+      showToast('영상을 연 뒤 이미지를 붙여넣어 주세요.', 'warning');
+      return;
+    }
+
+    // 이미지 변환 중 탐색하거나 영상을 바꿔도 붙여넣기 시작 당시의 대상을 유지한다.
+    const target = {
+      filePath: videoPlayer.filePath,
+      loadToken: latestVideoLoadToken,
+      intentGeneration: videoLoadIntentGeneration,
+      currentTime: compositionLayerManager.getCurrentTime(),
+      baseDuration: compositionLayerManager.getBaseDuration()
+    };
+    const isCurrentTarget = () => videoPlayer.isLoaded && activeVideoLoadToken === null &&
+      latestVideoLoadToken === target.loadToken && videoLoadIntentGeneration === target.intentGeneration &&
+      isSameFilePath(videoPlayer.filePath, target.filePath);
 
     try {
-      const image = await getImageFromClipboard(e);
+      const image = await getImageFromClipboard(e, { format: 'image/png' });
+      if (!isCurrentTarget()) {
+        showToast('영상이 바뀌어 이미지 붙여넣기를 취소했습니다. 다시 붙여넣어 주세요.', 'warning');
+        return;
+      }
       if (!image?.base64) {
         showToast('클립보드에서 이미지를 읽지 못했습니다.', 'error');
         return;
       }
-      const layer = await compositionLayerManager.addLayerFromDataUrl(image.base64);
-      if (layer) {
+      const layer = await compositionLayerManager.addLayerFromDataUrl(image.base64, {
+        currentTime: target.currentTime,
+        baseDuration: target.baseDuration
+      });
+      if (layer && isCurrentTarget()) {
         compositionLayerManager.togglePanel(true);
         renderCompositionLayerTimeline();
         scheduleMpvOverlayStateSync({ force: true });
@@ -3010,7 +3043,7 @@ async function initApp() {
       }
     } catch (error) {
       log.error('클립보드 이미지 붙여넣기 실패', error);
-      showToast('클립보드 이미지를 추가하지 못했습니다.', 'error');
+      if (isCurrentTarget()) showToast('클립보드 이미지를 추가하지 못했습니다.', 'error');
     }
   });
 
@@ -3069,6 +3102,10 @@ async function initApp() {
   // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
     void (async () => {
+      if (sidebarCommentSubmissionPending) {
+        cancelSidebarCommentDraft();
+        return;
+      }
       if (!state.isCommentMode && !(await ensureCutlistCommentTargetReady())) return;
       toggleCommentMode();
     })();
@@ -3076,40 +3113,12 @@ async function initApp() {
 
   // 이전 댓글로 이동
   elements.btnPrevComment?.addEventListener('click', () => {
-    if (!videoPlayer.duration) {
-      showToast('영상을 먼저 로드하세요', 'warn');
-      return;
-    }
-
-    const currentFrame = videoPlayer.currentFrame || 0;
-    const prevFrame = commentManager.getPrevMarkerFrame(currentFrame);
-
-    if (prevFrame !== null) {
-      videoPlayer.seekToFrame(prevFrame);
-      timeline.scrollToPlayhead();
-      log.info('이전 댓글로 이동', { frame: prevFrame });
-    } else {
-      showToast('이전 댓글이 없습니다', 'info');
-    }
+    void navigateVisibleComment(-1);
   });
 
   // 다음 댓글로 이동
   elements.btnNextComment?.addEventListener('click', () => {
-    if (!videoPlayer.duration) {
-      showToast('영상을 먼저 로드하세요', 'warn');
-      return;
-    }
-
-    const currentFrame = videoPlayer.currentFrame || 0;
-    const nextFrame = commentManager.getNextMarkerFrame(currentFrame);
-
-    if (nextFrame !== null) {
-      videoPlayer.seekToFrame(nextFrame);
-      timeline.scrollToPlayhead();
-      log.info('다음 댓글로 이동', { frame: nextFrame });
-    } else {
-      showToast('다음 댓글이 없습니다', 'info');
-    }
+    void navigateVisibleComment(1);
   });
 
   // 사이드바 댓글 입력에 멘션 자동완성 부착
@@ -3119,22 +3128,56 @@ async function initApp() {
   slackNotifier.setToastFunction(showToast);
 
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
-  async function submitSidebarCommentDraft() {
-    const text = elements.commentInput.value.trim();
-    if (!text && !state.pendingCommentImage) return false;
-    if (!(await ensureCutlistCommentTargetReady())) return false;
-
-    // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
-    commentManager.setPendingText(text || '(이미지)');
-    // 이미지가 있으면 commentManager에 임시 저장
-    if (state.pendingCommentImage) {
-      commentManager._pendingImage = state.pendingCommentImage;
-    }
-    elements.commentInput.value = '';
-    clearCommentImage();
-    showToast('영상에서 마커를 찍어주세요', 'info');
-    return true;
+  function cancelSidebarCommentDraft() {
+    sidebarCommentSubmissionToken += 1;
+    sidebarCommentSubmissionPending = false;
+    sidebarCommentDraft = null;
   }
+
+  function finishSidebarCommentDraft({ marker, remote, restored, imported }) {
+    if (remote || restored || imported || !sidebarCommentDraft) return;
+    const draft = sidebarCommentDraft;
+    sidebarCommentDraft = null;
+    if (draft.filePath !== state.currentFile || marker.text !== (draft.text || '(이미지)')) return;
+    if (elements.commentInput.value === draft.inputValue) elements.commentInput.value = '';
+    if (state.pendingCommentImage === draft.image) clearCommentImage();
+  }
+
+  async function submitSidebarCommentDraft() {
+    const inputValue = elements.commentInput.value;
+    const text = inputValue.trim();
+    const image = state.pendingCommentImage;
+    if (!text && !image) return false;
+    const submissionToken = ++sidebarCommentSubmissionToken;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
+    const cutId = cutlistUIState.active ? getCutlistManager().currentCutId : null;
+    const isCurrentDraft = () => submissionToken === sidebarCommentSubmissionToken &&
+      elements.commentInput.value === inputValue && state.pendingCommentImage === image &&
+      (cutId !== null
+        ? cutlistUIState.active && getCutlistManager().currentCutId === cutId
+        : !cutlistUIState.active && state.currentFile === filePath && videoLoadIntentGeneration === loadIntent);
+    sidebarCommentSubmissionPending = true;
+    try {
+      if (!(await ensureCutlistCommentTargetReady({ shouldContinue: isCurrentDraft })) || !isCurrentDraft()) return false;
+      // 위치가 확정되기 전에는 입력란과 첨부를 보존한다. 취소해도 다시 작성할 수 있다.
+      sidebarCommentDraft = { filePath: state.currentFile, inputValue, text, image };
+      commentManager._pendingImage = image || null;
+      commentManager.setPendingText(text || '(이미지)');
+      showToast('영상에서 마커를 찍어주세요 · Esc로 취소', 'info');
+      return true;
+    } finally {
+      if (submissionToken === sidebarCommentSubmissionToken) sidebarCommentSubmissionPending = false;
+    }
+  }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || (!sidebarCommentSubmissionPending && !state.isCommentMode)) return;
+    if (mentionManager.isVisible) return;
+    e.preventDefault();
+    cancelSidebarCommentDraft();
+    commentManager.setCommentMode(false);
+  });
 
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
@@ -3252,6 +3295,9 @@ async function initApp() {
   elements.btnCopyLink.addEventListener('click', async () => {
     const bframePath = reviewDataManager.getBframePath();
     const videoPath = reviewDataManager.getVideoPath();
+    const loadIntent = videoLoadIntentGeneration;
+    const isCurrentShare = () => loadIntent === videoLoadIntentGeneration &&
+      bframePath === reviewDataManager.getBframePath() && videoPath === reviewDataManager.getVideoPath();
 
     if (!bframePath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
@@ -3261,17 +3307,24 @@ async function initApp() {
     // #70: .bframe 파일 자동 생성 - 저장되지 않은 변경사항이 있거나 파일이 없으면 저장
     try {
       const fileExists = await window.electronAPI.fileExists(bframePath);
+      if (!isCurrentShare()) return;
       if (!fileExists || reviewDataManager.hasUnsavedChanges()) {
         log.info('링크 복사 전 .bframe 파일 자동 저장', {
           fileExists,
           hasUnsavedChanges: reviewDataManager.hasUnsavedChanges()
         });
-        await reviewDataManager.save();
+        const saved = await reviewDataManager.save();
+        if (!isCurrentShare()) return;
+        if (!saved) {
+          showToast('저장하지 못해 링크를 복사하지 않았습니다. 저장 후 다시 시도하세요.', 'error');
+          return;
+        }
         showToast('.bframe 파일이 자동 저장되었습니다.', 'info');
       }
     } catch (error) {
       log.warn('.bframe 파일 자동 저장 실패', error);
-      // 저장 실패해도 링크 복사는 진행
+      showToast('저장하지 못해 링크를 복사하지 않았습니다. 저장 후 다시 시도하세요.', 'error');
+      return;
     }
 
     // Windows 경로 형식으로 통일 (백슬래시 사용)
@@ -3290,6 +3343,7 @@ async function initApp() {
             storedDriveLinks.videoUrl,
             storedDriveLinks.bframeUrl
           );
+          if (!isCurrentShare()) return;
           if (result.success) {
             webShareUrl = result.webShareUrl;
           }
@@ -3297,6 +3351,7 @@ async function initApp() {
           // 자동으로 Google Drive 파일 ID 추출 시도
           log.info('Google Drive 파일 ID 검색 중...');
           const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
+          if (!isCurrentShare()) return;
           if (result.success) {
             storedDriveLinks.videoUrl = result.videoUrl;
             storedDriveLinks.bframeUrl = result.bframeUrl;
@@ -3319,7 +3374,9 @@ async function initApp() {
       clipboardContent = `${windowsPath}\n${webShareUrl}\n${fileName}`;
     }
 
+    if (!isCurrentShare()) return;
     await window.electronAPI.copyToClipboard(clipboardContent);
+    if (!isCurrentShare()) return;
 
     if (webShareUrl) {
       showToast('링크가 복사되었습니다! Slack에서 Ctrl+Shift+V로 붙여넣기 (웹 뷰어 링크 포함)', 'success');
@@ -6059,6 +6116,7 @@ async function initApp() {
   let pendingMpvReviewFreezeMediaChange = null;
   const mpvReviewFrameTracker = createMpvReviewFrameTracker();
   const mpvReviewFreezeCaptureOwner = createSharedAsyncCaptureOwner();
+  let mpvReviewFreezeContentRevision = 0;
   const mpvReviewFreezeRefreshScheduler = createCoalescedAsyncScheduler({
     delayMs: 160,
     shouldRun: () => isMpvReviewInteractionActive() && isMpvPilotPlaybackActive(),
@@ -6851,11 +6909,45 @@ async function initApp() {
     }
   }
 
+  let reviewDrawingFreezeRendererPromise = null;
+
+  function loadReviewDrawingFreezeRenderer() {
+    if (window.BAEReviewDrawingFreeze) return Promise.resolve(window.BAEReviewDrawingFreeze);
+    if (!reviewDrawingFreezeRendererPromise) {
+      reviewDrawingFreezeRendererPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = './scripts/lib/review-drawing-freeze.iife.js';
+        script.onload = () => {
+          if (window.BAEReviewDrawingFreeze) resolve(window.BAEReviewDrawingFreeze);
+          else reject(new Error('드로잉 정지 프레임 모듈을 초기화하지 못했습니다.'));
+        };
+        script.onerror = () => reject(new Error('드로잉 정지 프레임 모듈을 불러오지 못했습니다.'));
+        document.head.appendChild(script);
+      }).catch(error => {
+        reviewDrawingFreezeRendererPromise = null;
+        throw error;
+      });
+    }
+    return reviewDrawingFreezeRendererPromise;
+  }
+
+  async function captureMpvReviewFrameWithDrawings() {
+    if (!window.electronAPI?.mpvScreenshot) throw new Error('mpv screenshot API unavailable');
+    const keyframe = fabricDrawingPersistenceStore.resolveKeyframeAtFrame(videoPlayer.currentFrame);
+    const layers = reviewDataManager.getDrawingLayers();
+    const screenshot = await window.electronAPI.mpvScreenshot();
+    if (!screenshot?.success || !keyframe?.objects?.length) return screenshot;
+    const renderer = await loadReviewDrawingFreezeRenderer();
+    const dataUrl = await renderer.composite(screenshot.dataUrl, keyframe, layers);
+    return { ...screenshot, dataUrl };
+  }
+
   async function showMpvReviewFreezeFrame() {
     if (!isMpvPilotPlaybackActive() || !isMpvReviewInteractionActive()) return false;
 
     return mpvReviewFreezeCaptureOwner.capture(async () => {
       const token = ++mpvReviewFreezeToken;
+      const contentRevision = mpvReviewFreezeContentRevision;
       const captureFrameSnapshot = captureCurrentMpvReviewFrameTarget();
       const hadValidFrame = Boolean(
         mpvReviewFreezeElement &&
@@ -6870,10 +6962,7 @@ async function initApp() {
       try {
         return await runMpvReviewFreezeCapture({
           captureFrame: async () => {
-            if (!window.electronAPI?.mpvScreenshot) {
-              throw new Error('mpv screenshot API unavailable');
-            }
-            return window.electronAPI.mpvScreenshot();
+            return captureMpvReviewFrameWithDrawings();
           },
           createCandidate: dataUrl => {
             const candidate = new Image();
@@ -6885,6 +6974,7 @@ async function initApp() {
           decodeCandidate: candidate => candidate.decode(),
           isCurrent: () => (
             token === mpvReviewFreezeToken &&
+            contentRevision === mpvReviewFreezeContentRevision &&
             isMpvReviewInteractionActive() &&
             mpvReviewFrameTracker.isCurrent(
               captureFrameSnapshot,
@@ -7114,6 +7204,13 @@ async function initApp() {
     mpvReviewFreezeElement = null;
     mpvReviewFreezeFrameSnapshot = null;
     mpvReviewTargetFrameSnapshot = null;
+  }
+
+  function invalidateMpvReviewFreezeContent() {
+    // 초기 캡처도 scheduler 밖에서 같은 promise를 공유한다. 대기 중 변경은
+    // 그 캡처를 stale로 만들어, 합류한 refresh가 완료 뒤 최신 내용을 다시 요청하게 한다.
+    mpvReviewFreezeContentRevision += 1;
+    scheduleMpvReviewFreezeRefresh();
   }
 
   function scheduleMpvReviewFreezeRefresh() {
@@ -8325,6 +8422,7 @@ async function initApp() {
     // 때까지 다 보인다. 토글 자체는 여전히 그리기 모드에서만 받는다 — passive
     // 는 저장된 상태를 **적용만** 한다.
     if (!shouldSuppressLegacyDrawingForFabricPilot()) return;
+    if (state.isCommentMode && isMpvPilotPlaybackActive()) invalidateMpvReviewFreezeContent();
     Promise.resolve(fabricDrawingPilotController.sendLayerView(fabricPilotLayerViewSets()))
       .catch(() => {});
   }
@@ -8339,6 +8437,7 @@ async function initApp() {
 
   let fabricPilotTimelineRenderQueued = false;
   fabricDrawingPersistenceStore.subscribe(() => {
+    if (state.isCommentMode && isMpvPilotPlaybackActive()) invalidateMpvReviewFreezeContent();
     if (fabricPilotTimelineRenderQueued) return;
     fabricPilotTimelineRenderQueued = true;
     requestAnimationFrame(() => {
@@ -8567,24 +8666,46 @@ async function initApp() {
     if (!userSettings.getHybridReviewEngine()) return false;
     if (!isMpvPilotPlaybackActive()) return false;
     if (state.isAudioMode || !state.currentFile) return false;
-    if (!(await isHtml5DirectPlayableForReview(state.currentFile))) return false;
+    // HTML5 레거시 캔버스는 V3 획과 레이어를 표시하지 못하므로 기존 mpv 호스트를 유지한다.
+    if (fabricDrawingPersistenceStore.getStatus().keyframeCount > 0) return false;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
+    const commentToken = commentModePreparationToken;
+    const drawToken = drawModePreparationToken;
+    const isCurrentRequest = () => filePath === state.currentFile &&
+      loadIntent === videoLoadIntentGeneration &&
+      commentToken === commentModePreparationToken && drawToken === drawModePreparationToken &&
+      isMpvReviewInteractionActive();
 
     hybridReviewSwapInFlight = true;
     try {
+      if (!(await isHtml5DirectPlayableForReview(filePath)) || !isCurrentRequest()) return false;
+      if (fabricDrawingPersistenceStore.getStatus().keyframeCount > 0) return false;
       const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
-      const swapped = await loadVideoWithHtml5Fallback(state.currentFile, {
+      // 로딩 도중 취소해 false로 끝나더라도 이미 바뀐 HTML5 엔진을 되돌릴 수 있어야 한다.
+      hybridReviewResumeMpvFile = filePath;
+      const swapped = await loadVideoWithHtml5Fallback(filePath, {
         keepVersionContext: true,
         engineSwap: true,
+        videoLoadIntent: loadIntent,
+        shouldContinue: isCurrentRequest,
         initialFrame: resumeFrame,
         playWhenMediaReady: false
       }, { skipReviewTransition: true });
-      if (swapped) hybridReviewResumeMpvFile = state.currentFile;
-      return swapped;
+      if (swapped && filePath === state.currentFile && loadIntent === videoLoadIntentGeneration) {
+        hybridReviewResumeMpvFile = filePath;
+      }
+      if (!swapped && filePath === state.currentFile && loadIntent === videoLoadIntentGeneration &&
+        videoPlayer.engine === 'html5' && resumeFrame !== null) {
+        videoPlayer.seekToFrame(resumeFrame);
+      }
+      return swapped && isCurrentRequest();
     } catch (error) {
       log.warn('하이브리드 진입 실패 — freeze 방식으로 폴백', { error: error?.message });
       return false;
     } finally {
       hybridReviewSwapInFlight = false;
+      if (!isCurrentRequest()) void exitHybridReviewEngineIfNeeded();
     }
   }
 
@@ -8598,13 +8719,18 @@ async function initApp() {
     // 로드 시작 직후의 좁은 경합 창까지 닫는다. 별도 토큰 가드는 두지 않는다.
     if (videoPlayer.engine === 'html5' && hybridReviewResumeMpvFile === state.currentFile) {
       hybridReviewSwapInFlight = true;
+      const filePath = state.currentFile;
+      const loadIntent = videoLoadIntentGeneration;
       const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
       const resumePlayback = videoPlayer.isPlaying === true;
       try {
-        await loadVideo(state.currentFile, {
+        await loadVideo(filePath, {
           allowMpvPilot: true,
           keepVersionContext: true,
           engineSwap: true,
+          videoLoadIntent: loadIntent,
+          shouldContinue: () => filePath === state.currentFile && loadIntent === videoLoadIntentGeneration &&
+            !isMpvReviewInteractionActive(),
           initialFrame: resumeFrame,
           playWhenMediaReady: resumePlayback
         });
@@ -8614,7 +8740,9 @@ async function initApp() {
         hybridReviewSwapInFlight = false;
       }
     }
-    hybridReviewResumeMpvFile = null;
+    if (videoPlayer.engine !== 'html5' || hybridReviewResumeMpvFile !== state.currentFile) {
+      hybridReviewResumeMpvFile = null;
+    }
   }
 
   async function fallbackFromMpvOverlayRecoveryFailure(owner, filePath, error) {
@@ -13363,6 +13491,56 @@ async function initApp() {
     });
   }
 
+  function getFilteredCurrentCommentMarkers(filter = getActiveCommentFilter()) {
+    let markers = commentManager.getAllMarkers();
+    if (filter === 'unresolved') markers = markers.filter(marker => !marker.resolved);
+    else if (filter === 'resolved') markers = markers.filter(marker => marker.resolved);
+    markers = filterByAuthors(markers);
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    return normalizedSearch
+      ? markers.filter(marker => markerMatchesCommentSearch(marker, normalizedSearch))
+      : markers;
+  }
+
+  async function navigateVisibleComment(direction) {
+    const label = direction < 0 ? '이전' : '다음';
+    const isContinuous = playlistUIState.mode === 'continuous';
+    if (isContinuous || cutlistUIState.active) {
+      const search = normalizeCommentSearch(commentSearchKeyword);
+      const ranges = isContinuous
+        ? filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, getActiveCommentFilter(), search)
+        : filterCutlistAggregateCommentRanges(cutlistAggregateCommentRanges, getActiveCommentFilter(), search);
+      const currentTime = Number(timeline.currentTime) || 0;
+      const candidates = ranges.filter(range => direction < 0
+        ? range.globalStartTime < currentTime - 0.0001
+        : range.globalStartTime > currentTime + 0.0001);
+      const range = direction < 0 ? candidates[candidates.length - 1] : candidates[0];
+      if (!range) {
+        showToast(`${label} 댓글이 없습니다`, 'info');
+        return;
+      }
+      if (isContinuous) await openPlaylistAggregateComment(getPlaylistAggregateCommentKey(range));
+      else await openCutlistAggregateComment(getCutlistAggregateCommentKey(range));
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+    const markers = getFilteredCurrentCommentMarkers();
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const frame = direction < 0
+      ? commentManager.getPrevMarkerFrame(currentFrame, markers)
+      : commentManager.getNextMarkerFrame(currentFrame, markers);
+    if (frame === null) {
+      showToast(`${label} 댓글이 없습니다`, 'info');
+      return;
+    }
+    videoPlayer.seekToFrame(frame);
+    timeline.scrollToPlayhead();
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
@@ -13384,22 +13562,8 @@ async function initApp() {
     );
     const savedScrollTop = container.scrollTop;
 
-    let markers = commentManager.getAllMarkers();
-
-    // 필터 적용
-    if (filter === 'unresolved') {
-      markers = markers.filter(m => !m.resolved);
-    } else if (filter === 'resolved') {
-      markers = markers.filter(m => m.resolved);
-    }
-
-    // 작성자 필터 적용
-    markers = filterByAuthors(markers);
-
+    const markers = getFilteredCurrentCommentMarkers(filter);
     const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
-    if (normalizedSearch) {
-      markers = markers.filter((marker) => markerMatchesCommentSearch(marker, normalizedSearch));
-    }
 
     // 개수 업데이트
     const allMarkers = commentManager.getAllMarkers();
@@ -21123,7 +21287,8 @@ async function initApp() {
     return source;
   }
 
-  async function ensureCutlistCommentTargetReady() {
+  async function ensureCutlistCommentTargetReady(options) {
+    const shouldContinue = typeof options?.shouldContinue === 'function' ? options.shouldContinue : () => true;
     if (!cutlistUIState.active) return true;
     const cutlistManager = getCutlistManager();
     if (!cutlistManager.isActive()) return true;
@@ -21134,7 +21299,11 @@ async function initApp() {
       return false;
     }
 
+    const loadIntent = videoLoadIntentGeneration;
+    const isCurrentTarget = () => shouldContinue() && cutlistUIState.active &&
+      cutlistManager.currentCutId === cut.id;
     const source = await resolveCutlistSourceForPlayback(cut);
+    if (!isCurrentTarget() || loadIntent !== videoLoadIntentGeneration) return false;
     if (!source?.videoPath) return false;
 
     if (isSameFilePath(state.currentFile, source.videoPath)) {
@@ -21148,19 +21317,23 @@ async function initApp() {
       }
 
       await seekPlaybackToCutStart(cut);
-      return true;
+      return isCurrentTarget() && loadIntent === videoLoadIntentGeneration;
     }
 
-    const loaded = await loadVideo(source.videoPath, {
+    const loading = loadVideo(source.videoPath, {
       initialFrame: Number(cut.startFrame),
       revealAfterInitialSeek: true,
       holdPreviousFrameUntilReady: true,
-      deferCollaborationStart: true
+      deferCollaborationStart: true,
+      shouldContinue: isCurrentTarget
     });
+    const targetLoadIntent = videoLoadIntentGeneration;
+    const loaded = await loading;
     if (!loaded) return false;
+    if (!isCurrentTarget() || targetLoadIntent !== videoLoadIntentGeneration) return false;
 
     await seekPlaybackToCutStart(cut);
-    return true;
+    return isCurrentTarget() && targetLoadIntent === videoLoadIntentGeneration;
   }
 
   function formatCutlistFrameRange(startFrame, endFrame) {

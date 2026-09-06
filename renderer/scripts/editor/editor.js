@@ -9,7 +9,7 @@
   const music = $('musicPreview');
   let controller = null;
   let playing = false;
-  let drawingMode = false;
+  let drawingMode = true;
   let expanded = true;
   let exporting = false;
   let transport = null;
@@ -24,6 +24,8 @@
   let compositeReady = false;
   let musicReady = Promise.resolve();
   let activeTool = 'select';
+  let composing = false;
+  let savePending = false;
   let timelineScale = null;
   let timelineMode = 'fit';
   let timelineRevision = 0;
@@ -266,18 +268,32 @@
   async function operation(action, { sync = true } = {}) {
     pause();
     operationDepth += 1;
+    const previousCompositeReady = compositeReady;
     const release = beginComposite(true);
+    let actionCompleted = false;
     render();
     try {
       await drawing.setEnabled(false);
       const result = await action();
-      if (!sync || (await syncPreview())) compositeReady = true;
+      actionCompleted = true;
+      if (sync ? await syncPreview() : previousCompositeReady) compositeReady = true;
       return result;
     } catch (error) {
+      if (!actionCompleted) {
+        try {
+          // A rejected picker/validation leaves the current project in place.
+          // Re-present its drawing and video before releasing the retained still.
+          await controller.seek(controller.state.frame, { playback: true });
+          if (await syncPreview()) compositeReady = true;
+        } catch (_) {
+          // Keep the retained composite when the current media also cannot load.
+        }
+      }
       status(error.message, true);
     } finally {
       try {
-        await drawing.setEnabled(drawingMode && !exporting && !!selected());
+        if (drawingMode && selected()) await drawing.setTool(activeTool);
+        await drawing.setEnabled(drawingMode && compositeReady && !exporting && !!selected());
       } catch (error) {
         status(error.message, true);
       }
@@ -307,7 +323,7 @@
           scrubFrame = null;
         }
         try {
-          await drawing.setEnabled(!seeking && drawingMode && !exporting && !!selected());
+          await drawing.setEnabled(!seeking && drawingMode && compositeReady && !exporting && !!selected());
         } finally {
           operationDepth--;
           finishSeekComposite?.();
@@ -1128,16 +1144,19 @@
     operation(() => controller.importMedia());
   $('importMusic').onclick = () => operation(() => controller.importMedia('audio'));
   $('openProject').onclick = () => operation(() => controller.open());
-  $('saveProject').onclick = () =>
-    operation(async () => {
-      const r = await controller.save();
+  function saveProject(saveAs = false) {
+    if (savePending || exporting || composing) return Promise.resolve();
+    // Capture the live input before operation's render can restore model values.
+    const change = projectFieldChange(document.activeElement);
+    savePending = true;
+    return operation(async () => {
+      if (change) await controller.update(change);
+      const r = await controller.save(saveAs);
       if (r && !r.cancelled) status(`저장 완료 · ${r.path}`);
-    });
-  $('saveAsProject').onclick = () =>
-    operation(async () => {
-      const r = await controller.save(true);
-      if (r && !r.cancelled) status(`저장 완료 · ${r.path}`);
-    });
+    }).finally(() => { savePending = false; });
+  }
+  $('saveProject').onclick = () => saveProject();
+  $('saveAsProject').onclick = () => saveProject(true);
   $('playPause').onclick = () => {
     void play().catch((e) => status(e.message, true));
   };
@@ -1217,52 +1236,42 @@
   document.querySelectorAll('[data-draw-action]').forEach((b) => {
     b.onclick = () => operation(() => controller.drawingAction(b.dataset.drawAction));
   });
-  $('projectName').onchange = () => {
-    const name = $('projectName').value.trim() || '새 편집';
-    return operation(() =>
-      controller.update((p) => {
-        p.name = name;
+  function projectFieldChange(element) {
+    const project = controller.state.project;
+    if (element?.id === 'projectName') {
+      const name = element.value.trim() || '새 편집';
+      return name === project.name ? null : p => ({ ...p, name });
+    }
+    if (element?.id === 'aspectRatio') {
+      const [width, height] = element.value.split('x').map(Number);
+      return width === project.width && height === project.height ? null : p => ({ ...p, width, height });
+    }
+    if (element?.id === 'projectFps') {
+      const fps = Number(element.value);
+      return fps === project.fps ? null : p => ({ ...p, fps });
+    }
+    if (['clipFit', 'clipVolume'].includes(element?.id) && selected()) {
+      const clip = selected();
+      const field = element.id === 'clipFit' ? 'fit' : 'volume';
+      const value = field === 'fit' ? element.value : Number(element.value) / 100;
+      return value === clip[field] ? null : p => {
+        p.clips.find(c => c.id === clip.id)[field] = value;
         return p;
-      })
-    );
-  };
-  $('aspectRatio').onchange = () => {
-    const [width, height] = $('aspectRatio').value.split('x').map(Number);
-    void operation(() => controller.update((p) => ({ ...p, width, height })));
-  };
-  $('projectFps').onchange = () => {
-    const fps = Number($('projectFps').value);
-    void operation(() => controller.update((p) => ({ ...p, fps })));
-  };
-  $('clipFit').onchange = () => {
-    const fit = $('clipFit').value,
-      id = selected().id;
-    void operation(() =>
-      controller.update((p) => {
-        p.clips.find((c) => c.id === id).fit = fit;
-        return p;
-      })
-    );
-  };
-  $('clipVolume').onchange = () => {
-    const volume = Number($('clipVolume').value) / 100,
-      id = selected().id;
-    void operation(() =>
-      controller.update((p) => {
-        p.clips.find((c) => c.id === id).volume = volume;
-        return p;
-      })
-    );
-  };
-  $('musicVolume').onchange = () => {
-    const volume = Number($('musicVolume').value) / 100;
-    void operation(() =>
-      controller.update((p) => {
-        p.music.volume = volume;
-        return p;
-      })
-    );
-  };
+      };
+    }
+    if (element?.id === 'musicVolume' && project.music) {
+      const volume = Number(element.value) / 100;
+      return volume === project.music.volume ? null : p => ({ ...p, music: { ...p.music, volume } });
+    }
+    // Trim/hold fields are drafts for their explicit action buttons, not edits.
+    return null;
+  }
+  for (const id of ['projectName', 'aspectRatio', 'projectFps', 'clipFit', 'clipVolume', 'musicVolume']) {
+    $(id).onchange = () => {
+      const change = projectFieldChange($(id));
+      return change ? operation(() => controller.update(change)) : Promise.resolve();
+    };
+  }
   $('removeMusic').onclick = () =>
     operation(() => controller.update((p) => ({ ...p, music: null })));
   $('exportVideo').onclick = () =>
@@ -1286,8 +1295,16 @@
     $('progress').value = progress.progress || 0;
     status(progress.message || '영상 출력 중…');
   });
+  document.addEventListener('compositionstart', () => { composing = true; });
+  document.addEventListener('compositionend', () => { composing = false; });
   document.addEventListener('keydown', (e) => {
-    if (e.isComposing || e.target.closest('input,textarea,select,[contenteditable=true]')) return;
+    if (composing || e.isComposing || e.keyCode === 229) return;
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+      e.preventDefault();
+      if (!controller.state.busy && !exporting && !operationDepth) void saveProject();
+      return;
+    }
+    if (e.target.closest('input,textarea,select,[contenteditable=true]')) return;
     if (e.code === 'Space') {
       e.preventDefault();
       void play();
@@ -1300,10 +1317,7 @@
       void setEditorTool(tool);
       return;
     }
-    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
-      e.preventDefault();
-      $('saveProject').click();
-    } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z') {
       e.preventDefault();
       (e.shiftKey ? $('redo') : $('undo')).click();
     } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'y') {

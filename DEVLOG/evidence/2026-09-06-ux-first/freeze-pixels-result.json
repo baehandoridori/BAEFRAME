@@ -1,0 +1,34 @@
+{
+  "scope": "Actual Chrome canvas with production Fabric freeze bundle; synthetic V3 records only",
+  "checks": [
+    {
+      "name": "held frame12 uses frame0; hidden layers excluded; top locked layer drawn above bottom with 50% opacity; canonical translation preserved at 2x resolution; blank20 and all-hidden remain unchanged",
+      "blend": [
+        127,
+        0,
+        128,
+        255
+      ],
+      "hidden": [
+        0,
+        0,
+        0,
+        255
+      ],
+      "moved": [
+        255,
+        255,
+        255,
+        255
+      ],
+      "unshifted": [
+        0,
+        0,
+        0,
+        255
+      ],
+      "blankUnchanged": true,
+      "allHiddenUnchanged": true
+    }
+  ]
+}

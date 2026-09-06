@@ -71,7 +71,7 @@ function canvasToBase64(canvas, format, targetQuality, maxSize) {
   let base64 = canvas.toDataURL(format, quality);
 
   // 용량 초과 시 품질 낮춰서 재시도
-  while (base64.length > maxSize * 1.37 && quality > 0.3) { // Base64는 ~37% 증가
+  while (format !== 'image/png' && base64.length > maxSize * 1.37 && quality > 0.3) { // PNG는 quality를 무시한다.
     quality -= 0.1;
     base64 = canvas.toDataURL(format, quality);
     log.debug('품질 조정', { quality: quality.toFixed(2), size: Math.round(base64.length / 1024) + 'KB' });
@@ -186,9 +186,10 @@ export function hasImageInClipboard(event) {
 /**
  * 클립보드에서 이미지 가져오기
  * @param {ClipboardEvent} event - 붙여넣기 이벤트
+ * @param {Object} options - 압축 옵션 (합성 레이어는 PNG로 투명도 유지)
  * @returns {Promise<{base64: string, width: number, height: number}|null>}
  */
-export async function getImageFromClipboard(event) {
+export async function getImageFromClipboard(event, options = {}) {
   const items = event.clipboardData?.items;
   if (!items) return null;
 
@@ -196,7 +197,7 @@ export async function getImageFromClipboard(event) {
     if (item.type.startsWith('image/')) {
       const blob = item.getAsFile();
       if (blob) {
-        return await compressImage(blob);
+        return await compressImage(blob, options);
       }
     }
   }

@@ -1323,13 +1323,21 @@ test('stale playlist opens cannot publish older file state', () => {
   assert.match(openSource, /this\.lastCommittedOpenToken = openOperationToken;/);
   assert.match(openSource, /this\.thumbnailValidationToken = thumbnailValidationToken;/);
   assert.doesNotMatch(openSource, /catch \(error\) \{[\s\S]+this\.thumbnailValidationToken = /);
-  assert.doesNotMatch(openSource, /await this\.save\(/);
+  // save() now captures its owner/content before awaiting; playlist-save-ux.test.js
+  // exercises late completion, concurrent writes and switching during a first save.
+  assert.match(openSource, /await this\.save\(/);
+  const saveSource = playlistManagerSource.match(/async save\(savePath = null\) \{([\s\S]*?)\n  \}/)?.[1];
+  assert.ok(saveSource, 'saving should capture an immutable request before queueing I/O');
+  assert.ok(saveSource.indexOf('const playlist = this.currentPlaylist;') < saveSource.indexOf('this.saveQueue.then('));
+  assert.ok(saveSource.indexOf('const snapshot = JSON.parse(JSON.stringify(playlist));') < saveSource.indexOf('this.saveQueue.then('));
+  assert.match(saveSource, /await window\.electronAPI\.writePlaylist\(targetPath, snapshot\);/);
+  assert.match(saveSource, /this\.currentPlaylist === playlist && this\.lastCommittedOpenToken === ownerToken/);
   assert.ok(
     openSource.indexOf('if (!shouldContinueOpen()) return null;') <
       openSource.indexOf('this.currentPlaylist = data;'),
     'stale file reads should be discarded before replacing the active playlist'
   );
-  assert.match(openSource, /const repairedBframeCount = await this\._repairMissingBframePaths\(\{[\s\S]+playlist: data,[\s\S]+shouldContinue: shouldContinueOpen[\s\S]+\}\);/);
+  assert.match(openSource, /repairedBframeCount = await this\._repairMissingBframePaths\(\{[\s\S]+playlist: data,[\s\S]+shouldContinue: shouldContinueOpen[\s\S]+\}\);/);
   assert.match(openSource, /await window\.electronAPI\.writePlaylist\(filePath, data\);/);
   assert.match(openSource, /const restorePreviousCommittedState = \(\) => \{[\s\S]+this\.currentPlaylist = previousCommittedState\.playlist;[\s\S]+this\.thumbnailValidationToken = previousCommittedState\.thumbnailValidationToken;/);
   assert.match(openSource, /const committed = await options\.onCommitted\?\.\(openedPlaylist, loadContext\);[\s\S]+if \(committed === false\) \{[\s\S]+restorePreviousCommittedState\(\);[\s\S]+return null;[\s\S]+\}/);

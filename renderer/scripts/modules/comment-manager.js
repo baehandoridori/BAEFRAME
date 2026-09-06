@@ -330,6 +330,7 @@ export class CommentManager extends EventTarget {
     this.isCommentMode = false; // 댓글 추가 모드
     this.pendingMarker = null; // 생성 중인 마커
     this.pendingText = null; // 미리 입력한 텍스트 (역순 플로우)
+    this._pendingImage = null;
     this.currentFrame = 0;
 
     // 기본 레이어 생성
@@ -422,17 +423,7 @@ export class CommentManager extends EventTarget {
    * 댓글 모드 토글
    */
   toggleCommentMode() {
-    this.isCommentMode = !this.isCommentMode;
-
-    log.info('댓글 모드 변경', { isCommentMode: this.isCommentMode });
-
-    this._emit('commentModeChanged', { isCommentMode: this.isCommentMode });
-
-    // 모드 해제 시 pending 마커 정리
-    if (!this.isCommentMode && this.pendingMarker) {
-      this._cancelPendingMarker();
-    }
-
+    this.setCommentMode(!this.isCommentMode);
     return this.isCommentMode;
   }
 
@@ -451,6 +442,7 @@ export class CommentManager extends EventTarget {
       // 댓글 모드 해제 시 pendingText도 정리
       if (!enabled) {
         this.pendingText = null;
+        this._pendingImage = null;
       }
     }
   }
@@ -879,8 +871,7 @@ export class CommentManager extends EventTarget {
    * @param {number} currentFrame - 현재 프레임
    * @returns {number|null} 이전 마커의 시작 프레임 또는 null
    */
-  getPrevMarkerFrame(currentFrame) {
-    const markers = this.getAllMarkers();
+  getPrevMarkerFrame(currentFrame, markers = this.getAllMarkers()) {
     // 현재 프레임보다 시작 프레임이 작은 마커들 중 가장 큰 것
     let prevMarker = null;
     for (const marker of markers) {
@@ -898,8 +889,7 @@ export class CommentManager extends EventTarget {
    * @param {number} currentFrame - 현재 프레임
    * @returns {number|null} 다음 마커의 시작 프레임 또는 null
    */
-  getNextMarkerFrame(currentFrame) {
-    const markers = this.getAllMarkers();
+  getNextMarkerFrame(currentFrame, markers = this.getAllMarkers()) {
     // 현재 프레임보다 시작 프레임이 큰 마커들 중 가장 작은 것
     let nextMarker = null;
     for (const marker of markers) {
@@ -1237,6 +1227,7 @@ export class CommentManager extends EventTarget {
     this.layers = [];
     this.pendingMarker = null;
     this.pendingText = null;
+    this._pendingImage = null;
     this.isCommentMode = false;
     this._createDefaultLayer();
     this._emit('markersChanged');

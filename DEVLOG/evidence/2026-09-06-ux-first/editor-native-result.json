@@ -1,0 +1,77 @@
+{
+  "mode": "Production editor HTML/JS, bundled Fabric and actual media in isolated headless Chrome; fixture-only IPC",
+  "checks": [
+    {
+      "scenario": "U01: initial V selects and moves saved stroke without pressing V",
+      "before": {
+        "left": 863.9941408282264,
+        "top": 469.8,
+        "scaleX": 1,
+        "scaleY": 1,
+        "angle": 0,
+        "skewX": 0,
+        "skewY": 0,
+        "flipX": false,
+        "flipY": false
+      },
+      "after": {
+        "left": 945.2889450717819,
+        "top": 516.2535640777924,
+        "scaleX": 1,
+        "scaleY": 1,
+        "angle": 0,
+        "skewX": 0,
+        "skewY": 0,
+        "flipX": false,
+        "flipY": false
+      }
+    },
+    {
+      "scenario": "U02: real missing-media open failure releases still and restores selection",
+      "frame": 0,
+      "error": true,
+      "seeking": false,
+      "still": "false",
+      "before": {
+        "left": 863.9941408282264,
+        "top": 469.8,
+        "scaleX": 1,
+        "scaleY": 1,
+        "angle": 0,
+        "skewX": 0,
+        "skewY": 0,
+        "flipX": false,
+        "flipY": false
+      },
+      "after": {
+        "left": 933.6754016084168,
+        "top": 504.6401730583442,
+        "scaleX": 1,
+        "scaleY": 1,
+        "angle": 0,
+        "skewX": 0,
+        "skewY": 0,
+        "flipX": false,
+        "flipY": false
+      }
+    },
+    {
+      "scenario": "U03: focused Korean name commits before exactly one save",
+      "calls": 1,
+      "name": "한글 이름을 입력하며 저장",
+      "dirty": false
+    },
+    {
+      "scenario": "U03: Chrome CDP IME composition suppresses save until commit",
+      "before": 1,
+      "after": 2
+    },
+    {
+      "scenario": "U03: cancelling save preserves committed name and dirty state",
+      "dirty": true
+    }
+  ],
+  "errors": [],
+  "sourceSha256": "4f52cad55d4cd2f8c0e70c0e4689c226c1c14a8e0ba617d43da73dfd3a2e1c24",
+  "passed": true
+}

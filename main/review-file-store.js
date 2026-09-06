@@ -571,6 +571,15 @@ function createReviewFileStore(configuration = {}) {
     throw lastError;
   }
 
+  async function readTextAllowingNormalAbsence(filePath) {
+    try {
+      return await readTextOrNull(fsPromises, filePath);
+    } catch (error) {
+      if (!TRANSIENT_READ_ERROR_CODES.has(error?.code)) throw error;
+      return readTextOrNullWithRetry(filePath);
+    }
+  }
+
   async function cleanupPathsBestEffort(paths) {
     for (const filePath of paths.filter(Boolean)) {
       try {
@@ -2082,7 +2091,7 @@ function createReviewFileStore(configuration = {}) {
     };
   }
 
-  async function readReviewSnapshot(requestedFilePath) {
+  async function readReviewSnapshot(requestedFilePath, options = {}) {
     const filePath = await resolveCanonicalReviewPath(requestedFilePath);
     await waitForPendingWrite(filePath);
     let recovery = null;
@@ -2122,7 +2131,37 @@ function createReviewFileStore(configuration = {}) {
       }
     }
 
-    const content = await readTextOrNullWithRetry(filePath);
+    let content;
+    if (options.allowMissing === true && recovery === null) {
+      // 최초 영상 열기에서는 아직 만들지 않은 리뷰 파일이 정상이다.
+      // 접근 충돌은 기존 재시도를 유지하고 ENOENT만 즉시 부재로 처리한다.
+      content = await readTextAllowingNormalAbsence(filePath);
+      if (content === null && (
+        writeQueues.has(queueKey(filePath)) || await pathExists(fsPromises, sidecarPath)
+      )) {
+        // 첫 확인 이후 저장이 시작됐으면 일반 읽기로 다시 진입해 대기/복구한다.
+        return readReviewSnapshot(filePath);
+      }
+      if (content === null) {
+        // 다른 프로세스가 최초 저장을 준비 중이면 sidecar 게시 전에도 lock을 보유한다.
+        const release = await acquireLock(filePath);
+        if (!release) {
+          const error = new Error('ERR_REVIEW_LOCK_TIMEOUT: Review initial-save wait timed out');
+          error.code = 'ERR_REVIEW_LOCK_TIMEOUT';
+          throw error;
+        }
+        let needsRecovery;
+        try {
+          needsRecovery = await pathExists(fsPromises, sidecarPath);
+          if (!needsRecovery) content = await readTextAllowingNormalAbsence(filePath);
+        } finally {
+          await release().catch(() => {});
+        }
+        if (needsRecovery) return readReviewSnapshot(filePath);
+      }
+    } else {
+      content = await readTextOrNullWithRetry(filePath);
+    }
     if (content === null) {
       return {
         data: null,
