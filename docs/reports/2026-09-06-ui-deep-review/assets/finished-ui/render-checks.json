@@ -1,0 +1,230 @@
+[
+  {
+    "name": "01-baeframe-review",
+    "size": {
+      "w": 1600,
+      "h": 1000
+    },
+    "images": [
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      }
+    ],
+    "overflow": [],
+    "strayText": []
+  },
+  {
+    "name": "02-baeframe-drawing",
+    "size": {
+      "w": 1600,
+      "h": 1000
+    },
+    "images": [
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      }
+    ],
+    "overflow": [],
+    "strayText": []
+  },
+  {
+    "name": "03-bediter-edit",
+    "size": {
+      "w": 1600,
+      "h": 1000
+    },
+    "images": [
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      }
+    ],
+    "overflow": [],
+    "strayText": []
+  },
+  {
+    "name": "04-bediter-portrait",
+    "size": {
+      "w": 1600,
+      "h": 1000
+    },
+    "images": [
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      },
+      {
+        "src": "animation-shot.png",
+        "loaded": true
+      }
+    ],
+    "overflow": [],
+    "strayText": []
+  }
+]

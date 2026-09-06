@@ -1,11 +1,12 @@
 <!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="color-scheme" content="light"><title>BAEFRAME UI 심층 리뷰와 화면 설계 제안</title><meta name="description" content="현재 BAEFRAME 화면 실측, 타사 공식 UI 비교, 문제별 해결법과 후속 검증 기준"><style>
  :root{--ink:#20252e;--muted:#526071;--paper:#fff;--bg:#f2f4f7;--line:#d9dfe7;--accent:#574111;font-family:'Segoe UI','Malgun Gothic',sans-serif;color:var(--ink);background:var(--bg);font-size:16px}*{box-sizing:border-box}body{margin:0}a{color:#22589a;text-underline-offset:.2em}a:hover{color:#12345b}a:focus-visible{outline:3px solid #b18013;outline-offset:3px}header{height:56px;background:#20242b;color:#fff;display:flex;align-items:center;gap:14px;padding:0 28px;position:sticky;top:0;z-index:4;border-bottom:3px solid #e2b442}header b{background:#f4cb55;color:#1a1e26;border-radius:4px;padding:3px 9px}header span{font-size:14px}header a{color:#f6d774;margin-left:auto;font-size:13px}.layout{display:grid;grid-template-columns:258px minmax(0,1fr);max-width:1680px;margin:auto}nav{position:sticky;top:76px;align-self:start;max-height:calc(100vh - 94px);overflow:auto;padding:16px 18px 28px 24px;font-size:14px;line-height:1.45}nav strong{font-size:13px;display:block;color:var(--muted);margin-bottom:12px}nav a{display:block;text-decoration:none;padding:9px 0;border-bottom:1px solid var(--line)}article{background:var(--paper);padding:48px 52px 70px;min-width:0;border-left:1px solid var(--line);line-height:1.85}h1{font-size:clamp(1.7rem,3vw,2.8rem);line-height:1.3;letter-spacing:-.025em;margin:0 0 26px;max-width:25em}h2{font-size:1.65rem;margin:64px 0 22px;padding:20px 0 0;border-top:2px solid #343d4b;line-height:1.4;scroll-margin-top:84px}h3{font-size:1.23rem;margin:42px 0 16px;line-height:1.5;scroll-margin-top:84px;border-left:4px solid #c49625;padding-left:14px}h4{font-size:1.05rem;margin-top:24px}p,li{max-width:82ch}p{margin:14px 0}ul,ol{padding-left:1.45em}li{padding:4px 0}strong{font-weight:700;color:#19202b}blockquote{margin:26px 0;padding:16px 22px;background:#f8f4e8;border-left:4px solid #b58a22;color:#443a24}blockquote p{margin:4px 0}.table-scroll{width:100%;overflow:auto;margin:24px 0;border:1px solid var(--line)}table{border-collapse:collapse;min-width:580px;width:100%;font-size:14px;line-height:1.7}th{text-align:left;background:#edf0f4;white-space:nowrap}th,td{padding:13px 15px;vertical-align:top;border-bottom:1px solid var(--line)}tr:last-child td{border-bottom:0}td:first-child{min-width:125px}code{font-family:Consolas,monospace;font-size:.9em;background:#eef1f5;padding:2px 4px;border-radius:3px;overflow-wrap:anywhere}pre{white-space:pre-wrap;background:#eef1f5;padding:20px}.image-link{display:block;margin:25px 0 7px;text-decoration:none;border:1px solid #cad1dc;background:#17191d;border-radius:4px;overflow:hidden}.image-link img{display:block;width:100%;height:auto}.caption,figcaption{font-size:14px;color:#506073;line-height:1.7;max-width:none;margin:8px 0 25px}figure{margin:28px 0}figure .image-link{margin-bottom:0}.eyebrow{color:#70540f;font-size:14px;font-weight:600}.summary{background:#f3f5f8;border-left:4px solid #4a647f;padding:18px 24px}.note{font-size:14px;color:var(--muted)}.issue-meta{font-size:14px;color:#536175}.two-images{display:grid;grid-template-columns:1fr 1fr;gap:20px}.two-images figure{min-width:0}hr{border:0;border-top:1px solid var(--line);margin:36px 0}.mobile-toc{display:none}footer{padding:24px 36px;background:#20242b;color:#c8d0dc;font-size:13px}.ref-image img{max-height:680px;object-fit:contain}.ref-image{background:#f0f1f4} @media(max-width:1000px){.layout{grid-template-columns:210px minmax(0,1fr)}article{padding:32px 28px}nav{padding-left:18px}}@media(max-width:760px){header{padding:0 16px;height:54px}header span{font-size:12px}header a{font-size:12px}.layout{display:block}nav{position:static;max-height:none;padding:0}.desktop-toc{display:none}.mobile-toc{display:block;background:#e7ebf1;padding:15px 18px}.mobile-toc summary{font-size:15px;font-weight:700;cursor:pointer}.mobile-toc a{padding:10px 0}article{padding:28px 18px 50px;border-left:0;font-size:16px;line-height:1.85}h2{font-size:1.45rem;margin-top:48px}h3{font-size:1.15rem}.two-images{display:block}th,td{padding:10px 12px}.table-scroll{margin:18px 0}.image-link{margin-left:-2px;margin-right:-2px}blockquote{padding:14px 16px}.summary{padding:14px 16px}}@media print{header,nav,.mobile-toc{display:none}.layout{display:block}article{padding:0;border:0}h2,h3{break-after:avoid}img,figure,tr{break-inside:avoid}a{color:inherit}.table-scroll{overflow:visible}table{min-width:0;font-size:11px}h1{font-size:30px}h2{font-size:22px}body{background:white}}
- </style></head><body><header><b>B</b><span>BAEFRAME · UI 설계 검토</span><a href="#top">맨 위로</a></header><div class="layout"><nav class="desktop-toc" aria-label="목차"><strong>보고서 목차</strong><a href="#section-1">1. 가장 먼저 결정해야 할 것</a><a href="#section-3">2. 조사 범위와 근거의 한계</a><a href="#section-6">3. 현재 화면에서 드러나는 구조</a><a href="#section-7">4. 타사 UI에서 무엇을 가져올 것인가</a><a href="#section-14">5. 문제 목록과 우선순위</a><a href="#section-15">6. 입력·실패·저장의 신뢰를 먼저 회복한다</a><a href="#section-16">7. 영상이 중심이 되는 공간 배분</a><a href="#section-17">8. 선택 대상과 시간축을 다시 읽을 수 있게 한다</a><a href="#section-18">9. 읽기·학습·설정의 공통 규칙</a><a href="#section-19">10. 제안 화면 — 미구현 구조 설계</a><a href="#section-24">11. 디자인 시스템과 인터랙션 계약</a><a href="#section-28">12. 실제 작업 흐름으로 제안안을 검증한다</a><a href="#section-36">13. 구현 순서와 완료 조건</a><a href="#section-42">14. 출처·추적과 남은 불확실성</a></nav><div><details class="mobile-toc"><summary>보고서 목차 펼치기</summary><nav aria-label="모바일 목차"><a href="#section-1">1. 가장 먼저 결정해야 할 것</a><a href="#section-3">2. 조사 범위와 근거의 한계</a><a href="#section-6">3. 현재 화면에서 드러나는 구조</a><a href="#section-7">4. 타사 UI에서 무엇을 가져올 것인가</a><a href="#section-14">5. 문제 목록과 우선순위</a><a href="#section-15">6. 입력·실패·저장의 신뢰를 먼저 회복한다</a><a href="#section-16">7. 영상이 중심이 되는 공간 배분</a><a href="#section-17">8. 선택 대상과 시간축을 다시 읽을 수 있게 한다</a><a href="#section-18">9. 읽기·학습·설정의 공통 규칙</a><a href="#section-19">10. 제안 화면 — 미구현 구조 설계</a><a href="#section-24">11. 디자인 시스템과 인터랙션 계약</a><a href="#section-28">12. 실제 작업 흐름으로 제안안을 검증한다</a><a href="#section-36">13. 구현 순서와 완료 조건</a><a href="#section-42">14. 출처·추적과 남은 불확실성</a></nav></details><article id="top"><h1>BAEFRAME UI 심층 리뷰와 화면 설계 제안</h1>
-<p class="eyebrow">2026.09.06 · 기존 리뷰창 + 영상·드로잉 편집창 · 의사결정용 연구 보고서</p>
+ </style></head><body><header><b>B</b><span>BAEFRAME · UI 설계 검토</span><a href="#top">맨 위로</a></header><div class="layout"><nav class="desktop-toc" aria-label="목차"><strong>보고서 목차</strong><a href="#section-1">1. 가장 먼저 결정해야 할 것</a><a href="#section-3">2. 조사 범위와 근거의 한계</a><a href="#section-6">3. 현재 화면에서 드러나는 구조</a><a href="#section-7">4. 타사 UI에서 무엇을 가져올 것인가</a><a href="#section-14">5. 문제 목록과 우선순위</a><a href="#section-15">6. 입력·실패·저장의 신뢰를 먼저 회복한다</a><a href="#section-16">7. 영상이 중심이 되는 공간 배분</a><a href="#section-17">8. 선택 대상과 시간축을 다시 읽을 수 있게 한다</a><a href="#section-18">9. 읽기·학습·설정의 공통 규칙</a><a href="#section-19">10. BAEFRAME·BEditer 완성 화면 제안</a><a href="#section-31">11. 디자인 시스템과 인터랙션 계약</a><a href="#section-35">12. 실제 작업 흐름으로 제안안을 검증한다</a><a href="#section-43">13. 구현 순서와 완료 조건</a><a href="#section-49">14. 출처·추적과 남은 불확실성</a></nav><div><details class="mobile-toc"><summary>보고서 목차 펼치기</summary><nav aria-label="모바일 목차"><a href="#section-1">1. 가장 먼저 결정해야 할 것</a><a href="#section-3">2. 조사 범위와 근거의 한계</a><a href="#section-6">3. 현재 화면에서 드러나는 구조</a><a href="#section-7">4. 타사 UI에서 무엇을 가져올 것인가</a><a href="#section-14">5. 문제 목록과 우선순위</a><a href="#section-15">6. 입력·실패·저장의 신뢰를 먼저 회복한다</a><a href="#section-16">7. 영상이 중심이 되는 공간 배분</a><a href="#section-17">8. 선택 대상과 시간축을 다시 읽을 수 있게 한다</a><a href="#section-18">9. 읽기·학습·설정의 공통 규칙</a><a href="#section-19">10. BAEFRAME·BEditer 완성 화면 제안</a><a href="#section-31">11. 디자인 시스템과 인터랙션 계약</a><a href="#section-35">12. 실제 작업 흐름으로 제안안을 검증한다</a><a href="#section-43">13. 구현 순서와 완료 조건</a><a href="#section-49">14. 출처·추적과 남은 불확실성</a></nav></details><article id="top"><h1>BAEFRAME UI 심층 리뷰와 화면 설계 제안</h1>
+<p class="eyebrow">2026.09.06 · 보강판 2 · BAEFRAME 기본 화면 + BEditer 전체 UI · 의사결정용 연구 보고서</p>
 
 <p><strong>권고: 리뷰와 영상 제작의 목적은 유지하면서, 도구·선택 대상·시간·저장 상태의 문법을 먼저 통일한다.</strong> 그 위에서 화면 공간을 조절하고 타임라인을 다시 설계해야 한다. 어두운 배경과 작은 버튼을 늘리는 것만으로는 전문 작업 도구의 신뢰를 얻기 어렵다.</p>
 <p>이 문서는 기존 UX 보고서를 보존한 뒤, 새 편집기 개선까지 반영된 <code>5d1cb89</code>를 기준으로 다시 조사한 결과다. <strong>앱 기능을 변경한 문서가 아니며, 아래 설계 그림은 모두 미구현 제안이다.</strong> 현재 화면·측정·코드에서 확인한 문제와 후속 기능 제안을 구별했다. 이미 고친 획 이동 문제를 다시 미해결로 세지 않았다.</p>
-<p><strong>현재 화면 캡처 27개</strong>(리뷰 13개 + 편집 14개)를 수집하고, 공식 5개 제품의 15개 문서와 UI 이미지 6개를 대조했다. 본문에는 현재 대표 화면 17개, 공식 참고 6개, 직접 제작한 구조 제안 4개를 합쳐 <strong>이미지 27개</strong>를 배치했다. 이미지 선택 시 원본을 크게 볼 수 있다. 데스크톱 앱을 평가한 보고서이며, 이 <strong>보고서의 모바일 열람</strong>과 <strong>앱의 모바일 지원</strong>은 별개다.</p>
+<p><strong>이번 보강의 중심은 BAEFRAME 기본 앱과 BEditer를 같은 완성도로 제안하는 것이다.</strong> 기존 구조도만으로는 BAEFRAME에서 영상을 열고, 댓글을 읽고 쓰며, 그림으로 리뷰하는 전체 모습이 부족했다. 기본 리뷰 → 드로잉 리뷰 → 기본 편집 → 세로 영상·드로잉 편집 순서로, 실제 내용과 상태를 채운 <strong>완성 화면 시안 4장</strong>과 기능별 새 위치를 추가했다. <a href="#finished-ui">새 완성 화면 4장 바로 보기</a></p>
+<p><strong>현재 화면 캡처 27개</strong>(리뷰 13개 + 편집 14개)를 수집하고, 공식 5개 제품의 15개 문서와 UI 이미지 6개를 대조했다. 본문에는 현재 대표 화면 17개, 공식 참고 6개, 완성 화면 시안 4개, 구조 설명 4개를 합쳐 <strong>이미지 31개</strong>를 배치했다. 이미지 선택 시 원본을 크게 볼 수 있다. 데스크톱 앱을 평가한 보고서이며, 이 <strong>보고서의 모바일 열람</strong>과 <strong>앱의 모바일 지원</strong>은 별개다.</p>
 <h2 id="section-1">1. 가장 먼저 결정해야 할 것</h2>
 <h3 id="section-2">전문 UI의 목표는 ‘조작 결과를 예측할 수 있는 화면’이다</h3>
 <p>BAEFRAME의 강점은 영상을 보며 프레임에 직접 그리는 방식이다. 여기에 자르기·붙이기·영상 정지·짧은 릴 제작이 들어오면 하나의 화면에 서로 다른 대상이 등장한다. 영상 클립을 자르는 일, 그림의 일부 획을 옮기는 일, 같은 그림을 8프레임 유지하는 일, 리뷰 댓글의 적용 구간을 고르는 일은 모두 다른 작업이다. 그런데 모두 ‘선택’, ‘프레임’, ‘저장’이라는 짧은 말로만 표시하면 사용자는 실행 직전까지 결과를 추측해야 한다.</p>
@@ -558,9 +559,396 @@
 <p><strong>P3 · 구조 제안 · 현재 코드 + 타사 비교.</strong> 리뷰 기본 C는 댓글 모드이고 새 편집창 C는 자르기다. 이는 별도 창의 문맥에 따라 합리적일 수 있다. 하지만 ‘Premiere처럼’이라는 요구를 키 이름만 복사하는 것으로 처리하면 리뷰의 습관·드로잉의 획 선택·타임라인의 컷 선택이 충돌한다. 근거: <code>user-settings.js:30</code>, 편집창의 현재 V/C/H 명령 처리.</p>
 <p><strong>해결:</strong> 모든 명령에 작업 영역, 입력 대상, 적용 범위를 둔다. 현재 창이 ‘리뷰’인지 ‘영상 제작’인지 계속 보이고, 키 도움말은 해당 문맥을 따라야 한다. Premiere식 제작 기본값과 기존 리뷰 기본값을 명시적으로 제공한다. 기존 사용자 설정을 조용히 바꾸지 않는다. <a href="https://helpx.adobe.com/premiere/desktop/get-started/tour-the-workspace/what-are-workspaces.html">Premiere 작업 영역 개념</a></p>
 <p><strong>부작용·완료 기준:</strong> 지나치게 많은 모드를 만들면 매번 모드를 확인하는 부담이 생긴다. 우선 두 작업 목적과 하나의 공통 명령 목록으로 제한한다. 입력칸에서는 문자 키가 문자를 쓰고, 문서 저장은 동작하며, 타임라인과 캔버스에서는 명시된 대상으로 Delete/Undo가 적용되어야 한다. 편집창 내부 Undo는 이미 존재한다. 리뷰·제작 두 문맥을 아우르는 Undo 정책은 데이터 경계까지 검토한 별도 사양이 필요하다.</p>
-<h2 id="section-19">10. 제안 화면 — 미구현 구조 설계</h2>
-<p>이 절의 네 그림은 실제 제품 캡처가 아니다. 현재 기능, 후속 기능, 권고 배치를 함께 설명하는 <strong>구조도</strong>다. 버튼이 그려져 있다고 이미 동작하거나 이번 UI 개편의 확정 범위라는 뜻은 아니다. 최종 치수·색상·기능 범위는 후속 프로토타입과 구현 계획에서 확정한다.</p>
-<h3 id="section-20">제안 A · 흔들리지 않는 작업 화면과 선택 문맥</h3>
+<p><a id="finished-ui"></a></p>
+<h2 id="section-19">10. BAEFRAME·BEditer 완성 화면 제안</h2>
+<p><strong>기본 BAEFRAME의 리뷰 경험과 BEditer의 제작 경험을 함께 다듬는다.</strong> 아래 네 장은 같은 크기·글꼴·색상·부품을 사용한 완성 화면 예시다. 영상, 파일 목록, 댓글, 선택 속성, 타임라인을 채워 실제로 사용할 때의 밀도를 보여준다. 앞의 현재 앱 캡처와 달리 <strong>모두 미구현 디자인 시안</strong>이며, 시안 제작용 HTML을 이미지로 렌더했다. 그림 속 영상은 이 보고서를 위해 생성한 가상의 애니메이션 장면이고 파일명·작성자·댓글도 예시다.</p>
+<h3 id="section-20">10.1 · 하나의 스타일, 두 가지 작업 목적</h3>
+<p>두 앱에서 영상이 중심이고 문서 헤더·도구 줄·재생 줄·하단 시간축의 위치가 반복된다. 오른쪽은 리뷰할 때 댓글, 만들 때 선택 속성을 맡는다. BAEFRAME를 편집기의 축소판으로 만들지 않고, 기존 리뷰 업무에 필요한 목록·버전 정보·댓글 작성·구간 피드백을 완성된 화면의 절반으로 다룬다.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>구분</th>
+<th>BAEFRAME 기본 앱</th>
+<th>BEditer</th>
+<th>함께 사용할 규칙</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>작업 대상</td>
+<td>현재 열린 원본과 그 원본의 리뷰</td>
+<td>여러 컷으로 구성한 결과 영상</td>
+<td>헤더에 파일 이름·리뷰/제작 문맥을 계속 표시</td>
+</tr>
+<tr>
+<td>왼쪽 영역</td>
+<td>영상 목록·재생목록·컷 묶음·그림 레이어</td>
+<td>프로젝트 미디어·시퀀스·선택 컷의 그림 레이어</td>
+<td>같은 목록 높이, 선택·잠금·숨김 표시</td>
+</tr>
+<tr>
+<td>가운데</td>
+<td>원본 보기와 드로잉 리뷰</td>
+<td>편집 결과와 세로 출력 미리보기</td>
+<td>영상 비율 유지, 보기 배율과 출력 변형 구별</td>
+</tr>
+<tr>
+<td>오른쪽</td>
+<td>구간 댓글과 입력창, 필요 시 그림 속성</td>
+<td>선택 컷·그림·프로젝트 속성</td>
+<td>대상 이름과 적용 범위를 먼저 읽음</td>
+</tr>
+<tr>
+<td>아래 시간축</td>
+<td>원본 시간 위의 댓글·그림 노출</td>
+<td>출력 시간 위의 컷·그림·소리</td>
+<td>동일 눈금·재생 위치, 서로 다른 대상 이름</td>
+</tr>
+<tr>
+<td>저장물</td>
+<td>리뷰 파일 .bframe</td>
+<td>편집 프로젝트 .bedit와 별도 출력 영상</td>
+<td>이 기기에 저장됨 / 공유·연결 / 내보내기를 구분</td>
+</tr>
+<tr>
+<td>C 단축키</td>
+<td>댓글 작성</td>
+<td>클립 위치에서 자르기</td>
+<td>현재 문맥의 이름·커서·키 안내를 함께 표시</td>
+</tr>
+</tbody></table></div>
+<p>공통 외형의 출발점은 <strong>짙은 회색 면, 읽히는 밝은 글자, 얇은 구획선, 절제된 노랑</strong>이다. 영상·그림·소리는 작은 역할색과 이름으로 구별한다. 여러 패널을 둥근 카드로 겹치기보다 정렬된 면과 경계로 묶는다. 노랑을 배경 전체에 바르지 않고 주요 실행과 현재 도구에 집중한다. Premiere의 명령 인식, Animate의 노출 문법, Frame.io의 댓글 맥락을 BAEFRAME의 작업에 맞게 적용한 결과이며, 특정 제품의 화면을 복제한 것은 아니다.</p>
+<h3 id="section-21">10.2 · 완성 화면 ① BAEFRAME 기본 리뷰</h3>
+<p><a href="assets/finished-ui/01-baeframe-review.png" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/finished-ui/01-baeframe-review.png" alt="미구현 완성 시안 1: 영상 목록·원본 영상·구간 댓글·입력창을 갖춘 BAEFRAME 기본 리뷰 전체 화면"></a></p>
+<p class="caption">BAEFRAME 기본 리뷰 · 1600×1000 설계 / 3200×2000 이미지. 원본 영상 80F를 보며 72–84F 구간의 의견을 확인하는 예시. 영상 목록, 댓글 작성, 원본 시간축을 기본 화면의 주 작업으로 구성했다. 이미지를 누르면 글자까지 크게 볼 수 있다.</p>
+
+<p><strong>화면에서 달라지는 점.</strong> 파일명은 상단 왼쪽에 충분한 폭을 받고, 저장·링크 복사는 오른쪽 고정 영역에 남는다. 영상 목록은 폴더·현재 파일·버전·검토 상태를 연결한다. 댓글은 작성자 → 구간 → 본문 → 답글·해결의 순서로 읽히고, 입력창은 패널 아래에 항상 자리한다. 동기화 설명이 댓글 입력을 밀어내지 않는다. 댓글 카드는 선택된 구간만 강조하며 해결된 의견의 본문도 읽을 수 있게 둔다.</p>
+<p>하단의 파란 원본 행은 편집 가능한 컷 배열이 아니라 현재 영상의 길이를 보여주는 잠긴 기준행이다. 댓글 범위와 그림 유지 구간은 각각 다른 행에 놓인다. 선택한 댓글을 읽으면서 원본을 잘라 버릴 수 있다는 인상을 주지 않는다. 반복·볼륨·레이어 합성은 재생·보기 영역에서 이름을 보고 찾을 수 있게 유지한다.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>현재 기능·필요</th>
+<th>제안한 위치와 노출</th>
+<th>유지 또는 추가할 설계</th>
+<th>연결 문제</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>영상 열기·폴더·다른 파일</td>
+<td>왼쪽 목록과 하단 폴더 열기, 상단 파일 메뉴</td>
+<td>기존 열기 경로 유지. 목록의 검토 상태 요약은 표시 개선 제안</td>
+<td>U05·U06</td>
+</tr>
+<tr>
+<td>재생목록·컷 묶음</td>
+<td>왼쪽 상단 두 탐색 탭</td>
+<td>기존 탐색 기능 유지. 여기의 컷 묶음은 영상 자르기 명령이 아님</td>
+<td>RV-02</td>
+</tr>
+<tr>
+<td>파일명·버전 확인</td>
+<td>문서 헤더와 선택한 목록 항목</td>
+<td>긴 이름은 영역 안에서 줄임, 전체 이름은 툴팁/파일 정보로 제공. 버전 비교 화면은 별도 범위</td>
+<td>U05·U23</td>
+</tr>
+<tr>
+<td>저장·링크 복사·영상 편집 진입</td>
+<td>오른쪽 고정 문서 명령</td>
+<td>기존 기능 유지. 로컬 저장과 공유 상태 문구 분리</td>
+<td>U23·U25</td>
+</tr>
+<tr>
+<td>재생·프레임 이동·현재/전체 시간</td>
+<td>영상 바로 아래 고정 재생 줄</td>
+<td>핵심 조작 기본 노출, fps와 현재 프레임을 함께 표시</td>
+<td>U08·U11</td>
+</tr>
+<tr>
+<td>보기 배율·반복·합성·볼륨</td>
+<td>영상 위 보기 줄과 재생 줄</td>
+<td>세부 옵션은 이름 있는 메뉴로 접기, 현재 상태 표시</td>
+<td>U08·U14</td>
+</tr>
+<tr>
+<td>구간 댓글·답글·해결</td>
+<td>오른쪽 댓글 목록</td>
+<td>양 끝 시간과 길이, 작성자 역할, 해결 여부를 읽기 순서대로 정리</td>
+<td>U15·U16</td>
+</tr>
+<tr>
+<td>검색·필터·댓글 쓰기·이미지 첨부</td>
+<td>패널 상단 검색/필터, 하단 고정 입력창의 + 메뉴</td>
+<td>입력창 보존. 범위 지정과 이미지 첨부는 서로 다른 명령으로 명명</td>
+<td>U09·U16·U22</td>
+</tr>
+<tr>
+<td>앱 설정·협업 연결</td>
+<td>헤더 설정, 문서 연결 상태의 별도 상세</td>
+<td>설정 진입 분리 제안. 꺼진 연결 안내는 패널 전체를 차지하지 않음</td>
+<td>U09·U20</td>
+</tr>
+</tbody></table></div>
+<p><strong>완성의 기준:</strong> 예쁜 영상만 크게 보이는 화면이 아니라, 사용자가 다른 영상을 열고, 의견을 찾고, 답글을 달고, 새 구간 의견을 남긴 다음 저장까지 끝낼 수 있는 화면이어야 한다. 이 시안은 그 경로의 위치를 제안하며 실제 댓글 전송이나 외부 협업 성공을 증명하지 않는다.</p>
+<h3 id="section-22">10.3 · 완성 화면 ② BAEFRAME 드로잉 리뷰</h3>
+<p><a href="assets/finished-ui/02-baeframe-drawing.png" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/finished-ui/02-baeframe-drawing.png" alt="미구현 완성 시안 2: 작은 고정 도구 줄과 선택 획 속성·댓글을 함께 보여주는 BAEFRAME 드로잉 리뷰 전체 화면"></a></p>
+<p class="caption">BAEFRAME 드로잉 리뷰 · 동일한 원본의 손 주변 획 2개를 선택한 상태. 현재 80F, 포즈 수정 레이어, 노출 72–84F, 색·두께·불투명도를 화면에 함께 표시한다. 선택 상자는 실제 영상 안의 획에 맞춰 작성한 시안이다.</p>
+
+<p><strong>화면에서 달라지는 점.</strong> 선택 도구 창을 영상 위에 크게 펼치지 않고, 영상 위의 고정 도구 줄과 오른쪽 속성 영역에 나눈다. 원본 보기에서도 같은 높이의 작업 줄을 확보해 드로잉 진입 때문에 영상의 위치나 배율이 갑자기 바뀌지 않게 한다. 도구 줄에는 활성 V, 획 전체/부분, 선택 모양, 현재 레이어·프레임·개수를 읽을 수 있게 둔다. 세부 명령은 이름 있는 메뉴에서 확장한다.</p>
+<p>오른쪽은 선택한 그림의 속성을 먼저 보여주고 그 아래 댓글을 유지한다. 선택 속성 때문에 댓글 작성이 사라지지 않는다. 왼쪽의 그림 레이어와 하단 노출 행이 같은 이름을 사용하므로 ‘어느 레이어의 어느 그림을 바꾸는가’를 다시 계산할 필요가 없다. 화면의 선택 테두리와 실제 획 좌표는 같은 변환을 써야 하며, 완성 이미지가 기존 좌표 버그의 수정 검증을 대신하지 않는다.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>현재 기능·필요</th>
+<th>제안한 위치와 노출</th>
+<th>유지 또는 추가할 설계</th>
+<th>연결 문제</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>펜·지우개·선택·보기 이동</td>
+<td>영상 위 고정 작업 줄, 활성 도구와 이름 기본 노출</td>
+<td>기존 도구 유지. 고정 높이 도킹으로 큰 부동 팔레트 개선</td>
+<td>U01·U07</td>
+</tr>
+<tr>
+<td>획 전체/부분 선택, 사각/라쏘</td>
+<td>선택 도구 옆 범위·모양 메뉴</td>
+<td>기본값을 줄에 표시하고 대안은 메뉴로 펼침</td>
+<td>U07·U26</td>
+</tr>
+<tr>
+<td>레이어 선택·순서·잠금·표시·삭제</td>
+<td>왼쪽 레이어 목록과 레이어 문맥 메뉴</td>
+<td>선택·잠금·숨김 표시, 이름·순서·복제·삭제 진입 보존</td>
+<td>U10·U25</td>
+</tr>
+<tr>
+<td>색·두께·불투명도</td>
+<td>오른쪽 선택 속성 상단</td>
+<td>선택한 획의 값과 새로 그릴 펜의 기본값을 구별</td>
+<td>U10·U26</td>
+</tr>
+<tr>
+<td>실행 취소·재실행·선택 삭제·전체 지우기</td>
+<td>공통 편집 메뉴와 선택 문맥 메뉴</td>
+<td>삭제 범위 명시. 전체 지우기는 이름과 확인 단계로 구분</td>
+<td>U26</td>
+</tr>
+<tr>
+<td>그림 키·빈 키·유지 구간</td>
+<td>하단 그림 노출 행, 확대 조절</td>
+<td>기존 드로잉 방식을 유지하는 노출 편집 설계. 새 편집 명령의 구현 범위는 별도 확정</td>
+<td>U11·U12</td>
+</tr>
+<tr>
+<td>그림과 연결된 구간 의견</td>
+<td>오른쪽 댓글의 범위·그림 표시와 입력창</td>
+<td>리뷰 업무를 유지. 그림 편집을 위해 댓글 패널 전체를 교체하지 않음</td>
+<td>U09·U15</td>
+</tr>
+</tbody></table></div>
+<p><strong>부드러운 조작의 계약:</strong> 드래그 중 화면은 포인터를 계속 따라가고, 놓는 순간 다른 좌표로 뛰지 않아야 한다. 팬은 보기 위치만 바꾸고 획 데이터와 실행 취소 기록을 오염시키지 않아야 한다. 기본 리뷰와 드로잉 리뷰의 영상 영역 일치, 100%/맞춤/확대 상태에서의 선택 일치, 이동 도중 포인터 이탈·취소를 후속 프로토타입에서 검증한다. 이 문서의 정지 화면으로 반응 속도를 검증했다고 주장하지 않는다.</p>
+<h3 id="section-23">10.4 · 완성 화면 ③ BEditer 기본 편집</h3>
+<p><a href="assets/finished-ui/03-bediter-edit.png" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/finished-ui/03-bediter-edit.png" alt="미구현 완성 시안 3: 미디어 목록·결과 미리보기·선택 컷 속성·영상 및 그림 타임라인을 갖춘 BEditer 기본 편집 전체 화면"></a></p>
+<p class="caption">BEditer 기본 편집 · 4컷 / 12초 / 24fps. 편집 위치 72F는 선택한 컷 02 안의 24F이며, 이 컷의 원본 시작이 24F이므로 미리보는 원본 위치는 48F다. 영상·그림·소리의 구분과 선택 컷 속성을 한 화면에 배치했다.</p>
+
+<p><strong>화면에서 달라지는 점.</strong> 왼쪽은 가져온 미디어와 프로젝트, 가운데는 결과 미리보기, 오른쪽은 현재 컷의 속성을 맡는다. 컷 번호·이름·편집 위치·원본 범위를 한 묶음으로 보여주고 화면 변형은 그 아래에 둔다. 영상 보기 배율과 최종 출력에 반영되는 크기·위치는 서로 다른 영역에 배치한다. 출력 해상도·비율·fps는 미리보기 제목 줄에 남는다.</p>
+<p>타임라인에는 영상 필름스트립, 선택 컷의 드로잉 레이어, 소리 행을 읽을 수 있는 높이로 배치한다. C로 자르기 상태에 들어간 뒤 클립의 특정 위치를 눌러 분할한다는 명령이 도구 이름·키·커서에 연결되어야 한다. 빈 공간 클릭, 잠긴 행, 그림 키 클릭이 같은 방식으로 영상을 자르면 안 된다. 아래 전체 개요는 현재 확대 구간을 이동하는 역할이며 두 개의 독립 편집 시간을 만들지 않는다.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>현재 기능·필요</th>
+<th>제안한 위치와 노출</th>
+<th>유지 또는 추가할 설계</th>
+<th>연결 문제</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>미디어 가져오기·프로젝트 열기/저장</td>
+<td>왼쪽 미디어 목록과 고정 가져오기, 문서 헤더</td>
+<td>현 편집 경로 유지. 프로젝트/미디어 탐색 계층은 개선 제안</td>
+<td>U05·U23</td>
+</tr>
+<tr>
+<td>V 선택·C 자르기·H 보기 이동</td>
+<td>영상 위 공통 도구 줄, 타임라인 명령</td>
+<td>기존 키 의미를 읽을 수 있게 강화. 입력 포커스별 적용 범위 명세</td>
+<td>U26</td>
+</tr>
+<tr>
+<td>컷 배열·분할·정지 구간</td>
+<td>타임라인 영상 행과 상단 명령</td>
+<td>현 편집 기능의 위치 정리. 영상 정지와 그림 유지는 다른 명령</td>
+<td>U11·U12</td>
+</tr>
+<tr>
+<td>선택 컷의 길이·원본 시작/끝</td>
+<td>오른쪽 선택 컷 속성 최상단</td>
+<td>현재 선택을 고정 표시. 끝 경계 제외를 프레임 값과 함께 설명</td>
+<td>U10·U11</td>
+</tr>
+<tr>
+<td>크기·위치·회전과 보기 배율</td>
+<td>출력 변형은 오른쪽, 보기 배율은 재생 줄</td>
+<td>기존 영상 맞춤 contain/cover와 보기 배율 유지. 영상 클립의 크기·회전·X/Y 직접 조절은 <strong>확장 제안</strong></td>
+<td>U13·U14</td>
+</tr>
+<tr>
+<td>그림 레이어와 키 편집</td>
+<td>선택 컷 아래 펼침 행, 속성의 드로잉 탭</td>
+<td>다른 컷의 키를 잘못 수정하지 않게 소유 컷 표시</td>
+<td>U10·U12</td>
+</tr>
+<tr>
+<td>영상 내보내기</td>
+<td>문서 헤더의 주 실행, 출력 상세 패널</td>
+<td>기존 출력 진입 유지. 대상 폴더·단계·수치 진행은 U24 후속 설계</td>
+<td>U24</td>
+</tr>
+<tr>
+<td>배경 음악·소리 행</td>
+<td>이름·음량·파형이 있는 별도 행</td>
+<td>기존 배경음악 1개 가져오기·미리듣기·음량·출력 연결 유지. 파형 표시와 세부 오디오 편집 UI는 <strong>확장 제안</strong></td>
+<td>기존 제작 기능 + 확장 범위</td>
+</tr>
+</tbody></table></div>
+<p>영상 행과 소리 행이 있다고 멀티트랙 합성·전환 효과·자동 리플 편집이 모두 제공된다는 뜻은 아니다. 첫 구현 사양은 현재 가능한 컷 연결·분할·정지·드로잉·배경음악을 정리하고, 파형과 세부 오디오 편집·프로젝트 탐색의 확장 범위를 따로 결정해야 한다.</p>
+<h3 id="section-24">10.5 · 완성 화면 ④ BEditer 세로 영상·드로잉</h3>
+<p><a href="assets/finished-ui/04-bediter-portrait.png" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/finished-ui/04-bediter-portrait.png" alt="미구현 완성 시안 4: 세로 미리보기와 선택 그림의 위치·크기·유지 범위를 보여주는 BEditer 세로 영상 드로잉 전체 화면"></a></p>
+<p class="caption">BEditer 세로 제작 · 출력 1080×1920 / 9:16 / 24fps. 컷 02의 포즈 레이어에서 그림 2개를 선택했다. 컷 안 24–36F와 편집 72–84F가 같은 12프레임 노출을 가리키며, 선택 테두리는 출력 영상에 포함되지 않는다.</p>
+
+<p><strong>화면에서 달라지는 점.</strong> 미디어 탐색이 덜 필요한 드로잉 단계에서는 왼쪽을 선택 컷의 레이어 목록으로 전환한다. 가운데는 세로 영상 비율을 유지하고, 오른쪽은 ‘그림 2개 / 컷 02 / 포즈 레이어’를 먼저 밝힌다. 위치·크기·불투명도·획 설정 아래에는 키 복제, 빈 키, 유지 길이가 이어진다. Animate 방식의 ‘이 시점에 그림을 만들고 이어 보여주는’ 흐름을 보존한다.</p>
+<p>세로 화면을 공간에 맞춰 보여주는 기능과 원본을 세로 출력에 맞게 자르는 기능은 다르다. 재생 줄의 화면 맞춤은 작업용 배율이고, 선택 컷 탭의 출력 변형이 결과물을 바꾼다. 중앙 가이드와 선택 테두리는 편집 보조이며 결과 영상에는 들어가지 않는다. 주변 여백을 무조건 없애기 위해 세로 영상을 가로로 늘리지 않는다.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>현재 기능·필요</th>
+<th>제안한 위치와 노출</th>
+<th>유지 또는 추가할 설계</th>
+<th>연결 문제</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>세로 출력·프레임 확인</td>
+<td>미리보기 상단 해상도/비율/fps, 하단 편집 시간</td>
+<td>현재 출력 설정을 계속 확인하는 배치</td>
+<td>U13·U24</td>
+</tr>
+<tr>
+<td>선택 컷 레이어·잠금·숨김</td>
+<td>왼쪽 드로잉 탭, 선택 컷 이름 고정</td>
+<td>레이어 목록의 문맥 보존, 다른 컷 데이터와 구별</td>
+<td>U10·U12</td>
+</tr>
+<tr>
+<td>선택 획 위치·크기·공통 속성</td>
+<td>오른쪽 드로잉 탭</td>
+<td>수치 직접 편집·혼합값 표시는 <strong>확장 제안</strong>, 현 속성 기능 전체 구현 주장 아님</td>
+<td>U10·U26</td>
+</tr>
+<tr>
+<td>그림 시작·빈 상태·같은 그림 유지</td>
+<td>타임라인 점/빈 점/띠와 오른쪽 노출 길이</td>
+<td>기존 키프레임 원리를 유지하는 편집 UI 제안</td>
+<td>U11·U12</td>
+</tr>
+<tr>
+<td>보기 확대·팬</td>
+<td>재생 줄 보기 배율, H/가운데 버튼 안내</td>
+<td>화면 이동과 그림 이동을 분리하고 도구 전환으로 영상 위치가 튀지 않게 함</td>
+<td>U01·U13·U14</td>
+</tr>
+<tr>
+<td>그림 적용 범위·저장 범위</td>
+<td>오른쪽 상단과 하단 저장 상태</td>
+<td>이 키프레임의 그림인지, 컷 전체인지 명확히 표시</td>
+<td>U10·U23</td>
+</tr>
+</tbody></table></div>
+<p><strong>영상 정지와 그림 유지의 예:</strong> 그림을 12F 유지하면 그 구간에서 영상은 계속 움직이면서 같은 그림이 보인다. 영상 정지 12F를 넣으면 선택한 원본 프레임 내용이 12F 동안 고정되고 편집의 재생 시간은 진행한다. 두 명령을 같은 ‘홀드’ 버튼 하나로 합치지 않는다. 원본 리뷰에 그린 획을 편집 결과로 가져오는 연결 정책도 새 기능 사양으로 다루고 자동 적용을 가정하지 않는다.</p>
+<h3 id="section-25">10.6 · 네 화면에 적용한 구체적인 마감 규칙</h3>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>요소</th>
+<th>이번 완성 시안의 선택</th>
+<th>구현에서 지켜야 할 점</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>배경과 구획</td>
+<td>바탕 #17181B, 패널 #202226, 떠오르는 면 #2A2D32, 경계 #363940</td>
+<td>네이티브 영상 위의 오버레이와 패널 경계를 실제 앱에서 확인</td>
+</tr>
+<tr>
+<td>글자</td>
+<td>주 글자 #EDF0F4, 보조 글자 #AEB3BD, Segoe UI·맑은 고딕 계열</td>
+<td>CDN 의존 없이 한국어 가독성 비교. 표시는 토큰 후보이며 모든 상태의 대비 인증 아님</td>
+</tr>
+<tr>
+<td>강조</td>
+<td>노랑 #F2CD5D, 영상 파랑·그림 보라·소리 초록</td>
+<td>이름·아이콘·테두리를 함께 사용. 브러시 색과 선택색은 독립</td>
+</tr>
+<tr>
+<td>문서 영역</td>
+<td>상단 메뉴 32px, 문서 헤더 56px, 하단 상태 24px</td>
+<td>긴 이름도 저장·출력 명령을 밀어내지 않음</td>
+</tr>
+<tr>
+<td>패널</td>
+<td>1600px 예시에서 왼쪽 210px, 오른쪽 330px, 중앙은 나머지</td>
+<td>절대 고정 사양 아님. 접기·리사이즈·레이아웃 초기화가 필요</td>
+</tr>
+<tr>
+<td>도구와 시간축</td>
+<td>고정 작업 줄, 대상 이름을 가진 행, 의미 있는 간격의 눈금</td>
+<td>보기 확대와 시간 확대 분리. 좁아진 키는 묶음/상세 보기로 접근</td>
+</tr>
+<tr>
+<td>피드백</td>
+<td>저장 위치·대상·시각, 선택 이름·개수, 현재 도구 이름</td>
+<td>토스트가 사라진 뒤에도 핵심 상태는 남아야 함</td>
+</tr>
+</tbody></table></div>
+<p>첫 화면과 선택 상태만 그렸다고 전체 제품 설계가 끝난 것은 아니다. 다음 상태도 동일한 부품 규칙으로 이어져야 한다.</p>
+<div class="table-scroll"><table>
+<thead>
+<tr>
+<th>상태</th>
+<th>BAEFRAME</th>
+<th>BEditer</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>첫 실행·빈 문서</td>
+<td>영상 열기·폴더 열기부터 가능, 댓글 작성 전에 이름 필요 여부 안내</td>
+<td>미디어 가져오기·프로젝트 열기, 아직 출력 대상이 없음을 표시</td>
+</tr>
+<tr>
+<td>선택 없음·다중 선택</td>
+<td>댓글 입력 유지, 그림 속성에는 선택 안내 또는 혼합값</td>
+<td>선택 컷/그림/프로젝트 탭의 적용 대상 명시, 혼합값을 임의 단일값으로 표시하지 않음</td>
+</tr>
+<tr>
+<td>원본 누락·열기 실패</td>
+<td>현재 리뷰와 입력을 보존하고 실패한 파일을 표시</td>
+<td>현재 프로젝트를 보존하고 다시 찾기·취소·오프라인 상태를 안내</td>
+</tr>
+<tr>
+<td>저장·출력 실패</td>
+<td>저장하지 못한 문서와 재시도 위치 표시</td>
+<td>프로젝트 저장 실패와 MP4 출력 실패를 분리해 복구</td>
+</tr>
+<tr>
+<td>작은 창·글자 확대</td>
+<td>우선 목록 접기, 댓글 입력·재생·저장 보존</td>
+<td>우선 미디어 접기, 선택 속성 재배치, 영상과 시간축 크기 조절</td>
+</tr>
+</tbody></table></div>
+<p>위 상태 표는 <strong>후속 설계 요구사항</strong>이며 네 장에 전부 구현한 상태 예시가 아니다. 특히 1100×720, Windows 배율, 접근성 글자 확대, 다중 모니터, 실제 드래그 반응은 12장의 검증 과제를 통과해야 확정할 수 있다. 네 장은 완성 스타일을 비교하기 위한 동일한 1600×1000 기준 화면이다.</p>
+<h3 id="section-26">10.7 · 완성 화면을 뒷받침하는 구조 설명</h3>
+<p>다음 네 그림은 완성 화면과 별개인 기존 <strong>구조 설명도</strong>다. 부품 책임·시간 기준·상태를 확대해 설명한다. 앞의 네 화면이 전체 외형의 기준이며, 구조도의 단순화된 배치나 버튼 치수를 그대로 구현하지 않는다. 버튼이 그려져 있다고 이미 동작하거나 이번 개편의 확정 범위라는 뜻은 아니다.</p>
+<h3 id="section-27">제안 A · 흔들리지 않는 작업 화면과 선택 문맥</h3>
 <p><a href="assets/proposals/01-workspace-proposal.svg" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/proposals/01-workspace-proposal.svg" alt="미구현 제안: 공통 작업 구조와 선택 컷 아래 드로잉 타임라인"></a></p>
 <p><strong>읽는 순서:</strong> 문서 이름과 저장 상태 → 현재 작업 대상 → 영상/그림 → 현재 시간 → 타임라인의 선택 범위다. 도구가 바뀌어도 영상 사각형이 갑자기 이동하지 않게 한다. 이 예시는 V로 그림 2개를 선택한 상태이며, 선택된 컷 02 아래에 드로잉 레이어만 펼친다.</p>
 <div class="table-scroll"><table>
@@ -598,7 +986,7 @@
 </tr>
 </tbody></table></div>
 <p>그림에 있는 위치/크기 입력과 리플 삭제 등은 배치 후보다. 현재 제공 범위와 연결하지 않은 버튼을 실제 프로토타입에 활성 상태로 놓지 않는다. 프레임 표기의 <code>24–32F</code> 같은 범위는 후속 사양에서 끝 경계 포함/제외를 명확히 정해야 한다.</p>
-<h3 id="section-21">제안 B · 영상 정지와 그림 유지를 다른 언어로 표시</h3>
+<h3 id="section-28">제안 B · 영상 정지와 그림 유지를 다른 언어로 표시</h3>
 <p><a href="assets/proposals/02-time-language.svg" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/proposals/02-time-language.svg" alt="미구현 제안: 편집 전체 시간과 컷 안 시간, 영상 정지와 그림 유지"></a></p>
 <p>예시의 프레임 위치는 0부터 센다. A는 48F, B는 60F이며 편집 전체 72F는 B 안의 24F다. <strong>같은 눈금 위치를 유지하면서 기준만 명시</strong>한다. 영상 정지는 원본 프레임의 내용을 고정하지만 출력의 재생 시간과 플레이헤드는 계속 진행한다. 아래의 영상 정지와 드로잉 유지 행은 두 개념의 비교를 위한 설명이며 하나의 현재 프로젝트 실행 결과가 아니다.</p>
 <div class="table-scroll"><table>
@@ -646,7 +1034,7 @@
 </tr>
 </tbody></table></div>
 <p><strong>저장 구조 원칙:</strong> UI를 통일한다고 리뷰의 원본 시간이나 drawingsV3에 임의 필드를 넣지 않는다. 컷 분할·정지·재배치 후 그림 소유권과 시간 매핑은 현재 모델에 맞춰 명세해야 한다. 리뷰 원본 피드백을 편집 결과에 표시할 때는 대응 관계를 보여주며 원본 리뷰 자체를 조용히 바꾸지 않는다.</p>
-<h3 id="section-22">제안 C · 상태를 색 하나에 맡기지 않는다</h3>
+<h3 id="section-29">제안 C · 상태를 색 하나에 맡기지 않는다</h3>
 <p><a href="assets/proposals/03-state-language.svg" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/proposals/03-state-language.svg" alt="미구현 제안: 도구·선택·포커스와 저장·연결 상태 구분"></a></p>
 <p>활성 도구, 선택된 대상, 키보드 포커스는 서로 다른 상태다. 같은 노랑으로 전부 칠하면 어느 곳이 입력을 받는지 알기 어렵다. 저장 성공도 단순 녹색 점보다 ‘이 기기에 저장됨’이라는 목적어가 중요하다.</p>
 <div class="table-scroll"><table>
@@ -694,7 +1082,7 @@
 </tr>
 </tbody></table></div>
 <p>선택색은 사용자가 고른 브러시 색과 독립되어야 한다. 빨간 선을 그렸다는 이유로 오류 상태처럼 보이거나, 노란 그림 때문에 활성 도구를 찾기 어려워지지 않도록 화면 내용과 UI 표식을 구분한다.</p>
-<h3 id="section-23">제안 D · 리뷰와 제작은 목적을 유지하며 같은 규칙을 쓴다</h3>
+<h3 id="section-30">제안 D · 리뷰와 제작은 목적을 유지하며 같은 규칙을 쓴다</h3>
 <p><a href="assets/proposals/04-two-contexts.svg" target="_blank" rel="noopener" class="image-link" title="이미지 원본 크게 보기"><img src="assets/proposals/04-two-contexts.svg" alt="미구현 제안: 공통 화면 구조를 쓰는 리뷰와 영상 제작 두 문맥"></a></p>
 <p>리뷰는 원본을 보고 의견을 남기는 작업이고, 제작은 편집 결과를 만드는 작업이다. 오른쪽 패널의 책임은 달라도 문서 상태, 도구 위치, 시간 표현, 포커스, 오류 처리는 공유할 수 있다. 그림의 리뷰/제작 표시는 방향 설명이며 현재 창을 즉시 하나로 합치자는 확정안이 아니다.</p>
 <div class="table-scroll"><table>
@@ -725,8 +1113,8 @@
 <td>별도 제품 실험 이후 판단</td>
 </tr>
 </tbody></table></div>
-<h2 id="section-24">11. 디자인 시스템과 인터랙션 계약</h2>
-<h3 id="section-25">먼저 고정할 공통 부품</h3>
+<h2 id="section-31">11. 디자인 시스템과 인터랙션 계약</h2>
+<h3 id="section-32">먼저 고정할 공통 부품</h3>
 <p>그림자·테두리·아이콘을 개별 화면마다 조정하는 방식은 유지 비용이 크다. 다음 부품의 상태와 크기 규칙부터 공통으로 정한다. 한 번에 전체 CSS를 바꾸지 않고, 문서 헤더와 상태 영역부터 점진적으로 적용한다.</p>
 <div class="table-scroll"><table>
 <thead>
@@ -778,7 +1166,7 @@
 </tr>
 </tbody></table></div>
 <p>글자는 단일한 공통 계열을 선택하고 한국어·숫자·라틴 글자의 실제 가독성을 비교한다. 초기안은 본문 13–14px, 보조 라벨 12–13px, 핵심 시간 14–16px, 간격은 4/8/12/16 단위로 시작한다. 핵심 시간은 자리 폭이 일정한 숫자를 사용하면 재생 중 흔들림을 줄일 수 있다. 이 수치들은 <strong>프로토타입의 출발점</strong>이며 WCAG나 Windows의 강제 규격이 아니다. 콘텐츠의 그룹·간격·강조를 일관되게 다루는 원칙은 Microsoft 지침도 참고할 수 있다. <a href="https://learn.microsoft.com/en-us/windows/apps/design/basics/content-basics">Windows 콘텐츠 구성</a></p>
-<h3 id="section-26">색상과 접근성의 범위를 정확히 정한다</h3>
+<h3 id="section-33">색상과 접근성의 범위를 정확히 정한다</h3>
 <p>제품의 노란색은 브랜드와 주요 조작에 유지할 수 있다. 선택 대상은 별도 강조, 영상 트랙과 드로잉 행은 역할색, 오류는 경고색으로 구분하되 <strong>색만으로 뜻을 전달하지 않는다.</strong> 전체 면을 여러 색으로 채우기보다 작은 표식·선·제목과 함께 사용한다.</p>
 <div class="table-scroll"><table>
 <thead>
@@ -805,7 +1193,7 @@
 </tr>
 </tbody></table></div>
 <p>현재 일부 표본을 검사한 것이며 앱 전체의 WCAG 적합성 인증이 아니다. 고밀도 편집 도구라는 이유로 작은 글자나 식별 불가능한 상태를 정당화하지도 않는다.</p>
-<h3 id="section-27">클릭·드래그·키보드가 같은 결과를 설명해야 한다</h3>
+<h3 id="section-34">클릭·드래그·키보드가 같은 결과를 설명해야 한다</h3>
 <div class="table-scroll"><table>
 <thead>
 <tr>
@@ -856,8 +1244,8 @@
 </tr>
 </tbody></table></div>
 <p>‘프리미어처럼 부드럽다’는 말을 완료 기준으로 두면 평가가 어렵다. 팬과 스크럽은 <strong>입력 중 미리보기 갱신</strong>, <strong>중단 후 지연된 이동 없음</strong>, <strong>다른 프로젝트 응답이 섞이지 않음</strong>, <strong>포인터와 그림의 상대 위치 유지</strong>로 나눠 측정한다. 후속 성능 실험에서는 같은 PC·영상·배율로 입력부터 표시까지의 지연과 프레임 간격의 상위 지연을 기록한다. 이번에는 성능 수치를 새로 측정하지 않았으므로 ‘항상 60fps’ 같은 약속을 하지 않는다.</p>
-<h2 id="section-28">12. 실제 작업 흐름으로 제안안을 검증한다</h2>
-<h3 id="section-29">과제 1 · 긴 파일을 열고 특정 구간에 의견 남기기</h3>
+<h2 id="section-35">12. 실제 작업 흐름으로 제안안을 검증한다</h2>
+<h3 id="section-36">과제 1 · 긴 파일을 열고 특정 구간에 의견 남기기</h3>
 <ol>
 <li>긴 한글 이름의 영상을 열고 현재 파일 전체 이름을 확인한다.</li>
 <li>재생목록과 댓글을 열어 1100px 창에서 작업한다.</li>
@@ -865,7 +1253,7 @@
 <li>저장한 .bframe 위치와 마지막 저장 상태를 확인한다.</li>
 </ol>
 <p><strong>성공 기준:</strong> 핵심 명령이 화면 밖으로 나가지 않고, 댓글 입력을 상태 패널이 가리지 않으며, 카드만 보고 적용 범위를 확인할 수 있다. <strong>연결 항목:</strong> U05·U06·U08·U09·U15·U16·U23.</p>
-<h3 id="section-30">과제 2 · 저장된 그림을 선택하고 옮기기</h3>
+<h3 id="section-37">과제 2 · 저장된 그림을 선택하고 옮기기</h3>
 <ol>
 <li>새 편집창에서 그림이 들어 있는 프로젝트를 연다.</li>
 <li>표시된 V 상태에서 그림 두 개를 선택한다.</li>
@@ -873,7 +1261,7 @@
 <li>저장·재열기 후 같은 위치와 레이어 소유권을 확인한다.</li>
 </ol>
 <p><strong>성공 기준:</strong> V를 불필요하게 다시 누르지 않고 첫 입력이 동작한다. 화면 팬은 그림 데이터를 바꾸지 않으며, 획 이동만 의도한 내용을 바꾼다. <strong>연결 항목:</strong> U01·U07·U10·U26. 과거 좌표 개선을 반드시 회귀 검사한다.</p>
-<h3 id="section-31">과제 3 · 영상 정지와 그림 유지를 구별해 릴 편집하기</h3>
+<h3 id="section-38">과제 3 · 영상 정지와 그림 유지를 구별해 릴 편집하기</h3>
 <ol>
 <li>두 컷을 붙이고 C로 원하는 지점을 나눈다.</li>
 <li>원본의 한 프레임으로 영상 정지 구간을 만든다.</li>
@@ -881,7 +1269,7 @@
 <li>영상은 움직이지만 그림은 유지되는 경우, 영상과 그림이 모두 멈추는 경우를 각각 확인한다.</li>
 </ol>
 <p><strong>성공 기준:</strong> 사용자가 각 명령의 결과와 전체 길이 변화를 실행 전에 설명할 수 있다. 컷 분할 후 원본 시간과 드로잉 범위가 연결된다. 이 과제의 후속 노출 편집 UI는 미구현 제안이며 현재 기능과 구분해 프로토타입을 만든다. <strong>연결 항목:</strong> U10·U11·U12·U26.</p>
-<h3 id="section-32">과제 4 · 긴 편집에서 특정 그림 키 찾기</h3>
+<h3 id="section-39">과제 4 · 긴 편집에서 특정 그림 키 찾기</h3>
 <ol>
 <li>6분·12컷·9레이어 프로젝트를 1050×720에서 연다.</li>
 <li>전체 개요에서 지정된 컷을 찾는다.</li>
@@ -889,7 +1277,7 @@
 <li>타임라인 높이를 늘렸다 줄이고 전체 보기로 돌아온다.</li>
 </ol>
 <p><strong>성공 기준:</strong> 임의의 다른 키가 선택되지 않고, 작업 중 컷 이름·레이어·현재 시간이 남는다. 전체/선택 컷/수동 표시가 실제 범위와 일치한다. <strong>연결 항목:</strong> U10·U12·U13·U14·U18.</p>
-<h3 id="section-33">과제 5 · 입력 중 저장하고 출력 상태 확인하기</h3>
+<h3 id="section-40">과제 5 · 입력 중 저장하고 출력 상태 확인하기</h3>
 <ol>
 <li>프로젝트 이름을 한글로 수정한 뒤 입력칸에서 Ctrl+S를 누른다.</li>
 <li>저장 대상과 완료 상태를 확인한다.</li>
@@ -897,7 +1285,7 @@
 <li>취소 또는 실패 상태에서 프로젝트 저장이 유지되는지 확인한다.</li>
 </ol>
 <p><strong>성공 기준:</strong> 마지막 입력이 포함된 저장이 한 번 수행된다. 출력 완료와 프로젝트 저장을 혼동하지 않는다. 실제 인코딩은 후속 Electron·FFmpeg 통합 검사에서 수행한다. <strong>연결 항목:</strong> U03·U22·U23·U24.</p>
-<h3 id="section-34">과제 6 · 원본이 없을 때 현재 작업을 지키며 복구하기</h3>
+<h3 id="section-41">과제 6 · 원본이 없을 때 현재 작업을 지키며 복구하기</h3>
 <ol>
 <li>정상 프로젝트에서 누락 원본이 있는 다른 프로젝트를 연다.</li>
 <li>오류의 영향과 현재 작업 보존 상태를 읽는다.</li>
@@ -905,7 +1293,7 @@
 <li>현재 프로젝트의 그림 입력, 복구한 프로젝트의 시간·저장을 확인한다.</li>
 </ol>
 <p><strong>성공 기준:</strong> 실패 후 준비 중 상태가 남지 않는다. 잘못된 대체를 자동 수용하지 않는다. 복구 UI는 새 기능으로 사양을 정하며 원본 파일을 임의 수정하지 않는다. <strong>연결 항목:</strong> U02·U04·U23.</p>
-<h3 id="section-35">검증 환경을 한 가지 화면 크기에 고정하지 않는다</h3>
+<h3 id="section-42">검증 환경을 한 가지 화면 크기에 고정하지 않는다</h3>
 <div class="table-scroll"><table>
 <thead>
 <tr>
@@ -957,20 +1345,20 @@
 </tbody></table></div>
 <p>Windows 문서는 작은 창과 서로 다른 디스플레이 환경을 고려하도록 안내한다. 다만 여기 제시한 테스트 조합과 패널 치수는 BAEFRAME의 제품 검증안이다. <a href="https://learn.microsoft.com/en-us/windows/apps/get-started/best-practices">Windows 앱 권장 사항</a></p>
 <p>사용성 검증은 비개발자 리뷰 사용자, 드로잉 중심 사용자, 영상 편집 경험자에게 동일한 과제를 주고 <strong>첫 시도 성공 여부, 잘못 선택한 대상, 도움 요청, 되돌리기, 중단 이유</strong>를 기록한다. 아직 사용자를 모집하거나 시간을 측정하지 않았으므로 생산성 향상률과 만족도 점수는 제시하지 않는다.</p>
-<h2 id="section-36">13. 구현 순서와 완료 조건</h2>
-<h3 id="section-37">1단계 · 주 작업을 막는 상태와 화면 경계</h3>
+<h2 id="section-43">13. 구현 순서와 완료 조건</h2>
+<h3 id="section-44">1단계 · 주 작업을 막는 상태와 화면 경계</h3>
 <p><strong>대상:</strong> U01·U02·U03·U05·U06·U19·U22. 활성 표시와 실제 입력, 오류 종료, 전역 저장 키, 헤더 보존, 좁은 창, 틀린 도움말, 접근 가능한 이름을 정리한다. 큰 레이아웃 개편과 분리해 원인을 좁힐 수 있다.</p>
 <p><strong>완료 조건:</strong> 재현 순서에서 문제를 확인하는 검사가 먼저 실패하고 수정 후 통과한다. 기존 획 좌표·도구 전환 안정성·팬 데이터 불변이 유지된다. 이 단계에서도 앱 코드 변경은 별도 작업이며 본 보고서에서 실행하지 않았다.</p>
-<h3 id="section-38">2단계 · 공통 문서·선택·상태 부품</h3>
+<h3 id="section-45">2단계 · 공통 문서·선택·상태 부품</h3>
 <p><strong>대상:</strong> U07·U09·U10·U17·U18·U20·U23·U24·U25. 문서 헤더, 선택 문맥, 도구 바, 상태 영역, 환경설정 진입을 공통 규칙으로 만든다. 리뷰와 제작을 각각 유지하면서 같은 문법을 적용한다.</p>
 <p><strong>완료 조건:</strong> 가로/세로·좁은/넓은 창에서 선택 대상과 저장 상태가 지속된다. 고대비·글자 크기·긴 이름을 검사하고, 네이티브 오버레이가 있는 리뷰창은 실제 앱으로 확인한다. 단순 HTML 배치 검사만으로 완료하지 않는다.</p>
-<h3 id="section-39">3단계 · 타임라인과 패널을 작업에 맞게 조절</h3>
+<h3 id="section-46">3단계 · 타임라인과 패널을 작업에 맞게 조절</h3>
 <p><strong>대상:</strong> U08·U11·U12·U13·U14·U15·U16. 전체 개요, 선택 컷의 드로잉 상세, 키 묶음, 범위 카드, 패널 경계 조절을 프로토타입으로 검증한다. 픽셀 배치보다 시간 의미와 hit 영역부터 확정한다.</p>
 <p><strong>완료 조건:</strong> 6분·12컷·9레이어 과제에서 특정 키를 선택하고 전체로 돌아올 수 있다. 영상 정지와 그림 유지가 구별되며, 컷 이동·분할 뒤에도 표식과 데이터가 일치한다. 프레임 매핑 테스트와 실제 마우스 검사를 함께 수행한다.</p>
-<h3 id="section-40">4단계 · 복구·첫 사용·명령 체계 확장</h3>
+<h3 id="section-47">4단계 · 복구·첫 사용·명령 체계 확장</h3>
 <p><strong>대상:</strong> U04·U21·U26과 앞 단계에서 확정되지 않은 정책. 원본 재연결, 첫 이름 요청 시점, 작업별 단축키, Undo 적용 범위를 별도 사양으로 작성한다.</p>
 <p><strong>완료 조건:</strong> 누락·취소·잘못된 대체에서 데이터가 안전하며 현재 작업으로 돌아갈 수 있다. 기존 사용자 키 설정과 .bframe 하위 호환성을 보존한다. 파일 형식 통합, 고급 오디오, 효과 키 애니메이션, 클라우드 버전 관리 등은 이 UI 보고서만으로 승인된 구현 범위에 넣지 않는다.</p>
-<h3 id="section-41">구현 계획으로 넘기기 전에 확정할 결정</h3>
+<h3 id="section-48">구현 계획으로 넘기기 전에 확정할 결정</h3>
 <div class="table-scroll"><table>
 <thead>
 <tr>
@@ -1011,8 +1399,8 @@
 </tr>
 </tbody></table></div>
 <p>일정과 비용은 아직 산정하지 않는다. 실제 네이티브 오버레이 배치, 상태 소유권, 시간 매핑의 변경 폭을 확인한 뒤 단계별로 계산해야 한다. 디자인 시안 승인과 앱 코드 변경·PR·배포 승인은 별도 작업 범위다.</p>
-<h2 id="section-42">14. 출처·추적과 남은 불확실성</h2>
-<h3 id="section-43">현재 코드와 화면 근거</h3>
+<h2 id="section-49">14. 출처·추적과 남은 불확실성</h2>
+<h3 id="section-50">현재 코드와 화면 근거</h3>
 <p>이 보고서의 현재 상태 기준은 <strong><code>5d1cb89afcae21429c1e076a6964bc11cd990228</code></strong>, 앱 표기 버전은 <strong>2.9.0-beta</strong>다. 리뷰창의 실제 패키지와 편집 renderer 근거는 같은 개선 기준선을 대상으로 한다. 새 공식 릴리스를 배포했다는 뜻은 아니다.</p>
 <div class="table-scroll"><table>
 <thead>
@@ -1048,7 +1436,7 @@
 </tbody></table></div>
 <p>원시 관찰은 <code>evidence/review-findings.json</code>, <code>evidence/editor-findings.json</code>에 있고, 각 화면의 측정·재현 조건·소스 줄을 기록했다. 경쟁 자료는 <code>evidence/references/reference-ledger.json</code>에 페이지 시점·이미지 출처·한계·해시를 보존했다. 이 파일들은 로컬 조사 자료이며 모바일 게시본에 테스트 프로필·원시 로그·합성 영상 파일을 포함하지 않는다.</p>
 <p>리뷰 하니스는 오류 0건, 정상 종료 exit 0이며 편집 Chrome 검사도 pageerror 0, exit 0이다. 이는 <strong>이번 증거 수집의 실행 결과</strong>다. 과거의 자동 테스트 통과 수를 이번 UI 보고서의 새 테스트 수치로 재사용하지 않는다.</p>
-<h3 id="section-44">제외하거나 미확정으로 남긴 것</h3>
+<h3 id="section-51">제외하거나 미확정으로 남긴 것</h3>
 <ul>
 <li><strong>Windows DPI 결함 확정:</strong> page zoom 125%에서 네이티브 영상/오버레이와 DOM 위치 어긋남이 보였지만 지원 계약과 원인을 확정하지 않았다. OS 배율·다중 모니터·전체 화면을 별도로 검사해야 한다.</li>
 <li><strong>온라인 글꼴에서의 정확한 줄바꿈:</strong> 리뷰창은 외부 요청을 막은 상태다. 긴 이름 문제의 온라인 재확인과 실제 글리프 선택 추적이 필요하다.</li>
@@ -1057,7 +1445,7 @@
 <li><strong>성능 향상·사용자 선호:</strong> 새 지연 수치나 사용자 실험을 수집하지 않았다. 배치 선호와 생산성 향상률을 확정하지 않는다.</li>
 <li><strong>타사 최신 실행 화면:</strong> 공식 문서와 원본 이미지를 비교했다. 오래된 이미지도 구조 참고로 사용했으며 모든 최신 바이너리를 직접 실행하지 않았다.</li>
 </ul>
-<h3 id="section-45">공식 참고 문서 목록</h3>
+<h3 id="section-52">공식 참고 문서 목록</h3>
 <p>본문의 각 비교·표준 설명에 직접 연결된 출처를 붙였다. 아래는 추가 추적용 목록이다. 이미지의 권리는 각 제작사에 있으며 출처와 설명 맥락을 유지했다. 이미지 6개는 공식 문서의 원본 바이트를 보존했고 AI로 재구성하거나 현재 BAEFRAME 캡처처럼 표시하지 않았다.</p>
 <div class="table-scroll"><table>
 <thead>
@@ -1143,6 +1531,6 @@
 <td>2026-06-16T18:43:54Z · Premiere 25.6 이상 내장 Frame.io V4 패널</td>
 </tr>
 </tbody></table></div>
-<h3 id="section-46">다음 작업의 출발점</h3>
-<p>첫 구현 사양은 <strong>U01·U02·U03의 상태 정합성</strong>, <strong>U05·U06의 핵심 조작 보존</strong>, <strong>제안 A/B의 선택·시간 문법</strong>을 기준으로 작성하는 것이 적절하다. 먼저 안정된 입력과 읽을 수 있는 작업 구조를 만들고, 그 결과를 공통 부품으로 정리하면 이후 영상 편집 기능이 늘어도 UI의 의미를 유지할 수 있다.</p>
+<h3 id="section-53">다음 작업의 출발점</h3>
+<p>첫 구현 사양은 <strong>U01·U02·U03의 상태 정합성</strong>, <strong>U05·U06의 핵심 조작 보존</strong>, <strong>10장의 BAEFRAME 기본 리뷰·드로잉 리뷰와 BEditer 두 화면</strong>을 함께 기준으로 작성하는 것이 적절하다. 기본 앱의 댓글·목록·저장 경로를 편집기 개편 뒤로 밀지 않는다. 공통 문서 헤더·고정 작업 줄·상태 부품을 먼저 정리하고, 리뷰 원본 시간과 편집 출력 시간을 각각 유지한 채 타임라인을 다듬는다. 구조 설명 A/B는 그 구현의 선택·시간 규칙을 보충한다.</p>
 </article></div></div><footer>2026-09-06 · 현재 화면 증거와 설계 제안을 구분한 검토 문서 · 이미지를 누르면 원본을 크게 볼 수 있습니다.</footer></body></html>

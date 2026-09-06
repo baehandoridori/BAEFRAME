@@ -10,7 +10,7 @@ const files=new Set([...html.matchAll(/<img[^>]+src="([^"]+)"/g)].map(x=>x[1]));
 files.add('report-source.md');
 const manifest=[];
 for(const file of files){
- if(!/^(assets\/proposals\/[^/]+\.svg|evidence\/(review|editor|references)\/[^/]+\.(png|jpg)|report-source\.md)$/.test(file))throw new Error('Unexpected file '+file);
+ if(!/^(assets\/proposals\/[^/]+\.svg|assets\/finished-ui\/(01-baeframe-review|02-baeframe-drawing|03-bediter-edit|04-bediter-portrait)\.png|evidence\/(review|editor|references)\/[^/]+\.(png|jpg)|report-source\.md)$/.test(file))throw new Error('Unexpected file '+file);
  const input=path.join(root,file),target=path.join(dest,file),data=fs.readFileSync(input);
  fs.mkdirSync(path.dirname(target),{recursive:true});fs.writeFileSync(target,data);
  manifest.push({path:file,bytes:data.length,sha256:crypto.createHash('sha256').update(data).digest('hex')});

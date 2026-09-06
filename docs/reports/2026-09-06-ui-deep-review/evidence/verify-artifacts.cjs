@@ -10,7 +10,7 @@ const prior='C:/Users/user/.codex/worktrees/baeframe-reel-editor/BAEFRAME';
 const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
 (async()=>{
  const doc=new JSDOM(fs.readFileSync(path.join(root,'report.html'),'utf8')).window.document;
- const imgs=[...doc.images];assert.equal(imgs.length,27);
+ const imgs=[...doc.images];assert.equal(imgs.length,31);
  const categories={current:0,official:0,proposal:0};
  const images=[];
  for(const img of imgs){
@@ -20,7 +20,9 @@ const hash=data=>crypto.createHash('sha256').update(data).digest('hex');
   categories[src.startsWith('assets/')?'proposal':src.includes('/references/')?'official':'current']++;
   images.push({path:src,width:m.width,height:m.height,bytes:data.length,sha256:hash(data)});
  }
- assert.deepEqual(categories,{current:17,official:6,proposal:4});
+ assert.deepEqual(categories,{current:17,official:6,proposal:8});
+ assert.equal(imgs.filter(x=>x.getAttribute('src').startsWith('assets/finished-ui/')).length,4);
+ assert.ok(doc.getElementById('finished-ui'));
  const ledger=JSON.parse(fs.readFileSync(path.join(__dirname,'references/reference-ledger.json'),'utf8'));
  for(const img of ledger.images)assert.equal(hash(fs.readFileSync(path.join(__dirname,'references',img.file))),img.sha256);
  const urls=new Set([...doc.querySelectorAll('a[href]')].map(x=>x.getAttribute('href')));

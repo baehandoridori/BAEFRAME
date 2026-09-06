@@ -4,7 +4,7 @@
   "imageCategories": {
     "current": 17,
     "official": 6,
-    "proposal": 4
+    "proposal": 8
   },
   "officialDocuments": 15,
   "officialImageHashes": "6 match",
@@ -175,6 +175,34 @@
       "height": 1407,
       "bytes": 206878,
       "sha256": "c270cb0dd2dca06d414c3416a22eee8c3dbdcce01a5aa9e077bf36bd0e8d263b"
+    },
+    {
+      "path": "assets/finished-ui/01-baeframe-review.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 1799941,
+      "sha256": "ba4e0ac43f2618b828aa857dbe84ec39a94c68a1e4931f2f70f7b7a5cc45f7a7"
+    },
+    {
+      "path": "assets/finished-ui/02-baeframe-drawing.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 1771679,
+      "sha256": "ad85cc08be50a3b0ff8373b3fb5774901ca145cb5cf4a567b8ae7b2ffaee306c"
+    },
+    {
+      "path": "assets/finished-ui/03-bediter-edit.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 1923968,
+      "sha256": "baacb413d6bd60ab4f479bbad5aea867f4b51abb2f931f5a74bef9db230fd2c2"
+    },
+    {
+      "path": "assets/finished-ui/04-bediter-portrait.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 784870,
+      "sha256": "679e908d0ae610a64c507efe20ea57db7ebb570d5fdc913d6e482077dc44eb0d"
     },
     {
       "path": "assets/proposals/01-workspace-proposal.svg",
