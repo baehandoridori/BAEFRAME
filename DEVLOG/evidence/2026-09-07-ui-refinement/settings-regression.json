@@ -1,0 +1,75 @@
+{
+  "before": {
+    "lightPage": {
+      "scrollX": 160,
+      "scrollY": 0,
+      "width": 1440,
+      "height": 900,
+      "rootScrollWidth": 1600,
+      "bodyScrollWidth": 1600,
+      "header": {
+        "x": -160,
+        "y": 0,
+        "width": 1440,
+        "height": 48,
+        "top": 0,
+        "right": 1280,
+        "bottom": 48,
+        "left": -160
+      },
+      "logo": {
+        "x": -144,
+        "y": 9.5,
+        "width": 103.359375,
+        "height": 28,
+        "top": 9.5,
+        "right": -40.640625,
+        "bottom": 37.5,
+        "left": -144
+      }
+    },
+    "settingsMenuAfterOpen": {
+      "open": true,
+      "active": true
+    },
+    "regressionProblems": [
+      "Settings flow shifts page: scrollX=160, document width=1600 vs viewport=1440",
+      "Opening app settings leaves the settings dropdown or trigger active"
+    ]
+  },
+  "after": {
+    "lightPage": {
+      "scrollX": 0,
+      "scrollY": 0,
+      "width": 1440,
+      "height": 900,
+      "rootScrollWidth": 1440,
+      "bodyScrollWidth": 1440,
+      "header": {
+        "x": 0,
+        "y": 0,
+        "width": 1440,
+        "height": 48,
+        "top": 0,
+        "right": 1440,
+        "bottom": 48,
+        "left": 0
+      },
+      "logo": {
+        "x": 16,
+        "y": 9.5,
+        "width": 103.359375,
+        "height": 28,
+        "top": 9.5,
+        "right": 119.359375,
+        "bottom": 37.5,
+        "left": 16
+      }
+    },
+    "settingsMenuAfterOpen": {
+      "open": false,
+      "active": false
+    },
+    "regressionProblems": []
+  }
+}

@@ -7,7 +7,7 @@
 
 const PALETTE_STORAGE_KEY = 'baeframe.mpvFabricPalette.v1';
 const PALETTE_MARGIN = 12;
-const PALETTE_FALLBACK_WIDTH = 220;
+const PALETTE_FALLBACK_WIDTH = 212;
 const PALETTE_FALLBACK_HEIGHT = 120;
 const DEFAULT_PALETTE_STATE = Object.freeze({
   left: PALETTE_MARGIN,
@@ -143,6 +143,10 @@ function createFabricDrawingPalette(options = {}) {
   const title = documentRef.createElement('span');
   title.className = 'mpv-fabric-pilot-toolbar-title';
   title.textContent = '그리기 도구';
+  const activeToolLabel = documentRef.createElement('span');
+  activeToolLabel.className = 'mpv-fabric-pilot-toolbar-tool';
+  activeToolLabel.dataset.fabricPilotOutput = 'active-tool';
+  title.appendChild(activeToolLabel);
 
   const collapseButton = documentRef.createElement('button');
   collapseButton.type = 'button';
@@ -186,7 +190,7 @@ function createFabricDrawingPalette(options = {}) {
     // 항목이 많은 섹션(도구 줄)은 한 줄로 늘어놓으면 팔레트를 넘친다.
     // 렌더러 구조는 그대로 두고 표시만 그리드로 바꾼다.
     // minmax(0, 1fr) 이어야 트랙이 버튼의 min-width 보다 작아질 수 있다 —
-    // 1fr 만 쓰면 min-content(= min-width 40px)가 하한이 되어 팔레트를 넘친다.
+    // 1fr 만 쓰면 버튼의 min-content 가 하한이 되어 좁은 팔레트를 넘칠 수 있다.
     if (section.layout === 'grid') {
       const columns = Math.max(1, Number(section.columns) || 4);
       const gap = typeof section.gap === 'string' ? section.gap : '4px';
@@ -357,6 +361,9 @@ function createFabricDrawingPalette(options = {}) {
     content,
     collapseButton,
     isSectionCollapsed,
+    setActiveToolLabel(label) {
+      activeToolLabel.textContent = label ? ` · ${label}` : '';
+    },
     restore() {
       applyCollapsedState();
       return applyPosition(state);

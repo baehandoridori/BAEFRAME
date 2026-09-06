@@ -2834,7 +2834,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   assert.ok(registerAt > 0 && sendAt > registerAt, '등록이 전송보다 앞선다');
   // 되돌릴 자리는 이웃 정체로 잡는다 — 숫자 인덱스는 그 사이 추가에 흔들린다.
   assert.ok(
-    source.includes("aboveId: state.layers[removedIndex - 1]?.id || null"),
+    source.includes('aboveId: state.layers[removedIndex - 1]?.id || null'),
     '지운 레이어의 이웃을 기억한다'
   );
   assert.ok(
@@ -2890,7 +2890,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 이동은 **짝 레이어를 기준으로** 기억한다. 인덱스도 상대 칸 수도 기다리는
   // 동안 레이어가 끼면 같은 이동을 재현하지 못한다.
   assert.ok(
-    source.includes("const neighborId = state.layers[movedFrom + moveOffset]?.id || null;"),
+    source.includes('const neighborId = state.layers[movedFrom + moveOffset]?.id || null;'),
     '넘어간 짝 레이어를 기억한다'
   );
   assert.ok(

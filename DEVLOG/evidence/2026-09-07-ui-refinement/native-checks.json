@@ -1,0 +1,380 @@
+{
+  "scope": "Production UI with isolated profile and synthetic local media; no CSS or DOM visual overrides",
+  "checks": [
+    {
+      "name": "native video and closed playlist with real full-path tooltip",
+      "viewport": [
+        1440,
+        900
+      ],
+      "headerOverflow": false,
+      "buttons": [
+        {
+          "id": "btnOpenFolder",
+          "x": 796.90625,
+          "y": 8.5,
+          "width": 94.21875,
+          "height": 30,
+          "right": 891.125,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnOpenOther",
+          "x": 897.125,
+          "y": 8.5,
+          "width": 94.21875,
+          "height": 30,
+          "right": 991.34375,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnPlaylist",
+          "x": 997.34375,
+          "y": 8.5,
+          "width": 90,
+          "height": 30,
+          "right": 1087.34375,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnCutlist",
+          "x": 1093.34375,
+          "y": 8.5,
+          "width": 82.21875,
+          "height": 30,
+          "right": 1175.5625,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnOpenEditor",
+          "x": 1181.5625,
+          "y": 8.5,
+          "width": 72.21875,
+          "height": 30,
+          "right": 1253.78125,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnSave",
+          "x": 1259.78125,
+          "y": 8.5,
+          "width": 66,
+          "height": 30,
+          "right": 1325.78125,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnCopyLink",
+          "x": 1331.78125,
+          "y": 8.5,
+          "width": 92.21875,
+          "height": 30,
+          "right": 1424,
+          "bottom": 38.5
+        }
+      ],
+      "viewer": {
+        "x": 0,
+        "y": 48,
+        "width": 1054,
+        "height": 574,
+        "right": 1054,
+        "bottom": 622
+      },
+      "playlistClosed": true,
+      "pathTitle": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\ui-refinement\\review\\runtime\\SC012_seaside_v03.mp4"
+    },
+    {
+      "name": "playlist opens and closes through original toggle"
+    },
+    {
+      "name": "compact comments keep their own header spacing",
+      "compact": [
+        {
+          "padding": "0px",
+          "width": 68.484375,
+          "html": "<div class=\"comment-header\">\n          <span class=\"comment-timecode\">00:00:00:00</span>\n        </div>",
+          "ancestors": [
+            "comment-item    ",
+            "comments-list compact"
+          ],
+          "inline": null
+        },
+        {
+          "padding": "0px",
+          "width": 68.484375,
+          "html": "<div class=\"comment-header\">\n          <span class=\"comment-timecode\">00:00:02:00</span>\n        </div>",
+          "ancestors": [
+            "comment-item resolved   ",
+            "comments-list compact"
+          ],
+          "inline": null
+        },
+        {
+          "padding": "0px",
+          "width": 68.484375,
+          "html": "<div class=\"comment-header\">\n          <span class=\"comment-timecode\">00:00:04:04</span>\n        </div>",
+          "ancestors": [
+            "comment-item    ",
+            "comments-list compact"
+          ],
+          "inline": null
+        }
+      ]
+    },
+    {
+      "name": "real native compact selection toolbar",
+      "height": 360,
+      "width": 212,
+      "title": "그리기 도구 · 선택",
+      "selected": "true",
+      "scroll": 325,
+      "client": 325
+    },
+    {
+      "name": "active tool title follows brush, not hardcoded selection",
+      "brushTitle": "그리기 도구 · 브러시"
+    },
+    {
+      "name": "native tool palette collapse and expand"
+    },
+    {
+      "name": "1050px header controls stay in bounds",
+      "viewport": [
+        1050,
+        720
+      ],
+      "headerOverflow": false,
+      "buttons": [
+        {
+          "id": "btnOpenFolder",
+          "x": 673.5625,
+          "y": 8.5,
+          "width": 32,
+          "height": 30,
+          "right": 705.5625,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnOpenOther",
+          "x": 711.5625,
+          "y": 8.5,
+          "width": 32,
+          "height": 30,
+          "right": 743.5625,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnPlaylist",
+          "x": 749.5625,
+          "y": 8.5,
+          "width": 32,
+          "height": 30,
+          "right": 781.5625,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnCutlist",
+          "x": 787.5625,
+          "y": 8.5,
+          "width": 32,
+          "height": 30,
+          "right": 819.5625,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnOpenEditor",
+          "x": 825.5625,
+          "y": 8.5,
+          "width": 72.21875,
+          "height": 30,
+          "right": 897.78125,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnSave",
+          "x": 903.78125,
+          "y": 8.5,
+          "width": 32,
+          "height": 30,
+          "right": 935.78125,
+          "bottom": 38.5
+        },
+        {
+          "id": "btnCopyLink",
+          "x": 941.78125,
+          "y": 8.5,
+          "width": 92.21875,
+          "height": 30,
+          "right": 1034,
+          "bottom": 38.5
+        }
+      ],
+      "viewer": {
+        "x": 0,
+        "y": 48,
+        "width": 724,
+        "height": 394,
+        "right": 724,
+        "bottom": 442
+      },
+      "playlistClosed": true,
+      "pathTitle": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\ui-refinement\\review\\runtime\\SC012_seaside_v03.mp4"
+    },
+    {
+      "name": "real light theme toggle"
+    },
+    {
+      "name": "native palette receives existing light theme state",
+      "background": "rgb(250, 250, 250)",
+      "color": "rgb(32, 33, 36)",
+      "theme": "light"
+    },
+    {
+      "name": "settings flow keeps the page in its viewport"
+    },
+    {
+      "name": "app settings closes the previous menu and trigger"
+    }
+  ],
+  "errors": [],
+  "screens": [
+    {
+      "name": "01-main-1440.png",
+      "method": "Exact renderer page; native video surface is separate unless app freeze is active"
+    },
+    {
+      "name": "02-selection-1440.png",
+      "method": "Exact renderer page; native video surface is separate unless app freeze is active"
+    },
+    {
+      "name": "03-selection-1050.png",
+      "method": "Exact renderer page; native video surface is separate unless app freeze is active"
+    },
+    {
+      "name": "04-light-main.png",
+      "method": "Exact renderer page; native video surface is separate unless app freeze is active"
+    },
+    {
+      "name": "05-light-selection.png",
+      "method": "Exact renderer page; native video surface is separate unless app freeze is active"
+    }
+  ],
+  "executable": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\dist\\win-unpacked\\BFRAME_alpha_v2.exe",
+  "settingsMenuAfterOpen": {
+    "open": false,
+    "active": false
+  },
+  "lightGeometry": {
+    "viewport": [
+      1440,
+      900
+    ],
+    "headerOverflow": false,
+    "buttons": [
+      {
+        "id": "btnOpenFolder",
+        "x": 796.90625,
+        "y": 8.5,
+        "width": 94.21875,
+        "height": 30,
+        "right": 891.125,
+        "bottom": 38.5
+      },
+      {
+        "id": "btnOpenOther",
+        "x": 897.125,
+        "y": 8.5,
+        "width": 94.21875,
+        "height": 30,
+        "right": 991.34375,
+        "bottom": 38.5
+      },
+      {
+        "id": "btnPlaylist",
+        "x": 997.34375,
+        "y": 8.5,
+        "width": 90,
+        "height": 30,
+        "right": 1087.34375,
+        "bottom": 38.5
+      },
+      {
+        "id": "btnCutlist",
+        "x": 1093.34375,
+        "y": 8.5,
+        "width": 82.21875,
+        "height": 30,
+        "right": 1175.5625,
+        "bottom": 38.5
+      },
+      {
+        "id": "btnOpenEditor",
+        "x": 1181.5625,
+        "y": 8.5,
+        "width": 72.21875,
+        "height": 30,
+        "right": 1253.78125,
+        "bottom": 38.5
+      },
+      {
+        "id": "btnSave",
+        "x": 1259.78125,
+        "y": 8.5,
+        "width": 66,
+        "height": 30,
+        "right": 1325.78125,
+        "bottom": 38.5
+      },
+      {
+        "id": "btnCopyLink",
+        "x": 1331.78125,
+        "y": 8.5,
+        "width": 92.21875,
+        "height": 30,
+        "right": 1424,
+        "bottom": 38.5
+      }
+    ],
+    "viewer": {
+      "x": 0,
+      "y": 48,
+      "width": 1054,
+      "height": 574,
+      "right": 1054,
+      "bottom": 622
+    },
+    "playlistClosed": true,
+    "pathTitle": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\ui-refinement\\review\\runtime\\SC012_seaside_v03.mp4"
+  },
+  "lightPage": {
+    "scrollX": 0,
+    "scrollY": 0,
+    "width": 1440,
+    "height": 900,
+    "rootScrollWidth": 1440,
+    "bodyScrollWidth": 1440,
+    "header": {
+      "x": 0,
+      "y": 0,
+      "width": 1440,
+      "height": 48,
+      "top": 0,
+      "right": 1440,
+      "bottom": 48,
+      "left": 0
+    },
+    "logo": {
+      "x": 16,
+      "y": 9.5,
+      "width": 103.359375,
+      "height": 28,
+      "top": 9.5,
+      "right": 119.359375,
+      "bottom": 37.5,
+      "left": 16
+    }
+  },
+  "regressionProblems": [],
+  "passed": true
+}

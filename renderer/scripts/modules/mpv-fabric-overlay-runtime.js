@@ -5207,6 +5207,7 @@ function createFabricOverlayRuntime(options = {}) {
 
   function setToolMode(tool) {
     if (!fabricCanvas) return;
+    paletteShell?.setActiveToolLabel?.(TOOL_STATUS_LABELS[tool] || '');
     if (tool !== 'select') abortPendingLassoSelection();
     const selectMode = tool === 'select';
     const nativeSelectMode = usesNativeRectangleSelection(tool);

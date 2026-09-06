@@ -10893,6 +10893,7 @@ async function initApp() {
       state.currentFile = filePath;
       if (pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
       elements.fileName.textContent = fileInfo.name;
+      elements.fileName.title = filePath;
       elements.fileName.classList.remove('file-name-clickable'); // 파일 로드 후 클릭 가능 상태 제거
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
@@ -16078,7 +16079,8 @@ async function initApp() {
   btnAppSettings?.addEventListener('click', () => {
     // 드롭다운 닫기
     const dropdown = document.getElementById('commentSettingsDropdown');
-    if (dropdown) dropdown.classList.remove('show');
+    if (dropdown) dropdown.classList.remove('open');
+    document.getElementById('btnCommentSettings')?.classList.remove('active');
     openAppSettingsModal();
   });
 

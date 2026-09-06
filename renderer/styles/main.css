@@ -20,7 +20,6 @@
   /* 텍스트 */
   --text-primary: #f5f5f5;
   --text-secondary: #a0a0a0;
-  --text-tertiary: #666666;
 
   /* 액센트 (기본: 노란색, applyTheme()에서 동적 변경) */
   --accent-primary: #ffd000;
@@ -72,8 +71,6 @@
   --accent-gradient-radial: radial-gradient(circle, var(--accent-glow-strong) 0%, transparent 70%);
 
   /* 레이아웃 */
-  --header-height: 52px;
-  --controls-height: 56px;
   --timeline-height: 220px;
   --timeline-video-track-height: 48px;
   --timeline-drawing-track-height: 44px;
@@ -84,6 +81,9 @@
   --transition-fast: 0.1s ease;
   --transition-normal: 0.2s ease;
   --transition-slow: 0.3s ease;
+  --header-height: 48px;
+  --controls-height: 52px;
+  --text-tertiary: #909094;
 }
 
 /* 라이트 모드 */
@@ -471,9 +471,6 @@ body {
    ======================================== */
 .header {
   height: var(--header-height);
-  background: var(--glass-bg-heavy);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid var(--glass-border-bright);
   display: flex;
   align-items: center;
@@ -481,12 +478,18 @@ body {
   padding: 0 16px;
   position: relative;
   z-index: 100;
+  gap: 20px;
+  background: var(--bg-secondary);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .header-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  min-width: 0;
+  flex: 1;
+  gap: 12px;
 }
 
 .logo {
@@ -496,12 +499,12 @@ body {
   font-weight: 700;
   font-size: 15px;
   color: var(--accent-primary);
+  flex-shrink: 0;
 }
 
 .logo-icon {
   width: 28px;
   height: 28px;
-  background: var(--accent-gradient);
   border-radius: 6px;
   display: flex;
   align-items: center;
@@ -511,7 +514,8 @@ body {
   font-weight: 800;
   cursor: pointer;
   transition: all 0.2s ease;
-  box-shadow: 0 2px 8px var(--accent-glow-strong);
+  box-shadow: none;
+  background: var(--accent-primary);
 }
 
 .logo-icon:hover {
@@ -523,19 +527,24 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 12px;
-  background: rgba(26, 26, 26, 0.6);
-  backdrop-filter: var(--glass-blur-light);
-  -webkit-backdrop-filter: var(--glass-blur-light);
-  border-radius: 8px;
   font-size: 13px;
   border: 1px solid var(--glass-border);
+  min-width: 0;
+  flex: 1;
+  padding: 0 8px;
+  height: 32px;
+  border-color: transparent;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  border-radius: 4px;
 }
 
 .file-icon {
   color: var(--accent-primary);
   display: flex;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .file-icon svg {
@@ -546,6 +555,11 @@ body {
 .file-name {
   color: var(--text-primary);
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
 }
 
 /* 클릭 가능한 파일명 (파일 없을 때) */
@@ -561,6 +575,7 @@ body {
 .file-path {
   color: var(--text-tertiary);
   font-size: 12px;
+  display: none;
 }
 
 .version-badge {
@@ -576,7 +591,8 @@ body {
 .header-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  flex: 0 0 auto;
+  gap: 6px;
 }
 
 /* ========================================
@@ -646,11 +662,13 @@ body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 4px 12px;
   background: var(--bg-elevated);
   border: 1px solid var(--border-subtle);
-  border-radius: 20px;
-  margin-right: 8px;
+  height: 30px;
+  margin-right: 2px;
+  padding: 0 8px;
+  border-radius: 5px;
+  white-space: nowrap;
 }
 
 .collaborators-avatars {
@@ -694,6 +712,8 @@ body {
   gap: 2px;
   font-size: 12px;
   color: var(--text-secondary);
+  white-space: nowrap;
+  flex-wrap: nowrap;
 }
 
 .collaborators-count {
@@ -2065,19 +2085,19 @@ body.app-fullscreen .video-comment-range-overlay {
 }
 
 .overlay-control-btn {
-  width: 36px;
-  height: 36px;
   padding: 6px;
   background: rgba(30, 30, 30, 0.9);
   border: 2px solid rgba(255, 255, 255, 0.3);
-  border-radius: 8px;
   color: rgba(255, 255, 255, 0.8);
   cursor: pointer;
   transition: all var(--transition-fast);
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  width: 30px;
+  height: 30px;
+  border-radius: 6px;
+  box-shadow: none;
 }
 
 .overlay-control-btn:hover {
@@ -2566,24 +2586,23 @@ body.app-fullscreen .video-comment-overlay-controls {
    ======================================== */
 .controls-bar {
   height: var(--controls-height);
-  background: linear-gradient(180deg, rgba(20, 20, 20, 0.9) 0%, rgba(12, 12, 12, 0.95) 100%);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  border-top: 1px solid rgba(255, 255, 255, 0.08);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 -4px 16px rgba(0, 0, 0, 0.3);
   display: flex;
   align-items: center;
-  padding: 0 16px;
   gap: 16px;
   overflow: visible;
   flex-shrink: 0;
   position: relative;
+  padding: 0 12px;
+  background: var(--bg-secondary);
+  box-shadow: none;
+  border-top: 1px solid var(--border-subtle);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .playback-controls-scroll {
   display: flex;
   align-items: center;
-  gap: 16px;
   width: 100%;
   min-width: 0;
   height: 100%;
@@ -2592,6 +2611,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   overscroll-behavior-x: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(255, 255, 255, 0.18) transparent;
+  gap: 12px;
 }
 
 .playback-controls-scroll::-webkit-scrollbar {
@@ -2610,13 +2630,11 @@ body.app-fullscreen .video-comment-overlay-controls {
 .playback-controls {
   display: flex;
   align-items: center;
-  gap: 4px;
   flex-shrink: 0;
+  gap: 2px;
 }
 
 .control-btn {
-  width: 32px;
-  height: 32px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2627,6 +2645,8 @@ body.app-fullscreen .video-comment-overlay-controls {
   cursor: pointer;
   transition: all var(--transition-fast);
   font-size: 14px;
+  width: 28px;
+  height: 30px;
 }
 
 .control-btn:hover {
@@ -2635,15 +2655,15 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .control-btn.play-btn {
-  width: 44px;
-  height: 44px;
-  background: var(--accent-gradient);
   color: var(--bg-primary);
   font-size: 18px;
   border-radius: 50%;
-  box-shadow: 0 2px 8px var(--accent-shadow);
   transition: all 0.2s ease;
   position: relative;
+  width: 36px;
+  height: 36px;
+  box-shadow: none;
+  background: var(--accent-primary);
 }
 
 .control-btn.play-btn::after {
@@ -2674,17 +2694,18 @@ body.app-fullscreen .video-comment-overlay-controls {
 .playback-info-stack {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 2px;
   flex-shrink: 1;
+  gap: 3px;
+  align-items: flex-start;
 }
 
 .timecode {
   font-family: var(--font-mono);
-  font-size: clamp(11px, 1.2vw, 13px);
   color: var(--text-primary);
   white-space: nowrap;
   flex-shrink: 1;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
 }
 
 .timecode-current {
@@ -2715,26 +2736,30 @@ body.app-fullscreen .video-comment-overlay-controls {
 .action-controls {
   display: flex;
   align-items: center;
-  gap: 8px;
   flex-shrink: 0;
+  gap: 6px;
 }
 
 .action-btn {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 12px;
-  background: rgba(26, 26, 26, 0.7);
-  backdrop-filter: var(--glass-blur-light);
-  -webkit-backdrop-filter: var(--glass-blur-light);
   border: 1px solid var(--glass-border);
-  border-radius: 6px;
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 13px;
   font-weight: 500;
   cursor: pointer;
   transition: all var(--transition-fast);
+  height: 30px;
+  padding: 0 8px;
+  gap: 5px;
+  font-size: 12px;
+  background: var(--bg-tertiary);
+  border-color: var(--border-default);
+  border-radius: 5px;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: none;
+  white-space: nowrap;
 }
 
 .action-btn:hover {
@@ -2746,7 +2771,7 @@ body.app-fullscreen .video-comment-overlay-controls {
   background: var(--accent-glow);
   border-color: var(--accent-primary);
   color: var(--accent-primary);
-  box-shadow: 0 0 12px var(--accent-glow);
+  box-shadow: none;
 }
 
 .action-btn.preparing {
@@ -2780,14 +2805,14 @@ body.app-fullscreen .video-comment-overlay-controls {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 32px;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
+  height: 30px;
+  width: 22px;
 }
 
 .nav-arrow-btn:hover {
@@ -2977,32 +3002,32 @@ body.app-fullscreen .video-comment-overlay-controls {
 }
 
 .timeline-toolbar {
-  height: 40px;
-  background: var(--glass-bg);
-  backdrop-filter: var(--glass-blur-light);
-  -webkit-backdrop-filter: var(--glass-blur-light);
-  border-bottom: 1px solid var(--glass-border);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 16px;
   position: relative;
   z-index: 5;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .timeline-toolbar-left {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 8px;
 }
 
 .timeline-title {
-  font-size: 14px;
   font-weight: 600;
   color: var(--text-secondary);
   display: flex;
   align-items: center;
   gap: 8px;
+  font-size: 12px;
 }
 
 .timeline-title-icon {
@@ -3012,7 +3037,7 @@ body.app-fullscreen .video-comment-overlay-controls {
 .timeline-toolbar-right {
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 10px;
 }
 
 .comment-timeline-toggle {
@@ -3121,7 +3146,6 @@ body.app-fullscreen .video-comment-overlay-controls {
 .timeline-toolbar-btn {
   background: transparent;
   border: 1px solid var(--border-default, #333);
-  border-radius: 4px;
   color: var(--text-secondary, #aaa);
   padding: 4px 8px;
   cursor: pointer;
@@ -3129,8 +3153,10 @@ body.app-fullscreen .video-comment-overlay-controls {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 28px;
   margin-right: 6px;
+  height: 26px;
+  min-height: 26px;
+  border-radius: 4px;
 }
 
 .timeline-toolbar-btn:hover {
@@ -3180,16 +3206,16 @@ body.app-fullscreen .video-comment-overlay-controls {
 
 .zoom-btn {
   width: 28px;
-  height: 28px;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--bg-tertiary);
   border: 1px solid var(--border-subtle);
-  border-radius: 6px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
+  height: 26px;
+  border-radius: 4px;
 }
 
 .zoom-btn:hover {
@@ -3299,13 +3325,14 @@ body.app-fullscreen .video-comment-overlay-controls {
   padding: 0 8px;
   gap: 4px;
   border-bottom: 1px solid transparent;
-  background-image: linear-gradient(to right, transparent 4px, rgba(255, 255, 255, 0.04) 30%, rgba(255, 255, 255, 0.04) 70%, transparent 100%);
   background-size: 100% 1px;
   background-position: bottom;
   background-repeat: no-repeat;
   font-size: 13px;
   cursor: pointer;
   transition: background-color var(--transition-fast);
+  background-image: none;
+  padding-left: 12px;
 }
 
 .layer-header[data-layer="video"] {
@@ -3658,13 +3685,15 @@ button.layer-lock:not(.locked):hover {
 }
 
 .track-clip.video {
-  background: linear-gradient(90deg, #2a2a2a, #3a3a3a);
   left: 0;
   right: 0;
   top: 6px;
   height: calc(var(--timeline-video-track-height) - 12px);
   border: 1px solid var(--border-default);
   cursor: grab;
+  background: var(--bg-elevated);
+  border-radius: 4px;
+  color: var(--text-primary);
 }
 
 .track-clip.video:active {
@@ -3963,14 +3992,13 @@ button.layer-lock:not(.locked):hover {
 .main-volume-control {
   display: flex;
   align-items: center;
-  gap: 6px;
   margin-left: auto;
   padding: 0 8px;
   flex-shrink: 0;
+  gap: 6px;
 }
 
 .main-volume-slider {
-  width: 70px;
   height: 4px;
   -webkit-appearance: none;
   appearance: none;
@@ -3979,6 +4007,7 @@ button.layer-lock:not(.locked):hover {
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.15s ease;
+  width: 62px;
 }
 
 .main-volume-slider:hover {
@@ -4872,20 +4901,22 @@ button.layer-lock:not(.locked):hover {
 }
 
 .panel-header {
-  padding: 16px;
-  border-bottom: 1px solid var(--glass-border);
-  background: rgba(255, 255, 255, 0.02);
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: 48px;
+  height: 48px;
+  padding: 0 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border-subtle);
 }
 
 .panel-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 14px;
   font-weight: 600;
+  font-size: 13px;
 }
 
 .panel-title-icon {
@@ -4895,10 +4926,10 @@ button.layer-lock:not(.locked):hover {
 .comment-count {
   background: var(--accent-glow-strong);
   color: var(--accent-primary);
-  padding: 2px 8px;
-  border-radius: 10px;
-  font-size: 12px;
   font-weight: 600;
+  font-size: 11px;
+  padding: 3px 7px;
+  border-radius: 4px;
 }
 
 .panel-actions {
@@ -5132,8 +5163,8 @@ button.layer-lock:not(.locked):hover {
 
 /* 피드백 완료율 프로그레스 바 */
 .feedback-progress {
-  padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
+  padding: 10px 16px;
 }
 
 .feedback-progress-header {
@@ -5146,9 +5177,9 @@ button.layer-lock:not(.locked):hover {
 .feedback-progress-label {
   font-size: 11px;
   font-weight: 500;
-  color: var(--text-tertiary);
   text-transform: uppercase;
-  letter-spacing: 0.5px;
+  letter-spacing: 0;
+  color: var(--text-secondary);
 }
 
 .feedback-progress-value {
@@ -5159,17 +5190,17 @@ button.layer-lock:not(.locked):hover {
 }
 
 .feedback-progress-bar {
-  height: 6px;
   background: var(--bg-tertiary);
   border-radius: 3px;
   overflow: hidden;
+  height: 3px;
 }
 
 .feedback-progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-primary), var(--success));
   border-radius: 3px;
   transition: width 0.3s ease;
+  background: var(--accent-primary);
 }
 
 .feedback-progress.hidden {
@@ -5177,26 +5208,28 @@ button.layer-lock:not(.locked):hover {
 }
 
 .filter-bar {
-  padding: 12px 16px;
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   align-items: center;
-  gap: 8px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   overflow: visible;
+  padding: 10px 12px;
+  gap: 6px;
 }
 
 .filter-chip {
-  padding: 6px 12px;
-  background: rgba(26, 26, 26, 0.6);
   border: 1px solid var(--glass-border);
-  border-radius: 16px;
-  font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
   white-space: nowrap;
   flex-shrink: 0;
+  height: 28px;
+  padding: 0 9px;
+  border-radius: 5px;
+  font-size: 11px;
+  background: transparent;
+  border-color: var(--border-subtle);
 }
 
 .filter-chip:hover {
@@ -5219,11 +5252,11 @@ button.layer-lock:not(.locked):hover {
   justify-content: center;
   background: rgba(26, 26, 26, 0.6);
   border: 1px solid var(--glass-border);
-  border-radius: 8px;
   cursor: pointer;
   color: var(--text-secondary);
   flex-shrink: 0;
   transition: all var(--transition-fast);
+  border-radius: 5px;
 }
 
 .filter-icon-btn:hover {
@@ -5261,7 +5294,8 @@ button.layer-lock:not(.locked):hover {
 .filter-dropdown-menu {
   position: absolute;
   top: calc(100% + 4px);
-  left: 0;
+  left: auto;
+  right: 0;
   background: var(--glass-bg-heavy);
   backdrop-filter: var(--glass-blur-heavy);
   -webkit-backdrop-filter: var(--glass-blur-heavy);
@@ -5531,7 +5565,7 @@ button.layer-lock:not(.locked):hover {
 .comments-list {
   flex: 1;
   overflow-y: auto;
-  padding: 8px;
+  padding: 12px;
 }
 
 .empty-comments {
@@ -5557,14 +5591,14 @@ button.layer-lock:not(.locked):hover {
 
 .comment-item {
   position: relative;
-  padding: 12px;
-  padding-top: 32px;
-  background: rgba(26, 26, 26, 0.5);
-  border-radius: 8px;
-  margin-bottom: 8px;
   cursor: pointer;
   transition: all var(--transition-fast);
-  border: 1px solid transparent;
+  padding: 12px;
+  border-radius: 6px;
+  background: var(--bg-tertiary);
+  border: 1px solid var(--border-subtle);
+  box-shadow: none;
+  margin-bottom: 10px;
 }
 
 .comment-item:hover {
@@ -5576,16 +5610,17 @@ button.layer-lock:not(.locked):hover {
   position: absolute;
   top: 8px;
   right: 8px;
-  padding: 5px 10px;
-  font-size: 11px;
   font-weight: 600;
   background: rgba(255, 152, 0, 0.15);
   border: 1px solid rgba(255, 152, 0, 0.5);
-  border-radius: 12px;
   color: #ff9800;
   cursor: pointer;
   transition: all var(--transition-fast);
   z-index: 2;
+  min-height: 24px;
+  padding: 3px 7px;
+  font-size: 10px;
+  border-radius: 4px;
 }
 
 .comment-resolve-toggle:hover {
@@ -6080,10 +6115,10 @@ button.layer-lock:not(.locked):hover {
 
 .comment-content {
   font-size: 13px;
-  line-height: 1.5;
   color: var(--text-primary);
   margin-bottom: 12px;
   overflow: hidden;
+  line-height: 1.65;
 }
 
 .comment-actions {
@@ -6091,11 +6126,11 @@ button.layer-lock:not(.locked):hover {
   align-items: center;
   gap: 6px;
   flex-wrap: nowrap;
+  margin-top: 10px;
 }
 
 /* 댓글 액션 바에 있는 작성자 이름 */
 .comment-author-inline {
-  font-size: 13px;
   font-weight: 600;
   color: var(--text-primary);
   padding-right: 4px;
@@ -6104,6 +6139,7 @@ button.layer-lock:not(.locked):hover {
   text-overflow: ellipsis;
   max-width: 80px;
   flex-shrink: 1;
+  font-size: 12px;
 }
 
 .comment-time-inline {
@@ -6116,14 +6152,15 @@ button.layer-lock:not(.locked):hover {
 }
 
 .comment-action {
-  padding: 6px 10px;
   background: transparent;
   border: 1px solid var(--border-subtle);
   border-radius: 4px;
-  font-size: 12px;
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--transition-fast);
+  height: 24px;
+  padding: 0 7px;
+  font-size: 11px;
 }
 
 .comment-action:hover {
@@ -6206,9 +6243,9 @@ button.layer-lock:not(.locked):hover {
 
 /* New Comment */
 .new-comment {
-  padding: 16px;
   border-top: 1px solid var(--border-subtle);
-  background: var(--bg-tertiary);
+  padding: 12px;
+  background: var(--bg-secondary);
 }
 
 .comment-input-wrapper {
@@ -6221,17 +6258,18 @@ button.layer-lock:not(.locked):hover {
 .comment-input {
   flex: 1;
   padding: 12px;
-  background: rgba(10, 10, 10, 0.6);
-  border: 1px solid var(--glass-border);
   user-select: text;
-  border-radius: 8px;
   color: var(--text-primary);
   font-family: inherit;
-  font-size: 13px;
   resize: none;
   outline: none;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
   transition: all var(--transition-fast);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  background: var(--bg-primary);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
 .comment-input:focus {
@@ -6324,8 +6362,9 @@ button.layer-lock:not(.locked):hover {
 
 .input-hint {
   margin-top: 8px;
-  font-size: 11px;
   color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 /* ========================================
@@ -6976,12 +7015,13 @@ body.resizing .comment-panel {
 
 .comment-timecode {
   font-family: var(--font-mono);
-  font-size: 12px;
   font-weight: 600;
   color: var(--accent-primary);
   background: var(--accent-glow);
-  padding: 2px 8px;
   border-radius: 4px;
+  font-size: 11px;
+  padding: 3px 6px;
+  font-variant-numeric: tabular-nums;
 }
 
 .comment-author {
@@ -6998,8 +7038,8 @@ body.resizing .comment-panel {
 .comment-text {
   margin: 0;
   font-size: 13px;
-  line-height: 1.5;
   word-break: break-word;
+  line-height: 1.65;
 }
 
 .comment-search-highlight {
@@ -10137,8 +10177,6 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
 .version-dropdown-trigger {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
   background: var(--accent-glow);
   border: 1px solid var(--accent-primary);
   border-radius: 6px;
@@ -10147,6 +10185,10 @@ body.app-fullscreen .video-wrapper.comment-mode::after {
   font-family: inherit;
   font-size: 12px;
   color: var(--accent-primary);
+  height: 26px;
+  padding: 0 7px;
+  gap: 4px;
+  white-space: nowrap;
 }
 
 .version-dropdown-trigger:hover {
@@ -12802,4 +12844,85 @@ body.audio-mode .frame-indicator {
 .shortcut-reset-btn:hover {
   color: var(--accent-primary, #ffd000);
   border-color: var(--accent-primary, #ffd000);
+}
+
+
+/* Compact workspace controls. Hidden panels and selected states stay state-owned. */
+.header-right > .btn {
+  min-height: 30px;
+  height: 30px;
+  padding: 0 9px;
+  gap: 6px;
+  border-radius: 5px;
+  font-size: 12px;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.header-right > .btn-secondary {
+  background: var(--bg-tertiary);
+  border-color: var(--border-default);
+  backdrop-filter: none;
+}
+
+.header-right > .btn-secondary:hover {
+  background: var(--bg-hover);
+}
+
+.header-right > .btn-secondary.active {
+  background: var(--accent-glow);
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.header-right > .btn-primary {
+  background: var(--accent-primary);
+}
+
+#btnRecentFiles, .version-dropdown {
+  flex-shrink: 0;
+}
+
+.version-badge-icon {
+  display: none;
+}
+
+.control-btn.play-btn svg {
+  width: 21px;
+  height: 21px;
+}
+
+.frame-grid-container {
+  opacity: 0.22;
+}
+
+/* Keep range timecodes and avatars clear of the absolute resolve control. */
+.comments-list:not(.compact) .comment-item:not(.playlist-aggregate-comment) > .comment-header {
+  min-height: 24px;
+  padding-right: 76px;
+  flex-wrap: wrap;
+}
+
+.comments-list:not(.compact) .comment-item:not(.playlist-aggregate-comment) > .comment-header .comment-timecode {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1250px) {
+  /* Existing SVG and accessible button text remain; title identifies each action. */
+  .header-right > .btn-secondary:not(#btnOpenEditor) {
+    width: 32px;
+    min-width: 32px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
+  }
+
+  .header {
+    gap: 12px;
+  }
+
+  .header-left {
+    gap: 8px;
+  }
 }

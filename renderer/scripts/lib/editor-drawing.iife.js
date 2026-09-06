@@ -5784,7 +5784,7 @@
       "use strict";
       var PALETTE_STORAGE_KEY = "baeframe.mpvFabricPalette.v1";
       var PALETTE_MARGIN = 12;
-      var PALETTE_FALLBACK_WIDTH = 220;
+      var PALETTE_FALLBACK_WIDTH = 212;
       var PALETTE_FALLBACK_HEIGHT = 120;
       var DEFAULT_PALETTE_STATE = Object.freeze({
         left: PALETTE_MARGIN,
@@ -5895,6 +5895,10 @@
         const title = documentRef.createElement("span");
         title.className = "mpv-fabric-pilot-toolbar-title";
         title.textContent = "\uADF8\uB9AC\uAE30 \uB3C4\uAD6C";
+        const activeToolLabel = documentRef.createElement("span");
+        activeToolLabel.className = "mpv-fabric-pilot-toolbar-tool";
+        activeToolLabel.dataset.fabricPilotOutput = "active-tool";
+        title.appendChild(activeToolLabel);
         const collapseButton = documentRef.createElement("button");
         collapseButton.type = "button";
         collapseButton.className = "mpv-fabric-pilot-collapse-button";
@@ -6055,6 +6059,9 @@
           content,
           collapseButton,
           isSectionCollapsed,
+          setActiveToolLabel(label) {
+            activeToolLabel.textContent = label ? ` \xB7 ${label}` : "";
+          },
           restore() {
             applyCollapsedState();
             return applyPosition(state);
@@ -17768,6 +17775,7 @@ void main() {
         }
         function setToolMode(tool) {
           if (!fabricCanvas) return;
+          paletteShell?.setActiveToolLabel?.(TOOL_STATUS_LABELS[tool] || "");
           if (tool !== "select") abortPendingLassoSelection();
           const selectMode = tool === "select";
           const nativeSelectMode = usesNativeRectangleSelection(tool);

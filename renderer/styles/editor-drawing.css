@@ -12,11 +12,11 @@
 }
 .editor-drawing-palette.mpv-fabric-pilot-toolbar {
   --fabric-palette-gap: 4px;
-  --text-primary: #e4e5e8;
-  --text-tertiary: #a8abb3;
+  --text-primary: var(--text);
+  --text-tertiary: var(--muted);
   --text-faint: #b8bdc7;
   --track-idle: #41454f;
-  --accent-secondary: #f4cb55;
+  --accent-secondary: var(--yellow);
   position: static !important;
   left: auto !important;
   top: auto !important;
@@ -53,9 +53,9 @@
 }
 .editor-drawing-palette button {
   min-width: 28px;
-  min-height: 25px;
+  min-height: 26px;
   border: 1px solid #464951;
-  border-radius: 3px;
+  border-radius: 4px;
   padding: 3px 6px;
   background: #292b30;
   color: #d4d8e0;
@@ -64,12 +64,12 @@
   white-space: nowrap;
   cursor: pointer;
 }
-.editor-drawing-palette button:hover {
+.editor-drawing-palette button:hover:not(:disabled) {
   background: #303030;
   border-color: #777;
 }
 .editor-drawing-palette button:focus-visible {
-  outline: 2px solid #ffd000;
+  outline: 2px solid var(--yellow);
   outline-offset: 2px;
 }
 .editor-drawing-palette button[data-active='true'],
@@ -80,8 +80,8 @@
 }
 .editor-drawing-palette [data-fabric-pilot-action='brush-settings'] {
   width: auto !important;
-  min-height: 25px !important;
-  height: 25px !important;
+  min-height: 26px !important;
+  height: 26px !important;
   padding: 2px 6px !important;
   gap: 4px !important;
 }
@@ -192,8 +192,8 @@
 }
 .editor-drawing-palette [data-fabric-pilot-group='selection-controls'] button {
   width: auto !important;
-  min-height: 25px !important;
-  font-size: 10px !important;
+  min-height: 26px !important;
+  font-size: 11px !important;
   line-height: 16px !important;
-  padding: 3px 5px !important;
+  padding: 3px 7px !important;
 }
