@@ -166,7 +166,7 @@ test('right sidebar reply editors grow with long replies', () => {
   assert.match(appSource, /function resizeReplyEditorToContent\(editor\) \{/);
   assert.match(appSource, /replyInput\?\.addEventListener\('input', \(\) => resizeReplyEditorToContent\(replyInput\)\);/);
   assert.match(appSource, /threadEditor\?\.addEventListener\('input', \(\) => \{[\s\S]+resizeReplyEditorToContent\(threadEditor\);/);
-  assert.match(appSource, /const computedMaxHeight = Number\.parseFloat\(getComputedStyle\(editor\)\.maxHeight\);/);
+  assert.match(appSource, /const computedMaxHeight = Number\.parseFloat\(editor\.ownerDocument\.defaultView\.getComputedStyle\(editor\)\.maxHeight\);/);
   assert.match(appSource, /editor\.style\.overflowY = editor\.scrollHeight > maxHeight \? 'auto' : '';/);
 });
 

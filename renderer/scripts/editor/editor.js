@@ -592,7 +592,7 @@
     const source = project.sources.find((s) => s.id === clip?.sourceId);
     const locked = state.busy || exporting || operationDepth > 0;
     $('projectTitle').textContent = `${project.name}${state.dirty ? ' · 저장 안 됨' : ''}`;
-    document.title = `${state.dirty ? '● ' : ''}${project.name} · BAEFRAME 영상 편집`;
+    document.title = `${state.dirty ? '● ' : ''}${project.name} · BEditer · 프로토타입`;
     $('outputInfo').textContent = `${project.width} × ${project.height} · ${project.fps}fps`;
     $('emptyState').hidden = !!project.clips.length;
     $('timeDisplay').textContent =

@@ -64,7 +64,7 @@ function setupEditorIpc({ getMainWindow, electron = require('electron'), runtime
       const owner = editorWindow;
       if (!owner || owner.isDestroyed()) return true;
       const result = await dialog.showMessageBox(owner, {
-        type: 'warning', title: '영상 편집',
+        type: 'warning', title: 'BEditer · 프로토타입',
         message: activeExport ? '출력을 취소하고 편집을 닫을까요?' : '저장하지 않은 편집 내용을 버릴까요?',
         detail: activeExport ? '아직 완성되지 않은 출력은 저장되지 않습니다. 저장하지 않은 편집 내용도 사라집니다.' : '계속 편집하려면 취소를 선택하세요.',
         buttons: ['계속 편집', '변경 버리기'], defaultId: 0, cancelId: 0, noLink: true
@@ -100,7 +100,7 @@ function setupEditorIpc({ getMainWindow, electron = require('electron'), runtime
     const windowLifetime = lifetime;
     const window = new BrowserWindow({
       width: 1440, height: 940, minWidth: 1050, minHeight: 700,
-      title: 'BAEFRAME · 영상 편집', backgroundColor: '#101216', autoHideMenuBar: true, show: false,
+      title: 'BEditer · 프로토타입', backgroundColor: '#101216', autoHideMenuBar: true, show: false,
       webPreferences: { preload: path.join(__dirname, '../preload/editor-preload.js'), nodeIntegration: false, contextIsolation: true, sandbox: true, webSecurity: true, allowRunningInsecureContent: false }
     });
     editorWindow = window;

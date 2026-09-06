@@ -59,7 +59,11 @@ export class MentionManager {
     const onKeyDown = (e) => this._handleKeyDown(e, element, type);
     const onBlur = () => {
       // 약간의 지연: 드롭다운 클릭이 blur보다 먼저 처리되도록
-      setTimeout(() => this.hide(), 150);
+      element.ownerDocument.defaultView.setTimeout(() => {
+        if (this._activeElement === element && element.ownerDocument.activeElement !== element) {
+          this.hide();
+        }
+      }, 150);
     };
 
     element.addEventListener('input', onInput);
@@ -200,14 +204,15 @@ export class MentionManager {
     }
 
     // contenteditable
-    const sel = window.getSelection();
-    if (!sel.rangeCount || !element.contains(sel.anchorNode)) {
+    const doc = element.ownerDocument;
+    const sel = doc.defaultView.getSelection();
+    if (!sel?.rangeCount || !element.contains(sel.anchorNode)) {
       return { text: '', cursorPos: -1 };
     }
 
     const text = element.textContent || '';
     // anchorNode 내에서의 offset을 전체 텍스트 내 위치로 변환
-    const range = document.createRange();
+    const range = doc.createRange();
     range.setStart(element, 0);
     range.setEnd(sel.anchorNode, sel.anchorOffset);
     const cursorPos = range.toString().length;
@@ -219,6 +224,10 @@ export class MentionManager {
    * 드롭다운 렌더링
    */
   _renderDropdown() {
+    const doc = this._activeElement?.ownerDocument || this._dropdown.ownerDocument;
+    if (this._dropdown.parentNode !== doc.body) {
+      doc.body.appendChild(this._dropdown);
+    }
     this._dropdown.innerHTML = this._filteredMembers.map((member, i) => `
       <div class="mention-item ${i === this._activeIndex ? 'active' : ''}" data-index="${i}">
         <span class="mention-item-name">${this._escapeHtml(member.name)}</span>
@@ -238,6 +247,7 @@ export class MentionManager {
    * 드롭다운 위치 계산
    */
   _positionDropdown(element, type, atIndex) {
+    const view = element.ownerDocument.defaultView;
     const rect = element.getBoundingClientRect();
     let left, top;
 
@@ -247,8 +257,8 @@ export class MentionManager {
       top = rect.bottom + 4;
     } else {
       // contenteditable: 커서 위치 기준
-      const sel = window.getSelection();
-      if (sel.rangeCount) {
+      const sel = view.getSelection();
+      if (sel?.rangeCount) {
         const range = sel.getRangeAt(0);
         const cursorRect = range.getBoundingClientRect();
         left = cursorRect.left;
@@ -263,11 +273,11 @@ export class MentionManager {
     const dropdownWidth = 200;
     const dropdownHeight = Math.min(this._filteredMembers.length * 36, 200);
 
-    if (left + dropdownWidth > window.innerWidth) {
-      left = window.innerWidth - dropdownWidth - 8;
+    if (left + dropdownWidth > view.innerWidth) {
+      left = view.innerWidth - dropdownWidth - 8;
     }
 
-    if (top + dropdownHeight > window.innerHeight) {
+    if (top + dropdownHeight > view.innerHeight) {
       // 위쪽으로 표시
       top = (type === 'textarea' ? rect.top : top - 8) - dropdownHeight - 4;
     }
@@ -312,25 +322,27 @@ export class MentionManager {
     textarea.focus();
 
     // input 이벤트 발생시켜 외부 리스너에 알림
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new textarea.ownerDocument.defaultView.Event('input', { bubbles: true }));
   }
 
   /**
    * contenteditable에 텍스트 삽입
    */
   _insertIntoContentEditable(element, replacement) {
-    const sel = window.getSelection();
-    if (!sel.rangeCount) return;
+    const doc = element.ownerDocument;
+    const view = doc.defaultView;
+    const sel = view.getSelection();
+    if (!sel?.rangeCount || !element.contains(sel.anchorNode)) return;
 
     // 현재 커서 위치 기준으로 @멘션 시작점부터 커서까지의 Range 생성
-    const cursorRange = document.createRange();
+    const cursorRange = doc.createRange();
     cursorRange.setStart(element, 0);
     cursorRange.setEnd(sel.anchorNode, sel.anchorOffset);
     const beforeCursorText = cursorRange.toString();
 
     // @멘션 시작 위치를 찾아서 해당 범위만 삭제 후 교체
     // TreeWalker로 텍스트 노드를 순회하며 정확한 위치를 찾음
-    const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    const walker = doc.createTreeWalker(element, view.NodeFilter.SHOW_TEXT, null, false);
     let charCount = 0;
     let startNode = null, startOffset = 0;
     let endNode = null, endOffset = 0;
@@ -364,19 +376,19 @@ export class MentionManager {
       element.textContent = before + replacement + after;
     } else {
       // @멘션 범위만 선택해서 교체 (서식 보존)
-      const replaceRange = document.createRange();
+      const replaceRange = doc.createRange();
       replaceRange.setStart(startNode, startOffset);
       replaceRange.setEnd(endNode, endOffset);
       replaceRange.deleteContents();
-      replaceRange.insertNode(document.createTextNode(replacement));
+      replaceRange.insertNode(doc.createTextNode(replacement));
     }
 
     // 커서를 삽입 텍스트 끝으로 이동
-    const newSel = window.getSelection();
-    const newRange = document.createRange();
+    const newSel = view.getSelection();
+    const newRange = doc.createRange();
 
     // 삽입된 텍스트 노드 찾기 — 마지막으로 삽입한 노드 바로 뒤
-    const insertedWalker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, null, false);
+    const insertedWalker = doc.createTreeWalker(element, view.NodeFilter.SHOW_TEXT, null, false);
     let targetNode = null;
     let accumulated = 0;
     const targetPos = this._mentionStart + replacement.length;
@@ -398,7 +410,7 @@ export class MentionManager {
     }
 
     element.focus();
-    element.dispatchEvent(new Event('input', { bubbles: true }));
+    element.dispatchEvent(new view.Event('input', { bubbles: true }));
   }
 
   /**
@@ -424,7 +436,7 @@ export class MentionManager {
    * XSS 방지용 이스케이프
    */
   _escapeHtml(text) {
-    const div = document.createElement('div');
+    const div = this._dropdown.ownerDocument.createElement('div');
     div.textContent = text;
     return div.innerHTML;
   }

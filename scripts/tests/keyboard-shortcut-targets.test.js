@@ -93,7 +93,7 @@ test('global shortcuts use active text entry when keyboard target is the page sh
   assert.equal(shouldIgnoreComposingKeyboardEvent({ key: 'a', code: 'KeyA' }), false);
 
   assert.match(appSource, /if \(isTextEntryShortcutTarget\(shortcutTarget\) && shouldIgnoreComposingKeyboardEvent\(e\)\) return;/);
-  assert.match(appSource, /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, document\);/);
+  assert.match(appSource, /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, e\.target\?\.ownerDocument \|\| document\);/);
   assert.match(appSource, /shouldHandlePlayPauseShortcutFromTarget\(shortcutTarget, e\)/);
   assert.match(appSource, /shouldIgnoreGlobalShortcutTarget\(shortcutTarget, e\)/);
 });
@@ -135,7 +135,7 @@ test('비텍스트 폼 컨트롤은 그 컨트롤이 소비하는 키만 차단�
 test('IME 조합 게이트는 텍스트 입력 대상에만 적용되고 폼 컨트롤 가드는 이벤트를 함께 본다', () => {
   assert.match(
     appSource,
-    /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, document\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(isTextEntryShortcutTarget\(shortcutTarget\) && shouldIgnoreComposingKeyboardEvent\(e\)\) return;/
+    /const shortcutTarget = getEffectiveKeyboardShortcutTarget\(e, e\.target\?\.ownerDocument \|\| document\);\n(?:\s*\/\/[^\n]*\n)*\s*if \(isTextEntryShortcutTarget\(shortcutTarget\) && shouldIgnoreComposingKeyboardEvent\(e\)\) return;/
   );
   assert.doesNotMatch(appSource, /\n\s+if \(shouldIgnoreComposingKeyboardEvent\(e\)\) return;\n/);
   assert.match(appSource, /if \(shouldIgnoreGlobalShortcutTarget\(shortcutTarget, e\)\) return;/);

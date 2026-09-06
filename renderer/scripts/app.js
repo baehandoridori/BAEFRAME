@@ -39,6 +39,7 @@ import { createFabricDrawingPilotController } from './modules/fabric-drawing-pil
 import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
+import { createCommentPanelPopout } from './modules/comment-panel-popout.js';
 import { getAuthManager } from './modules/auth-manager.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
@@ -789,15 +790,16 @@ async function initApp() {
 
   // 사용자 설정
   const userSettings = getUserSettings();
+  let commentPanelPopout = null;
 
   function getCommentEditableTarget(target) {
-    if (!(target instanceof Element)) return null;
+    if (target?.nodeType !== 1 || typeof target.closest !== 'function') return null;
     const standardEditable = target.closest('.comment-input, .comment-marker-input, .comment-reply-input, .comment-edit-textarea, .comment-reply-edit-textarea, .thread-editor[contenteditable="true"]');
     return standardEditable || target.closest('.playlist-comment-reply-input');
   }
 
   function getTextEntryFocusableTarget(target) {
-    if (!(target instanceof Element)) return null;
+    if (target?.nodeType !== 1 || typeof target.closest !== 'function') return null;
     const editable = target.closest('textarea, input, [contenteditable="true"], [contenteditable="plaintext-only"]');
     if (!editable || editable.disabled || editable.readOnly) return null;
     return isTextEntryShortcutTarget(editable) ? editable : null;
@@ -806,7 +808,7 @@ async function initApp() {
   function resizeReplyEditorToContent(editor) {
     if (!editor) return;
 
-    if (editor instanceof HTMLTextAreaElement) {
+    if (editor.tagName === 'TEXTAREA') {
       const maxHeight = Number(editor.dataset.maxAutoHeight) || 150;
       editor.style.height = 'auto';
       const nextHeight = Math.min(Math.max(editor.scrollHeight, 34), maxHeight);
@@ -816,7 +818,7 @@ async function initApp() {
     }
 
     if (editor.isContentEditable) {
-      const computedMaxHeight = Number.parseFloat(getComputedStyle(editor).maxHeight);
+      const computedMaxHeight = Number.parseFloat(editor.ownerDocument.defaultView.getComputedStyle(editor).maxHeight);
       const maxHeight = Number(editor.dataset.maxAutoHeight) || (Number.isFinite(computedMaxHeight) ? computedMaxHeight : 220);
       editor.style.overflowY = editor.scrollHeight > maxHeight ? 'auto' : '';
     }
@@ -3164,6 +3166,7 @@ async function initApp() {
       sidebarCommentDraft = { filePath: state.currentFile, inputValue, text, image };
       commentManager._pendingImage = image || null;
       commentManager.setPendingText(text || '(이미지)');
+      if (commentPanelPopout?.isDetached()) window.focus();
       showToast('영상에서 마커를 찍어주세요 · Esc로 취소', 'info');
       return true;
     } finally {
@@ -3171,13 +3174,14 @@ async function initApp() {
     }
   }
 
-  document.addEventListener('keydown', (e) => {
+  function handleSidebarCommentEscape(e) {
     if (e.key !== 'Escape' || (!sidebarCommentSubmissionPending && !state.isCommentMode)) return;
     if (mentionManager.isVisible) return;
     e.preventDefault();
     cancelSidebarCommentDraft();
     commentManager.setCommentMode(false);
-  });
+  }
+  document.addEventListener('keydown', handleSidebarCommentEscape);
 
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
@@ -3239,7 +3243,7 @@ async function initApp() {
 
   // 이미지 버튼 클릭 (파일 선택)
   elements.btnCommentImage?.addEventListener('click', async () => {
-    const imageData = await selectImageFile();
+    const imageData = await selectImageFile(elements.btnCommentImage.ownerDocument);
     if (imageData) {
       showCommentImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
@@ -3498,13 +3502,13 @@ async function initApp() {
 
   // 필터 칩 (댓글 목록 필터링)
   function getActiveCommentFilter() {
-    return document.querySelector('.filter-chip.active')?.dataset.filter || 'all';
+    return elements.commentPanel.querySelector('.filter-chip.active')?.dataset.filter || 'all';
   }
 
-  document.querySelectorAll('.filter-chip').forEach(chip => {
+  elements.commentPanel.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
       if (this.id === 'authorFilterBtn' || this.id === 'markerToggleBtn') return;
-      document.querySelectorAll('.filter-chip').forEach(c => {
+      elements.commentPanel.querySelectorAll('.filter-chip').forEach(c => {
         if (c.id !== 'authorFilterBtn' && c.id !== 'markerToggleBtn') c.classList.remove('active');
       });
       this.classList.add('active');
@@ -3536,7 +3540,7 @@ async function initApp() {
   }
 
   function updateAuthorFilterMenu() {
-    const menu = document.getElementById('authorFilterMenu');
+    const menu = elements.commentPanel.querySelector('#authorFilterMenu');
     if (!menu) return;
 
     const allMarkers = getAuthorFilterSourceItems();
@@ -3555,7 +3559,7 @@ async function initApp() {
 
     let html = '';
     for (const [authorId, info] of authors) {
-      const color = getAuthorColor(authorId);
+      const color = getCommentAuthorColor(info.name, authorId);
       const isChecked = selectedAll || commentFilterState.authors.includes(authorId);
       html += `
         <div class="filter-dropdown-item" data-author-id="${escapeHtml(authorId)}">
@@ -3584,16 +3588,16 @@ async function initApp() {
     commentFilterState.showMarkers = true;
 
     // UI 초기화
-    document.querySelectorAll('.filter-chip').forEach(c => {
+    elements.commentPanel.querySelectorAll('.filter-chip').forEach(c => {
       if (c.id !== 'authorFilterBtn') {
         c.classList.toggle('active', c.dataset.filter === 'all');
       }
     });
-    const authorBtn = document.getElementById('authorFilterBtn');
+    const authorBtn = elements.commentPanel.querySelector('#authorFilterBtn');
     if (authorBtn) authorBtn.classList.remove('active');
-    const markerBtn = document.getElementById('markerToggleBtn');
+    const markerBtn = elements.commentPanel.querySelector('#markerToggleBtn');
     if (markerBtn) markerBtn.classList.add('active');
-    const menu = document.getElementById('authorFilterMenu');
+    const menu = elements.commentPanel.querySelector('#authorFilterMenu');
     if (menu) menu.classList.remove('open');
   }
 
@@ -3605,9 +3609,9 @@ async function initApp() {
   }
 
   // 작성자 필터 드롭다운 토글
-  document.getElementById('authorFilterBtn')?.addEventListener('click', (e) => {
+  elements.commentPanel.querySelector('#authorFilterBtn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const menu = document.getElementById('authorFilterMenu');
+    const menu = elements.commentPanel.querySelector('#authorFilterMenu');
     const isOpen = menu.classList.contains('open');
     if (isOpen) {
       menu.classList.remove('open');
@@ -3628,11 +3632,12 @@ async function initApp() {
       // 레이아웃 확정 후 overflow 보정
       requestAnimationFrame(() => {
         const rect = menu.getBoundingClientRect();
-        if (rect.bottom > window.innerHeight) {
+        const menuWindow = menu.ownerDocument.defaultView;
+        if (rect.bottom > menuWindow.innerHeight) {
           menu.style.top = 'auto';
           menu.style.bottom = 'calc(100% + 4px)';
         }
-        if (rect.right > window.innerWidth) {
+        if (rect.right > menuWindow.innerWidth) {
           menu.style.left = 'auto';
           menu.style.right = '0';
         }
@@ -3642,11 +3647,11 @@ async function initApp() {
 
   // 작성자 드롭다운 — 마우스 벗어나면 닫기
   let _authorDropdownLeaveTimer = null;
-  const authorWrapper = document.getElementById('authorFilterWrapper');
+  const authorWrapper = elements.commentPanel.querySelector('#authorFilterWrapper');
   if (authorWrapper) {
     authorWrapper.addEventListener('mouseleave', () => {
       _authorDropdownLeaveTimer = setTimeout(() => {
-        const menu = document.getElementById('authorFilterMenu');
+        const menu = elements.commentPanel.querySelector('#authorFilterMenu');
         if (menu) menu.classList.remove('open');
       }, 300); // 300ms 딜레이
     });
@@ -3659,17 +3664,28 @@ async function initApp() {
   }
 
   // 드롭다운 외부 클릭 시 닫기
-  document.addEventListener('click', (e) => {
-    const wrapper = document.getElementById('authorFilterWrapper');
+  function handleCommentMenusOutsideClick(e) {
+    const wrapper = elements.commentPanel.querySelector('#authorFilterWrapper');
     if (wrapper && !wrapper.contains(e.target)) {
-      const menu = document.getElementById('authorFilterMenu');
+      const menu = elements.commentPanel.querySelector('#authorFilterMenu');
       if (menu) menu.classList.remove('open');
     }
-  });
+    const previousMenu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
+    if (previousMenu?.classList.contains('open') && !e.target.closest?.('#prevVersionCommentsWrapper')) {
+      previousMenu.classList.remove('open');
+    }
+    const settingsMenu = elements.commentPanel.querySelector('#commentSettingsDropdown');
+    const settingsButton = elements.commentPanel.querySelector('#btnCommentSettings');
+    if (!settingsMenu?.contains(e.target) && !settingsButton?.contains(e.target)) {
+      settingsMenu?.classList.remove('open');
+      settingsButton?.classList.remove('active');
+    }
+  }
+  document.addEventListener('click', handleCommentMenusOutsideClick);
 
   // 피드백 36: 이전 버전 댓글 보기 드롭다운
   function renderPrevVersionCommentsMenu() {
-    const menu = document.getElementById('prevVersionCommentsMenu');
+    const menu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
     if (!menu) return;
     const versions = getVersionManager().getAllVersions()
       .filter((v) => v?.path && !isSameFilePath(v.path, state.currentFile));
@@ -3692,23 +3708,16 @@ async function initApp() {
     });
   }
 
-  document.getElementById('prevVersionCommentsBtn')?.addEventListener('click', (e) => {
+  elements.commentPanel.querySelector('#prevVersionCommentsBtn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const menu = document.getElementById('prevVersionCommentsMenu');
+    const menu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
     if (!menu) return;
     renderPrevVersionCommentsMenu();
     menu.classList.toggle('open');
   });
 
-  document.addEventListener('click', (e) => {
-    const menu = document.getElementById('prevVersionCommentsMenu');
-    if (menu?.classList.contains('open') && !e.target.closest('#prevVersionCommentsWrapper')) {
-      menu.classList.remove('open');
-    }
-  });
-
   // 작성자 선택/해제 (체크박스 토글 + 이름 솔로)
-  document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
+  elements.commentPanel.querySelector('#authorFilterMenu')?.addEventListener('click', (e) => {
     e.stopPropagation(); // 드롭다운 닫힘 방지
 
     const item = e.target.closest('.filter-dropdown-item');
@@ -3754,16 +3763,16 @@ async function initApp() {
     updateAuthorFilterMenu();
     applyCommentFilters();
 
-    const btn = document.getElementById('authorFilterBtn');
+    const btn = elements.commentPanel.querySelector('#authorFilterBtn');
     if (btn) {
       btn.classList.toggle('active', commentFilterState.authors !== null);
     }
   });
 
   // 뷰포트 마커 토글
-  document.getElementById('markerToggleBtn')?.addEventListener('click', () => {
+  elements.commentPanel.querySelector('#markerToggleBtn')?.addEventListener('click', () => {
     commentFilterState.showMarkers = !commentFilterState.showMarkers;
-    const btn = document.getElementById('markerToggleBtn');
+    const btn = elements.commentPanel.querySelector('#markerToggleBtn');
     btn.classList.toggle('active', commentFilterState.showMarkers);
     applyCommentFilters();
   });
@@ -3901,14 +3910,6 @@ async function initApp() {
     e.stopPropagation();
     commentSettingsDropdown?.classList.toggle('open');
     btnCommentSettings.classList.toggle('active', commentSettingsDropdown?.classList.contains('open'));
-  });
-
-  // 드롭다운 외부 클릭 시 닫기
-  document.addEventListener('click', (e) => {
-    if (!commentSettingsDropdown?.contains(e.target) && e.target !== btnCommentSettings) {
-      commentSettingsDropdown?.classList.remove('open');
-      btnCommentSettings?.classList.remove('active');
-    }
   });
 
   // 드롭다운 내부 클릭 시 이벤트 버블링 방지
@@ -5267,7 +5268,7 @@ async function initApp() {
       // 색상 (작성자 색상 기반)
       const rangeMarker = commentManager.getMarker(comment.markerId);
       const authorColorInfo = rangeMarker
-        ? getAuthorColor(rangeMarker.authorId || rangeMarker.author || 'unknown')
+        ? getCommentAuthorColor(rangeMarker.author, rangeMarker.authorId)
         : { color: comment.color || '#4a9eff' };
       const color = authorColorInfo.color;
       bar.style.left = `${leftPercent}%`;
@@ -6314,6 +6315,10 @@ async function initApp() {
   // ====== 댓글 패널 토글 ======
 
   elements.commentPanelToggle?.addEventListener('click', () => {
+    if (commentPanelPopout?.isDetached()) {
+      commentPanelPopout.focus();
+      return;
+    }
     const isCollapsed = elements.commentPanel?.classList.toggle('collapsed');
     elements.commentPanelToggle?.classList.toggle('collapsed', isCollapsed);
     elements.panelResizer?.classList.toggle('hidden', isCollapsed);
@@ -9875,6 +9880,7 @@ async function initApp() {
     return {
       revision: ++mpvOverlayCollaborationRevision,
       theme: document.documentElement.classList.contains('light-mode') ? 'light' : 'dark',
+      accentColor: getComputedStyle(document.documentElement).getPropertyValue('--accent-primary').trim() || '#ffd000',
       indicator: {
         ...indicator,
         badge: getMpvCollaborationBadge(),
@@ -11340,7 +11346,7 @@ async function initApp() {
         const { time, dataUrl } = detail;
         if (!dataUrl || typeof time !== 'number') return;
         const frame = Math.round(time * (videoPlayer.fps || 24));
-        document.querySelectorAll(
+        elements.commentsList.querySelectorAll(
           `.comment-item[data-start-frame="${frame}"] .comment-thumbnail`
         ).forEach(img => { img.src = dataUrl; });
       };
@@ -12110,7 +12116,7 @@ async function initApp() {
     const markerEl = document.createElement('div');
     markerEl.className = `comment-marker${marker.resolved ? ' resolved' : ''}`;
     markerEl.dataset.markerId = marker.id;
-    const authorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
+    const authorColor = getCommentAuthorColor(marker.author, marker.authorId);
     markerEl.style.cssText = `
       position: absolute;
       left: ${marker.x * 100}%;
@@ -12498,6 +12504,19 @@ async function initApp() {
   /**
    * 댓글 목록 업데이트 (사이드 패널)
    */
+
+  /**
+   * 지정된 이름/등록 테마 색상을 우선하고, 미지정 작성자는 기존 ID 색상을 유지한다.
+   * 작성자 강조색 전용이며 개별 마커·타임라인 색상은 변경하지 않는다.
+   */
+  function getCommentAuthorColor(author, authorId) {
+    const color = typeof author === 'string' ? userSettings.getColorForName(author) : null;
+    if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) {
+      const [red, green, blue] = color.slice(1).match(/.{2}/g).map(channel => parseInt(channel, 16));
+      return { color, bgColor: `rgba(${red}, ${green}, ${blue}, 0.3)` };
+    }
+    return getAuthorColor(authorId || author || 'unknown');
+  }
 
   /**
    * 이름에 따른 색상 클래스 반환
@@ -13148,7 +13167,7 @@ async function initApp() {
       const key = getPlaylistAggregateCommentKey(range);
       const title = escapeHtmlAttribute(formatPlaylistCommentPanelLine(range));
       const author = range.author || '알 수 없음';
-      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const authorColor = getCommentAuthorColor(author, range.authorId);
       const replyCount = range.replies?.length || 0;
       const repliesExpanded = playlistExpandedReplyKeys.has(key);
       const repliesHtml = renderPlaylistAggregateReplies(range, normalizedSearch);
@@ -13240,7 +13259,7 @@ async function initApp() {
         try {
           await togglePlaylistAggregateResolved(item.dataset.aggregateCommentKey);
         } finally {
-          if (document.contains(resolveBtn)) resolveBtn.disabled = false;
+          if (resolveBtn.isConnected) resolveBtn.disabled = false;
         }
       });
 
@@ -13257,7 +13276,7 @@ async function initApp() {
         try {
           await submitPlaylistAggregateReply(item.dataset.aggregateCommentKey, replyInput);
         } finally {
-          if (document.contains(submitBtn)) submitBtn.disabled = false;
+          if (submitBtn.isConnected) submitBtn.disabled = false;
         }
       });
 
@@ -13421,7 +13440,7 @@ async function initApp() {
       const key = getCutlistAggregateCommentKey(range);
       const title = escapeHtmlAttribute(formatCutlistCommentPanelLine(range));
       const author = range.author || '알 수 없음';
-      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const authorColor = getCommentAuthorColor(author, range.authorId);
       const replyCount = range.replies?.length || 0;
 
       return `
@@ -13558,7 +13577,7 @@ async function initApp() {
 
     // 확장 상태 및 스크롤 위치 보존
     const expandedIds = new Set(
-      [...container.querySelectorAll('.comment-thread-toggle.expanded')]
+      [...container.querySelectorAll('.comment-thread-toggle.expanded, .comment-replies.expanded')]
         .map(el => el.dataset.markerId)
     );
     const savedScrollTop = container.scrollTop;
@@ -13626,7 +13645,7 @@ async function initApp() {
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const authorStyle = getAuthorColorStyle(marker.author);
-      const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
+      const markerAuthorColor = getCommentAuthorColor(marker.author, marker.authorId);
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
@@ -13970,7 +13989,7 @@ async function initApp() {
       // 답글 이미지 버튼 클릭
       replyImageBtn?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const imageData = await selectImageFile();
+        const imageData = await selectImageFile(replyImageBtn.ownerDocument);
         if (imageData) {
           showReplyImagePreview(imageData);
           showToast('이미지가 첨부되었습니다', 'success');
@@ -14100,7 +14119,7 @@ async function initApp() {
     const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
     if (commentItem) {
       // 댓글 패널 열기
-      const commentPanel = document.getElementById('commentPanel');
+      const commentPanel = elements.commentPanel;
       commentPanel?.classList.add('open');
 
       // 스크롤
@@ -14133,7 +14152,7 @@ async function initApp() {
     const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
     if (commentItem) {
       // 댓글 패널 열기
-      const commentPanel = document.getElementById('commentPanel');
+      const commentPanel = elements.commentPanel;
       commentPanel?.classList.add('open');
 
       // 스크롤
@@ -14689,7 +14708,7 @@ async function initApp() {
   }
 
   // G:/ 드라이브 경로 버튼 클릭 이벤트 위임 (전역)
-  document.body.addEventListener('click', (e) => {
+  function handleDriveLinkClick(e) {
     const btn = e.target.closest('.gdrive-link-btn');
     if (btn) {
       e.preventDefault();
@@ -14699,7 +14718,8 @@ async function initApp() {
         window.electronAPI.showInFolder(path);
       }
     }
-  });
+  }
+  document.body.addEventListener('click', handleDriveLinkClick);
 
   /**
    * 리사이저 설정 (마우스 커서 추적 개선)
@@ -14764,7 +14784,7 @@ async function initApp() {
   async function handleKeydown(e) {
     if (document.querySelector('.shortcut-key-btn.capturing')) return;
 
-    const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
+    const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, e.target?.ownerDocument || document);
     // 한글 IME는 편집 대상이 없어도 알파벳 키를 keyCode 229 / key 'Process'로 올린다.
     // 아래 분기는 전부 e.code(물리 키 위치)로 판정하므로, 조합 게이트는 실제로 글자가
     // 들어가는 텍스트 입력 대상에만 적용한다.
@@ -16078,9 +16098,9 @@ async function initApp() {
   // 앱 설정 열기 버튼
   btnAppSettings?.addEventListener('click', () => {
     // 드롭다운 닫기
-    const dropdown = document.getElementById('commentSettingsDropdown');
+    const dropdown = elements.commentPanel.querySelector('#commentSettingsDropdown');
     if (dropdown) dropdown.classList.remove('open');
-    document.getElementById('btnCommentSettings')?.classList.remove('active');
+    elements.commentPanel.querySelector('#btnCommentSettings')?.classList.remove('active');
     openAppSettingsModal();
   });
 
@@ -16390,6 +16410,10 @@ async function initApp() {
   _applyToastPosition(userSettings.getToastPosition());
 
   // ====== 테마 설정 (앱 설정 모달) ======
+  userSettings.addEventListener('themeChanged', () => {
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+  });
+
   // 라이트 모드 토글
   const lightModeToggle = document.getElementById('appSettingsLightMode');
   function _applyLightMode(enabled) {
@@ -16436,11 +16460,15 @@ async function initApp() {
   let _previousFocusElement = null;
 
   function saveFocus() {
-    _previousFocusElement = document.activeElement;
+    const panelDocument = elements.commentPanel.ownerDocument;
+    _previousFocusElement = panelDocument !== document && panelDocument.hasFocus()
+      ? panelDocument.activeElement
+      : document.activeElement;
   }
 
   function restoreFocus() {
-    if (_previousFocusElement && document.contains(_previousFocusElement)) {
+    if (_previousFocusElement?.isConnected) {
+      _previousFocusElement.ownerDocument.defaultView?.focus();
       _previousFocusElement.focus();
       _previousFocusElement = null;
     }
@@ -17352,7 +17380,7 @@ async function initApp() {
 
   // 스레드 이미지 버튼 클릭
   threadImageBtn?.addEventListener('click', async () => {
-    const imageData = await selectImageFile();
+    const imageData = await selectImageFile(threadImageBtn.ownerDocument);
     if (imageData) {
       showThreadImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
@@ -17423,7 +17451,7 @@ async function initApp() {
   });
 
   // 댓글/스레드 이미지 클릭 이벤트 위임
-  document.addEventListener('click', (e) => {
+  function handleCommentImageClick(e) {
     // 댓글 이미지 클릭
     const commentImg = e.target.closest('.comment-attached-image img');
     if (commentImg) {
@@ -17439,7 +17467,49 @@ async function initApp() {
       openImageViewer(threadImg.dataset.fullImage || threadImg.src);
       return;
     }
-  });
+  }
+  document.addEventListener('click', handleCommentImageClick);
+
+  function installCommentPopoutDocument(childWindow) {
+    const childDocument = childWindow.document;
+    const bindings = [
+      ['keydown', handleKeydown, true],
+      ['keyup', handleKeyup, true],
+      ['keydown', handleSidebarCommentEscape, false],
+      ['click', handleCommentMenusOutsideClick, false],
+      ['click', handleCommentImageClick, false],
+      ['click', handleDriveLinkClick, false]
+    ];
+    for (const [type, listener, capture] of bindings) childDocument.addEventListener(type, listener, capture);
+
+    // 설정·스레드·이미지 모달은 메인 창에 있으므로 열리는 순간 그 창을 보여준다.
+    // 모달 안의 내용 변경만으로 포커스를 반복해서 빼앗지 않는다.
+    const modals = [...document.querySelectorAll('.modal-overlay, .thread-overlay, .image-viewer-overlay')];
+    const isOpen = modal => modal.classList.contains('active') || modal.classList.contains('open');
+    const visibility = new Map(modals.map(modal => [modal, isOpen(modal)]));
+    const modalObserver = new MutationObserver(records => {
+      for (const { target } of records) {
+        const open = isOpen(target);
+        if (open && !visibility.get(target)) window.focus();
+        visibility.set(target, open);
+      }
+    });
+    for (const modal of modals) modalObserver.observe(modal, { attributes: true, attributeFilter: ['class'] });
+
+    const clearChildKeyboardState = () => {
+      suppressPlayPauseShortcutKeyup = false;
+      state.isSpaceHeld = false;
+      state.spacePanUsed = false;
+      elements.videoWrapper?.classList.remove('space-pan');
+    };
+    childWindow.addEventListener('blur', clearChildKeyboardState);
+    return () => {
+      for (const [type, listener, capture] of bindings) childDocument.removeEventListener(type, listener, capture);
+      childWindow.removeEventListener('blur', clearChildKeyboardState);
+      modalObserver.disconnect();
+      clearChildKeyboardState();
+    };
+  }
 
   // 전역 노출
   window.openImageViewer = openImageViewer;
@@ -19041,7 +19111,7 @@ async function initApp() {
         updateTimelineMarkers();
 
         // 편집 중이 아닐 때만 댓글 목록 업데이트
-        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
+        const isEditingComment = elements.commentsList.querySelector('.comment-edit-form[style*="display: block"]');
         if (!isEditingComment) {
           updateCommentList();
         }
@@ -22353,6 +22423,23 @@ async function initApp() {
       }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
   }
+
+  commentPanelPopout = createCommentPanelPopout({
+    panel: elements.commentPanel,
+    toggleButton: document.getElementById('btnDetachComments'),
+    focusButton: document.getElementById('btnCommentWindow'),
+    windowRef: window,
+    onReady: installCommentPopoutDocument,
+    onChange: () => {
+      mentionManager.hide();
+      syncCanvasOverlay();
+      window.dispatchEvent(new Event('resize'));
+    },
+    onError: error => {
+      log.warn('댓글 창 분리 실패', { error: error.message });
+      showToast('댓글 창을 열지 못해 원래 패널로 돌아왔습니다.', 'warning');
+    }
+  });
 
   // 리사이저
   function initPlaylistResizer() {

@@ -244,12 +244,12 @@ test('release build scripts pin stable while trial build scripts pin trial regar
   assert.match(packageJson.scripts['test:mpv'], /runtime-profile\.test\.js/);
 });
 
-test('stable engine promotion uses the 2.3.0 beta release version consistently', () => {
+test('stable release version is consistent across the package and lockfile', () => {
   const rootDir = path.resolve(__dirname, '..', '..');
   const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
   const packageLock = JSON.parse(fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8'));
 
-  assert.equal(packageJson.version, '2.9.0-beta');
-  assert.equal(packageLock.version, '2.9.0-beta');
-  assert.equal(packageLock.packages[''].version, '2.9.0-beta');
+  assert.equal(packageJson.version, '2.10.0-beta');
+  assert.equal(packageLock.version, packageJson.version);
+  assert.equal(packageLock.packages[''].version, packageJson.version);
 });

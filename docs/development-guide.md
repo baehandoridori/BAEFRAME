@@ -52,6 +52,7 @@
 | 편집기·영상 출력 | `test:editor` (로컬 FFmpeg 필요) |
 | UX 회귀: 댓글 초안·공유 저장·붙여넣기·목록 저장 경합·편집 입력 | `test:ux`, 변경 영역의 기존 검사도 함께 실행 |
 | 댓글·협업 | `test:comment-input`, `test:cluster`, `test:collaboration` 중 관련 항목 |
+| 댓글 분리창·작성자 색·창 사이 입력 | `test:comment-popout`, `test:comment-input`, `test:ux` |
 | Drawing V3 문서·어댑터·관찰자 | `test:drawing-v3-hardening`, `test:drawing-v3-adapter`, `test:drawing-v3-store-observer` 중 관련 항목 |
 
 전체 회귀 검증이 필요하면 package.json의 현재 `test:*` 목록을 기준으로 실행한다. 테스트 수를 고정하지 않는다. 성능 변경은 관련 `benchmark:*`도 검토한다.

@@ -52,6 +52,7 @@ function draftHarness() {
   const image = { base64: 'data:image/png;base64,fixture', width: 8, height: 8 };
   const context = vm.createContext({
     commentManager: cm, elements: { commentInput: input },
+    commentPanelPopout: null, window: { focus: noop },
     state: { currentFile: 'A.mp4', pendingCommentImage: image },
     latestVideoLoadToken: 1, videoLoadIntentGeneration: 1,
     cutlistUIState: { active: false },
@@ -71,6 +72,19 @@ test('sidebar cancellation preserves the text and attachment until a marker is c
   assert.equal(cm.getAllMarkers().length, 0);
   assert.equal(cm.pendingText, null);
   assert.equal(cm._pendingImage, null);
+});
+
+test('detached comment submission focuses the video window without consuming its draft before placement', async () => {
+  const { context, cm, input, image } = draftHarness();
+  let focusCalls = 0;
+  context.commentPanelPopout = { isDetached: () => true };
+  context.window.focus = () => { focusCalls += 1; };
+  assert.equal(await context.submitSidebarCommentDraft(), true);
+  assert.equal(focusCalls, 1);
+  assert.equal(input.value, '손 포즈를 확인해주세요');
+  assert.equal(context.state.pendingCommentImage, image);
+  assert.equal(cm.getAllMarkers().length, 0);
+  assert.equal(cm.pendingText, input.value);
 });
 
 test('confirmed sidebar marker consumes exactly its own text and image draft', async () => {

@@ -438,7 +438,7 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-toolbar {
       display: block;
       --fabric-palette-gap: 6px;
-      --fabric-palette-accent: #ffd000;
+      --fabric-palette-accent: var(--mpv-theme-accent, #ffd000);
       --fabric-palette-bg: #1b1b1e;
       --fabric-palette-header: #242427;
       --fabric-palette-button: #2a2a2e;
@@ -458,10 +458,9 @@ const OVERLAY_HTML = String.raw`
       -webkit-font-smoothing: antialiased;
       user-select: none;
     }
-    /* 전역 accent는 획 색상 등에도 쓰인다. 팔레트 강조색과 밝은 테마는
-       이 셸 안에만 적용하고, 기존 협업 미러가 전달하는 테마를 따른다. */
+    /* 획 기본색과 분리된 테마 변수를 사용하며 밝은 팔레트에서는 대비를 높인다. */
     :root:has(#collaborationMirror[data-theme="light"]) .mpv-fabric-pilot-toolbar {
-      --fabric-palette-accent: #846800;
+      --fabric-palette-accent: color-mix(in srgb, var(--mpv-theme-accent, #ffd000) 65%, #000);
       --fabric-palette-bg: #fafafa;
       --fabric-palette-header: #f0f0f2;
       --fabric-palette-button: #e7e7ea;
@@ -1442,6 +1441,8 @@ const OVERLAY_HTML = String.raw`
       const playback = document.getElementById('mpvPlaybackSyncPanel');
       if (!root || !indicator || !plexus || !playback) return false;
       root.dataset.theme = state.theme;
+      document.documentElement.style.setProperty('--mpv-theme-accent', state.accentColor);
+      root.style.setProperty('--accent-primary', state.accentColor);
 
       applyMpvCollaborationBounds(indicator, state.indicator, 'flex');
       applyMpvCollaborationUsers(state.indicator.users);
@@ -1795,13 +1796,18 @@ function normalizeMpvCollaborationSnapshotDataUrl(value) {
 
 function normalizeMpvCollaborationState(value) {
   try {
-    if (!isExactPlainRecord(value, [
+    const keys = [
       'revision',
       'theme',
       'indicator',
       'plexus',
       'playback'
-    ])) return null;
+    ];
+    const hasAccentColor = value !== null && typeof value === 'object' && Object.hasOwn(value, 'accentColor');
+    if (hasAccentColor) keys.push('accentColor');
+    if (!isExactPlainRecord(value, keys)) return null;
+    if (hasAccentColor && (typeof value.accentColor !== 'string' ||
+        !/^#[0-9a-f]{6}$/i.test(value.accentColor))) return null;
     if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_MPV_COLLABORATION_STATE_BYTES ||
         !Number.isSafeInteger(value.revision) || value.revision < 0 ||
         !['dark', 'light'].includes(value.theme)) {
@@ -1852,6 +1858,7 @@ function normalizeMpvCollaborationState(value) {
     return {
       revision: value.revision,
       theme: value.theme,
+      accentColor: hasAccentColor ? value.accentColor.toLowerCase() : MPV_COLLABORATION_FALLBACK_COLOR,
       indicator: {
         visible: value.indicator.visible,
         bounds: indicatorBounds,

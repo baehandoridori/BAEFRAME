@@ -216,6 +216,27 @@ test('collaboration overlay document uses the fixed z-order and trusted static c
   assert.doesNotMatch(hostSource, /collaborationMirror\.innerHTML/);
 });
 
+test('collaboration mirror carries only a validated accent color and preserves the older state shape', () => {
+  assert.equal(normalizeMpvCollaborationState(validState()).accentColor, '#ffd000');
+  assert.equal(normalizeMpvCollaborationState(validState({ accentColor: '#4A9EFF' })).accentColor, '#4a9eff');
+  for (const accentColor of ['red', '#fff', '#123456; color: red', 'url(https://example.com)', null, 123]) {
+    assert.equal(normalizeMpvCollaborationState(validState({ accentColor })), null);
+  }
+});
+
+test('native drawing palette follows theme changes through the existing mirror without changing stroke defaults', async t => {
+  const harness = await createGeneratedOverlayHarness();
+  t.after(() => harness.close());
+  for (const [index, accentColor] of ['#4a9eff', '#ffaaaa', '#2ed573'].entries()) {
+    const result = await harness.host.updateCollaborationState(validState({ revision: index + 1, accentColor }));
+    assert.equal(result.success, true);
+    assert.equal(harness.document.documentElement.style.getPropertyValue('--mpv-theme-accent'), accentColor);
+  }
+  assert.match(hostSource, /--fabric-palette-accent: var\(--mpv-theme-accent, #ffd000\)/);
+  assert.match(hostSource, /--accent-primary: #ff5555/);
+  assert.match(appSource, /userSettings\.addEventListener\('themeChanged',[\s\S]*?scheduleMpvOverlayCollaborationStateSync\(\{ force: true \}\)/);
+});
+
 test('collaboration host applies only increasing revisions to the trusted overlay API', async () => {
   const scripts = [];
   const host = new MPVOverlayHost({ BrowserWindow: class {}, getMainWindow: () => null });
