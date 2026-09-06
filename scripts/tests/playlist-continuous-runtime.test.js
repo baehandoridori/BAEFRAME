@@ -172,7 +172,7 @@ test('continuous metadata keeps mpv pilot originals off FFmpeg probing', () => {
 });
 
 test('status filter chip changes route through shared comment filter refresh', () => {
-  const filterHandlerMatch = appSource.match(/document\.querySelectorAll\('\.filter-chip'\)\.forEach\(chip => \{([\s\S]*?)\n  \}\);/);
+  const filterHandlerMatch = appSource.match(/elements\.commentPanel\.querySelectorAll\('\.filter-chip'\)\.forEach\(chip => \{([\s\S]*?)\n  \}\);/);
   assert.ok(filterHandlerMatch, 'filter chip handler should exist');
 
   const filterHandlerSource = filterHandlerMatch[1];
@@ -513,7 +513,7 @@ test('continuous author filter menu uses aggregate playlist comments', () => {
   assert.ok(menuMatch, 'updateAuthorFilterMenu should exist');
   assert.match(menuMatch[1], /const allMarkers = getAuthorFilterSourceItems\(\);/);
 
-  const clickMatch = appSource.match(/document\.getElementById\('authorFilterMenu'\)\?\.addEventListener\('click', \(e\) => \{([\s\S]*?)\n  \}\);/);
+  const clickMatch = appSource.match(/elements\.commentPanel\.querySelector\('#authorFilterMenu'\)\?\.addEventListener\('click', \(e\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(clickMatch, 'author filter click handler should exist');
   const clickSource = clickMatch[1];
   assert.match(clickSource, /const uniqueAuthors = getAuthorFilterAuthorIds\(\);/);
