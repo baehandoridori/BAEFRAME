@@ -1,0 +1,179 @@
+{
+  "checkedAt": "2026-09-05T17:48:47.542Z",
+  "testScope": "Downloaded public renderer and write guard executed locally; mocked canvas; native app-created synthetic fixture; no authenticated app, browser, or Google Drive operation",
+  "networkRequests": [
+    {
+      "method": "GET",
+      "url": "https://baeframe.vercel.app/open.html",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "url": "https://baeframe.vercel.app/index.html",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "url": "https://baeframe.vercel.app/scripts/app.js",
+      "body": null
+    },
+    {
+      "method": "GET",
+      "url": "https://baeframe.vercel.app/scripts/bframe-write-guard.js",
+      "body": null
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://baeframe.vercel.app/open.html",
+      "status": 200,
+      "bytes": 9660,
+      "sha256": "0b78830654fc894814176263a966f3f113adefbf5928f7e4f02ff4f8538a3cad"
+    },
+    {
+      "url": "https://baeframe.vercel.app/index.html",
+      "status": 200,
+      "bytes": 12046,
+      "sha256": "ae78d1ff181eeaddfb6dd4d7bfe6446fefd4c4e4c683d6052bfe71cf1e519948"
+    },
+    {
+      "url": "https://baeframe.vercel.app/scripts/app.js",
+      "status": 200,
+      "bytes": 91544,
+      "sha256": "57b9bbbd6f7ba05642fa53ed8feaa8fcfef25408306b60c43c51f9cfd7892113"
+    },
+    {
+      "url": "https://baeframe.vercel.app/scripts/bframe-write-guard.js",
+      "status": 200,
+      "bytes": 10941,
+      "sha256": "0b9063cf0f09e42c56433054c31a01469c9ff69f6ed41067cb36ead33339772c"
+    }
+  ],
+  "inspectedAppImports": [
+    "./bframe-write-guard.js"
+  ],
+  "drawingsV3Occurrences": {
+    "app": 0,
+    "guard": 0
+  },
+  "nativeFixture": {
+    "filename": "native-drawing-sample.bframe",
+    "sha256": "3245882d62e99b0cdfdffed1d6003501f301eabe241f0d47bcc405f180e20802",
+    "bytes": 4726,
+    "fps": 24,
+    "framesWithDrawings": [
+      33
+    ],
+    "legacyDrawingsIsArray": false,
+    "nativeImport": {
+      "accepted": true,
+      "compatible": true,
+      "reason": null
+    },
+    "nativeStatus": {
+      "state": "ready",
+      "compatible": true,
+      "reason": null,
+      "revision": 1,
+      "keyframeCount": 1,
+      "objectCount": 1
+    }
+  },
+  "nativeValidator": {
+    "path": "renderer/scripts/modules/fabric-drawing-persistence-store.js",
+    "sha256": "7e35d7207ea5fffdb7fdf0bacfd92d8766348541190f2bf99367c2d83d50a21f"
+  },
+  "deployedRenderer": {
+    "firstLine": 2017,
+    "sha256": "9e99b0fb0c807c603fc688c306ec3e3cdcb4fc900e7722c7f4a96d8c24a7e4ec",
+    "nativeRender": [
+      {
+        "requestedFrame": 33,
+        "computedFrame": 33,
+        "clearCalls": 1,
+        "strokeCalls": 0,
+        "fillCalls": 0
+      }
+    ],
+    "legacyControl": {
+      "requestedFrame": 33,
+      "computedFrame": 33,
+      "clearCalls": 1,
+      "strokeCalls": 1,
+      "fillCalls": 0
+    }
+  },
+  "deployedWriteGuard": {
+    "nativeV3Preserved": true,
+    "nativeV3Hash": "fbd6cc266bb88000f50a97fc8a9da47b427598a45a2102e143ebda8d59221ece",
+    "preservedV3Hash": "fbd6cc266bb88000f50a97fc8a9da47b427598a45a2102e143ebda8d59221ece"
+  },
+  "assertions": {
+    "passed": 14,
+    "failed": 0,
+    "cancelled": 0,
+    "checks": [
+      {
+        "label": "Open page targets the actual index.html web viewer",
+        "passed": true
+      },
+      {
+        "label": "Open page also attempts the desktop baeframe protocol",
+        "passed": true
+      },
+      {
+        "label": "Viewer HTML contains the drawing canvas",
+        "passed": true
+      },
+      {
+        "label": "Viewer HTML loads scripts/app.js",
+        "passed": true
+      },
+      {
+        "label": "The app has only the inspected first-party module dependency",
+        "passed": true
+      },
+      {
+        "label": "The inspected guard has no additional module dependency",
+        "passed": true
+      },
+      {
+        "label": "Neither deployed first-party module names drawingsV3",
+        "passed": true
+      },
+      {
+        "label": "The desktop persistence module accepts the native fixture",
+        "passed": true
+      },
+      {
+        "label": "The native fixture contains visible-review content to exercise",
+        "passed": true
+      },
+      {
+        "label": "The deployed renderer can be extracted at explicit function boundaries",
+        "passed": true
+      },
+      {
+        "label": "The deployed renderer clears but never draws the native fixture",
+        "passed": true
+      },
+      {
+        "label": "The same deployed renderer draws a legacy positive control",
+        "passed": true
+      },
+      {
+        "label": "The write guard preserves the latest native drawingsV3 as an opaque root",
+        "passed": true
+      },
+      {
+        "label": "The fixture remains byte-for-byte unchanged",
+        "passed": true
+      }
+    ]
+  },
+  "limitations": [
+    "The mocked canvas counts drawing calls; it does not produce or inspect browser pixels.",
+    "There was no authenticated Google Drive load or save and no personal/shared URL was sent.",
+    "These results identify the downloaded deployment by its hashes; a future deployment can differ."
+  ]
+}

@@ -1,0 +1,2200 @@
+
+> baeframe@2.9.0-beta test:mpv
+> node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/keyboard-shortcut-targets.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-collaboration-retry.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs
+
+TAP version 13
+# (node:40584) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/video-player.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: forward external playback interpolation does not move backward toward a late poll anchor
+ok 1 - forward external playback interpolation does not move backward toward a late poll anchor
+  ---
+  duration_ms: 1.0804
+  type: 'test'
+  ...
+# Subtest: forward external playback interpolation advances one frame toward a newer anchor
+ok 2 - forward external playback interpolation advances one frame toward a newer anchor
+  ---
+  duration_ms: 0.1455
+  type: 'test'
+  ...
+# Subtest: high-fps interpolation advances by the predicted elapsed frame delta
+ok 3 - high-fps interpolation advances by the predicted elapsed frame delta
+  ---
+  duration_ms: 0.1158
+  type: 'test'
+  ...
+# Subtest: paused external polling holds one-frame seek noise but adopts a real two-frame backward move
+ok 4 - paused external polling holds one-frame seek noise but adopts a real two-frame backward move
+  ---
+  duration_ms: 0.5381
+  type: 'test'
+  ...
+# (node:37236) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/keyboard-shortcut-targets.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: play/pause shortcut can be handled from focused controls but not text editors
+ok 5 - play/pause shortcut can be handled from focused controls but not text editors
+  ---
+  duration_ms: 4.9388
+  type: 'test'
+  ...
+# Subtest: form controls only allow play/pause override for the Space shortcut
+ok 6 - form controls only allow play/pause override for the Space shortcut
+  ---
+  duration_ms: 0.4041
+  type: 'test'
+  ...
+# Subtest: Space play/pause shortcut suppresses focused control keyup activation
+ok 7 - Space play/pause shortcut suppresses focused control keyup activation
+  ---
+  duration_ms: 3683.217
+  type: 'test'
+  ...
+# Subtest: non-playback shortcuts stay ignored for form controls
+ok 8 - non-playback shortcuts stay ignored for form controls
+  ---
+  duration_ms: 0.3677
+  type: 'test'
+  ...
+# Subtest: global shortcuts use active text entry when keyboard target is the page shell
+ok 9 - global shortcuts use active text entry when keyboard target is the page shell
+  ---
+  duration_ms: 0.5768
+  type: 'test'
+  ...
+# Subtest: 비텍스트 폼 컨트롤은 그 컨트롤이 소비하는 키만 차단한다
+ok 10 - 비텍스트 폼 컨트롤은 그 컨트롤이 소비하는 키만 차단한다
+  ---
+  duration_ms: 0.2397
+  type: 'test'
+  ...
+# Subtest: IME 조합 게이트는 텍스트 입력 대상에만 적용되고 폼 컨트롤 가드는 이벤트를 함께 본다
+ok 11 - IME 조합 게이트는 텍스트 입력 대상에만 적용되고 폼 컨트롤 가드는 이벤트를 함께 본다
+  ---
+  duration_ms: 1.0627
+  type: 'test'
+  ...
+# Subtest: collaboration state accepts only the exact bounded schema and normalizes untrusted users
+ok 12 - collaboration state accepts only the exact bounded schema and normalizes untrusted users
+  ---
+  duration_ms: 8.1183
+  type: 'test'
+  ...
+# Subtest: collaboration overlay document uses the fixed z-order and trusted static controls
+ok 13 - collaboration overlay document uses the fixed z-order and trusted static controls
+  ---
+  duration_ms: 0.5231
+  type: 'test'
+  ...
+# Subtest: collaboration host applies only increasing revisions to the trusted overlay API
+ok 14 - collaboration host applies only increasing revisions to the trusted overlay API
+  ---
+  duration_ms: 1.3238
+  type: 'test'
+  ...
+# Subtest: renderer builds collaboration UI with DOM properties and keeps it out of generic HTML serialization
+ok 15 - renderer builds collaboration UI with DOM properties and keeps it out of generic HTML serialization
+  ---
+  duration_ms: 0.6644
+  type: 'test'
+  ...
+# Subtest: generated collaboration overlay renders real toggle and radio state transitions
+ok 16 - generated collaboration overlay renders real toggle and radio state transitions
+  ---
+  duration_ms: 202.1468
+  type: 'test'
+  ...
+# Subtest: generated collaboration overlay preserves badge, plexus and monotonic revision state
+ok 17 - generated collaboration overlay preserves badge, plexus and monotonic revision state
+  ---
+  duration_ms: 44.3489
+  type: 'test'
+  ...
+# Subtest: generated overlay keeps collaboration between remote cursors and toasts
+ok 18 - generated overlay keeps collaboration between remote cursors and toasts
+  ---
+  duration_ms: 42.1263
+  type: 'test'
+  ...
+# Subtest: host sanitizes hostile collaborator values before the generated overlay DOM
+ok 19 - host sanitizes hostile collaborator values before the generated overlay DOM
+  ---
+  duration_ms: 58.7963
+  type: 'test'
+  ...
+# (node:10168) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/mpv-collaboration-retry.js?test=1788629692119-0.013384521179661046 is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: collaboration retry coalesces one fence and backs off to the cap
+ok 20 - collaboration retry coalesces one fence and backs off to the cap
+  ---
+  duration_ms: 6.8251
+  type: 'test'
+  ...
+# Subtest: collaboration retry fences out reversed success and failure settlements
+ok 21 - collaboration retry fences out reversed success and failure settlements
+  ---
+  duration_ms: 2.2594
+  type: 'test'
+  ...
+# Subtest: collaboration retry replaces fences without allowing stale callbacks to cancel the new timer
+ok 22 - collaboration retry replaces fences without allowing stale callbacks to cancel the new timer
+  ---
+  duration_ms: 1.363
+  type: 'test'
+  ...
+# Subtest: collaboration retry clears without running after mpv mode ends or owned teardown wins
+ok 23 - collaboration retry clears without running after mpv mode ends or owned teardown wins
+  ---
+  duration_ms: 1.434
+  type: 'test'
+  ...
+# Subtest: collaboration retry defers again when a retry attempt cannot start
+ok 24 - collaboration retry defers again when a retry attempt cannot start
+  ---
+  duration_ms: 1.2516
+  type: 'test'
+  ...
+# Subtest: converts Windows native window handle buffers to unsigned mpv wid strings
+ok 25 - converts Windows native window handle buffers to unsigned mpv wid strings
+  ---
+  duration_ms: 1.9512
+  type: 'test'
+  ...
+# Subtest: normalizes embed bounds to positive integer rectangles
+ok 26 - normalizes embed bounds to positive integer rectangles
+  ---
+  duration_ms: 0.6222
+  type: 'test'
+  ...
+# Subtest: creates a child host window positioned over the main content area
+ok 27 - creates a child host window positioned over the main content area
+  ---
+  duration_ms: 0.8283
+  type: 'test'
+  ...
+# Subtest: updates and destroys an existing host window
+ok 28 - updates and destroys an existing host window
+  ---
+  duration_ms: 0.4925
+  type: 'test'
+  ...
+# Subtest: hides and restores an embedded host without destroying playback
+ok 29 - hides and restores an embedded host without destroying playback
+  ---
+  duration_ms: 0.3567
+  type: 'test'
+  ...
+# Subtest: repositions the host window when the parent window moves
+ok 30 - repositions the host window when the parent window moves
+  ---
+  duration_ms: 4.5334
+  type: 'test'
+  ...
+# Subtest: hides the host while the parent is minimized and restores it with fresh bounds
+ok 31 - hides the host while the parent is minimized and restores it with fresh bounds
+  ---
+  duration_ms: 0.8802
+  type: 'test'
+  ...
+# Subtest: destroys the host and unbinds parent listeners when the parent closes
+ok 32 - destroys the host and unbinds parent listeners when the parent closes
+  ---
+  duration_ms: 0.5083
+  type: 'test'
+  ...
+# Subtest: 동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)
+ok 33 - 동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)
+  ---
+  duration_ms: 0.6084
+  type: 'test'
+  ...
+# Subtest: 호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으로 전달한다 (드래그드롭 수복)
+ok 34 - 호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으로 전달한다 (드래그드롭 수복)
+  ---
+  duration_ms: 1.1696
+  type: 'test'
+  ...
+# Subtest: hidden Chromium keeps the Fabric drawing palette usable, draggable, and collapsible
+ok 35 - hidden Chromium keeps the Fabric drawing palette usable, draggable, and collapsible
+  ---
+  duration_ms: 25460.1801
+  type: 'test'
+  ...
+# Subtest: hidden Chromium layout probe exits non-zero when its setup fails
+ok 36 - hidden Chromium layout probe exits non-zero when its setup fails
+  ---
+  duration_ms: 177.6309
+  type: 'test'
+  ...
+# Subtest: remote cursors have one revisioned writer and the general overlay state cannot rewind them
+ok 37 - remote cursors have one revisioned writer and the general overlay state cannot rewind them
+  ---
+  duration_ms: 1.2745
+  type: 'test'
+  ...
+# Subtest: original cursor visibility follows the real native-host state, including temporary blockers
+ok 38 - original cursor visibility follows the real native-host state, including temporary blockers
+  ---
+  duration_ms: 0.5607
+  type: 'test'
+  ...
+# Subtest: native host visibility ignores stale async completions and invalidates teardown requests
+ok 39 - native host visibility ignores stale async completions and invalidates teardown requests
+  ---
+  duration_ms: 1.0839
+  type: 'test'
+  ...
+# Subtest: legacy remote strokes and the collaboration ripple have native mpv mirror paths
+ok 40 - legacy remote strokes and the collaboration ripple have native mpv mirror paths
+  ---
+  duration_ms: 0.938
+  type: 'test'
+  ...
+# Subtest: Fabric native input relays normalized pointer presence back to Liveblocks
+ok 41 - Fabric native input relays normalized pointer presence back to Liveblocks
+  ---
+  duration_ms: 0.1865
+  type: 'test'
+  ...
+# Subtest: mpv pilot is disabled unless BAEFRAME_MPV_PILOT is enabled
+ok 42 - mpv pilot is disabled unless BAEFRAME_MPV_PILOT is enabled
+  ---
+  duration_ms: 0.9768
+  type: 'test'
+  ...
+# Subtest: resolved mpv pilot state is injected without mutating or depending on the environment
+ok 43 - resolved mpv pilot state is injected without mutating or depending on the environment
+  ---
+  duration_ms: 0.8435
+  type: 'test'
+  ...
+# Subtest: mpv manager accepts one resolved pilot state through its explicit configuration boundary
+ok 44 - mpv manager accepts one resolved pilot state through its explicit configuration boundary
+  ---
+  duration_ms: 0.4504
+  type: 'test'
+  ...
+# Subtest: BAEFRAME_DISABLE_MPV forces availability off even when the binary exists
+ok 45 - BAEFRAME_DISABLE_MPV forces availability off even when the binary exists
+  ---
+  duration_ms: 0.7506
+  type: 'test'
+  ...
+# Subtest: injected mpv kill-switch state forces availability off without an environment write
+ok 46 - injected mpv kill-switch state forces availability off without an environment write
+  ---
+  duration_ms: 0.6229
+  type: 'test'
+  ...
+# Subtest: BAEFRAME_DISABLE_MPV wins over BAEFRAME_MPV_PILOT when both are set
+ok 47 - BAEFRAME_DISABLE_MPV wins over BAEFRAME_MPV_PILOT when both are set
+  ---
+  duration_ms: 0.3051
+  type: 'test'
+  ...
+# Subtest: detects bundled Windows mpv before system PATH
+ok 48 - detects bundled Windows mpv before system PATH
+  ---
+  duration_ms: 0.3846
+  type: 'test'
+  ...
+# Subtest: uses injected platform path rules for bundled mpv lookup
+ok 49 - uses injected platform path rules for bundled mpv lookup
+  ---
+  duration_ms: 0.4758
+  type: 'test'
+  ...
+# Subtest: detects mpv availability even when pilot env is not enabled
+ok 50 - detects mpv availability even when pilot env is not enabled
+  ---
+  duration_ms: 0.446
+  type: 'test'
+  ...
+# Subtest: creates stable platform-specific IPC paths
+ok 51 - creates stable platform-specific IPC paths
+  ---
+  duration_ms: 0.6122
+  type: 'test'
+  ...
+# Subtest: creates unique IPC suffixes for same-millisecond mpv starts
+ok 52 - creates unique IPC suffixes for same-millisecond mpv starts
+  ---
+  duration_ms: 0.2524
+  type: 'test'
+  ...
+# Subtest: launch args enable JSON IPC without user config
+ok 53 - launch args enable JSON IPC without user config
+  ---
+  duration_ms: 0.3171
+  type: 'test'
+  ...
+# Subtest: launch args can attach mpv to an embedded window id
+ok 54 - launch args can attach mpv to an embedded window id
+  ---
+  duration_ms: 0.1065
+  type: 'test'
+  ...
+# Subtest: launch args can use null audio and video outputs for headless metadata probes
+ok 55 - launch args can use null audio and video outputs for headless metadata probes
+  ---
+  duration_ms: 0.0894
+  type: 'test'
+  ...
+# Subtest: load can start hidden no-window mpv for metadata probes
+ok 56 - load can start hidden no-window mpv for metadata probes
+  ---
+  duration_ms: 0.6832
+  type: 'test'
+  ...
+# Subtest: start restarts mpv when the embedded window id changes
+ok 57 - start restarts mpv when the embedded window id changes
+  ---
+  duration_ms: 0.4284
+  type: 'test'
+  ...
+# Subtest: stale mpv exit handlers do not clear a replacement process
+ok 58 - stale mpv exit handlers do not clear a replacement process
+  ---
+  duration_ms: 0.5523
+  type: 'test'
+  ...
+# Subtest: status polling keeps the active embedded window id
+ok 59 - status polling keeps the active embedded window id
+  ---
+  duration_ms: 0.4514
+  type: 'test'
+  ...
+# Subtest: loading a new file into the same embedded window replaces media without restarting mpv
+ok 60 - loading a new file into the same embedded window replaces media without restarting mpv
+  ---
+  duration_ms: 0.5328
+  type: 'test'
+  ...
+# Subtest: serializes overlapping loadfile requests so stale loads cannot replace newer media late
+ok 61 - serializes overlapping loadfile requests so stale loads cannot replace newer media late
+  ---
+  duration_ms: 9.9507
+  type: 'test'
+  ...
+# Subtest: start hides the mpv console window while keeping IPC detached from stdio
+ok 62 - start hides the mpv console window while keeping IPC detached from stdio
+  ---
+  duration_ms: 0.3789
+  type: 'test'
+  ...
+# Subtest: status uses fallbacks when optional mpv properties are unavailable
+ok 63 - status uses fallbacks when optional mpv properties are unavailable
+  ---
+  duration_ms: 0.4011
+  type: 'test'
+  ...
+# Subtest: status reports eof-reached for keep-open mpv playback
+ok 64 - status reports eof-reached for keep-open mpv playback
+  ---
+  duration_ms: 0.2261
+  type: 'test'
+  ...
+# Subtest: status polling reports stopped instead of restarting mpv after exit
+ok 65 - status polling reports stopped instead of restarting mpv after exit
+  ---
+  duration_ms: 0.0977
+  type: 'test'
+  ...
+# Subtest: mpv audio and viewport controls send bounded properties
+ok 66 - mpv audio and viewport controls send bounded properties
+  ---
+  duration_ms: 0.2664
+  type: 'test'
+  ...
+# Subtest: waits for playback properties before treating mpv load as ready
+ok 67 - waits for playback properties before treating mpv load as ready
+  ---
+  duration_ms: 3.5345
+  type: 'test'
+  ...
+# Subtest: waits for the requested file path before treating mpv load as ready
+ok 68 - waits for the requested file path before treating mpv load as ready
+  ---
+  duration_ms: 2.9999
+  type: 'test'
+  ...
+# Subtest: fails playback readiness when the requested file path never becomes active
+ok 69 - fails playback readiness when the requested file path never becomes active
+  ---
+  duration_ms: 15.2715
+  type: 'test'
+  ...
+# Subtest: screenshot sends screenshot-to-file and verifies the output file
+ok 70 - screenshot sends screenshot-to-file and verifies the output file
+  ---
+  duration_ms: 0.3334
+  type: 'test'
+  ...
+# Subtest: screenshot rejects when mpv is not running
+ok 71 - screenshot rejects when mpv is not running
+  ---
+  duration_ms: 0.1944
+  type: 'test'
+  ...
+# Subtest: launch args pin png screenshot format
+ok 72 - launch args pin png screenshot format
+  ---
+  duration_ms: 0.0794
+  type: 'test'
+  ...
+# Subtest: mpv 실행 인자는 자식 창 입력 소비를 차단한다
+ok 73 - mpv 실행 인자는 자식 창 입력 소비를 차단한다
+  ---
+  duration_ms: 0.0872
+  type: 'test'
+  ...
+# (node:52044) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/mpv-overlay-collaboration-action-relay.js?test=1788629692152-0.24923819609951003 is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: renderer collaboration relay accepts only the current active fence and increasing sequence
+ok 74 - renderer collaboration relay accepts only the current active fence and increasing sequence
+  ---
+  duration_ms: 7.2302
+  type: 'test'
+  ...
+# Subtest: renderer collaboration sequence resets only after a matching new current fence
+ok 75 - renderer collaboration sequence resets only after a matching new current fence
+  ---
+  duration_ms: 2.9709
+  type: 'test'
+  ...
+# Subtest: renderer collaboration relay converts overlay-local drag coordinates to main client coordinates
+ok 76 - renderer collaboration relay converts overlay-local drag coordinates to main client coordinates
+  ---
+  duration_ms: 2.81
+  type: 'test'
+  ...
+# Subtest: renderer collaboration relay maps every semantic action to the authoritative named handler
+ok 77 - renderer collaboration relay maps every semantic action to the authoritative named handler
+  ---
+  duration_ms: 2.4188
+  type: 'test'
+  ...
+# [90m[17:34:52.191][0m [90m[DEBUG][0m [MPVOverlayHost] Drawing V3 shadow bootstrap failed; continuing disabled {"error":"injected V3 bootstrap failure"}
+# [90m[17:34:52.194][0m [90m[DEBUG][0m [MPVOverlayHost] Drawing V3 shadow bootstrap was not installed; continuing disabled
+# [90m[17:34:52.195][0m [90m[DEBUG][0m [MPVOverlayHost] Drawing V3 disabled bootstrap was not installed; loading bundle off
+# [90m[17:34:52.201][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.202][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.202][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.202][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.202][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.202][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.202][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-envelope"}
+# [90m[17:34:52.203][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-scene@0"}
+# [90m[17:34:52.203][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:record-keys@0.0"}
+# [90m[17:34:52.203][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry-keys@0.0"}
+# [90m[17:34:52.204][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry@0.0"}
+# [90m[17:34:52.204][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry@0.0"}
+# [90m[17:34:52.204][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry@0.0"}
+# [90m[17:34:52.204][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry@0.0"}
+# [90m[17:34:52.205][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry@0.0"}
+# [90m[17:34:52.205][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:render-geometry@0.0"}
+# [90m[17:34:52.205][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:style-keys@0.0"}
+# [90m[17:34:52.206][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:point:0@0.0"}
+# [90m[17:34:52.206][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:point-time:1@0.0"}
+# [90m[17:34:52.206][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:transform@0.0"}
+# [90m[17:34:52.206][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:transform@0.0"}
+# [90m[17:34:52.207][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-scene@1"}
+# [90m[17:34:52.207][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:duplicate-id@0.1"}
+# [90m[17:34:52.207][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-scene@1"}
+# [90m[17:34:52.208][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"persistence-snapshot-too-large","failedCheck":"snapshot-clone-too-large"}
+# [90m[17:34:52.208][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric drawing runtime prepare failed {"error":"C:/private/user/project/fabric-bundle.js"}
+# Subtest: normalizes only exact collaboration semantic action packets
+ok 78 - normalizes only exact collaboration semantic action packets
+  ---
+  duration_ms: 1.9819
+  type: 'test'
+  ...
+# Subtest: forwards collaboration actions only from the current active Fabric session with host fences
+ok 79 - forwards collaboration actions only from the current active Fabric session with host fences
+  ---
+  duration_ms: 2.6754
+  type: 'test'
+  ...
+# Subtest: hiding an active collaboration drag cancels once and preserves the same-fence sequence
+ok 80 - hiding an active collaboration drag cancels once and preserves the same-fence sequence
+  ---
+  duration_ms: 0.6763
+  type: 'test'
+  ...
+# Subtest: parent hide cancels an active collaboration drag after the overlay is already hidden
+ok 81 - parent hide cancels an active collaboration drag after the overlay is already hidden
+  ---
+  duration_ms: 0.6488
+  type: 'test'
+  ...
+# Subtest: exposes the MPV overlay Fabric drawing host capability API
+ok 82 - exposes the MPV overlay Fabric drawing host capability API
+  ---
+  duration_ms: 0.195
+  type: 'test'
+  ...
+# Subtest: drawing V3 shadow configuration accepts only the first valid strict boolean
+ok 83 - drawing V3 shadow configuration accepts only the first valid strict boolean
+  ---
+  duration_ms: 0.4833
+  type: 'test'
+  ...
+# Subtest: the first ensure entry locks the default V3 shadow setting even when ensure fails
+ok 84 - the first ensure entry locks the default V3 shadow setting even when ensure fails
+  ---
+  duration_ms: 0.4535
+  type: 'test'
+  ...
+# Subtest: destroying and recreating the overlay host does not unlock V3 shadow configuration
+ok 85 - destroying and recreating the overlay host does not unlock V3 shadow configuration
+  ---
+  duration_ms: 0.4926
+  type: 'test'
+  ...
+# Subtest: default-false V3 bootstrap runs before bundle singleton creation, prepare, and drawing input
+ok 86 - default-false V3 bootstrap runs before bundle singleton creation, prepare, and drawing input
+  ---
+  duration_ms: 0.7838
+  type: 'test'
+  ...
+# Subtest: configured-true V3 bootstrap runs before bundle singleton creation, prepare, and drawing input
+ok 87 - configured-true V3 bootstrap runs before bundle singleton creation, prepare, and drawing input
+  ---
+  duration_ms: 0.6788
+  type: 'test'
+  ...
+# Subtest: a warm Fabric runtime injects the configured V3 bootstrap only once per host generation
+ok 88 - a warm Fabric runtime injects the configured V3 bootstrap only once per host generation
+  ---
+  duration_ms: 0.9413
+  type: 'test'
+  ...
+# Subtest: a true V3 bootstrap injection failure falls back false without poisoning Fabric retry state
+ok 89 - a true V3 bootstrap injection failure falls back false without poisoning Fabric retry state
+  ---
+  duration_ms: 2.1596
+  type: 'test'
+  ...
+# Subtest: hostile bootstrap accessors cannot block the bundle when both standalone injections fail
+ok 90 - hostile bootstrap accessors cannot block the bundle when both standalone injections fail
+  ---
+  duration_ms: 1.6173
+  type: 'test'
+  ...
+# Subtest: drawing diagnostics expose only the exact bounded 16-key V3 shadow aggregate
+ok 91 - drawing diagnostics expose only the exact bounded 16-key V3 shadow aggregate
+  ---
+  duration_ms: 0.9016
+  type: 'test'
+  ...
+# Subtest: passive ensure stays ready without reading or injecting the Fabric bundle
+ok 92 - passive ensure stays ready without reading or injecting the Fabric bundle
+  ---
+  duration_ms: 0.2489
+  type: 'test'
+  ...
+# Subtest: only the current live overlay webContents is accepted as a persistence sender
+ok 93 - only the current live overlay webContents is accepted as a persistence sender
+  ---
+  duration_ms: 0.2628
+  type: 'test'
+  ...
+# Subtest: drawing persistence hydrate/export enforce fences, input state, and bounded host responses
+ok 94 - drawing persistence hydrate/export enforce fences, input state, and bounded host responses
+  ---
+  duration_ms: 3.2038
+  type: 'test'
+  ...
+# Subtest: drawing export rejects non-exact requests and returns only a validated cloned snapshot
+ok 95 - drawing export rejects non-exact requests and returns only a validated cloned snapshot
+  ---
+  duration_ms: 1.2649
+  type: 'test'
+  ...
+# Subtest: drawing export rejects snapshot fence mismatches and every non-exact inner record shape
+ok 96 - drawing export rejects snapshot fence mismatches and every non-exact inner record shape
+  ---
+  duration_ms: 6.1072
+  type: 'test'
+  ...
+# Subtest: drawing export enforces the configured snapshot byte ceiling before returning data
+ok 97 - drawing export enforces the configured snapshot byte ceiling before returning data
+  ---
+  duration_ms: 0.4612
+  type: 'test'
+  ...
+# Subtest: drawing persistence maps prepare, runtime rejection, and runtime exceptions to fixed public reasons
+ok 98 - drawing persistence maps prepare, runtime rejection, and runtime exceptions to fixed public reasons
+  ---
+  duration_ms: 1.2526
+  type: 'test'
+  ...
+# Subtest: drawing export reports host loss after asynchronous Fabric preparation failure
+ok 99 - drawing export reports host loss after asynchronous Fabric preparation failure
+  ---
+  duration_ms: 0.3502
+  type: 'test'
+  ...
+# Subtest: drawing export reports host loss after asynchronous runtime success
+ok 100 - drawing export reports host loss after asynchronous runtime success
+  ---
+  duration_ms: 0.2852
+  type: 'test'
+  ...
+# Subtest: drawing export reports host loss after asynchronous runtime failure
+ok 101 - drawing export reports host loss after asynchronous runtime failure
+  ---
+  duration_ms: 0.2878
+  type: 'test'
+  ...
+# Subtest: drawing export keeps a live-host video-generation change classified as stale
+ok 102 - drawing export keeps a live-host video-generation change classified as stale
+  ---
+  duration_ms: 0.3138
+  type: 'test'
+  ...
+# Subtest: drawing persistence IPC normalization preserves small transitions and never drops oversize dirty signals
+ok 103 - drawing persistence IPC normalization preserves small transitions and never drops oversize dirty signals
+  ---
+  duration_ms: 20.983
+  type: 'test'
+  ...
+# Subtest: drawing persistence IPC normalization resyncs malformed nested deltas with a valid fence
+ok 104 - drawing persistence IPC normalization resyncs malformed nested deltas with a valid fence
+  ---
+  duration_ms: 0.9845
+  type: 'test'
+  ...
+# Subtest: drawing actions relay the keyframe set change flag
+ok 105 - drawing actions relay the keyframe set change flag
+  ---
+  duration_ms: 0.7003
+  type: 'test'
+  ...
+# Subtest: drawing actions that repaint force the transparent overlay to composite
+ok 106 - drawing actions that repaint force the transparent overlay to composite
+  ---
+  duration_ms: 0.255
+  type: 'test'
+  ...
+# Subtest: drawing actions that do not repaint leave the overlay alone
+ok 107 - drawing actions that do not repaint leave the overlay alone
+  ---
+  duration_ms: 0.2544
+  type: 'test'
+  ...
+# Subtest: drawing diagnostics relay global history depths
+ok 108 - drawing diagnostics relay global history depths
+  ---
+  duration_ms: 0.2605
+  type: 'test'
+  ...
+# Subtest: drawing diagnostics relay the bounded gesture probe
+ok 109 - drawing diagnostics relay the bounded gesture probe
+  ---
+  duration_ms: 0.307
+  type: 'test'
+  ...
+# Subtest: drawing diagnostics report a missing gesture probe as null
+ok 110 - drawing diagnostics report a missing gesture probe as null
+  ---
+  duration_ms: 0.2205
+  type: 'test'
+  ...
+# Subtest: enabling drawing input focuses the overlay after restacking
+ok 111 - enabling drawing input focuses the overlay after restacking
+  ---
+  duration_ms: 0.2115
+  type: 'test'
+  ...
+# Subtest: passive diagnostics expose accepted host tokens before the Fabric runtime is prepared
+ok 112 - passive diagnostics expose accepted host tokens before the Fabric runtime is prepared
+  ---
+  duration_ms: 0.1987
+  type: 'test'
+  ...
+# Subtest: injects and prepares Fabric once per host generation before enabling native input
+ok 113 - injects and prepares Fabric once per host generation before enabling native input
+  ---
+  duration_ms: 0.4358
+  type: 'test'
+  ...
+# Subtest: successful drawing activation repaints and restores the overlay above the video host
+ok 114 - successful drawing activation repaints and restores the overlay above the video host
+  ---
+  duration_ms: 0.3306
+  type: 'test'
+  ...
+# Subtest: relays keyboard input through the focused main renderer and restores main focus on disable
+ok 115 - relays keyboard input through the focused main renderer and restores main focus on disable
+  ---
+  duration_ms: 0.71
+  type: 'test'
+  ...
+# Subtest: V Delete Space and repeat relay keep the active drawing overlay focused
+ok 116 - V Delete Space and repeat relay keep the active drawing overlay focused
+  ---
+  duration_ms: 0.4367
+  type: 'test'
+  ...
+# Subtest: disabling a focused overlay completes main focus handoff without B pre-focus
+ok 117 - disabling a focused overlay completes main focus handoff without B pre-focus
+  ---
+  duration_ms: 0.2218
+  type: 'test'
+  ...
+# Subtest: completes the main-window focus handoff when relayed B disables a focused drawing overlay
+ok 118 - completes the main-window focus handoff when relayed B disables a focused drawing overlay
+  ---
+  duration_ms: 0.3185
+  type: 'test'
+  ...
+# Subtest: canonicalizes overlay keys, drops IME composition, and never steals focus after Alt-Tab
+ok 119 - canonicalizes overlay keys, drops IME composition, and never steals focus after Alt-Tab
+  ---
+  duration_ms: 0.3798
+  type: 'test'
+  ...
+# Subtest: relays exact validated physical key codes including Enter Tab and Numpad keys
+ok 120 - relays exact validated physical key codes including Enter Tab and Numpad keys
+  ---
+  duration_ms: 0.2875
+  type: 'test'
+  ...
+# Subtest: overlay physical key relay rejects malformed and composing input without focusing main
+ok 121 - overlay physical key relay rejects malformed and composing input without focusing main
+  ---
+  duration_ms: 0.2361
+  type: 'test'
+  ...
+# Subtest: 오버레이 릴레이는 동기화된 drawMode 서술자로 조합 입력과 포커스 handoff를 판정한다
+ok 122 - 오버레이 릴레이는 동기화된 drawMode 서술자로 조합 입력과 포커스 handoff를 판정한다
+  ---
+  duration_ms: 0.5589
+  type: 'test'
+  ...
+# Subtest: overlay history shortcuts relay once to the main renderer without host-side history execution
+ok 123 - overlay history shortcuts relay once to the main renderer without host-side history execution
+  ---
+  duration_ms: 0.3222
+  type: 'test'
+  ...
+# Subtest: overlay history routing leaves invalid combinations and Electron IME input alone
+ok 124 - overlay history routing leaves invalid combinations and Electron IME input alone
+  ---
+  duration_ms: 16.4455
+  type: 'test'
+  ...
+# [90m[17:34:52.258][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric overlay keyboard relay failed {"error":"synthetic forwarding failure"}
+# [90m[17:34:52.258][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric overlay keyboard relay failed {"error":"synthetic forwarding failure"}
+# Subtest: overlay history relay bypasses an in-flight controller-origin host queue
+ok 125 - overlay history relay bypasses an in-flight controller-origin host queue
+  ---
+  duration_ms: 0.9644
+  type: 'test'
+  ...
+# Subtest: overlay keeps forwarding B V Delete and Space through the main renderer route
+ok 126 - overlay keeps forwarding B V Delete and Space through the main renderer route
+  ---
+  duration_ms: 0.2915
+  type: 'test'
+  ...
+# Subtest: overlay history keyup suppression is cleared when drawing input is disabled
+ok 127 - overlay history keyup suppression is cleared when drawing input is disabled
+  ---
+  duration_ms: 0.2491
+  type: 'test'
+  ...
+# Subtest: leaves the original overlay key untouched when forwarding fails
+ok 128 - leaves the original overlay key untouched when forwarding fails
+  ---
+  duration_ms: 0.5166
+  type: 'test'
+  ...
+# Subtest: rejects stale host video input session and tool revisions at the host boundary
+ok 129 - rejects stale host video input session and tool revisions at the host boundary
+  ---
+  duration_ms: 0.3603
+  type: 'test'
+  ...
+# Subtest: stale disable requests cannot close native input owned by the current active session
+ok 130 - stale disable requests cannot close native input owned by the current active session
+  ---
+  duration_ms: 0.1855
+  type: 'test'
+  ...
+# Subtest: deduplicates drawing actions and allowlists lightweight host responses
+ok 131 - deduplicates drawing actions and allowlists lightweight host responses
+  ---
+  duration_ms: 0.4773
+  type: 'test'
+  ...
+# Subtest: drawing action response forwards history-empty reason
+ok 132 - drawing action response forwards history-empty reason
+  ---
+  duration_ms: 0.2197
+  type: 'test'
+  ...
+# Subtest: drawing actions preserve the controller-captured target frame through the host queue
+ok 133 - drawing actions preserve the controller-captured target frame through the host queue
+  ---
+  duration_ms: 0.5355
+  type: 'test'
+  ...
+# Subtest: overlay history relay does not await or invoke host Fabric history
+ok 134 - overlay history relay does not await or invoke host Fabric history
+  ---
+  duration_ms: 0.3064
+  type: 'test'
+  ...
+# Subtest: allowlists undo and redo while rejecting unknown drawing actions
+ok 135 - allowlists undo and redo while rejecting unknown drawing actions
+  ---
+  duration_ms: 0.5585
+  type: 'test'
+  ...
+# Subtest: serializes different actions and continues after the first action fails
+ok 136 - serializes different actions and continues after the first action fails
+  ---
+  duration_ms: 3.0395
+  type: 'test'
+  ...
+# Subtest: revalidates queued action tokens before runtime execution
+ok 137 - revalidates queued action tokens before runtime execution
+  ---
+  duration_ms: 0.534
+  type: 'test'
+  ...
+# Subtest: revalidates the host window and Fabric generation before queued execution
+ok 138 - revalidates the host window and Fabric generation before queued execution
+  ---
+  duration_ms: 0.409
+  type: 'test'
+  ...
+# Subtest: a recovered host generation is not blocked by the previous generation queue tail
+ok 139 - a recovered host generation is not blocked by the previous generation queue tail
+  ---
+  duration_ms: 0.4902
+  type: 'test'
+  ...
+# Subtest: bounds history diagnostics to finite nonnegative integers
+ok 140 - bounds history diagnostics to finite nonnegative integers
+  ---
+  duration_ms: 0.4282
+  type: 'test'
+  ...
+# Subtest: disable responses expose only the normalized local tool for controller continuity
+ok 141 - disable responses expose only the normalized local tool for controller continuity
+  ---
+  duration_ms: 0.195
+  type: 'test'
+  ...
+# Subtest: shares an in-flight action failure and keeps the action ID retryable until success
+ok 142 - shares an in-flight action failure and keeps the action ID retryable until success
+  ---
+  duration_ms: 0.9815
+  type: 'test'
+  ...
+# [90m[17:34:52.268][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric drawing runtime prepare failed {"error":"transient fixed bundle read failure 1"}
+# [90m[17:34:52.269][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric drawing runtime prepare failed {"error":"transient fixed bundle read failure 2"}
+# [90m[17:34:52.269][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric drawing runtime prepare failed {"error":"transient fixed bundle read failure 3"}
+# [90m[17:34:52.269][0m [90m[DEBUG][0m [MPVOverlayHost] Fabric drawing runtime prepare failed {"error":"transient fixed bundle read failure 4"}
+# Subtest: a later disable keeps click-through when an older enable finishes late
+ok 143 - a later disable keeps click-through when an older enable finishes late
+  ---
+  duration_ms: 0.6883
+  type: 'test'
+  ...
+# Subtest: revalidates desired input tokens after Fabric preparation before invoking the runtime
+ok 144 - revalidates desired input tokens after Fabric preparation before invoking the runtime
+  ---
+  duration_ms: 0.2796
+  type: 'test'
+  ...
+# Subtest: destroy restores click-through and only a newly constructed window advances host generation
+ok 145 - destroy restores click-through and only a newly constructed window advances host generation
+  ---
+  duration_ms: 0.2345
+  type: 'test'
+  ...
+# Subtest: unprepared disable skips Fabric while failed enables retry with bounded exponential backoff
+ok 146 - unprepared disable skips Fabric while failed enables retry with bounded exponential backoff
+  ---
+  duration_ms: 0.7253
+  type: 'test'
+  ...
+# [90m[17:34:52.273][0m [90m[DEBUG][0m [MPVOverlayHost] mpv overlay host load failed {"error":"older overlay load failed"}
+# Subtest: a late Fabric preparation failure from an old host generation cannot poison the recovered host
+ok 147 - a late Fabric preparation failure from an old host generation cannot poison the recovered host
+  ---
+  duration_ms: 1.1035
+  type: 'test'
+  ...
+# Subtest: renderer crash discards its current overlay and recovers in a new host generation
+ok 148 - renderer crash discards its current overlay and recovers in a new host generation
+  ---
+  duration_ms: 0.4886
+  type: 'test'
+  ...
+# Subtest: normalizes overlay state to bounded serializable fields
+ok 149 - normalizes overlay state to bounded serializable fields
+  ---
+  duration_ms: 0.1708
+  type: 'test'
+  ...
+# Subtest: normalizes Fabric viewport numbers while preserving signed offsets and safe positive dimensions
+ok 150 - normalizes Fabric viewport numbers while preserving signed offsets and safe positive dimensions
+  ---
+  duration_ms: 0.1839
+  type: 'test'
+  ...
+# Subtest: preserves negative overlay canvas offsets from zoomed and panned video
+ok 151 - preserves negative overlay canvas offsets from zoomed and panned video
+  ---
+  duration_ms: 0.0975
+  type: 'test'
+  ...
+# Subtest: creates a click-through overlay window above the viewer area
+ok 152 - creates a click-through overlay window above the viewer area
+  ---
+  duration_ms: 1.274
+  type: 'test'
+  ...
+# Subtest: keeps the overlay host unready when the document APIs are unavailable
+ok 153 - keeps the overlay host unready when the document APIs are unavailable
+  ---
+  duration_ms: 0.2768
+  type: 'test'
+  ...
+# Subtest: keeps the newest successful ensure ready when an older overlapping load rejects late
+ok 154 - keeps the newest successful ensure ready when an older overlapping load rejects late
+  ---
+  duration_ms: 0.3716
+  type: 'test'
+  ...
+# Subtest: ignores a pending ensure completion after the overlay host is destroyed
+ok 155 - ignores a pending ensure completion after the overlay host is destroyed
+  ---
+  duration_ms: 0.2518
+  type: 'test'
+  ...
+# Subtest: ignores a late closed event from a replaced overlay window
+ok 156 - ignores a late closed event from a replaced overlay window
+  ---
+  duration_ms: 0.3031
+  type: 'test'
+  ...
+# Subtest: updates overlay state through the isolated overlay document
+ok 157 - updates overlay state through the isolated overlay document
+  ---
+  duration_ms: 0.5034
+  type: 'test'
+  ...
+# Subtest: hides and restores the native overlay host with the mpv embed host
+ok 158 - hides and restores the native overlay host with the mpv embed host
+  ---
+  duration_ms: 0.2811
+  type: 'test'
+  ...
+# Subtest: repositions and hides overlay with the parent window
+ok 159 - repositions and hides overlay with the parent window
+  ---
+  duration_ms: 1.582
+  type: 'test'
+  ...
+# Subtest: 동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)
+ok 160 - 동일 bounds 재호출은 setBounds를 생략한다 (피드백 32)
+  ---
+  duration_ms: 0.294
+  type: 'test'
+  ...
+# Subtest: 생략된 미러 필드는 이전 DOM을 유지하고 playhead는 별도 필드로 갱신된다 (32 잔존)
+ok 161 - 생략된 미러 필드는 이전 DOM을 유지하고 playhead는 별도 필드로 갱신된다 (32 잔존)
+  ---
+  duration_ms: 1.0389
+  type: 'test'
+  ...
+# Subtest: 호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으로 전달한다 (드래그드롭 수복)
+ok 162 - 호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으로 전달한다 (드래그드롭 수복)
+  ---
+  duration_ms: 0.9884
+  type: 'test'
+  ...
+# Subtest: Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 계승한다
+ok 163 - Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 계승한다
+  ---
+  duration_ms: 1.6617
+  type: 'test'
+  ...
+# Subtest: stable overlay host does not include the old manual verification HUD
+ok 164 - stable overlay host does not include the old manual verification HUD
+  ---
+  duration_ms: 1.0295
+  type: 'test'
+  ...
+# Subtest: standard mpv suite includes the hidden Fabric toolbar Chromium layout regression
+ok 165 - standard mpv suite includes the hidden Fabric toolbar Chromium layout regression
+  ---
+  duration_ms: 0.6729
+  type: 'test'
+  ...
+# Subtest: standard mpv suite runs the keyboard shortcut target regression
+ok 166 - standard mpv suite runs the keyboard shortcut target regression
+  ---
+  duration_ms: 0.0703
+  type: 'test'
+  ...
+# Subtest: current overlay pointerdown request relays only the exact active drawing session to main
+ok 167 - current overlay pointerdown request relays only the exact active drawing session to main
+  ---
+  duration_ms: 0.5066
+  type: 'test'
+  ...
+# Subtest: pointerdown frame confirmation reaches runtime only for the exact current active session
+ok 168 - pointerdown frame confirmation reaches runtime only for the exact current active session
+  ---
+  duration_ms: 0.4655
+  type: 'test'
+  ...
+# Subtest: pointerdown frame cancellation reaches runtime and requires the exact echoed owner and time
+ok 169 - pointerdown frame cancellation reaches runtime and requires the exact echoed owner and time
+  ---
+  duration_ms: 0.4595
+  type: 'test'
+  ...
+# Subtest: pointerdown frame cancellation rejects non-exact tags and stale owners without runtime side effects
+ok 170 - pointerdown frame cancellation rejects non-exact tags and stale owners without runtime side effects
+  ---
+  duration_ms: 0.269
+  type: 'test'
+  ...
+# Subtest: late pointerdown cancellation response is rejected after input ownership changes
+ok 171 - late pointerdown cancellation response is rejected after input ownership changes
+  ---
+  duration_ms: 1.5907
+  type: 'test'
+  ...
+# Subtest: late pointerdown confirmation is rejected after input ownership changes
+ok 172 - late pointerdown confirmation is rejected after input ownership changes
+  ---
+  duration_ms: 0.531
+  type: 'test'
+  ...
+# Subtest: accepted passive frame presentation executes runtime, restacks, then invalidates
+ok 173 - accepted passive frame presentation executes runtime, restacks, then invalidates
+  ---
+  duration_ms: 0.8441
+  type: 'test'
+  ...
+# Subtest: rejected and failed passive frame presentations never restack or invalidate
+ok 174 - rejected and failed passive frame presentations never restack or invalidate
+  ---
+  duration_ms: 0.5198
+  type: 'test'
+  ...
+# Subtest: passive frame presentation strictly rejects missing, extra, and malformed viewport geometry
+ok 175 - passive frame presentation strictly rejects missing, extra, and malformed viewport geometry
+  ---
+  duration_ms: 0.3686
+  type: 'test'
+  ...
+# Subtest: passive frame presentation rejects active input and a mismatched video identity before runtime execution
+ok 176 - passive frame presentation rejects active input and a mismatched video identity before runtime execution
+  ---
+  duration_ms: 0.3306
+  type: 'test'
+  ...
+# Subtest: newer passive presentation supersedes an older in-flight response and owns the only invalidation
+ok 177 - newer passive presentation supersedes an older in-flight response and owns the only invalidation
+  ---
+  duration_ms: 1.0102
+  type: 'test'
+  ...
+# Subtest: active frame updates accept only the current active session and strictly increasing revisions
+ok 178 - active frame updates accept only the current active session and strictly increasing revisions
+  ---
+  duration_ms: 0.4869
+  type: 'test'
+  ...
+# [90m[17:34:52.293][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"stale-drawing-snapshot","failedCheck":"export-request-fence-mismatch"}
+# [90m[17:34:52.293][0m [33m[WARN][0m [MPVOverlayHost] Fabric 드로잉 스냅샷 회수 거절 {"reason":"invalid-persistence-snapshot","failedCheck":"snapshot-record:record-keys@0.0"}
+# Subtest: a late active frame response cannot supersede a newer accepted revision
+ok 179 - a late active frame response cannot supersede a newer accepted revision
+  ---
+  duration_ms: 2.3412
+  type: 'test'
+  ...
+# Subtest: active frame updates invalidate the host only when the runtime repaints
+ok 180 - active frame updates invalidate the host only when the runtime repaints
+  ---
+  duration_ms: 0.3307
+  type: 'test'
+  ...
+# Subtest: drawing input disable and export degrade gracefully when the overlay host is gone
+ok 181 - drawing input disable and export degrade gracefully when the overlay host is gone
+  ---
+  duration_ms: 0.1526
+  type: 'test'
+  ...
+# Subtest: drawing export separates a stale request fence from a corrupted snapshot
+ok 182 - drawing export separates a stale request fence from a corrupted snapshot
+  ---
+  duration_ms: 0.4532
+  type: 'test'
+  ...
+# Subtest: rejected export logs which record check failed and where
+ok 183 - rejected export logs which record check failed and where
+  ---
+  duration_ms: 0.4941
+  type: 'test'
+  ...
+# Subtest: updateDrawingTool accepts every declared tool and rejects unknown ones
+ok 184 - updateDrawingTool accepts every declared tool and rejects unknown ones
+  ---
+  duration_ms: 0.4084
+  type: 'test'
+  ...
+# Subtest: updateDrawingBrush relays a valid request and advances the brush revision
+ok 185 - updateDrawingBrush relays a valid request and advances the brush revision
+  ---
+  duration_ms: 0.3441
+  type: 'test'
+  ...
+# Subtest: updateDrawingBrush rejects stale tokens, backward revisions and out-of-range sizes
+ok 186 - updateDrawingBrush rejects stale tokens, backward revisions and out-of-range sizes
+  ---
+  duration_ms: 0.2963
+  type: 'test'
+  ...
+# Subtest: updateDrawingBrush applies a relative step against the overlay size
+ok 187 - updateDrawingBrush applies a relative step against the overlay size
+  ---
+  duration_ms: 0.198
+  type: 'test'
+  ...
+# Subtest: enabling drawing input resets the brush revision for the new session
+ok 188 - enabling drawing input resets the brush revision for the new session
+  ---
+  duration_ms: 0.2138
+  type: 'test'
+  ...
+# Subtest: updateDrawingLayerView relays a valid request and advances the revision
+ok 189 - updateDrawingLayerView relays a valid request and advances the revision
+  ---
+  duration_ms: 0.325
+  type: 'test'
+  ...
+# Subtest: 레이어 뷰는 새 획이 들어갈 자리(activeLayerRank)를 함께 넘긴다
+ok 190 - 레이어 뷰는 새 획이 들어갈 자리(activeLayerRank)를 함께 넘긴다
+  ---
+  duration_ms: 0.2428
+  type: 'test'
+  ...
+# Subtest: updateDrawingLayerView rejects stale tokens, backward revisions and malformed id 목록
+ok 191 - updateDrawingLayerView rejects stale tokens, backward revisions and malformed id 목록
+  ---
+  duration_ms: 0.3092
+  type: 'test'
+  ...
+# Subtest: passive 레이어 뷰는 영상 정체로 맞추고 리비전을 전진시킨다
+ok 192 - passive 레이어 뷰는 영상 정체로 맞추고 리비전을 전진시킨다
+  ---
+  duration_ms: 0.2891
+  type: 'test'
+  ...
+# Subtest: 페이로드는 소스에 객체 리터럴로 끼워진다 — 그래서 랭크는 쌍 배열이다
+ok 193 - 페이로드는 소스에 객체 리터럴로 끼워진다 — 그래서 랭크는 쌍 배열이다
+  ---
+  duration_ms: 0.1276
+  type: 'test'
+  ...
+# Subtest: 레이어 오브젝트 조작은 페이로드를 검사하고 허용된 필드만 넘긴다
+ok 194 - 레이어 오브젝트 조작은 페이로드를 검사하고 허용된 필드만 넘긴다
+  ---
+  duration_ms: 0.3659
+  type: 'test'
+  ...
+# [Preload] electronAPI 노출 완료
+# [Preload] electronAPI 노출 완료
+# [Preload] electronAPI 노출 완료
+# [Preload] electronAPI 노출 완료
+# [Preload] electronAPI 노출 완료
+# [Preload] electronAPI 노출 완료
+# (node:35704) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/mpv-overlay-keyboard-relay.js?test=1788629692182 is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: main preload exposes a narrow validated overlay keyboard subscription
+ok 195 - main preload exposes a narrow validated overlay keyboard subscription
+  ---
+  duration_ms: 5.7014
+  type: 'test'
+  ...
+# Subtest: main preload overlay keyboard bridge preserves Enter Tab Numpad and keyup fields
+ok 196 - main preload overlay keyboard bridge preserves Enter Tab Numpad and keyup fields
+  ---
+  duration_ms: 1.1405
+  type: 'test'
+  ...
+# Subtest: main preload exposes a narrow validated overlay pointer presence subscription
+ok 197 - main preload exposes a narrow validated overlay pointer presence subscription
+  ---
+  duration_ms: 1.5294
+  type: 'test'
+  ...
+# Subtest: main preload validates pointerdown frame subscriptions and exposes the confirm invoke
+ok 198 - main preload validates pointerdown frame subscriptions and exposes the confirm invoke
+  ---
+  duration_ms: 1.659
+  type: 'test'
+  ...
+# Subtest: main preload exposes the dedicated collaboration state invoke channel
+ok 199 - main preload exposes the dedicated collaboration state invoke channel
+  ---
+  duration_ms: 1.8508
+  type: 'test'
+  ...
+# Subtest: main preload exposes only exact host-fenced collaboration action messages
+ok 200 - main preload exposes only exact host-fenced collaboration action messages
+  ---
+  duration_ms: 1.3628
+  type: 'test'
+  ...
+# Subtest: renderer relay rebuilds a bubbling keyboard event with the exact physical code
+ok 201 - renderer relay rebuilds a bubbling keyboard event with the exact physical code
+  ---
+  duration_ms: 10.6043
+  type: 'test'
+  ...
+# Subtest: renderer relay rejects malformed payloads before DOM dispatch
+ok 202 - renderer relay rejects malformed payloads before DOM dispatch
+  ---
+  duration_ms: 2.0855
+  type: 'test'
+  ...
+# Subtest: renderer relay keeps ordinary keys on the remembered editor but sends overlay history to the document
+ok 203 - renderer relay keeps ordinary keys on the remembered editor but sends overlay history to the document
+  ---
+  duration_ms: 3.9027
+  type: 'test'
+  ...
+# Subtest: app subscribes once and dispatches overlay keyboard payloads through the guarded relay
+ok 204 - app subscribes once and dispatches overlay keyboard payloads through the guarded relay
+  ---
+  duration_ms: 3.174
+  type: 'test'
+  ...
+# Subtest: 릴레이된 전역 단축키 코드는 남아 있는 텍스트 포커스를 건너뛰고 문서로 간다
+ok 205 - 릴레이된 전역 단축키 코드는 남아 있는 텍스트 포커스를 건너뛰고 문서로 간다
+  ---
+  duration_ms: 3.1299
+  type: 'test'
+  ...
+# Subtest: app은 drawMode 단축키 코드를 릴레이 우회 목록으로 넘긴다
+ok 206 - app은 drawMode 단축키 코드를 릴레이 우회 목록으로 넘긴다
+  ---
+  duration_ms: 4.7272
+  type: 'test'
+  ...
+# Subtest: overlay preload exposes one narrow committed-transition bridge and sends plain JSON
+ok 207 - overlay preload exposes one narrow committed-transition bridge and sends plain JSON
+  ---
+  duration_ms: 7.7277
+  type: 'test'
+  ...
+# Subtest: overlay preload sends bounded layer-history notifications only
+ok 208 - overlay preload sends bounded layer-history notifications only
+  ---
+  duration_ms: 2.071
+  type: 'test'
+  ...
+# Subtest: overlay preload sends only exact bounded pointerdown frame requests
+ok 209 - overlay preload sends only exact bounded pointerdown frame requests
+  ---
+  duration_ms: 1.5593
+  type: 'test'
+  ...
+# Subtest: overlay collaboration bridge accepts only exact allowlisted semantic actions
+ok 210 - overlay collaboration bridge accepts only exact allowlisted semantic actions
+  ---
+  duration_ms: 1.7158
+  type: 'test'
+  ...
+# Subtest: collaboration capture handlers suppress Fabric while preserving toolbar priority
+ok 211 - collaboration capture handlers suppress Fabric while preserving toolbar priority
+  ---
+  duration_ms: 2.1799
+  type: 'test'
+  ...
+# Subtest: collaboration drag captures one pointer, coalesces moves, flushes end, and cancels safely
+ok 212 - collaboration drag captures one pointer, coalesces moves, flushes end, and cancels safely
+  ---
+  duration_ms: 1.6584
+  type: 'test'
+  ...
+# Subtest: collaboration drag cancels once on lost capture or blur and invalidates pending frames
+ok 213 - collaboration drag cancels once on lost capture or blur and invalidates pending frames
+  ---
+  duration_ms: 1.5306
+  type: 'test'
+  ...
+# Subtest: overlay preload compacts oversized and unserializable transitions into exact resync envelopes
+ok 214 - overlay preload compacts oversized and unserializable transitions into exact resync envelopes
+  ---
+  duration_ms: 21.8131
+  type: 'test'
+  ...
+# Subtest: overlay preload drops invalid fences and isolates send failures from committed drawing state
+ok 215 - overlay preload drops invalid fences and isolates send failures from committed drawing state
+  ---
+  duration_ms: 2.3292
+  type: 'test'
+  ...
+# Subtest: overlay preload relays the latest pointer once per animation frame in normalized overlay coordinates
+ok 216 - overlay preload relays the latest pointer once per animation frame in normalized overlay coordinates
+  ---
+  duration_ms: 1.4987
+  type: 'test'
+  ...
+# Subtest: overlay pointer relay clamps captured coordinates and drops unusable bounds or values
+ok 217 - overlay pointer relay clamps captured coordinates and drops unusable bounds or values
+  ---
+  duration_ms: 1.0907
+  type: 'test'
+  ...
+# Subtest: main IPC forwards only strict pointer presence from the current native overlay sender
+ok 218 - main IPC forwards only strict pointer presence from the current native overlay sender
+  ---
+  duration_ms: 7.3813
+  type: 'test'
+  ...
+# Subtest: main IPC accepts bounded remote cursor state only from the current main renderer
+ok 219 - main IPC accepts bounded remote cursor state only from the current main renderer
+  ---
+  duration_ms: 1.478
+  type: 'test'
+  ...
+# Subtest: main IPC accepts exact collaboration state only from the current main renderer
+ok 220 - main IPC accepts exact collaboration state only from the current main renderer
+  ---
+  duration_ms: 1.7705
+  type: 'test'
+  ...
+# Subtest: main IPC delegates raw collaboration actions to the overlay host sender fence
+ok 221 - main IPC delegates raw collaboration actions to the overlay host sender fence
+  ---
+  duration_ms: 1.3806
+  type: 'test'
+  ...
+# Subtest: main IPC relays pointerdown frame requests only for the enabled pilot and current overlay sender
+ok 222 - main IPC relays pointerdown frame requests only for the enabled pilot and current overlay sender
+  ---
+  duration_ms: 1.8599
+  type: 'test'
+  ...
+# Subtest: main IPC confirms pointerdown frames only for the enabled pilot and current main renderer
+ok 223 - main IPC confirms pointerdown frames only for the enabled pilot and current main renderer
+  ---
+  duration_ms: 1.4789
+  type: 'test'
+  ...
+# Subtest: external status polling escalates repeated failures to a stop event
+ok 224 - external status polling escalates repeated failures to a stop event
+  ---
+  duration_ms: 1.3958
+  type: 'test'
+  ...
+# Subtest: stale unresponsive cleanup cannot replace a newer playback engine
+ok 225 - stale unresponsive cleanup cannot replace a newer playback engine
+  ---
+  duration_ms: 0.8754
+  type: 'test'
+  ...
+# Subtest: externalstopped carries recovery context
+ok 226 - externalstopped carries recovery context
+  ---
+  duration_ms: 0.1542
+  type: 'test'
+  ...
+# Subtest: unexpected mpv stop triggers reload with retry policy
+ok 227 - unexpected mpv stop triggers reload with retry policy
+  ---
+  duration_ms: 0.2699
+  type: 'test'
+  ...
+# Subtest: renderer crash and reload clean up mpv processes and hosts
+ok 228 - renderer crash and reload clean up mpv processes and hosts
+  ---
+  duration_ms: 0.1903
+  type: 'test'
+  ...
+# Subtest: mpv screenshot ipc channel is wired end to end
+ok 229 - mpv screenshot ipc channel is wired end to end
+  ---
+  duration_ms: 0.2138
+  type: 'test'
+  ...
+# Subtest: comment and draw modes share a decoded mpv review freeze frame
+ok 230 - comment and draw modes share a decoded mpv review freeze frame
+  ---
+  duration_ms: 24.5493
+  type: 'test'
+  ...
+# Subtest: mpv review freeze frame is cleared and refreshed across media changes
+ok 231 - mpv review freeze frame is cleared and refreshed across media changes
+  ---
+  duration_ms: 0.8893
+  type: 'test'
+  ...
+# Subtest: mpv review freeze decodes before hiding native video and releases in the reverse order
+ok 232 - mpv review freeze decodes before hiding native video and releases in the reverse order
+  ---
+  duration_ms: 0.6552
+  type: 'test'
+  ...
+# Subtest: mpv review freeze refresh is throttled instead of perpetually debounced
+ok 233 - mpv review freeze refresh is throttled instead of perpetually debounced
+  ---
+  duration_ms: 0.5234
+  type: 'test'
+  ...
+# Subtest: mpv review refresh coalescer keeps one slow capture and schedules one trailing refresh
+ok 234 - mpv review refresh coalescer keeps one slow capture and schedules one trailing refresh
+  ---
+  duration_ms: 0.5242
+  type: 'test'
+  ...
+# Subtest: direct comment readiness and scheduled refreshes share one freeze capture owner
+ok 235 - direct comment readiness and scheduled refreshes share one freeze capture owner
+  ---
+  duration_ms: 0.7106
+  type: 'test'
+  ...
+# Subtest: active review refresh queues one trailing capture when its shared capture settles stale
+ok 236 - active review refresh queues one trailing capture when its shared capture settles stale
+  ---
+  duration_ms: 0.4715
+  type: 'test'
+  ...
+# Subtest: cancelling a shared freeze capture detaches stale ownership from a fresh interaction
+ok 237 - cancelling a shared freeze capture detaches stale ownership from a fresh interaction
+  ---
+  duration_ms: 0.223
+  type: 'test'
+  ...
+# Subtest: comment readiness waits for screenshot, decode, and native host hide
+ok 238 - comment readiness waits for screenshot, decode, and native host hide
+  ---
+  duration_ms: 0.4636
+  type: 'test'
+  ...
+# Subtest: initial host hide failure keeps the safety frame until native host restore succeeds
+ok 239 - initial host hide failure keeps the safety frame until native host restore succeeds
+  ---
+  duration_ms: 0.9871
+  type: 'test'
+  ...
+# Subtest: failed native host restore retains the decoded safety frame and propagates the hide failure
+ok 240 - failed native host restore retains the decoded safety frame and propagates the hide failure
+  ---
+  duration_ms: 0.8257
+  type: 'test'
+  ...
+# Subtest: late stale host hide completion resynchronizes current native host visibility
+ok 241 - late stale host hide completion resynchronizes current native host visibility
+  ---
+  duration_ms: 0.3434
+  type: 'test'
+  ...
+# Subtest: shared mpv freeze releases only after the final review mode turns off
+ok 242 - shared mpv freeze releases only after the final review mode turns off
+  ---
+  duration_ms: 0.401
+  type: 'test'
+  ...
+# Subtest: comment and draw handoffs acquire the next mode before releasing the previous mode
+ok 243 - comment and draw handoffs acquire the next mode before releasing the previous mode
+  ---
+  duration_ms: 0.6269
+  type: 'test'
+  ...
+# Subtest: every comment and draw entry path enforces mutual exclusion in the central state handlers
+ok 244 - every comment and draw entry path enforces mutual exclusion in the central state handlers
+  ---
+  duration_ms: 0.3144
+  type: 'test'
+  ...
+# Subtest: review freeze frame tracker rejects stale file, frame, and epoch captures
+ok 245 - review freeze frame tracker rejects stale file, frame, and epoch captures
+  ---
+  duration_ms: 0.282
+  type: 'test'
+  ...
+# Subtest: frame changes suspend mpv review input until a current trailing capture restores readiness
+ok 246 - frame changes suspend mpv review input until a current trailing capture restores readiness
+  ---
+  duration_ms: 0.4449
+  type: 'test'
+  ...
+# Subtest: media replacement invalidates the old freeze and requires draw readiness for the new mpv frame
+ok 247 - media replacement invalidates the old freeze and requires draw readiness for the new mpv frame
+  ---
+  duration_ms: 0.478
+  type: 'test'
+  ...
+# Subtest: failed superseding video load safely tears down a destructive review transition
+ok 248 - failed superseding video load safely tears down a destructive review transition
+  ---
+  duration_ms: 0.6812
+  type: 'test'
+  ...
+# Subtest: leaving draw mode forces a final mpv overlay sync so saved drawings stay visible
+ok 249 - leaving draw mode forces a final mpv overlay sync so saved drawings stay visible
+  ---
+  duration_ms: 0.1771
+  type: 'test'
+  ...
+# Subtest: media change preserves an active draw freeze across mpv to mpv replacement
+ok 250 - media change preserves an active draw freeze across mpv to mpv replacement
+  ---
+  duration_ms: 0.5402
+  type: 'test'
+  ...
+# Subtest: mpv review mode readiness exposes preparing state and ignores stale completion
+ok 251 - mpv review mode readiness exposes preparing state and ignores stale completion
+  ---
+  duration_ms: 0.2305
+  type: 'test'
+  ...
+# Subtest: comment and draw mpv controls become active only after readiness succeeds
+ok 252 - comment and draw mpv controls become active only after readiness succeeds
+  ---
+  duration_ms: 0.6324
+  type: 'test'
+  ...
+# Subtest: mpv playback is enabled by default with legacy pilot key migration
+ok 253 - mpv playback is enabled by default with legacy pilot key migration
+  ---
+  duration_ms: 0.2258
+  type: 'test'
+  ...
+# Subtest: mpv can be disabled per machine via env for troubleshooting
+ok 254 - mpv can be disabled per machine via env for troubleshooting
+  ---
+  duration_ms: 0.0954
+  type: 'test'
+  ...
+# Subtest: draw mode playback uses the shared review freeze only after playback stops
+ok 255 - draw mode playback uses the shared review freeze only after playback stops
+  ---
+  duration_ms: 0.4869
+  type: 'test'
+  ...
+# Subtest: latest draw playback transition alone may reveal the restored drawing panel
+ok 256 - latest draw playback transition alone may reveal the restored drawing panel
+  ---
+  duration_ms: 0.4235
+  type: 'test'
+  ...
+# Subtest: draw playback state is cancelled before mode exit or media replacement
+ok 257 - draw playback state is cancelled before mode exit or media replacement
+  ---
+  duration_ms: 0.5174
+  type: 'test'
+  ...
+# Subtest: failed video loads clear the drive loading overlay in the finally block
+ok 258 - failed video loads clear the drive loading overlay in the finally block
+  ---
+  duration_ms: 502.1309
+  type: 'test'
+  ...
+# Subtest: a newer non-drive load clears stale drive loading feedback before tracing
+ok 259 - a newer non-drive load clears stale drive loading feedback before tracing
+  ---
+  duration_ms: 0.3595
+  type: 'test'
+  ...
+# Subtest: copies the complete Windows mpv runtime from the main checkout into a linked worktree
+ok 260 - copies the complete Windows mpv runtime from the main checkout into a linked worktree
+  ---
+  duration_ms: 19.6598
+  type: 'test'
+  ...
+# Subtest: keeps an already prepared worktree runtime without overwriting it
+ok 261 - keeps an already prepared worktree runtime without overwriting it
+  ---
+  duration_ms: 10.9949
+  type: 'test'
+  ...
+# Subtest: rejects an incomplete local runtime without overwriting its existing files
+ok 262 - rejects an incomplete local runtime without overwriting its existing files
+  ---
+  duration_ms: 10.4177
+  type: 'test'
+  ...
+# Subtest: accepts an explicit runtime source directory for CI and non-worktree builds
+ok 263 - accepts an explicit runtime source directory for CI and non-worktree builds
+  ---
+  duration_ms: 11.7906
+  type: 'test'
+  ...
+# Subtest: rejects an explicit runtime source that is missing required companion files
+ok 264 - rejects an explicit runtime source that is missing required companion files
+  ---
+  duration_ms: 7.3977
+  type: 'test'
+  ...
+# Subtest: rejects required runtime entries that are empty files
+ok 265 - rejects required runtime entries that are empty files
+  ---
+  duration_ms: 6.1446
+  type: 'test'
+  ...
+# Subtest: resolves the real Git common directory for a linked worktree
+ok 266 - resolves the real Git common directory for a linked worktree
+  ---
+  duration_ms: 303.0934
+  type: 'test'
+  ...
+# Subtest: fails before packaging when no Windows mpv runtime can be found
+ok 267 - fails before packaging when no Windows mpv runtime can be found
+  ---
+  duration_ms: 3.3993
+  type: 'test'
+  ...
+# Subtest: accepts complete non-empty Windows FFmpeg tools from the project runtime directory
+ok 268 - accepts complete non-empty Windows FFmpeg tools from the project runtime directory
+  ---
+  duration_ms: 5.5312
+  type: 'test'
+  ...
+# Subtest: rejects a Windows FFmpeg runtime when either executable is missing
+ok 269 - rejects a Windows FFmpeg runtime when either executable is missing
+  ---
+  duration_ms: 4.3479
+  type: 'test'
+  ...
+# Subtest: rejects empty Windows FFmpeg executables
+ok 270 - rejects empty Windows FFmpeg executables
+  ---
+  duration_ms: 4.2812
+  type: 'test'
+  ...
+# Subtest: rejects Windows FFmpeg runtime entries that are not regular files
+ok 271 - rejects Windows FFmpeg runtime entries that are not regular files
+  ---
+  duration_ms: 5.7642
+  type: 'test'
+  ...
+# Subtest: Windows beforePack stops before building a package with missing FFmpeg tools
+ok 272 - Windows beforePack stops before building a package with missing FFmpeg tools
+  ---
+  duration_ms: 7.8751
+  type: 'test'
+  ...
+# Subtest: electron-builder hook skips non-Windows targets
+ok 273 - electron-builder hook skips non-Windows targets
+  ---
+  duration_ms: 4.7895
+  type: 'test'
+  ...
+# Subtest: electron-builder config wires mpv provisioning before pack and runtime marker cleanup after pack
+ok 274 - electron-builder config wires mpv provisioning before pack and runtime marker cleanup after pack
+  ---
+  duration_ms: 1.0722
+  type: 'test'
+  ...
+# Subtest: the standard mpv test command includes the packaging regression
+ok 275 - the standard mpv test command includes the packaging regression
+  ---
+  duration_ms: 0.4479
+  type: 'test'
+  ...
+# Subtest: Fabric drawing pilot IPC channels and preload bridge names stay fixed
+ok 276 - Fabric drawing pilot IPC channels and preload bridge names stay fixed
+  ---
+  duration_ms: 1.5948
+  type: 'test'
+  ...
+# Subtest: Fabric overlay persistence uses a narrow sender-fenced event bridge
+ok 277 - Fabric overlay persistence uses a narrow sender-fenced event bridge
+  ---
+  duration_ms: 1.7451
+  type: 'test'
+  ...
+# Subtest: Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls before touching the host
+ok 278 - Fabric drawing mutation IPC rejects pilot-off and non-main-renderer calls before touching the host
+  ---
+  duration_ms: 0.4945
+  type: 'test'
+  ...
+# Subtest: mpv overlay lifecycle ignores stale prepare and sync completions
+ok 279 - mpv overlay lifecycle ignores stale prepare and sync completions
+  ---
+  duration_ms: 0.7572
+  type: 'test'
+  ...
+# Subtest: mpv overlay lifecycle clears and warns once for a current-generation failure
+ok 280 - mpv overlay lifecycle clears and warns once for a current-generation failure
+  ---
+  duration_ms: 0.3715
+  type: 'test'
+  ...
+# Subtest: mpv ownership claim queued before an old stop makes that stop stale after prior work
+ok 281 - mpv ownership claim queued before an old stop makes that stop stale after prior work
+  ---
+  duration_ms: 0.8466
+  type: 'test'
+  ...
+# Subtest: mpv old stop queued before a new claim finishes teardown before the claim begins
+ok 282 - mpv old stop queued before a new claim finishes teardown before the claim begins
+  ---
+  duration_ms: 0.7523
+  type: 'test'
+  ...
+# Subtest: mpv idle ownership operations preserve adjacent microtask queue order atomically
+ok 283 - mpv idle ownership operations preserve adjacent microtask queue order atomically
+  ---
+  duration_ms: 0.4064
+  type: 'test'
+  ...
+# Subtest: mpv teardown gate keeps a new load behind the complete owned stop sequence
+ok 284 - mpv teardown gate keeps a new load behind the complete owned stop sequence
+  ---
+  duration_ms: 0.7228
+  type: 'test'
+  ...
+# Subtest: mpv teardown gate keeps a new load behind both pre-load host destroys
+ok 285 - mpv teardown gate keeps a new load behind both pre-load host destroys
+  ---
+  duration_ms: 0.7311
+  type: 'test'
+  ...
+# Subtest: mpv teardown gate clears after rejection without hiding the caller error
+ok 286 - mpv teardown gate clears after rejection without hiding the caller error
+  ---
+  duration_ms: 0.9505
+  type: 'test'
+  ...
+# Subtest: mpv teardown gate waiters stay blocked when another teardown is chained
+ok 287 - mpv teardown gate waiters stay blocked when another teardown is chained
+  ---
+  duration_ms: 0.3965
+  type: 'test'
+  ...
+# Subtest: package exposes an mpv pilot test command
+ok 288 - package exposes an mpv pilot test command
+  ---
+  duration_ms: 0.09
+  type: 'test'
+  ...
+# Subtest: Fabric overlay bundling preserves logical node_modules paths in linked worktrees
+ok 289 - Fabric overlay bundling preserves logical node_modules paths in linked worktrees
+  ---
+  duration_ms: 0.1837
+  type: 'test'
+  ...
+# Subtest: preload exposes a narrow mpv API surface
+ok 290 - preload exposes a narrow mpv API surface
+  ---
+  duration_ms: 0.2104
+  type: 'test'
+  ...
+# Subtest: main process registers mpv IPC handlers through the manager and embed host
+ok 291 - main process registers mpv IPC handlers through the manager and embed host
+  ---
+  duration_ms: 0.684
+  type: 'test'
+  ...
+# Subtest: video player supports an external mpv engine without removing HTML5 fallback
+ok 292 - video player supports an external mpv engine without removing HTML5 fallback
+  ---
+  duration_ms: 0.1048
+  type: 'test'
+  ...
+# Subtest: loadVideo checks mpv pilot before FFmpeg transcode and falls back by default
+ok 293 - loadVideo checks mpv pilot before FFmpeg transcode and falls back by default
+  ---
+  duration_ms: 0.5756
+  type: 'test'
+  ...
+# Subtest: mpv pilot skips thumbnail generation without FFmpeg probing
+ok 294 - mpv pilot skips thumbnail generation without FFmpeg probing
+  ---
+  duration_ms: 0.9045
+  type: 'test'
+  ...
+# Subtest: mpv pilot falls back to the normal playback path when mpv load fails
+ok 295 - mpv pilot falls back to the normal playback path when mpv load fails
+  ---
+  duration_ms: 0.4519
+  type: 'test'
+  ...
+# Subtest: loadVideo shows Google Drive loading feedback before media preparation
+ok 296 - loadVideo shows Google Drive loading feedback before media preparation
+  ---
+  duration_ms: 0.4068
+  type: 'test'
+  ...
+# Subtest: mpv direct playback defaults on and can be opted out from app settings
+ok 297 - mpv direct playback defaults on and can be opted out from app settings
+  ---
+  duration_ms: 0.5792
+  type: 'test'
+  ...
+# Subtest: mpv pilot embeds into the BAEFRAME viewer before loading media
+ok 298 - mpv pilot embeds into the BAEFRAME viewer before loading media
+  ---
+  duration_ms: 15.244
+  type: 'test'
+  ...
+# Subtest: mpv pilot requires a ready overlay host before loading media
+ok 299 - mpv pilot requires a ready overlay host before loading media
+  ---
+  duration_ms: 0.626
+  type: 'test'
+  ...
+# Subtest: mpv overlay sync circuit-breaks failed IPC responses before taking more snapshots
+ok 300 - mpv overlay sync circuit-breaks failed IPC responses before taking more snapshots
+  ---
+  duration_ms: 0.5878
+  type: 'test'
+  ...
+# Subtest: mpv overlay lifecycle serializes claim, cleanup, and stop ownership changes
+ok 301 - mpv overlay lifecycle serializes claim, cleanup, and stop ownership changes
+  ---
+  duration_ms: 0.7845
+  type: 'test'
+  ...
+# Subtest: mpv pilot hides native host while DOM blocking overlays are open
+ok 302 - mpv pilot hides native host while DOM blocking overlays are open
+  ---
+  duration_ms: 560.6216
+  type: 'test'
+  ...
+# Subtest: mpv pilot waits for the requested initial frame before revealing the native host
+ok 303 - mpv pilot waits for the requested initial frame before revealing the native host
+  ---
+  duration_ms: 0.8253
+  type: 'test'
+  ...
+# Subtest: mpv pilot routes audio and viewport controls through mpv IPC
+ok 304 - mpv pilot routes audio and viewport controls through mpv IPC
+  ---
+  duration_ms: 20.59
+  type: 'test'
+  ...
+# Subtest: mpv pilot applies the same zoom and pan to the mpv image
+ok 305 - mpv pilot applies the same zoom and pan to the mpv image
+  ---
+  duration_ms: 6.4571
+  type: 'test'
+  ...
+# Subtest: mpv pilot resyncs embed bounds after fullscreen layout transitions
+ok 306 - mpv pilot resyncs embed bounds after fullscreen layout transitions
+  ---
+  duration_ms: 53.699
+  type: 'test'
+  ...
+# Subtest: mpv pilot cleans up pending embed host when load is stale or fails before adoption
+ok 307 - mpv pilot cleans up pending embed host when load is stale or fails before adoption
+  ---
+  duration_ms: 3.2851
+  type: 'test'
+  ...
+# Subtest: mpv pilot mirrors DOM overlays into a click-through native overlay window
+ok 308 - mpv pilot mirrors DOM overlays into a click-through native overlay window
+  ---
+  duration_ms: 3336.6429
+  type: 'test'
+  ...
+# Subtest: mpv collaboration actions share one playback sync model writer and current lifecycle fence
+ok 309 - mpv collaboration actions share one playback sync model writer and current lifecycle fence
+  ---
+  duration_ms: 1.2631
+  type: 'test'
+  ...
+# Subtest: mpv pilot keeps toast notifications visible above the native video host
+ok 310 - mpv pilot keeps toast notifications visible above the native video host
+  ---
+  duration_ms: 6.7696
+  type: 'test'
+  ...
+# Subtest: mpv overlay throttles live drawing snapshots but forces final drawing sync
+ok 311 - mpv overlay throttles live drawing snapshots but forces final drawing sync
+  ---
+  duration_ms: 8.2414
+  type: 'test'
+  ...
+# Subtest: mpv drawing overlay snapshot includes floating selection overlay
+ok 312 - mpv drawing overlay snapshot includes floating selection overlay
+  ---
+  duration_ms: 2.824
+  type: 'test'
+  ...
+# Subtest: mpv external playback preserves frame seek and loop behavior
+ok 313 - mpv external playback preserves frame seek and loop behavior
+  ---
+  duration_ms: 8.8236
+  type: 'test'
+  ...
+# Subtest: mpv external playback interpolates frame UI between status polls
+ok 314 - mpv external playback interpolates frame UI between status polls
+  ---
+  duration_ms: 0.5298
+  type: 'test'
+  ...
+# Subtest: mpv external playback emits ended when keep-open reaches EOF
+ok 315 - mpv external playback emits ended when keep-open reaches EOF
+  ---
+  duration_ms: 0.9933
+  type: 'test'
+  ...
+# Subtest: mpv engine replacement resets playing state before html5 loads
+ok 316 - mpv engine replacement resets playing state before html5 loads
+  ---
+  duration_ms: 1.1221
+  type: 'test'
+  ...
+# Subtest: main process owns mpv shutdown cleanup before forced app quit
+ok 317 - main process owns mpv shutdown cleanup before forced app quit
+  ---
+  duration_ms: 0.3606
+  type: 'test'
+  ...
+# Subtest: pending mpv owner cleanup stops the shared process even before its own load begins
+ok 318 - pending mpv owner cleanup stops the shared process even before its own load begins
+  ---
+  duration_ms: 0.4314
+  type: 'test'
+  ...
+# Subtest: current video load falls back to html5 when mpv adoption returns false
+ok 319 - current video load falls back to html5 when mpv adoption returns false
+  ---
+  duration_ms: 0.6735
+  type: 'test'
+  ...
+# Subtest: mpv teardown removes a retained review freeze after native hosts are destroyed
+ok 320 - mpv teardown removes a retained review freeze after native hosts are destroyed
+  ---
+  duration_ms: 4.1265
+  type: 'test'
+  ...
+# Subtest: collaboration mirror sync failures retry without invalidating the core mpv overlay
+ok 321 - collaboration mirror sync failures retry without invalidating the core mpv overlay
+  ---
+  duration_ms: 4.1519
+  type: 'test'
+  ...
+# Subtest: current overlay owner gets one serialized host reprepare after sync IPC failure
+ok 322 - current overlay owner gets one serialized host reprepare after sync IPC failure
+  ---
+  duration_ms: 2.6394
+  type: 'test'
+  ...
+# Subtest: overlay fallback is blocked only while a newer video load is actively in flight
+ok 323 - overlay fallback is blocked only while a newer video load is actively in flight
+  ---
+  duration_ms: 2.6388
+  type: 'test'
+  ...
+# Subtest: html5 overlay fallback settles pending draw readiness without leaving a spinner
+ok 324 - html5 overlay fallback settles pending draw readiness without leaving a spinner
+  ---
+  duration_ms: 21.5794
+  type: 'test'
+  ...
+# Subtest: intentional html5 fallback stop is consumed instead of triggering mpv auto-recovery
+ok 325 - intentional html5 fallback stop is consumed instead of triggering mpv auto-recovery
+  ---
+  duration_ms: 4.8681
+  type: 'test'
+  ...
+# Subtest: fullscreen controls inset snaps to final size and yields to letterbox gap
+ok 326 - fullscreen controls inset snaps to final size and yields to letterbox gap
+  ---
+  duration_ms: 0.9751
+  type: 'test'
+  ...
+# Subtest: 드로잉 미러 PNG가 paintStamp 캐시로 재생 중 재인코딩을 피한다 (피드백 32)
+ok 327 - 드로잉 미러 PNG가 paintStamp 캐시로 재생 중 재인코딩을 피한다 (피드백 32)
+  ---
+  duration_ms: 0.3759
+  type: 'test'
+  ...
+# Subtest: mpv에 가려지던 패널·컨트롤이 오버레이 미러 대상에 포함된다 (사용자 지시 2026-07-15)
+ok 328 - mpv에 가려지던 패널·컨트롤이 오버레이 미러 대상에 포함된다 (사용자 지시 2026-07-15)
+  ---
+  duration_ms: 0.2221
+  type: 'test'
+  ...
+# Subtest: 미러 전송이 변경 필드만 보낸다 (32 잔존)
+ok 329 - 미러 전송이 변경 필드만 보낸다 (32 잔존)
+  ---
+  duration_ms: 0.4112
+  type: 'test'
+  ...
+# Subtest: stale mpv load cleanup cannot clear the newest seamless transition owner
+ok 330 - stale mpv load cleanup cannot clear the newest seamless transition owner
+  ---
+  duration_ms: 0.2738
+  type: 'test'
+  ...
+# Subtest: new non-seamless mpv load immediately disables a prior seamless owner
+ok 331 - new non-seamless mpv load immediately disables a prior seamless owner
+  ---
+  duration_ms: 0.1659
+  type: 'test'
+  ...
+# Subtest: mpv to mpv transitions keep the native host visible for seamless playback
+ok 332 - mpv to mpv transitions keep the native host visible for seamless playback
+  ---
+  duration_ms: 0.6927
+  type: 'test'
+  ...
+# Subtest: 렌더러 WARN 이상 로그는 파일로 강제 기록된다
+ok 333 - 렌더러 WARN 이상 로그는 파일로 강제 기록된다
+  ---
+  duration_ms: 0.7907
+  type: 'test'
+  ...
+# Subtest: 외부 엔진 폴링은 보간과 분리된 실측 시각을 기록한다
+ok 334 - 외부 엔진 폴링은 보간과 분리된 실측 시각을 기록한다
+  ---
+  duration_ms: 0.1976
+  type: 'test'
+  ...
+# Subtest: 외부 엔진 폴링은 수용한 상태 시각만 실측 시각으로 기록한다
+ok 335 - 외부 엔진 폴링은 수용한 상태 시각만 실측 시각으로 기록한다
+  ---
+  duration_ms: 0.3077
+  type: 'test'
+  ...
+# (node:648) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/mpv-surface-policy.js?test=1788629692206-0.059428855601258324 is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: surface registry derives block, observed mirror, and generic HTML mirror selectors
+ok 336 - surface registry derives block, observed mirror, and generic HTML mirror selectors
+  ---
+  duration_ms: 6.875
+  type: 'test'
+  ...
+# Subtest: collaboration status surfaces use the dedicated collaboration mirror without hiding the native host
+ok 337 - collaboration status surfaces use the dedicated collaboration mirror without hiding the native host
+  ---
+  duration_ms: 1.4768
+  type: 'test'
+  ...
+# Subtest: a registered surface blocks mpv when a visible overflow child overlaps the host
+ok 338 - a registered surface blocks mpv when a visible overflow child overlaps the host
+  ---
+  duration_ms: 1.5576
+  type: 'test'
+  ...
+# Subtest: hidden, transparent, and non-overlapping surfaces do not block mpv
+ok 339 - hidden, transparent, and non-overlapping surfaces do not block mpv
+  ---
+  duration_ms: 1.4728
+  type: 'test'
+  ...
+# Subtest: a descendant hidden by an ancestor cannot block mpv
+ok 340 - a descendant hidden by an ancestor cannot block mpv
+  ---
+  duration_ms: 1.8072
+  type: 'test'
+  ...
+# Subtest: an overflow-clipped descendant outside the visible ancestor bounds cannot block mpv
+ok 341 - an overflow-clipped descendant outside the visible ancestor bounds cannot block mpv
+  ---
+  duration_ms: 3.4425
+  type: 'test'
+  ...
+# Subtest: overflow-x clips only the x axis while overflow-y remains visible
+ok 342 - overflow-x clips only the x axis while overflow-y remains visible
+  ---
+  duration_ms: 1.8297
+  type: 'test'
+  ...
+# Subtest: overflow-y clips only the y axis while overflow-x remains visible
+ok 343 - overflow-y clips only the y axis while overflow-x remains visible
+  ---
+  duration_ms: 1.9487
+  type: 'test'
+  ...
+# Subtest: zero-size candidates and clipping ancestors never block mpv
+ok 344 - zero-size candidates and clipping ancestors never block mpv
+  ---
+  duration_ms: 2.6866
+  type: 'test'
+  ...
+# Subtest: surface lookup finds the containing registered block surface
+ok 345 - surface lookup finds the containing registered block surface
+  ---
+  duration_ms: 2.3807
+  type: 'test'
+  ...
+# Subtest: app consumes the registry for blocking, observation, serialization, and motion rechecks
+ok 346 - app consumes the registry for blocking, observation, serialization, and motion rechecks
+  ---
+  duration_ms: 0.5421
+  type: 'test'
+  ...
+# Subtest: runtime profile stays off when unpackaged, missing, malformed, or oversized
+ok 347 - runtime profile stays off when unpackaged, missing, malformed, or oversized
+  ---
+  duration_ms: 6.9812
+  type: 'test'
+  ...
+# Subtest: runtime profile rejects unknown or inexact marker contracts atomically
+ok 348 - runtime profile rejects unknown or inexact marker contracts atomically
+  ---
+  duration_ms: 12.2635
+  type: 'test'
+  ...
+# Subtest: valid packaged trial marker enables the complete deeply frozen profile
+ok 349 - valid packaged trial marker enables the complete deeply frozen profile
+  ---
+  duration_ms: 2.7965
+  type: 'test'
+  ...
+# Subtest: valid packaged stable marker enables the complete non-isolated profile
+ok 350 - valid packaged stable marker enables the complete non-isolated profile
+  ---
+  duration_ms: 3.0979
+  type: 'test'
+  ...
+# Subtest: afterPack writes stable markers for normal builds and trial markers for trial builds
+ok 351 - afterPack writes stable markers for normal builds and trial markers for trial builds
+  ---
+  duration_ms: 8.4461
+  type: 'test'
+  ...
+# Subtest: release build scripts pin stable while trial build scripts pin trial regardless of parent env
+ok 352 - release build scripts pin stable while trial build scripts pin trial regardless of parent env
+  ---
+  duration_ms: 0.8088
+  type: 'test'
+  ...
+# Subtest: stable engine promotion uses the 2.3.0 beta release version consistently
+ok 353 - stable engine promotion uses the 2.3.0 beta release version consistently
+  ---
+  duration_ms: 11.3904
+  type: 'test'
+  ...
+1..353
+# tests 353
+# suites 0
+# pass 353
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 25730.1708

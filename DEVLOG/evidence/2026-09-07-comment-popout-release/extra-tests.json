@@ -1,0 +1,63 @@
+{
+  "checkedAtUtc": "2026-09-06T20:56:21.6082267Z",
+  "sourceHead": "1904aed199fad72a659c8238d8aa9a65228f789d",
+  "sourceHeadAfter": "1904aed199fad72a659c8238d8aa9a65228f789d",
+  "execution": "Three suites executed sequentially, using their own test fixtures; no operational user files supplied.",
+  "runs": [
+    {
+      "suite": "fabric-drawing-persistence",
+      "command": "npm.cmd run test:fabric-drawing-persistence",
+      "log": ".cache/release-test-fabric-drawing-persistence.log",
+      "exitCode": 0,
+      "tests": 164,
+      "pass": 164,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "logSha256": "55f3afaa9ad6a2cc989730c847a8b586f3365e136f338861b3f18783d9cb38ff"
+    },
+    {
+      "suite": "playlist",
+      "command": "npm.cmd run test:playlist",
+      "log": ".cache/release-test-playlist.log",
+      "exitCode": 0,
+      "tests": 330,
+      "pass": 330,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "logSha256": "2d126e8d9a6e6d10dda7e9f6c91d44fbfca46cec4059bf9ef6f1a0cc2630cb69"
+    },
+    {
+      "suite": "drawing",
+      "command": "npm.cmd run test:drawing",
+      "log": ".cache/release-test-drawing.log",
+      "exitCode": 0,
+      "tests": 334,
+      "pass": 334,
+      "fail": 0,
+      "cancelled": 0,
+      "skipped": 0,
+      "logSha256": "5a833c45f9ea0716cda4d87883444275367fa90e35e1330552718b93418d62de"
+    }
+  ],
+  "initialPlaylistRun": {
+    "log": ".cache/release-test-playlist-initial.log",
+    "exitCode": 1,
+    "tests": 330,
+    "pass": 328,
+    "fail": 2,
+    "cancelled": 0,
+    "cause": "Two source-extraction patterns were fixed to parent document selectors and could not locate handlers now scoped to elements.commentPanel.",
+    "failures": [
+      "status filter chip changes route through shared comment filter refresh",
+      "continuous author filter menu uses aggregate playlist comments"
+    ]
+  },
+  "correction": {
+    "file": "scripts/tests/playlist-continuous-runtime.test.js",
+    "change": "Only two extraction patterns were updated to elements.commentPanel.querySelectorAll/querySelector. All shared refresh and aggregate author-source assertions remain unchanged.",
+    "productFilesChanged": false,
+    "commitCreated": false
+  }
+}

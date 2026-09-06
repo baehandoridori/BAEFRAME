@@ -1,0 +1,66 @@
+{
+  "scope": "Real Electron, isolated profile and synthetic local review; native file choices simulated; no CSS or app-state overrides",
+  "runtime": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\comments-release-e2e\\run-1788727971313",
+  "checks": [
+    {
+      "name": "fixed author colors survive opaque author IDs",
+      "color-sw": "rgb(74, 158, 255)",
+      "color-hy": "rgb(255, 170, 170)",
+      "color-hs": "rgb(255, 85, 85)"
+    },
+    {
+      "name": "native drawing palette follows blue personal theme"
+    },
+    {
+      "name": "detach moves original draft, image, filter and search to a separate protected window"
+    },
+    {
+      "name": "image pasted from child window File is compressed and attached"
+    },
+    {
+      "name": "mention menu and insertion work inside detached window"
+    },
+    {
+      "name": "detached comment submission commits through the real main review manager"
+    },
+    {
+      "name": "reply written in detached window reaches canonical comment state"
+    },
+    {
+      "name": "resolve updates detached list and main timeline"
+    },
+    {
+      "name": "author filter colors and outside click work after detach"
+    },
+    {
+      "name": "typing a space in detached input does not start video"
+    },
+    {
+      "name": "settings opened from popup update both windows and close the old menu"
+    },
+    {
+      "name": "minimum popup size keeps comment input and reattach button accessible"
+    },
+    {
+      "name": "reattach button restores the same panel and unsent text"
+    },
+    {
+      "name": "native window close returns the panel without losing draft"
+    },
+    {
+      "name": "saved bframe contains the popup comment, reply, and resolve status"
+    },
+    {
+      "name": "fresh app launch reopens the persisted review"
+    }
+  ],
+  "errors": [],
+  "screens": [
+    "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\comments-release-e2e\\run-1788727971313\\comments-detached.png",
+    "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\comments-release-e2e\\run-1788727971313\\main-detached.png",
+    "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\comments-release-e2e\\run-1788727971313\\comments-compact.png"
+  ],
+  "executable": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\node_modules\\electron\\dist\\electron.exe",
+  "createdMarkerId": "e050da5c-b3a5-494d-b1b0-e1d52aa5db5f",
+  "passed": true
+}

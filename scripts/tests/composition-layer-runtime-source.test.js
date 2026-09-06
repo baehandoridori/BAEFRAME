@@ -248,7 +248,7 @@ test('bframe schema documentation includes compositionLayers', () => {
 test('clipboard image paste embeds a composition layer', () => {
   assert.match(appSource, /document\.addEventListener\('paste', async \(e\) => \{/);
   assert.match(appSource, /hasImageInClipboard\(e\)/);
-  assert.match(appSource, /compositionLayerManager\.addLayerFromDataUrl\(image\.base64\)/);
+  assert.match(appSource, /compositionLayerManager\.addLayerFromDataUrl\(image\.base64, \{/);
   assert.match(compositionManagerSource, /async addLayerFromDataUrl\(dataUrl, options = \{\}\) \{/);
   assert.match(compositionManagerSource, /export function isEmbeddedImageDataUrl\(value\) \{/);
   assert.match(compositionManagerSource, /export function getCompositionLayerMediaUrl\(layer\) \{/);

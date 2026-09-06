@@ -1,0 +1,28 @@
+{
+  "scope": "Local package only; no remote deployment",
+  "version": "2.9.0-beta",
+  "runtimeProfile": "fabric-v3-stable",
+  "exactStableMarker": true,
+  "active": true,
+  "uiSourceToPackageMatches": 8,
+  "runtimeSourceToBuildMatches": 7,
+  "mismatches": 0,
+  "files": 82,
+  "bytes": 753713745,
+  "emptyFiles": 0,
+  "sha256": {
+    "resources/app.asar": "d3a39a67702f4fab967203f5f3c144ae26c770c8f40403bd4ba67e64b35e6aa6",
+    "BFRAME_alpha_v2.exe": "af6c0068a6c4b9d3df54ba906822b8cc469191c00868b21e07a1b163dd291783",
+    "resources/native/ReviewFileCasHelper.exe": "2538b7e3f07b15aaf79f4cd3e384f5e448cdfb577c3c0bdc438137fb52486811"
+  },
+  "uiFiles": [
+    "main/mpv-overlay-host.js",
+    "renderer/styles/main.css",
+    "renderer/styles/editor.css",
+    "renderer/styles/editor-drawing.css",
+    "renderer/index.html",
+    "renderer/scripts/app.js",
+    "renderer/scripts/lib/mpv-fabric-overlay.iife.js",
+    "renderer/scripts/lib/editor-drawing.iife.js"
+  ]
+}

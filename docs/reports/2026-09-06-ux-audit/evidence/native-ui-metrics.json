@@ -1,0 +1,122 @@
+{
+  "viewport": {
+    "width": 1586,
+    "height": 963,
+    "dpr": 1.5
+  },
+  "elements": [
+    {
+      "q": "#fileName",
+      "text": "review-C-3s.mp4",
+      "x": 234.125,
+      "y": 9.666666984558105,
+      "width": 104.42708587646484,
+      "height": 32,
+      "scrollWidth": 104,
+      "font": "13px",
+      "color": "rgb(245, 245, 245)",
+      "bg": "rgba(0, 0, 0, 0)",
+      "overflow": "visible",
+      "title": "",
+      "aria": null
+    },
+    {
+      "q": "#filePath",
+      "text": "C:\\Users\\user\\AppData\\Local\\Temp\\baeframe-ux-20260906",
+      "x": 346.5520935058594,
+      "y": 11.666666984558105,
+      "width": 323.5,
+      "height": 28,
+      "scrollWidth": 324,
+      "font": "12px",
+      "color": "rgb(102, 102, 102)",
+      "bg": "rgba(0, 0, 0, 0)",
+      "overflow": "visible",
+      "title": "",
+      "aria": null
+    },
+    {
+      "q": ".playback-controls-scroll",
+      "text": "전체 00:00:07:09 / 00:00:09:00 · 컷 00:00:01:09 / 00:00:03:00\n24fps · Frame 33 / 72\n그리기\nB\n댓글\n",
+      "x": 300,
+      "y": 682,
+      "width": 884,
+      "height": 55.333335876464844,
+      "scrollWidth": 1377,
+      "font": "16px",
+      "color": "rgb(245, 245, 245)",
+      "bg": "rgba(0, 0, 0, 0)",
+      "overflow": "auto hidden",
+      "title": "",
+      "aria": null
+    },
+    {
+      "q": "#btnMainMute",
+      "text": "",
+      "x": 1561.0208740234375,
+      "y": 690.6666870117188,
+      "width": 32,
+      "height": 32,
+      "scrollWidth": 32,
+      "font": "14px",
+      "color": "rgb(160, 160, 160)",
+      "bg": "rgba(0, 0, 0, 0)",
+      "overflow": "visible",
+      "title": "음소거 토글",
+      "aria": null
+    },
+    {
+      "q": "#btnAddComment",
+      "text": "댓글\nC",
+      "x": 1113.6875,
+      "y": 690,
+      "width": 91.3125,
+      "height": 33.333335876464844,
+      "scrollWidth": 90,
+      "font": "13px",
+      "color": "rgb(245, 245, 245)",
+      "bg": "rgba(255, 255, 255, 0.08)",
+      "overflow": "visible",
+      "title": "",
+      "aria": null
+    },
+    {
+      "q": "#playlistTabContinuous",
+      "text": "타임라인 이어붙이기 모드",
+      "x": 141.6666717529297,
+      "y": 132.6666717529297,
+      "width": 129.6666717529297,
+      "height": 34.625,
+      "scrollWidth": 128,
+      "font": "11px",
+      "color": "rgb(245, 245, 245)",
+      "bg": "rgb(34, 34, 34)",
+      "overflow": "visible",
+      "title": "",
+      "aria": null
+    },
+    {
+      "q": ".comment-hint",
+      "missing": true
+    },
+    {
+      "q": ".frame-info",
+      "missing": true
+    },
+    {
+      "q": "#authorFilterBtn",
+      "text": " ",
+      "x": 1446.354248046875,
+      "y": 125.33333587646484,
+      "width": 48.677085876464844,
+      "height": 28.666667938232422,
+      "scrollWidth": 47,
+      "font": "12px",
+      "color": "rgb(160, 160, 160)",
+      "bg": "rgba(26, 26, 26, 0.6)",
+      "overflow": "visible",
+      "title": "",
+      "aria": null
+    }
+  ]
+}

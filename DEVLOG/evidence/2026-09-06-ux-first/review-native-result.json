@@ -1,0 +1,35 @@
+{
+  "scope": "Current source Electron with native mpv and synthetic local .bframe; isolated profile, external HTTP blocked, file picker uses fixture",
+  "checks": [
+    {
+      "name": "playlist starts closed"
+    },
+    {
+      "name": "playlist remains optional after video open and toggles both ways"
+    },
+    {
+      "name": "V3 comment placement keeps native drawing engine"
+    },
+    {
+      "name": "actual native freeze contains the saved V3 stroke pixels",
+      "white": 590,
+      "width": 1280,
+      "height": 720
+    },
+    {
+      "name": "cancel preserves actual comment text and image draft"
+    },
+    {
+      "name": "next comment skips resolved marker with unresolved filter",
+      "frameText": "24fps · Frame 48 / 144"
+    },
+    {
+      "name": "실제 빌드에서 입력 중 저장",
+      "clips": 1
+    }
+  ],
+  "errors": [],
+  "executable": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\dist\\win-unpacked\\BFRAME_alpha_v2.exe",
+  "packaged": true,
+  "passed": true
+}

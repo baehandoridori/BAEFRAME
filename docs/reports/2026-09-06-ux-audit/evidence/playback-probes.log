@@ -1,0 +1,2 @@
+HYBRID_STALE_PROBE_REPRODUCED {"probed":["A.mp4"],"loads":[{"path":"B.mov","options":{"keepVersionContext":true,"engineSwap":true,"initialFrame":42,"playWhenMediaReady":false}}],"commentMode":false}
+WATCHDOG_CANCEL_MARKS_ERROR_REPRODUCED {"waits":2,"active":false,"mutations":[[{"id":"B","fileName":"B.mp4"},"error","건너뜀"]],"toasts":[["영상을 재생할 수 없어 다음 영상으로 넘어갑니다.","warning"]]}

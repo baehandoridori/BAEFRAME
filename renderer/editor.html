@@ -1,0 +1,362 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: file:; media-src 'self' file: blob:; connect-src 'none';"
+    />
+    <title>BEditer · 프로토타입</title>
+    <link rel="stylesheet" href="styles/editor.css" />
+    <link rel="stylesheet" href="styles/editor-drawing.css" />
+    <script defer src="../shared/edit-project.js"></script>
+    <script defer src="scripts/lib/editor-drawing.iife.js"></script>
+    <script defer src="scripts/editor/controller.js"></script>
+    <script defer src="scripts/editor/preview-clock.js"></script>
+    <script defer src="scripts/editor/timeline-interaction.js"></script>
+    <script defer src="scripts/editor/editor.js"></script>
+  </head>
+  <body data-editor-tool="select">
+    <svg class="icon-definitions" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <defs>
+        <symbol id="i-select" viewBox="0 0 24 24"><path d="m5 3 14 10-7 1-3 7Z" /></symbol>
+        <symbol id="i-cut" viewBox="0 0 24 24">
+          <path d="m14 3 7 7-11 11-7-7Z M10 7l7 7 M7 16l2 2 M16 7l2 2" />
+        </symbol>
+        <symbol id="i-hand" viewBox="0 0 24 24">
+          <path
+            d="M8 12V6a2 2 0 0 1 4 0v5-7a2 2 0 0 1 4 0v7-4a2 2 0 0 1 4 0v8c0 4-3 6-7 6-3 0-5-2-7-5l-3-4a2 2 0 0 1 3-2l2 2"
+          />
+        </symbol>
+        <symbol id="i-pen" viewBox="0 0 24 24">
+          <path d="m15 3 6 6-11 11-7 1 1-7Z M13 5l6 6 M4 14l6 6" />
+        </symbol>
+        <symbol id="i-eraser" viewBox="0 0 24 24">
+          <path d="m14 3 7 7-11 11H6l-4-4Z M7 12l7 7 M10 21h11" />
+        </symbol>
+        <symbol id="i-line" viewBox="0 0 24 24">
+          <path d="m4 20 16-16" />
+          <circle cx="4" cy="20" r="1" />
+          <circle cx="20" cy="4" r="1" />
+        </symbol>
+        <symbol id="i-rect" viewBox="0 0 24 24">
+          <rect x="4" y="5" width="16" height="14" rx="1" />
+        </symbol>
+        <symbol id="i-arrow" viewBox="0 0 24 24"><path d="m5 19 14-14 M9 5h10v10" /></symbol>
+        <symbol id="i-folder" viewBox="0 0 24 24">
+          <path d="M3 7h7l2 2h9l-2 11H3V5h7l2 2h7v2" />
+        </symbol>
+        <symbol id="i-save" viewBox="0 0 24 24">
+          <path d="M4 3h13l3 3v15H4Z M8 3v6h8V3 M8 21v-7h8v7" />
+        </symbol>
+        <symbol id="i-export" viewBox="0 0 24 24">
+          <path d="M12 16V3 M7 8l5-5 5 5 M4 14v7h16v-7" />
+        </symbol>
+        <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14 M5 12h14" /></symbol>
+        <symbol id="i-undo" viewBox="0 0 24 24">
+          <path d="M9 5 3 11l6 6 M3 11h11a6 6 0 0 1 6 6v3" />
+        </symbol>
+        <symbol id="i-redo" viewBox="0 0 24 24">
+          <path d="m15 5 6 6-6 6 M21 11H10a6 6 0 0 0-6 6v3" />
+        </symbol>
+        <symbol id="i-trash" viewBox="0 0 24 24">
+          <path d="M3 6h18 M9 6V3h6v3 M5 6l1 15h12l1-15 M9 10v7 M15 10v7" />
+        </symbol>
+      </defs>
+    </svg>
+    <header class="editor-header">
+      <div class="brand">
+        <span class="brand-mark">B</span><strong>baeframe</strong
+        ><span class="workspace-name" title="영상 편집 기능을 먼저 사용해 보는 프로토타입입니다.">BEditer · 프로토타입</span>
+      </div>
+      <div class="header-actions">
+        <button id="openProject" title="편집 프로젝트 열기">
+          <svg class="icon"><use href="#i-folder" /></svg><span>열기</span>
+        </button>
+        <button id="saveProject" title="프로젝트 저장 · Ctrl+S">
+          <svg class="icon"><use href="#i-save" /></svg><span>저장</span>
+        </button>
+        <button id="saveAsProject" class="quiet">다른 이름으로 저장</button>
+        <span class="separator"></span>
+        <button id="exportVideo" class="primary">
+          <svg class="icon"><use href="#i-export" /></svg>MP4 내보내기
+        </button>
+      </div>
+    </header>
+    <main class="workspace">
+      <section class="viewer" aria-label="영상과 드로잉 미리보기">
+        <nav class="tool-rail" aria-label="편집과 그리기 도구">
+          <button
+            data-editor-tool="select"
+            data-tool="select"
+            aria-label="선택 도구 V"
+            aria-pressed="true"
+            title="선택 · V"
+          >
+            <svg class="icon"><use href="#i-select" /></svg><kbd>V</kbd>
+          </button>
+          <button
+            data-editor-tool="razor"
+            aria-label="자르기 도구 C"
+            aria-pressed="false"
+            title="클릭 위치에서 컷 나누기 · C"
+          >
+            <svg class="icon"><use href="#i-cut" /></svg><kbd>C</kbd>
+          </button>
+          <button
+            data-editor-tool="hand"
+            aria-label="화면 이동 도구 H"
+            aria-pressed="false"
+            title="화면 이동 · H / 마우스 가운데 버튼"
+          >
+            <svg class="icon"><use href="#i-hand" /></svg><kbd>H</kbd>
+          </button>
+          <span class="rail-separator"></span>
+          <button data-tool="brush" aria-label="펜 도구 B" aria-pressed="false" title="펜 · B">
+            <svg class="icon"><use href="#i-pen" /></svg><kbd>B</kbd>
+          </button>
+          <button
+            data-tool="eraser"
+            aria-label="지우개 도구 E"
+            aria-pressed="false"
+            title="지우개 · E"
+          >
+            <svg class="icon"><use href="#i-eraser" /></svg><kbd>E</kbd>
+          </button>
+          <button data-tool="line" aria-label="선 도구" aria-pressed="false" title="선">
+            <svg class="icon"><use href="#i-line" /></svg>
+          </button>
+          <button data-tool="rect" aria-label="사각형 도구" aria-pressed="false" title="사각형">
+            <svg class="icon"><use href="#i-rect" /></svg>
+          </button>
+          <button data-tool="arrow" aria-label="화살표 도구" aria-pressed="false" title="화살표">
+            <svg class="icon"><use href="#i-arrow" /></svg>
+          </button>
+        </nav>
+        <div class="viewer-top">
+          <span class="panel-title">미리보기 <span id="projectTitle">새 편집</span></span
+          ><span id="outputInfo">1920 × 1080 · 24fps</span>
+        </div>
+        <div class="stage-area" id="stageViewport">
+          <div class="stage" id="stage">
+            <video id="videoPreview" playsinline preload="auto"></video>
+            <div id="drawingContainer"></div>
+            <canvas id="previewStill" aria-hidden="true"></canvas>
+          </div>
+          <div class="empty-state" id="emptyState">
+            <svg class="empty-icon icon"><use href="#i-folder" /></svg
+            ><strong>첫 번째 영상을 추가하세요</strong>
+            <p>영상을 연결하고, 프레임에 그림을 더해보세요.</p>
+            <button id="emptyImport" class="primary">
+              <svg class="icon"><use href="#i-plus" /></svg>영상 가져오기</button
+            ><span class="empty-shortcuts"
+              >V 선택 <span>·</span> C 컷 나누기 <span>·</span> B 그리기</span
+            >
+          </div>
+        </div>
+        <div class="transport">
+          <div class="monitor-scale">
+            <label for="previewZoom" class="sr-only">미리보기 배율</label
+            ><select id="previewZoom">
+              <option value="fit">화면 맞춤</option>
+              <option value="50">50%</option>
+              <option value="100">100%</option>
+              <option value="150">150%</option>
+              <option value="200">200%</option></select
+            ><button id="resetPreview" class="quiet" title="화면 이동과 확대 초기화">맞춤</button>
+          </div>
+          <div class="play-controls">
+            <button id="previousFrame" aria-label="이전 프레임" title="이전 프레임 · ←">◀│</button
+            ><button id="playPause" title="재생 / 일시정지 · Space">재생</button
+            ><button id="nextFrame" aria-label="다음 프레임" title="다음 프레임 · →">│▶</button
+            ><output id="timeDisplay">00:00:00 / 00:00:00</output>
+          </div>
+          <span id="sourceTime" class="muted">원본 위치</span>
+        </div>
+        <div class="drawing-tools" aria-label="현재 도구 설정">
+          <span class="context-tool"><i></i><strong id="activeToolName">선택</strong></span
+          ><button id="drawMode" aria-pressed="false" title="영상 위 드로잉 입력 켜기 / 끄기">
+            그리기</button
+          ><span class="context-divider"></span>
+        </div>
+      </section>
+      <aside class="inspector" aria-label="편집 설정">
+        <div class="inspector-title">속성 <span>선택한 항목</span></div>
+        <div class="inspector-body">
+          <details open class="property-section">
+            <summary>프로젝트</summary>
+            <div class="property-fields">
+              <label>이름<input id="projectName" maxlength="120" value="새 편집" /></label>
+              <div class="field-pair">
+                <label
+                  >화면<select id="aspectRatio">
+                    <option value="1920x1080">가로 16:9</option>
+                    <option value="1080x1920">세로 9:16</option>
+                    <option value="1080x1080">정사각형 1:1</option>
+                  </select></label
+                ><label
+                  >프레임<select id="projectFps">
+                    <option>24</option>
+                    <option>25</option>
+                    <option>30</option>
+                    <option>60</option>
+                  </select></label
+                >
+              </div>
+            </div>
+          </details>
+          <details open class="property-section" id="clipInspector">
+            <summary>클립 <span id="selectedClipName"></span></summary>
+            <div class="property-fields">
+              <label
+                >화면 맞춤<select id="clipFit">
+                  <option value="contain">전체 보이기</option>
+                  <option value="cover">화면 채우기</option>
+                </select></label
+              >
+              <label class="range-label"
+                >원본 소리 <output id="clipVolumeValue">100%</output
+                ><input id="clipVolume" type="range" min="0" max="100" value="100"
+              /></label>
+              <span class="field-heading">클립 양끝 자르기</span>
+              <div class="field-pair">
+                <label
+                  >앞에서 제거 (초)<input
+                    id="trimStart"
+                    type="number"
+                    min="0"
+                    step="0.05"
+                    value="0" /></label
+                ><label
+                  >뒤에서 제거 (초)<input id="trimEnd" type="number" min="0" step="0.05" value="0"
+                /></label>
+              </div>
+              <button id="applyTrim" class="wide">자르기 적용</button>
+              <span class="field-heading">정지 프레임</span>
+              <div class="field-pair">
+                <label
+                  >길이 (초)<input
+                    id="holdSeconds"
+                    type="number"
+                    min="0.05"
+                    max="300"
+                    step="0.25"
+                    value="2" /></label
+                ><label
+                  >정지 방식<select id="holdType">
+                    <option value="insert">시간 추가</option>
+                    <option value="replace">현재부터 대체</option>
+                  </select></label
+                >
+              </div>
+              <button id="insertHold" class="wide">현재 화면으로 정지 구간 만들기</button>
+            </div>
+          </details>
+          <details open class="property-section">
+            <summary>배경음악</summary>
+            <div class="property-fields">
+              <button id="importMusic" class="wide">음악 가져오기</button>
+              <p id="musicName" class="muted">추가된 음악 없음</p>
+              <label>음량<input id="musicVolume" type="range" min="0" max="100" value="50" /></label
+              ><button id="removeMusic" class="quiet">음악 제거</button>
+            </div>
+          </details>
+        </div>
+      </aside>
+    </main>
+    <section class="timeline" aria-label="편집 타임라인">
+      <div class="timeline-title">
+        <strong>타임라인</strong
+        ><span class="track-legend"
+          ><i class="video-dot"></i>영상 <i class="drawing-dot"></i>드로잉
+          <i class="audio-dot"></i>음악</span
+        ><span id="timelineScale" class="scale-value">전체 보기</span>
+      </div>
+      <div class="timeline-tools">
+        <div class="edit-actions">
+          <button id="importVideo" title="영상 가져오기">
+            <svg class="icon"><use href="#i-plus" /></svg>영상 추가</button
+          ><span class="separator"></span
+          ><button id="splitClip" title="재생 위치에서 컷 나누기">
+            <svg class="icon"><use href="#i-cut" /></svg>분할</button
+          ><button id="deleteClip" aria-label="컷 삭제" title="컷 삭제">
+            <svg class="icon"><use href="#i-trash" /></svg></button
+          ><button id="moveLeft" aria-label="컷 앞으로 이동" title="컷 앞으로 이동">←</button
+          ><button id="moveRight" aria-label="컷 뒤로 이동" title="컷 뒤로 이동">→</button
+          ><span class="separator"></span
+          ><button id="undo" aria-label="실행취소" title="실행취소 · Ctrl+Z">
+            <svg class="icon"><use href="#i-undo" /></svg></button
+          ><button id="redo" aria-label="다시실행" title="다시실행 · Ctrl+Shift+Z">
+            <svg class="icon"><use href="#i-redo" /></svg>
+          </button>
+        </div>
+        <div class="keyframe-actions">
+          <button data-draw-action="keyframe" title="그림 키프레임 추가">
+            ● <span>키프레임</span></button
+          ><button data-draw-action="blank" title="빈 그림 키프레임 추가">
+            ○ <span>빈 프레임</span></button
+          ><button data-draw-action="hold" title="그림 유지 1프레임 추가">+1F</button>
+        </div>
+        <div class="zoom-actions">
+          <button id="expandLayers" aria-expanded="true" title="드로잉 레이어 접기">
+            드로잉 접기</button
+          ><select id="timelineZoom" aria-label="타임라인 보기">
+            <option value="all">전체</option>
+            <option value="clip">선택 컷</option></select
+          ><button id="timelineZoomOut" aria-label="타임라인 축소" title="축소 · -">−</button
+          ><input
+            id="timelineZoomRange"
+            type="range"
+            min="0"
+            max="100"
+            value="0"
+            aria-label="타임라인 확대"
+          /><button id="timelineZoomIn" aria-label="타임라인 확대" title="확대 · +">+</button
+          ><button id="timelineFit" title="전체 타임라인 맞춤">맞춤</button>
+        </div>
+      </div>
+      <div class="scrub-row sr-only">
+        <label for="scrub">재생 위치</label
+        ><input id="scrub" type="range" min="0" max="0" step="1" value="0" tabindex="-1" />
+      </div>
+      <div id="timelineScroll" class="timeline-scroll">
+        <div id="timelineContent" class="timeline-content">
+          <div class="track ruler">
+            <span class="track-label">레이어 / 소스</span>
+            <div id="ruler" class="axis"></div>
+          </div>
+          <div class="track video-track">
+            <span class="track-label"><b class="track-code">V1</b>영상</span>
+            <div id="clipTrack" class="axis"></div>
+          </div>
+          <div class="drawing-group">
+            <span id="drawingClipLabel">선택 컷의 드로잉</span
+            ><button id="addLayer" title="드로잉 레이어 추가">+ 레이어</button>
+          </div>
+          <div id="drawingRows"></div>
+          <div class="track music-track">
+            <span class="track-label"><b class="track-code audio">A1</b>배경음악</span>
+            <div id="musicTrack" class="axis"></div>
+          </div>
+        </div>
+      </div>
+      <div class="overview-row">
+        <span>시간 범위</span>
+        <div id="timelineOverview" aria-label="타임라인 전체 범위">
+          <div id="timelineOverviewClips"></div>
+          <div id="timelineViewport" title="드래그하여 표시 범위 이동"></div>
+        </div>
+      </div>
+    </section>
+    <footer>
+      <span id="status" role="status">영상 편집 프로젝트는 원본과 별도로 저장됩니다.</span>
+      <div id="exportProgress" hidden>
+        <progress id="progress" max="1" value="0"></progress
+        ><button id="cancelExport">출력 취소</button>
+      </div>
+      <span class="shortcut-note">V 선택 · C 자르기 · H 이동 · Space 재생</span>
+    </footer>
+    <audio id="musicPreview" preload="auto"></audio>
+  </body>
+</html>

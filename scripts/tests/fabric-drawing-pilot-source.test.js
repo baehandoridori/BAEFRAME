@@ -234,9 +234,10 @@ test('Fabric persistence is pulled after root refresh and before save and video 
 });
 
 test('quit transaction disables Fabric before dirty/save decisions and resumes every cancelled quit path', () => {
-  const quitHandler = appSource.match(
-    /window\.electronAPI\.onRequestSaveBeforeQuit\(async \(\) => \{([\s\S]*?)\n  \}\);/
-  )?.[1] || '';
+  const quitHandler = appSource.slice(
+    appSource.indexOf('// ====== 앱 종료 전 저장 처리 ======'),
+    appSource.indexOf('// ====== 사용자 이름 초기화')
+  );
   const prepareIndex = quitHandler.indexOf(
     'await fabricDrawingPilotController.preparePersistenceForQuit()'
   );
@@ -252,32 +253,21 @@ test('quit transaction disables Fabric before dirty/save decisions and resumes e
   assert.ok(dirtyIndex < saveIndex, 'dirty state must be checked before a quit save');
   assert.match(
     quitHandler,
-    /await fabricDrawingPilotController\.preparePersistenceForQuit\(\)[\s\S]+if \(!reviewDataManager\.hasUnsavedChanges\(\)\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(\);/
+    /await fabricDrawingPilotController\.preparePersistenceForQuit\(\)[\s\S]+if \(!reviewDataManager\.hasUnsavedChanges\(\)\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(attemptId\);/
   );
   assert.match(
     quitHandler,
-    /await reviewDataManager\.save\(\);[\s\S]+if \(saved\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(\);/
+    /await reviewDataManager\.save\(\);[\s\S]+if \(saved\) \{[\s\S]+await window\.electronAPI\.confirmQuit\(attemptId\);/
   );
   assert.match(
     quitHandler,
     /commentSync\.stop\(\);[\s\S]+drawingSync\.stop\(\);[\s\S]+try \{[\s\S]+await liveblocksManager\.stop\(\);[\s\S]+\} catch \(error\) \{[\s\S]+log\.warn\('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행'/
   );
 
-  const cancelCalls = [
-    ...quitHandler.matchAll(/await window\.electronAPI\.cancelQuit\(\);/g)
-  ];
-  assert.ok(cancelCalls.length > 0, 'quit handler must expose at least one cancellation path');
-  for (const cancelCall of cancelCalls) {
-    const cancellationPath = quitHandler.slice(
-      cancelCall.index,
-      cancelCall.index + 240
-    );
-    assert.match(
-      cancellationPath,
-      /await fabricDrawingPilotController\.resumeAfterQuitCancelled\(\);/,
-      'every cancelQuit branch must await Fabric input restoration'
-    );
-  }
+  assert.match(quitHandler, /attempt\.cancelled = true;\s*await window\.electronAPI\.cancelQuit\(attemptId\);/);
+  assert.match(quitHandler, /finally \{\s*if \(attempt\.cancelled\) await resumeCancelledQuit\(attempt\);/);
+  assert.match(quitHandler, /function resumeCancelledQuit\(attempt\)[\s\S]+await fabricDrawingPilotController\.resumeAfterQuitCancelled\(\);/);
+  assert.match(quitHandler, /onQuitAborted\([\s\S]+reviewQuitWork\.then\(\(\) => resumeCancelledQuit\(attempt\)\)/);
 });
 
 test('video teardown drains any late autosave after pausing it and before clearing review managers', () => {
@@ -2844,7 +2834,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   assert.ok(registerAt > 0 && sendAt > registerAt, '등록이 전송보다 앞선다');
   // 되돌릴 자리는 이웃 정체로 잡는다 — 숫자 인덱스는 그 사이 추가에 흔들린다.
   assert.ok(
-    source.includes("aboveId: state.layers[removedIndex - 1]?.id || null"),
+    source.includes('aboveId: state.layers[removedIndex - 1]?.id || null'),
     '지운 레이어의 이웃을 기억한다'
   );
   assert.ok(
@@ -2900,7 +2890,7 @@ test('레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만
   // 이동은 **짝 레이어를 기준으로** 기억한다. 인덱스도 상대 칸 수도 기다리는
   // 동안 레이어가 끼면 같은 이동을 재현하지 못한다.
   assert.ok(
-    source.includes("const neighborId = state.layers[movedFrom + moveOffset]?.id || null;"),
+    source.includes('const neighborId = state.layers[movedFrom + moveOffset]?.id || null;'),
     '넘어간 짝 레이어를 기억한다'
   );
   assert.ok(

@@ -1,0 +1,189 @@
+{
+  "mode": "Production BEditer renderer and styles in Chrome; controlled fixture IPC",
+  "viewport": {
+    "width": 1440,
+    "height": 900
+  },
+  "errors": [],
+  "empty": {
+    "emptyVisible": true,
+    "exportHidden": true,
+    "disabled": 28
+  },
+  "fixture": {
+    "frame": 36,
+    "activeTool": "선택",
+    "clipCount": 3,
+    "layerCount": 2
+  },
+  "screens": [
+    {
+      "viewport": {
+        "width": 1440,
+        "height": 900
+      },
+      "overflow": {
+        "page": false,
+        "header": {
+          "width": 1440,
+          "scroll": 1440,
+          "overflowX": "visible",
+          "overflowing": false
+        },
+        "toolbar": {
+          "width": 1440,
+          "scroll": 1440,
+          "overflowX": "visible",
+          "overflowing": false
+        },
+        "context": {
+          "width": 1114,
+          "scroll": 1114,
+          "overflowX": "hidden",
+          "overflowing": false
+        },
+        "timeline": {
+          "width": 1440,
+          "scroll": 1466,
+          "overflowX": "auto",
+          "overflowing": true
+        },
+        "inspector": {
+          "width": 279,
+          "scroll": 279,
+          "overflowX": "auto",
+          "overflowing": false
+        }
+      },
+      "transportCenterOffset": 0,
+      "fieldAlignment": 0,
+      "exportHidden": true,
+      "emptyHidden": true,
+      "keyframeButtons": [
+        {
+          "title": "그림 키프레임 추가",
+          "disabled": false,
+          "height": 28
+        },
+        {
+          "title": "빈 그림 키프레임 추가",
+          "disabled": false,
+          "height": 28
+        },
+        {
+          "title": "그림 유지 1프레임 추가",
+          "disabled": false,
+          "height": 28
+        }
+      ],
+      "frameCount": 6,
+      "hold": {
+        "selected": true,
+        "color": "rgb(246, 239, 217)",
+        "border": "rgb(244, 203, 85)",
+        "shadow": "rgba(244, 203, 85, 0.4) 0px 0px 0px 1px inset",
+        "disabled": false
+      },
+      "focus": {
+        "visible": true,
+        "outline": "rgb(244, 203, 85) solid 2px",
+        "name": "바닷가 · 동작 타이밍"
+      },
+      "brushPanel": {
+        "visible": true,
+        "insideViewport": true,
+        "width": 280,
+        "height": 236
+      }
+    },
+    {
+      "viewport": {
+        "width": 1050,
+        "height": 720
+      },
+      "overflow": {
+        "page": false,
+        "header": {
+          "width": 1050,
+          "scroll": 1050,
+          "overflowX": "visible",
+          "overflowing": false
+        },
+        "toolbar": {
+          "width": 1050,
+          "scroll": 1050,
+          "overflowX": "visible",
+          "overflowing": false
+        },
+        "context": {
+          "width": 758,
+          "scroll": 758,
+          "overflowX": "hidden",
+          "overflowing": false
+        },
+        "timeline": {
+          "width": 1050,
+          "scroll": 1073,
+          "overflowX": "auto",
+          "overflowing": true
+        },
+        "inspector": {
+          "width": 245,
+          "scroll": 245,
+          "overflowX": "auto",
+          "overflowing": false
+        }
+      },
+      "transportCenterOffset": 0,
+      "fieldAlignment": 0,
+      "exportHidden": true,
+      "emptyHidden": true,
+      "keyframeButtons": [
+        {
+          "title": "그림 키프레임 추가",
+          "disabled": false,
+          "height": 28
+        },
+        {
+          "title": "빈 그림 키프레임 추가",
+          "disabled": false,
+          "height": 28
+        },
+        {
+          "title": "그림 유지 1프레임 추가",
+          "disabled": false,
+          "height": 28
+        }
+      ],
+      "frameCount": 6,
+      "hold": {
+        "selected": true,
+        "color": "rgb(246, 239, 217)",
+        "border": "rgb(244, 203, 85)",
+        "shadow": "rgba(244, 203, 85, 0.4) 0px 0px 0px 1px inset",
+        "disabled": false
+      },
+      "focus": {
+        "visible": true,
+        "outline": "rgb(244, 203, 85) solid 2px",
+        "name": "바닷가 · 동작 타이밍"
+      },
+      "brushPanel": {
+        "visible": true,
+        "insideViewport": true,
+        "width": 280,
+        "height": 236
+      }
+    }
+  ],
+  "frameStep": {
+    "before": 36,
+    "after": 37
+  },
+  "collapse": {
+    "expanded": "false",
+    "rowsHidden": true,
+    "display": "none"
+  },
+  "problems": []
+}

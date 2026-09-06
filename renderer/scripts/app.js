@@ -39,6 +39,7 @@ import { createFabricDrawingPilotController } from './modules/fabric-drawing-pil
 import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
+import { createCommentPanelPopout } from './modules/comment-panel-popout.js';
 import { getAuthManager } from './modules/auth-manager.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
@@ -760,6 +761,7 @@ async function initApp() {
 
     // 컷 묶음 관련
     btnCutlist: document.getElementById('btnCutlist'),
+    btnOpenEditor: document.getElementById('btnOpenEditor'),
     cutlistSidebar: document.getElementById('cutlistSidebar'),
     cutlistNameInput: document.getElementById('cutlistNameInput'),
     btnCutlistAdd: document.getElementById('btnCutlistAdd'),
@@ -788,15 +790,16 @@ async function initApp() {
 
   // 사용자 설정
   const userSettings = getUserSettings();
+  let commentPanelPopout = null;
 
   function getCommentEditableTarget(target) {
-    if (!(target instanceof Element)) return null;
+    if (target?.nodeType !== 1 || typeof target.closest !== 'function') return null;
     const standardEditable = target.closest('.comment-input, .comment-marker-input, .comment-reply-input, .comment-edit-textarea, .comment-reply-edit-textarea, .thread-editor[contenteditable="true"]');
     return standardEditable || target.closest('.playlist-comment-reply-input');
   }
 
   function getTextEntryFocusableTarget(target) {
-    if (!(target instanceof Element)) return null;
+    if (target?.nodeType !== 1 || typeof target.closest !== 'function') return null;
     const editable = target.closest('textarea, input, [contenteditable="true"], [contenteditable="plaintext-only"]');
     if (!editable || editable.disabled || editable.readOnly) return null;
     return isTextEntryShortcutTarget(editable) ? editable : null;
@@ -805,7 +808,7 @@ async function initApp() {
   function resizeReplyEditorToContent(editor) {
     if (!editor) return;
 
-    if (editor instanceof HTMLTextAreaElement) {
+    if (editor.tagName === 'TEXTAREA') {
       const maxHeight = Number(editor.dataset.maxAutoHeight) || 150;
       editor.style.height = 'auto';
       const nextHeight = Math.min(Math.max(editor.scrollHeight, 34), maxHeight);
@@ -815,7 +818,7 @@ async function initApp() {
     }
 
     if (editor.isContentEditable) {
-      const computedMaxHeight = Number.parseFloat(getComputedStyle(editor).maxHeight);
+      const computedMaxHeight = Number.parseFloat(editor.ownerDocument.defaultView.getComputedStyle(editor).maxHeight);
       const maxHeight = Number(editor.dataset.maxAutoHeight) || (Number.isFinite(computedMaxHeight) ? computedMaxHeight : 220);
       editor.style.overflowY = editor.scrollHeight > maxHeight ? 'auto' : '';
     }
@@ -2487,6 +2490,9 @@ async function initApp() {
   let commentModePreparationToken = 0;
   let drawModePreparationToken = 0;
   let suppressReviewFreezeReleaseForMediaChange = false;
+  let sidebarCommentDraft = null;
+  let sidebarCommentSubmissionToken = 0;
+  let sidebarCommentSubmissionPending = false;
 
   function setCommentModeReadyState(ready) {
     elements.videoWrapper.classList.toggle('comment-mode', ready);
@@ -2526,6 +2532,8 @@ async function initApp() {
   commentManager.addEventListener('commentModeChanged', (e) => {
     const { isCommentMode } = e.detail;
     const preparationToken = ++commentModePreparationToken;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
     state.isCommentMode = isCommentMode;
     if (isCommentMode && (state.isDrawMode || isFabricDrawingPilotControllerEngaged())) {
       exitDrawModeForSystemPath();
@@ -2535,11 +2543,14 @@ async function initApp() {
     if (isCommentMode) {
       if (isMpvPilotPlaybackActive()) {
         videoPlayer.pause();
+        setCommentModeReadyState(false);
+        setCommentModePreparingState(true);
         // 작업 4: 하이브리드 우선 — 성공 시 직접 ready, 실패 시 기존 freeze 준비로 폴백.
         // (c-0)의 skipReviewTransition 없이는 전이 헬퍼가 댓글 모드를 강제 종료해 자멸한다.
         void enterHybridReviewEngineIfPossible().then((swapped) => {
           // 전환 중 사용자가 모드를 껐으면 mpv 복귀만 정리
-          if (!state.isCommentMode) {
+          if (!state.isCommentMode || preparationToken !== commentModePreparationToken ||
+            filePath !== state.currentFile || loadIntent !== videoLoadIntentGeneration) {
             void exitHybridReviewEngineIfNeeded();
             return;
           }
@@ -2557,6 +2568,7 @@ async function initApp() {
         showCommentModeGuidance();
       }
     } else {
+      cancelSidebarCommentDraft();
       setCommentModePreparingState(false);
       setCommentModeReadyState(false);
       removePendingMarkerUI();
@@ -2581,6 +2593,7 @@ async function initApp() {
   // 마커 추가됨
   commentManager.addEventListener('markerAdded', async (e) => {
     const { marker, remote, restored, imported } = e.detail;
+    finishSidebarCommentDraft(e.detail);
     removePendingMarkerUI();
     renderVideoMarkers();
     updateTimelineMarkers();
@@ -2993,15 +3006,38 @@ async function initApp() {
       return;
     }
     e.preventDefault();
+    if (activeVideoLoadToken !== null) {
+      showToast('영상을 연 뒤 이미지를 붙여넣어 주세요.', 'warning');
+      return;
+    }
+
+    // 이미지 변환 중 탐색하거나 영상을 바꿔도 붙여넣기 시작 당시의 대상을 유지한다.
+    const target = {
+      filePath: videoPlayer.filePath,
+      loadToken: latestVideoLoadToken,
+      intentGeneration: videoLoadIntentGeneration,
+      currentTime: compositionLayerManager.getCurrentTime(),
+      baseDuration: compositionLayerManager.getBaseDuration()
+    };
+    const isCurrentTarget = () => videoPlayer.isLoaded && activeVideoLoadToken === null &&
+      latestVideoLoadToken === target.loadToken && videoLoadIntentGeneration === target.intentGeneration &&
+      isSameFilePath(videoPlayer.filePath, target.filePath);
 
     try {
-      const image = await getImageFromClipboard(e);
+      const image = await getImageFromClipboard(e, { format: 'image/png' });
+      if (!isCurrentTarget()) {
+        showToast('영상이 바뀌어 이미지 붙여넣기를 취소했습니다. 다시 붙여넣어 주세요.', 'warning');
+        return;
+      }
       if (!image?.base64) {
         showToast('클립보드에서 이미지를 읽지 못했습니다.', 'error');
         return;
       }
-      const layer = await compositionLayerManager.addLayerFromDataUrl(image.base64);
-      if (layer) {
+      const layer = await compositionLayerManager.addLayerFromDataUrl(image.base64, {
+        currentTime: target.currentTime,
+        baseDuration: target.baseDuration
+      });
+      if (layer && isCurrentTarget()) {
         compositionLayerManager.togglePanel(true);
         renderCompositionLayerTimeline();
         scheduleMpvOverlayStateSync({ force: true });
@@ -3009,7 +3045,7 @@ async function initApp() {
       }
     } catch (error) {
       log.error('클립보드 이미지 붙여넣기 실패', error);
-      showToast('클립보드 이미지를 추가하지 못했습니다.', 'error');
+      if (isCurrentTarget()) showToast('클립보드 이미지를 추가하지 못했습니다.', 'error');
     }
   });
 
@@ -3068,6 +3104,10 @@ async function initApp() {
   // 댓글 추가 버튼 (댓글 모드 토글)
   elements.btnAddComment.addEventListener('click', () => {
     void (async () => {
+      if (sidebarCommentSubmissionPending) {
+        cancelSidebarCommentDraft();
+        return;
+      }
       if (!state.isCommentMode && !(await ensureCutlistCommentTargetReady())) return;
       toggleCommentMode();
     })();
@@ -3075,40 +3115,12 @@ async function initApp() {
 
   // 이전 댓글로 이동
   elements.btnPrevComment?.addEventListener('click', () => {
-    if (!videoPlayer.duration) {
-      showToast('영상을 먼저 로드하세요', 'warn');
-      return;
-    }
-
-    const currentFrame = videoPlayer.currentFrame || 0;
-    const prevFrame = commentManager.getPrevMarkerFrame(currentFrame);
-
-    if (prevFrame !== null) {
-      videoPlayer.seekToFrame(prevFrame);
-      timeline.scrollToPlayhead();
-      log.info('이전 댓글로 이동', { frame: prevFrame });
-    } else {
-      showToast('이전 댓글이 없습니다', 'info');
-    }
+    void navigateVisibleComment(-1);
   });
 
   // 다음 댓글로 이동
   elements.btnNextComment?.addEventListener('click', () => {
-    if (!videoPlayer.duration) {
-      showToast('영상을 먼저 로드하세요', 'warn');
-      return;
-    }
-
-    const currentFrame = videoPlayer.currentFrame || 0;
-    const nextFrame = commentManager.getNextMarkerFrame(currentFrame);
-
-    if (nextFrame !== null) {
-      videoPlayer.seekToFrame(nextFrame);
-      timeline.scrollToPlayhead();
-      log.info('다음 댓글로 이동', { frame: nextFrame });
-    } else {
-      showToast('다음 댓글이 없습니다', 'info');
-    }
+    void navigateVisibleComment(1);
   });
 
   // 사이드바 댓글 입력에 멘션 자동완성 부착
@@ -3118,22 +3130,58 @@ async function initApp() {
   slackNotifier.setToastFunction(showToast);
 
   // 사이드바 댓글 입력 Enter 처리 (역순 플로우: 텍스트 입력 → 마커 찍기)
-  async function submitSidebarCommentDraft() {
-    const text = elements.commentInput.value.trim();
-    if (!text && !state.pendingCommentImage) return false;
-    if (!(await ensureCutlistCommentTargetReady())) return false;
-
-    // 텍스트/이미지를 pending으로 설정하고 댓글 모드 활성화
-    commentManager.setPendingText(text || '(이미지)');
-    // 이미지가 있으면 commentManager에 임시 저장
-    if (state.pendingCommentImage) {
-      commentManager._pendingImage = state.pendingCommentImage;
-    }
-    elements.commentInput.value = '';
-    clearCommentImage();
-    showToast('영상에서 마커를 찍어주세요', 'info');
-    return true;
+  function cancelSidebarCommentDraft() {
+    sidebarCommentSubmissionToken += 1;
+    sidebarCommentSubmissionPending = false;
+    sidebarCommentDraft = null;
   }
+
+  function finishSidebarCommentDraft({ marker, remote, restored, imported }) {
+    if (remote || restored || imported || !sidebarCommentDraft) return;
+    const draft = sidebarCommentDraft;
+    sidebarCommentDraft = null;
+    if (draft.filePath !== state.currentFile || marker.text !== (draft.text || '(이미지)')) return;
+    if (elements.commentInput.value === draft.inputValue) elements.commentInput.value = '';
+    if (state.pendingCommentImage === draft.image) clearCommentImage();
+  }
+
+  async function submitSidebarCommentDraft() {
+    const inputValue = elements.commentInput.value;
+    const text = inputValue.trim();
+    const image = state.pendingCommentImage;
+    if (!text && !image) return false;
+    const submissionToken = ++sidebarCommentSubmissionToken;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
+    const cutId = cutlistUIState.active ? getCutlistManager().currentCutId : null;
+    const isCurrentDraft = () => submissionToken === sidebarCommentSubmissionToken &&
+      elements.commentInput.value === inputValue && state.pendingCommentImage === image &&
+      (cutId !== null
+        ? cutlistUIState.active && getCutlistManager().currentCutId === cutId
+        : !cutlistUIState.active && state.currentFile === filePath && videoLoadIntentGeneration === loadIntent);
+    sidebarCommentSubmissionPending = true;
+    try {
+      if (!(await ensureCutlistCommentTargetReady({ shouldContinue: isCurrentDraft })) || !isCurrentDraft()) return false;
+      // 위치가 확정되기 전에는 입력란과 첨부를 보존한다. 취소해도 다시 작성할 수 있다.
+      sidebarCommentDraft = { filePath: state.currentFile, inputValue, text, image };
+      commentManager._pendingImage = image || null;
+      commentManager.setPendingText(text || '(이미지)');
+      if (commentPanelPopout?.isDetached()) window.focus();
+      showToast('영상에서 마커를 찍어주세요 · Esc로 취소', 'info');
+      return true;
+    } finally {
+      if (submissionToken === sidebarCommentSubmissionToken) sidebarCommentSubmissionPending = false;
+    }
+  }
+
+  function handleSidebarCommentEscape(e) {
+    if (e.key !== 'Escape' || (!sidebarCommentSubmissionPending && !state.isCommentMode)) return;
+    if (mentionManager.isVisible) return;
+    e.preventDefault();
+    cancelSidebarCommentDraft();
+    commentManager.setCommentMode(false);
+  }
+  document.addEventListener('keydown', handleSidebarCommentEscape);
 
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
@@ -3195,7 +3243,7 @@ async function initApp() {
 
   // 이미지 버튼 클릭 (파일 선택)
   elements.btnCommentImage?.addEventListener('click', async () => {
-    const imageData = await selectImageFile();
+    const imageData = await selectImageFile(elements.btnCommentImage.ownerDocument);
     if (imageData) {
       showCommentImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
@@ -3251,6 +3299,9 @@ async function initApp() {
   elements.btnCopyLink.addEventListener('click', async () => {
     const bframePath = reviewDataManager.getBframePath();
     const videoPath = reviewDataManager.getVideoPath();
+    const loadIntent = videoLoadIntentGeneration;
+    const isCurrentShare = () => loadIntent === videoLoadIntentGeneration &&
+      bframePath === reviewDataManager.getBframePath() && videoPath === reviewDataManager.getVideoPath();
 
     if (!bframePath) {
       showToast('먼저 파일을 열어주세요.', 'warn');
@@ -3260,17 +3311,24 @@ async function initApp() {
     // #70: .bframe 파일 자동 생성 - 저장되지 않은 변경사항이 있거나 파일이 없으면 저장
     try {
       const fileExists = await window.electronAPI.fileExists(bframePath);
+      if (!isCurrentShare()) return;
       if (!fileExists || reviewDataManager.hasUnsavedChanges()) {
         log.info('링크 복사 전 .bframe 파일 자동 저장', {
           fileExists,
           hasUnsavedChanges: reviewDataManager.hasUnsavedChanges()
         });
-        await reviewDataManager.save();
+        const saved = await reviewDataManager.save();
+        if (!isCurrentShare()) return;
+        if (!saved) {
+          showToast('저장하지 못해 링크를 복사하지 않았습니다. 저장 후 다시 시도하세요.', 'error');
+          return;
+        }
         showToast('.bframe 파일이 자동 저장되었습니다.', 'info');
       }
     } catch (error) {
       log.warn('.bframe 파일 자동 저장 실패', error);
-      // 저장 실패해도 링크 복사는 진행
+      showToast('저장하지 못해 링크를 복사하지 않았습니다. 저장 후 다시 시도하세요.', 'error');
+      return;
     }
 
     // Windows 경로 형식으로 통일 (백슬래시 사용)
@@ -3289,6 +3347,7 @@ async function initApp() {
             storedDriveLinks.videoUrl,
             storedDriveLinks.bframeUrl
           );
+          if (!isCurrentShare()) return;
           if (result.success) {
             webShareUrl = result.webShareUrl;
           }
@@ -3296,6 +3355,7 @@ async function initApp() {
           // 자동으로 Google Drive 파일 ID 추출 시도
           log.info('Google Drive 파일 ID 검색 중...');
           const result = await window.electronAPI.generateGDriveShareLink(videoPath, bframePath);
+          if (!isCurrentShare()) return;
           if (result.success) {
             storedDriveLinks.videoUrl = result.videoUrl;
             storedDriveLinks.bframeUrl = result.bframeUrl;
@@ -3318,7 +3378,9 @@ async function initApp() {
       clipboardContent = `${windowsPath}\n${webShareUrl}\n${fileName}`;
     }
 
+    if (!isCurrentShare()) return;
     await window.electronAPI.copyToClipboard(clipboardContent);
+    if (!isCurrentShare()) return;
 
     if (webShareUrl) {
       showToast('링크가 복사되었습니다! Slack에서 Ctrl+Shift+V로 붙여넣기 (웹 뷰어 링크 포함)', 'success');
@@ -3440,13 +3502,13 @@ async function initApp() {
 
   // 필터 칩 (댓글 목록 필터링)
   function getActiveCommentFilter() {
-    return document.querySelector('.filter-chip.active')?.dataset.filter || 'all';
+    return elements.commentPanel.querySelector('.filter-chip.active')?.dataset.filter || 'all';
   }
 
-  document.querySelectorAll('.filter-chip').forEach(chip => {
+  elements.commentPanel.querySelectorAll('.filter-chip').forEach(chip => {
     chip.addEventListener('click', function() {
       if (this.id === 'authorFilterBtn' || this.id === 'markerToggleBtn') return;
-      document.querySelectorAll('.filter-chip').forEach(c => {
+      elements.commentPanel.querySelectorAll('.filter-chip').forEach(c => {
         if (c.id !== 'authorFilterBtn' && c.id !== 'markerToggleBtn') c.classList.remove('active');
       });
       this.classList.add('active');
@@ -3478,7 +3540,7 @@ async function initApp() {
   }
 
   function updateAuthorFilterMenu() {
-    const menu = document.getElementById('authorFilterMenu');
+    const menu = elements.commentPanel.querySelector('#authorFilterMenu');
     if (!menu) return;
 
     const allMarkers = getAuthorFilterSourceItems();
@@ -3497,7 +3559,7 @@ async function initApp() {
 
     let html = '';
     for (const [authorId, info] of authors) {
-      const color = getAuthorColor(authorId);
+      const color = getCommentAuthorColor(info.name, authorId);
       const isChecked = selectedAll || commentFilterState.authors.includes(authorId);
       html += `
         <div class="filter-dropdown-item" data-author-id="${escapeHtml(authorId)}">
@@ -3526,16 +3588,16 @@ async function initApp() {
     commentFilterState.showMarkers = true;
 
     // UI 초기화
-    document.querySelectorAll('.filter-chip').forEach(c => {
+    elements.commentPanel.querySelectorAll('.filter-chip').forEach(c => {
       if (c.id !== 'authorFilterBtn') {
         c.classList.toggle('active', c.dataset.filter === 'all');
       }
     });
-    const authorBtn = document.getElementById('authorFilterBtn');
+    const authorBtn = elements.commentPanel.querySelector('#authorFilterBtn');
     if (authorBtn) authorBtn.classList.remove('active');
-    const markerBtn = document.getElementById('markerToggleBtn');
+    const markerBtn = elements.commentPanel.querySelector('#markerToggleBtn');
     if (markerBtn) markerBtn.classList.add('active');
-    const menu = document.getElementById('authorFilterMenu');
+    const menu = elements.commentPanel.querySelector('#authorFilterMenu');
     if (menu) menu.classList.remove('open');
   }
 
@@ -3547,9 +3609,9 @@ async function initApp() {
   }
 
   // 작성자 필터 드롭다운 토글
-  document.getElementById('authorFilterBtn')?.addEventListener('click', (e) => {
+  elements.commentPanel.querySelector('#authorFilterBtn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const menu = document.getElementById('authorFilterMenu');
+    const menu = elements.commentPanel.querySelector('#authorFilterMenu');
     const isOpen = menu.classList.contains('open');
     if (isOpen) {
       menu.classList.remove('open');
@@ -3570,11 +3632,12 @@ async function initApp() {
       // 레이아웃 확정 후 overflow 보정
       requestAnimationFrame(() => {
         const rect = menu.getBoundingClientRect();
-        if (rect.bottom > window.innerHeight) {
+        const menuWindow = menu.ownerDocument.defaultView;
+        if (rect.bottom > menuWindow.innerHeight) {
           menu.style.top = 'auto';
           menu.style.bottom = 'calc(100% + 4px)';
         }
-        if (rect.right > window.innerWidth) {
+        if (rect.right > menuWindow.innerWidth) {
           menu.style.left = 'auto';
           menu.style.right = '0';
         }
@@ -3584,11 +3647,11 @@ async function initApp() {
 
   // 작성자 드롭다운 — 마우스 벗어나면 닫기
   let _authorDropdownLeaveTimer = null;
-  const authorWrapper = document.getElementById('authorFilterWrapper');
+  const authorWrapper = elements.commentPanel.querySelector('#authorFilterWrapper');
   if (authorWrapper) {
     authorWrapper.addEventListener('mouseleave', () => {
       _authorDropdownLeaveTimer = setTimeout(() => {
-        const menu = document.getElementById('authorFilterMenu');
+        const menu = elements.commentPanel.querySelector('#authorFilterMenu');
         if (menu) menu.classList.remove('open');
       }, 300); // 300ms 딜레이
     });
@@ -3601,17 +3664,28 @@ async function initApp() {
   }
 
   // 드롭다운 외부 클릭 시 닫기
-  document.addEventListener('click', (e) => {
-    const wrapper = document.getElementById('authorFilterWrapper');
+  function handleCommentMenusOutsideClick(e) {
+    const wrapper = elements.commentPanel.querySelector('#authorFilterWrapper');
     if (wrapper && !wrapper.contains(e.target)) {
-      const menu = document.getElementById('authorFilterMenu');
+      const menu = elements.commentPanel.querySelector('#authorFilterMenu');
       if (menu) menu.classList.remove('open');
     }
-  });
+    const previousMenu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
+    if (previousMenu?.classList.contains('open') && !e.target.closest?.('#prevVersionCommentsWrapper')) {
+      previousMenu.classList.remove('open');
+    }
+    const settingsMenu = elements.commentPanel.querySelector('#commentSettingsDropdown');
+    const settingsButton = elements.commentPanel.querySelector('#btnCommentSettings');
+    if (!settingsMenu?.contains(e.target) && !settingsButton?.contains(e.target)) {
+      settingsMenu?.classList.remove('open');
+      settingsButton?.classList.remove('active');
+    }
+  }
+  document.addEventListener('click', handleCommentMenusOutsideClick);
 
   // 피드백 36: 이전 버전 댓글 보기 드롭다운
   function renderPrevVersionCommentsMenu() {
-    const menu = document.getElementById('prevVersionCommentsMenu');
+    const menu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
     if (!menu) return;
     const versions = getVersionManager().getAllVersions()
       .filter((v) => v?.path && !isSameFilePath(v.path, state.currentFile));
@@ -3634,23 +3708,16 @@ async function initApp() {
     });
   }
 
-  document.getElementById('prevVersionCommentsBtn')?.addEventListener('click', (e) => {
+  elements.commentPanel.querySelector('#prevVersionCommentsBtn')?.addEventListener('click', (e) => {
     e.stopPropagation();
-    const menu = document.getElementById('prevVersionCommentsMenu');
+    const menu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
     if (!menu) return;
     renderPrevVersionCommentsMenu();
     menu.classList.toggle('open');
   });
 
-  document.addEventListener('click', (e) => {
-    const menu = document.getElementById('prevVersionCommentsMenu');
-    if (menu?.classList.contains('open') && !e.target.closest('#prevVersionCommentsWrapper')) {
-      menu.classList.remove('open');
-    }
-  });
-
   // 작성자 선택/해제 (체크박스 토글 + 이름 솔로)
-  document.getElementById('authorFilterMenu')?.addEventListener('click', (e) => {
+  elements.commentPanel.querySelector('#authorFilterMenu')?.addEventListener('click', (e) => {
     e.stopPropagation(); // 드롭다운 닫힘 방지
 
     const item = e.target.closest('.filter-dropdown-item');
@@ -3696,16 +3763,16 @@ async function initApp() {
     updateAuthorFilterMenu();
     applyCommentFilters();
 
-    const btn = document.getElementById('authorFilterBtn');
+    const btn = elements.commentPanel.querySelector('#authorFilterBtn');
     if (btn) {
       btn.classList.toggle('active', commentFilterState.authors !== null);
     }
   });
 
   // 뷰포트 마커 토글
-  document.getElementById('markerToggleBtn')?.addEventListener('click', () => {
+  elements.commentPanel.querySelector('#markerToggleBtn')?.addEventListener('click', () => {
     commentFilterState.showMarkers = !commentFilterState.showMarkers;
-    const btn = document.getElementById('markerToggleBtn');
+    const btn = elements.commentPanel.querySelector('#markerToggleBtn');
     btn.classList.toggle('active', commentFilterState.showMarkers);
     applyCommentFilters();
   });
@@ -3843,14 +3910,6 @@ async function initApp() {
     e.stopPropagation();
     commentSettingsDropdown?.classList.toggle('open');
     btnCommentSettings.classList.toggle('active', commentSettingsDropdown?.classList.contains('open'));
-  });
-
-  // 드롭다운 외부 클릭 시 닫기
-  document.addEventListener('click', (e) => {
-    if (!commentSettingsDropdown?.contains(e.target) && e.target !== btnCommentSettings) {
-      commentSettingsDropdown?.classList.remove('open');
-      btnCommentSettings?.classList.remove('active');
-    }
   });
 
   // 드롭다운 내부 클릭 시 이벤트 버블링 방지
@@ -5209,7 +5268,7 @@ async function initApp() {
       // 색상 (작성자 색상 기반)
       const rangeMarker = commentManager.getMarker(comment.markerId);
       const authorColorInfo = rangeMarker
-        ? getAuthorColor(rangeMarker.authorId || rangeMarker.author || 'unknown')
+        ? getCommentAuthorColor(rangeMarker.author, rangeMarker.authorId)
         : { color: comment.color || '#4a9eff' };
       const color = authorColorInfo.color;
       bar.style.left = `${leftPercent}%`;
@@ -6058,6 +6117,7 @@ async function initApp() {
   let pendingMpvReviewFreezeMediaChange = null;
   const mpvReviewFrameTracker = createMpvReviewFrameTracker();
   const mpvReviewFreezeCaptureOwner = createSharedAsyncCaptureOwner();
+  let mpvReviewFreezeContentRevision = 0;
   const mpvReviewFreezeRefreshScheduler = createCoalescedAsyncScheduler({
     delayMs: 160,
     shouldRun: () => isMpvReviewInteractionActive() && isMpvPilotPlaybackActive(),
@@ -6255,6 +6315,10 @@ async function initApp() {
   // ====== 댓글 패널 토글 ======
 
   elements.commentPanelToggle?.addEventListener('click', () => {
+    if (commentPanelPopout?.isDetached()) {
+      commentPanelPopout.focus();
+      return;
+    }
     const isCollapsed = elements.commentPanel?.classList.toggle('collapsed');
     elements.commentPanelToggle?.classList.toggle('collapsed', isCollapsed);
     elements.panelResizer?.classList.toggle('hidden', isCollapsed);
@@ -6850,11 +6914,45 @@ async function initApp() {
     }
   }
 
+  let reviewDrawingFreezeRendererPromise = null;
+
+  function loadReviewDrawingFreezeRenderer() {
+    if (window.BAEReviewDrawingFreeze) return Promise.resolve(window.BAEReviewDrawingFreeze);
+    if (!reviewDrawingFreezeRendererPromise) {
+      reviewDrawingFreezeRendererPromise = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = './scripts/lib/review-drawing-freeze.iife.js';
+        script.onload = () => {
+          if (window.BAEReviewDrawingFreeze) resolve(window.BAEReviewDrawingFreeze);
+          else reject(new Error('드로잉 정지 프레임 모듈을 초기화하지 못했습니다.'));
+        };
+        script.onerror = () => reject(new Error('드로잉 정지 프레임 모듈을 불러오지 못했습니다.'));
+        document.head.appendChild(script);
+      }).catch(error => {
+        reviewDrawingFreezeRendererPromise = null;
+        throw error;
+      });
+    }
+    return reviewDrawingFreezeRendererPromise;
+  }
+
+  async function captureMpvReviewFrameWithDrawings() {
+    if (!window.electronAPI?.mpvScreenshot) throw new Error('mpv screenshot API unavailable');
+    const keyframe = fabricDrawingPersistenceStore.resolveKeyframeAtFrame(videoPlayer.currentFrame);
+    const layers = reviewDataManager.getDrawingLayers();
+    const screenshot = await window.electronAPI.mpvScreenshot();
+    if (!screenshot?.success || !keyframe?.objects?.length) return screenshot;
+    const renderer = await loadReviewDrawingFreezeRenderer();
+    const dataUrl = await renderer.composite(screenshot.dataUrl, keyframe, layers);
+    return { ...screenshot, dataUrl };
+  }
+
   async function showMpvReviewFreezeFrame() {
     if (!isMpvPilotPlaybackActive() || !isMpvReviewInteractionActive()) return false;
 
     return mpvReviewFreezeCaptureOwner.capture(async () => {
       const token = ++mpvReviewFreezeToken;
+      const contentRevision = mpvReviewFreezeContentRevision;
       const captureFrameSnapshot = captureCurrentMpvReviewFrameTarget();
       const hadValidFrame = Boolean(
         mpvReviewFreezeElement &&
@@ -6869,10 +6967,7 @@ async function initApp() {
       try {
         return await runMpvReviewFreezeCapture({
           captureFrame: async () => {
-            if (!window.electronAPI?.mpvScreenshot) {
-              throw new Error('mpv screenshot API unavailable');
-            }
-            return window.electronAPI.mpvScreenshot();
+            return captureMpvReviewFrameWithDrawings();
           },
           createCandidate: dataUrl => {
             const candidate = new Image();
@@ -6884,6 +6979,7 @@ async function initApp() {
           decodeCandidate: candidate => candidate.decode(),
           isCurrent: () => (
             token === mpvReviewFreezeToken &&
+            contentRevision === mpvReviewFreezeContentRevision &&
             isMpvReviewInteractionActive() &&
             mpvReviewFrameTracker.isCurrent(
               captureFrameSnapshot,
@@ -7113,6 +7209,13 @@ async function initApp() {
     mpvReviewFreezeElement = null;
     mpvReviewFreezeFrameSnapshot = null;
     mpvReviewTargetFrameSnapshot = null;
+  }
+
+  function invalidateMpvReviewFreezeContent() {
+    // 초기 캡처도 scheduler 밖에서 같은 promise를 공유한다. 대기 중 변경은
+    // 그 캡처를 stale로 만들어, 합류한 refresh가 완료 뒤 최신 내용을 다시 요청하게 한다.
+    mpvReviewFreezeContentRevision += 1;
+    scheduleMpvReviewFreezeRefresh();
   }
 
   function scheduleMpvReviewFreezeRefresh() {
@@ -8324,6 +8427,7 @@ async function initApp() {
     // 때까지 다 보인다. 토글 자체는 여전히 그리기 모드에서만 받는다 — passive
     // 는 저장된 상태를 **적용만** 한다.
     if (!shouldSuppressLegacyDrawingForFabricPilot()) return;
+    if (state.isCommentMode && isMpvPilotPlaybackActive()) invalidateMpvReviewFreezeContent();
     Promise.resolve(fabricDrawingPilotController.sendLayerView(fabricPilotLayerViewSets()))
       .catch(() => {});
   }
@@ -8338,6 +8442,7 @@ async function initApp() {
 
   let fabricPilotTimelineRenderQueued = false;
   fabricDrawingPersistenceStore.subscribe(() => {
+    if (state.isCommentMode && isMpvPilotPlaybackActive()) invalidateMpvReviewFreezeContent();
     if (fabricPilotTimelineRenderQueued) return;
     fabricPilotTimelineRenderQueued = true;
     requestAnimationFrame(() => {
@@ -8566,24 +8671,46 @@ async function initApp() {
     if (!userSettings.getHybridReviewEngine()) return false;
     if (!isMpvPilotPlaybackActive()) return false;
     if (state.isAudioMode || !state.currentFile) return false;
-    if (!(await isHtml5DirectPlayableForReview(state.currentFile))) return false;
+    // HTML5 레거시 캔버스는 V3 획과 레이어를 표시하지 못하므로 기존 mpv 호스트를 유지한다.
+    if (fabricDrawingPersistenceStore.getStatus().keyframeCount > 0) return false;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
+    const commentToken = commentModePreparationToken;
+    const drawToken = drawModePreparationToken;
+    const isCurrentRequest = () => filePath === state.currentFile &&
+      loadIntent === videoLoadIntentGeneration &&
+      commentToken === commentModePreparationToken && drawToken === drawModePreparationToken &&
+      isMpvReviewInteractionActive();
 
     hybridReviewSwapInFlight = true;
     try {
+      if (!(await isHtml5DirectPlayableForReview(filePath)) || !isCurrentRequest()) return false;
+      if (fabricDrawingPersistenceStore.getStatus().keyframeCount > 0) return false;
       const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
-      const swapped = await loadVideoWithHtml5Fallback(state.currentFile, {
+      // 로딩 도중 취소해 false로 끝나더라도 이미 바뀐 HTML5 엔진을 되돌릴 수 있어야 한다.
+      hybridReviewResumeMpvFile = filePath;
+      const swapped = await loadVideoWithHtml5Fallback(filePath, {
         keepVersionContext: true,
         engineSwap: true,
+        videoLoadIntent: loadIntent,
+        shouldContinue: isCurrentRequest,
         initialFrame: resumeFrame,
         playWhenMediaReady: false
       }, { skipReviewTransition: true });
-      if (swapped) hybridReviewResumeMpvFile = state.currentFile;
-      return swapped;
+      if (swapped && filePath === state.currentFile && loadIntent === videoLoadIntentGeneration) {
+        hybridReviewResumeMpvFile = filePath;
+      }
+      if (!swapped && filePath === state.currentFile && loadIntent === videoLoadIntentGeneration &&
+        videoPlayer.engine === 'html5' && resumeFrame !== null) {
+        videoPlayer.seekToFrame(resumeFrame);
+      }
+      return swapped && isCurrentRequest();
     } catch (error) {
       log.warn('하이브리드 진입 실패 — freeze 방식으로 폴백', { error: error?.message });
       return false;
     } finally {
       hybridReviewSwapInFlight = false;
+      if (!isCurrentRequest()) void exitHybridReviewEngineIfNeeded();
     }
   }
 
@@ -8597,13 +8724,18 @@ async function initApp() {
     // 로드 시작 직후의 좁은 경합 창까지 닫는다. 별도 토큰 가드는 두지 않는다.
     if (videoPlayer.engine === 'html5' && hybridReviewResumeMpvFile === state.currentFile) {
       hybridReviewSwapInFlight = true;
+      const filePath = state.currentFile;
+      const loadIntent = videoLoadIntentGeneration;
       const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
       const resumePlayback = videoPlayer.isPlaying === true;
       try {
-        await loadVideo(state.currentFile, {
+        await loadVideo(filePath, {
           allowMpvPilot: true,
           keepVersionContext: true,
           engineSwap: true,
+          videoLoadIntent: loadIntent,
+          shouldContinue: () => filePath === state.currentFile && loadIntent === videoLoadIntentGeneration &&
+            !isMpvReviewInteractionActive(),
           initialFrame: resumeFrame,
           playWhenMediaReady: resumePlayback
         });
@@ -8613,7 +8745,9 @@ async function initApp() {
         hybridReviewSwapInFlight = false;
       }
     }
-    hybridReviewResumeMpvFile = null;
+    if (videoPlayer.engine !== 'html5' || hybridReviewResumeMpvFile !== state.currentFile) {
+      hybridReviewResumeMpvFile = null;
+    }
   }
 
   async function fallbackFromMpvOverlayRecoveryFailure(owner, filePath, error) {
@@ -9746,6 +9880,7 @@ async function initApp() {
     return {
       revision: ++mpvOverlayCollaborationRevision,
       theme: document.documentElement.classList.contains('light-mode') ? 'light' : 'dark',
+      accentColor: getComputedStyle(document.documentElement).getPropertyValue('--accent-primary').trim() || '#ffd000',
       indicator: {
         ...indicator,
         badge: getMpvCollaborationBadge(),
@@ -10764,6 +10899,7 @@ async function initApp() {
       state.currentFile = filePath;
       if (pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
       elements.fileName.textContent = fileInfo.name;
+      elements.fileName.title = filePath;
       elements.fileName.classList.remove('file-name-clickable'); // 파일 로드 후 클릭 가능 상태 제거
       elements.filePath.textContent = fileInfo.dir;
       elements.dropZone.classList.add('hidden');
@@ -11210,7 +11346,7 @@ async function initApp() {
         const { time, dataUrl } = detail;
         if (!dataUrl || typeof time !== 'number') return;
         const frame = Math.round(time * (videoPlayer.fps || 24));
-        document.querySelectorAll(
+        elements.commentsList.querySelectorAll(
           `.comment-item[data-start-frame="${frame}"] .comment-thumbnail`
         ).forEach(img => { img.src = dataUrl; });
       };
@@ -11980,7 +12116,7 @@ async function initApp() {
     const markerEl = document.createElement('div');
     markerEl.className = `comment-marker${marker.resolved ? ' resolved' : ''}`;
     markerEl.dataset.markerId = marker.id;
-    const authorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
+    const authorColor = getCommentAuthorColor(marker.author, marker.authorId);
     markerEl.style.cssText = `
       position: absolute;
       left: ${marker.x * 100}%;
@@ -12368,6 +12504,19 @@ async function initApp() {
   /**
    * 댓글 목록 업데이트 (사이드 패널)
    */
+
+  /**
+   * 지정된 이름/등록 테마 색상을 우선하고, 미지정 작성자는 기존 ID 색상을 유지한다.
+   * 작성자 강조색 전용이며 개별 마커·타임라인 색상은 변경하지 않는다.
+   */
+  function getCommentAuthorColor(author, authorId) {
+    const color = typeof author === 'string' ? userSettings.getColorForName(author) : null;
+    if (typeof color === 'string' && /^#[0-9a-f]{6}$/i.test(color)) {
+      const [red, green, blue] = color.slice(1).match(/.{2}/g).map(channel => parseInt(channel, 16));
+      return { color, bgColor: `rgba(${red}, ${green}, ${blue}, 0.3)` };
+    }
+    return getAuthorColor(authorId || author || 'unknown');
+  }
 
   /**
    * 이름에 따른 색상 클래스 반환
@@ -13018,7 +13167,7 @@ async function initApp() {
       const key = getPlaylistAggregateCommentKey(range);
       const title = escapeHtmlAttribute(formatPlaylistCommentPanelLine(range));
       const author = range.author || '알 수 없음';
-      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const authorColor = getCommentAuthorColor(author, range.authorId);
       const replyCount = range.replies?.length || 0;
       const repliesExpanded = playlistExpandedReplyKeys.has(key);
       const repliesHtml = renderPlaylistAggregateReplies(range, normalizedSearch);
@@ -13110,7 +13259,7 @@ async function initApp() {
         try {
           await togglePlaylistAggregateResolved(item.dataset.aggregateCommentKey);
         } finally {
-          if (document.contains(resolveBtn)) resolveBtn.disabled = false;
+          if (resolveBtn.isConnected) resolveBtn.disabled = false;
         }
       });
 
@@ -13127,7 +13276,7 @@ async function initApp() {
         try {
           await submitPlaylistAggregateReply(item.dataset.aggregateCommentKey, replyInput);
         } finally {
-          if (document.contains(submitBtn)) submitBtn.disabled = false;
+          if (submitBtn.isConnected) submitBtn.disabled = false;
         }
       });
 
@@ -13291,7 +13440,7 @@ async function initApp() {
       const key = getCutlistAggregateCommentKey(range);
       const title = escapeHtmlAttribute(formatCutlistCommentPanelLine(range));
       const author = range.author || '알 수 없음';
-      const authorColor = getAuthorColor(range.authorId || author || 'unknown');
+      const authorColor = getCommentAuthorColor(author, range.authorId);
       const replyCount = range.replies?.length || 0;
 
       return `
@@ -13362,6 +13511,56 @@ async function initApp() {
     });
   }
 
+  function getFilteredCurrentCommentMarkers(filter = getActiveCommentFilter()) {
+    let markers = commentManager.getAllMarkers();
+    if (filter === 'unresolved') markers = markers.filter(marker => !marker.resolved);
+    else if (filter === 'resolved') markers = markers.filter(marker => marker.resolved);
+    markers = filterByAuthors(markers);
+    const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
+    return normalizedSearch
+      ? markers.filter(marker => markerMatchesCommentSearch(marker, normalizedSearch))
+      : markers;
+  }
+
+  async function navigateVisibleComment(direction) {
+    const label = direction < 0 ? '이전' : '다음';
+    const isContinuous = playlistUIState.mode === 'continuous';
+    if (isContinuous || cutlistUIState.active) {
+      const search = normalizeCommentSearch(commentSearchKeyword);
+      const ranges = isContinuous
+        ? filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, getActiveCommentFilter(), search)
+        : filterCutlistAggregateCommentRanges(cutlistAggregateCommentRanges, getActiveCommentFilter(), search);
+      const currentTime = Number(timeline.currentTime) || 0;
+      const candidates = ranges.filter(range => direction < 0
+        ? range.globalStartTime < currentTime - 0.0001
+        : range.globalStartTime > currentTime + 0.0001);
+      const range = direction < 0 ? candidates[candidates.length - 1] : candidates[0];
+      if (!range) {
+        showToast(`${label} 댓글이 없습니다`, 'info');
+        return;
+      }
+      if (isContinuous) await openPlaylistAggregateComment(getPlaylistAggregateCommentKey(range));
+      else await openCutlistAggregateComment(getCutlistAggregateCommentKey(range));
+      timeline.scrollToPlayhead();
+      return;
+    }
+    if (!videoPlayer.duration) {
+      showToast('영상을 먼저 로드하세요', 'warn');
+      return;
+    }
+    const markers = getFilteredCurrentCommentMarkers();
+    const currentFrame = videoPlayer.currentFrame || 0;
+    const frame = direction < 0
+      ? commentManager.getPrevMarkerFrame(currentFrame, markers)
+      : commentManager.getNextMarkerFrame(currentFrame, markers);
+    if (frame === null) {
+      showToast(`${label} 댓글이 없습니다`, 'info');
+      return;
+    }
+    videoPlayer.seekToFrame(frame);
+    timeline.scrollToPlayhead();
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
@@ -13378,27 +13577,13 @@ async function initApp() {
 
     // 확장 상태 및 스크롤 위치 보존
     const expandedIds = new Set(
-      [...container.querySelectorAll('.comment-thread-toggle.expanded')]
+      [...container.querySelectorAll('.comment-thread-toggle.expanded, .comment-replies.expanded')]
         .map(el => el.dataset.markerId)
     );
     const savedScrollTop = container.scrollTop;
 
-    let markers = commentManager.getAllMarkers();
-
-    // 필터 적용
-    if (filter === 'unresolved') {
-      markers = markers.filter(m => !m.resolved);
-    } else if (filter === 'resolved') {
-      markers = markers.filter(m => m.resolved);
-    }
-
-    // 작성자 필터 적용
-    markers = filterByAuthors(markers);
-
+    const markers = getFilteredCurrentCommentMarkers(filter);
     const normalizedSearch = normalizeCommentSearch(commentSearchKeyword);
-    if (normalizedSearch) {
-      markers = markers.filter((marker) => markerMatchesCommentSearch(marker, normalizedSearch));
-    }
 
     // 개수 업데이트
     const allMarkers = commentManager.getAllMarkers();
@@ -13460,7 +13645,7 @@ async function initApp() {
     container.innerHTML = markers.map(marker => {
       const authorClass = getAuthorColorClass(marker.author);
       const authorStyle = getAuthorColorStyle(marker.author);
-      const markerAuthorColor = getAuthorColor(marker.authorId || marker.author || 'unknown');
+      const markerAuthorColor = getCommentAuthorColor(marker.author, marker.authorId);
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
@@ -13804,7 +13989,7 @@ async function initApp() {
       // 답글 이미지 버튼 클릭
       replyImageBtn?.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const imageData = await selectImageFile();
+        const imageData = await selectImageFile(replyImageBtn.ownerDocument);
         if (imageData) {
           showReplyImagePreview(imageData);
           showToast('이미지가 첨부되었습니다', 'success');
@@ -13934,7 +14119,7 @@ async function initApp() {
     const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
     if (commentItem) {
       // 댓글 패널 열기
-      const commentPanel = document.getElementById('commentPanel');
+      const commentPanel = elements.commentPanel;
       commentPanel?.classList.add('open');
 
       // 스크롤
@@ -13967,7 +14152,7 @@ async function initApp() {
     const commentItem = container.querySelector(`.comment-item[data-marker-id="${markerId}"]`);
     if (commentItem) {
       // 댓글 패널 열기
-      const commentPanel = document.getElementById('commentPanel');
+      const commentPanel = elements.commentPanel;
       commentPanel?.classList.add('open');
 
       // 스크롤
@@ -14523,7 +14708,7 @@ async function initApp() {
   }
 
   // G:/ 드라이브 경로 버튼 클릭 이벤트 위임 (전역)
-  document.body.addEventListener('click', (e) => {
+  function handleDriveLinkClick(e) {
     const btn = e.target.closest('.gdrive-link-btn');
     if (btn) {
       e.preventDefault();
@@ -14533,7 +14718,8 @@ async function initApp() {
         window.electronAPI.showInFolder(path);
       }
     }
-  });
+  }
+  document.body.addEventListener('click', handleDriveLinkClick);
 
   /**
    * 리사이저 설정 (마우스 커서 추적 개선)
@@ -14598,7 +14784,7 @@ async function initApp() {
   async function handleKeydown(e) {
     if (document.querySelector('.shortcut-key-btn.capturing')) return;
 
-    const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, document);
+    const shortcutTarget = getEffectiveKeyboardShortcutTarget(e, e.target?.ownerDocument || document);
     // 한글 IME는 편집 대상이 없어도 알파벳 키를 keyCode 229 / key 'Process'로 올린다.
     // 아래 분기는 전부 e.code(물리 키 위치)로 판정하므로, 조합 게이트는 실제로 글자가
     // 들어가는 텍스트 입력 대상에만 적용한다.
@@ -15417,99 +15603,119 @@ async function initApp() {
   });
 
   // ====== 앱 종료 전 저장 처리 ======
-  let saveBeforeQuitInProgress = false;
-  window.electronAPI.onRequestSaveBeforeQuit(async () => {
-    if (saveBeforeQuitInProgress) return;
-    saveBeforeQuitInProgress = true;
-    log.info('앱 종료 전 저장 요청 수신');
-    const savingOverlay = document.getElementById('appSavingOverlay');
-    savingOverlay?.classList.add('active');
-    const fabricPersistenceReadyToLeave =
-      await fabricDrawingPilotController.preparePersistenceForQuit();
-    if (!fabricPersistenceReadyToLeave) {
-      const forceQuit = confirm(
-        '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
-      );
-      if (forceQuit) {
-        await window.electronAPI.confirmQuit();
-      } else {
-        savingOverlay?.classList.remove('active');
-        await window.electronAPI.cancelQuit();
+  let reviewQuitWork = Promise.resolve();
+  const reviewQuitAttempts = new Map();
+
+  function resumeCancelledQuit(attempt) {
+    if (attempt.recovery) return attempt.recovery;
+    attempt.recovery = (async () => {
+      // The caller waits for the attempt's save/preparation before releasing input.
+      try {
         await fabricDrawingPilotController.resumeAfterQuitCancelled();
-        saveBeforeQuitInProgress = false;
+      } finally {
+        if (attempt.autoSavePaused) reviewDataManager.resumeAutoSave();
+        attempt.savingOverlay?.classList.remove('active');
       }
-      return;
-    }
-
-    reviewDataManager.pauseAutoSave();
-    await reviewDataManager.waitForPendingSave();
-
-    // 협업 세션 종료 (presence 제거)
-    commentSync.stop();
-    drawingSync.stop();
-    fabricDrawingSync.stop();
-    try {
-      await liveblocksManager.stop();
-    } catch (error) {
-      log.warn('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행', {
-        error: error.message
-      });
-    }
-
-    // 미저장 변경사항 확인
-    if (!reviewDataManager.hasUnsavedChanges()) {
-      log.info('저장할 변경사항 없음, 바로 종료');
-      await window.electronAPI.confirmQuit();
-      return;
-    }
-
-    try {
-      log.info('종료 전 저장 시작');
-      const saved = await reviewDataManager.save();
-
-      if (saved) {
-        log.info('저장 완료, 앱 종료 진행');
-        await window.electronAPI.confirmQuit();
-      } else {
-        // 저장 실패 - 사용자 선택
-        savingOverlay?.classList.remove('active');
-        const forceQuit = confirm(
-          '저장에 실패했습니다.\n\n저장하지 않고 종료하시겠습니까?'
-        );
-        if (forceQuit) {
-          await window.electronAPI.confirmQuit();
-        } else {
-          await window.electronAPI.cancelQuit();
-          await fabricDrawingPilotController.resumeAfterQuitCancelled();
-          reviewDataManager.resumeAutoSave();
-          await startCollaborationForVideoLoad(
-            latestVideoLoadToken,
-            reviewDataManager.currentBframePath,
-            { persistNewRoom: false, seedCurrentState: false }
-          );
-          saveBeforeQuitInProgress = false;
-        }
-      }
-    } catch (error) {
-      log.error('종료 전 저장 오류', error);
-      savingOverlay?.classList.remove('active');
-      const forceQuit = confirm(
-        `저장 중 오류가 발생했습니다: ${error.message}\n\n저장하지 않고 종료하시겠습니까?`
-      );
-      if (forceQuit) {
-        await window.electronAPI.confirmQuit();
-      } else {
-        await window.electronAPI.cancelQuit();
-        await fabricDrawingPilotController.resumeAfterQuitCancelled();
-        reviewDataManager.resumeAutoSave();
+      if (attempt.collaborationStopped) {
         await startCollaborationForVideoLoad(
           latestVideoLoadToken,
           reviewDataManager.currentBframePath,
           { persistNewRoom: false, seedCurrentState: false }
         );
-        saveBeforeQuitInProgress = false;
       }
-    }
+      reviewQuitAttempts.delete(attempt.id);
+    })();
+    return attempt.recovery;
+  }
+
+  window.electronAPI.onQuitAborted((attemptId) => {
+    const attempt = reviewQuitAttempts.get(attemptId);
+    if (!attempt) return reviewQuitWork;
+    attempt.cancelled = true;
+    const recovery = reviewQuitWork.then(() => resumeCancelledQuit(attempt));
+    reviewQuitWork = recovery.catch((error) => log.error('종료 취소 후 복구 실패', error));
+    return recovery;
+  });
+
+  window.electronAPI.onRequestSaveBeforeQuit(async (attemptId) => {
+    if (!Number.isSafeInteger(attemptId) || reviewQuitAttempts.has(attemptId)) return;
+    const attempt = {
+      id: attemptId, cancelled: false, autoSavePaused: false, collaborationStopped: false,
+      savingOverlay: document.getElementById('appSavingOverlay'), recovery: null
+    };
+    reviewQuitAttempts.set(attemptId, attempt);
+    // A new attempt waits for the cancelled attempt's save and input recovery.
+    const work = reviewQuitWork.then(async () => {
+      if (attempt.cancelled) return;
+      log.info('앱 종료 전 저장 요청 수신', { attemptId });
+      attempt.savingOverlay?.classList.add('active');
+      const cancel = async () => {
+        attempt.cancelled = true;
+        await window.electronAPI.cancelQuit(attemptId);
+      };
+      try {
+        const fabricPersistenceReadyToLeave =
+          await fabricDrawingPilotController.preparePersistenceForQuit();
+        if (attempt.cancelled) return;
+        if (!fabricPersistenceReadyToLeave) {
+          const forceQuit = confirm(
+            '새 드로잉의 최신 상태를 저장할 수 없습니다.\n\n저장하지 않고 종료하시겠습니까?'
+          );
+          if (forceQuit) await window.electronAPI.confirmQuit(attemptId);
+          else await cancel();
+          return;
+        }
+
+        reviewDataManager.pauseAutoSave();
+        attempt.autoSavePaused = true;
+        await reviewDataManager.waitForPendingSave();
+        if (attempt.cancelled) return;
+
+        // 협업 세션 종료 (presence 제거)
+        attempt.collaborationStopped = true;
+        commentSync.stop();
+        drawingSync.stop();
+        fabricDrawingSync.stop();
+        try {
+          await liveblocksManager.stop();
+        } catch (error) {
+          log.warn('종료 전 협업 세션 정리 실패, 로컬 저장 계속 진행', {
+            error: error.message
+          });
+        }
+        if (attempt.cancelled) return;
+
+        if (!reviewDataManager.hasUnsavedChanges()) {
+          log.info('저장할 변경사항 없음, 바로 종료');
+          await window.electronAPI.confirmQuit(attemptId);
+          return;
+        }
+        log.info('종료 전 저장 시작');
+        const saved = await reviewDataManager.save();
+        if (attempt.cancelled) return;
+        if (saved) {
+          log.info('저장 완료, 앱 종료 진행');
+          await window.electronAPI.confirmQuit(attemptId);
+        } else {
+          attempt.savingOverlay?.classList.remove('active');
+          if (confirm('저장에 실패했습니다.\n\n저장하지 않고 종료하시겠습니까?')) {
+            await window.electronAPI.confirmQuit(attemptId);
+          } else await cancel();
+        }
+      } catch (error) {
+        if (!attempt.cancelled) {
+          log.error('종료 전 저장 오류', error);
+          attempt.savingOverlay?.classList.remove('active');
+          if (confirm(`저장 중 오류가 발생했습니다: ${error.message}\n\n저장하지 않고 종료하시겠습니까?`)) {
+            await window.electronAPI.confirmQuit(attemptId);
+          } else await cancel();
+        }
+      } finally {
+        if (attempt.cancelled) await resumeCancelledQuit(attempt);
+      }
+    });
+    reviewQuitWork = work.catch((error) => log.error('종료 저장 처리 실패', error));
+    return work;
   });
 
   // ====== 사용자 이름 초기화 ======
@@ -15892,8 +16098,9 @@ async function initApp() {
   // 앱 설정 열기 버튼
   btnAppSettings?.addEventListener('click', () => {
     // 드롭다운 닫기
-    const dropdown = document.getElementById('commentSettingsDropdown');
-    if (dropdown) dropdown.classList.remove('show');
+    const dropdown = elements.commentPanel.querySelector('#commentSettingsDropdown');
+    if (dropdown) dropdown.classList.remove('open');
+    elements.commentPanel.querySelector('#btnCommentSettings')?.classList.remove('active');
     openAppSettingsModal();
   });
 
@@ -16203,6 +16410,10 @@ async function initApp() {
   _applyToastPosition(userSettings.getToastPosition());
 
   // ====== 테마 설정 (앱 설정 모달) ======
+  userSettings.addEventListener('themeChanged', () => {
+    scheduleMpvOverlayCollaborationStateSync({ force: true });
+  });
+
   // 라이트 모드 토글
   const lightModeToggle = document.getElementById('appSettingsLightMode');
   function _applyLightMode(enabled) {
@@ -16249,11 +16460,15 @@ async function initApp() {
   let _previousFocusElement = null;
 
   function saveFocus() {
-    _previousFocusElement = document.activeElement;
+    const panelDocument = elements.commentPanel.ownerDocument;
+    _previousFocusElement = panelDocument !== document && panelDocument.hasFocus()
+      ? panelDocument.activeElement
+      : document.activeElement;
   }
 
   function restoreFocus() {
-    if (_previousFocusElement && document.contains(_previousFocusElement)) {
+    if (_previousFocusElement?.isConnected) {
+      _previousFocusElement.ownerDocument.defaultView?.focus();
       _previousFocusElement.focus();
       _previousFocusElement = null;
     }
@@ -17165,7 +17380,7 @@ async function initApp() {
 
   // 스레드 이미지 버튼 클릭
   threadImageBtn?.addEventListener('click', async () => {
-    const imageData = await selectImageFile();
+    const imageData = await selectImageFile(threadImageBtn.ownerDocument);
     if (imageData) {
       showThreadImagePreview(imageData);
       showToast('이미지가 첨부되었습니다', 'success');
@@ -17236,7 +17451,7 @@ async function initApp() {
   });
 
   // 댓글/스레드 이미지 클릭 이벤트 위임
-  document.addEventListener('click', (e) => {
+  function handleCommentImageClick(e) {
     // 댓글 이미지 클릭
     const commentImg = e.target.closest('.comment-attached-image img');
     if (commentImg) {
@@ -17252,7 +17467,49 @@ async function initApp() {
       openImageViewer(threadImg.dataset.fullImage || threadImg.src);
       return;
     }
-  });
+  }
+  document.addEventListener('click', handleCommentImageClick);
+
+  function installCommentPopoutDocument(childWindow) {
+    const childDocument = childWindow.document;
+    const bindings = [
+      ['keydown', handleKeydown, true],
+      ['keyup', handleKeyup, true],
+      ['keydown', handleSidebarCommentEscape, false],
+      ['click', handleCommentMenusOutsideClick, false],
+      ['click', handleCommentImageClick, false],
+      ['click', handleDriveLinkClick, false]
+    ];
+    for (const [type, listener, capture] of bindings) childDocument.addEventListener(type, listener, capture);
+
+    // 설정·스레드·이미지 모달은 메인 창에 있으므로 열리는 순간 그 창을 보여준다.
+    // 모달 안의 내용 변경만으로 포커스를 반복해서 빼앗지 않는다.
+    const modals = [...document.querySelectorAll('.modal-overlay, .thread-overlay, .image-viewer-overlay')];
+    const isOpen = modal => modal.classList.contains('active') || modal.classList.contains('open');
+    const visibility = new Map(modals.map(modal => [modal, isOpen(modal)]));
+    const modalObserver = new MutationObserver(records => {
+      for (const { target } of records) {
+        const open = isOpen(target);
+        if (open && !visibility.get(target)) window.focus();
+        visibility.set(target, open);
+      }
+    });
+    for (const modal of modals) modalObserver.observe(modal, { attributes: true, attributeFilter: ['class'] });
+
+    const clearChildKeyboardState = () => {
+      suppressPlayPauseShortcutKeyup = false;
+      state.isSpaceHeld = false;
+      state.spacePanUsed = false;
+      elements.videoWrapper?.classList.remove('space-pan');
+    };
+    childWindow.addEventListener('blur', clearChildKeyboardState);
+    return () => {
+      for (const [type, listener, capture] of bindings) childDocument.removeEventListener(type, listener, capture);
+      childWindow.removeEventListener('blur', clearChildKeyboardState);
+      modalObserver.disconnect();
+      clearChildKeyboardState();
+    };
+  }
 
   // 전역 노출
   window.openImageViewer = openImageViewer;
@@ -18854,7 +19111,7 @@ async function initApp() {
         updateTimelineMarkers();
 
         // 편집 중이 아닐 때만 댓글 목록 업데이트
-        const isEditingComment = document.querySelector('.comment-edit-form[style*="display: block"]');
+        const isEditingComment = elements.commentsList.querySelector('.comment-edit-form[style*="display: block"]');
         if (!isEditingComment) {
           updateCommentList();
         }
@@ -20431,6 +20688,13 @@ async function initApp() {
   }
 
   function initCutlistFeature() {
+    elements.btnOpenEditor?.addEventListener('click', async () => {
+      try {
+        await window.electronAPI.openEditor();
+      } catch (error) {
+        showToast(`영상 편집창을 열 수 없습니다: ${error.message}`, 'error');
+      }
+    });
     const cutlistManager = getCutlistManager();
 
     cutlistManager.onCutlistLoaded = () => {
@@ -21095,7 +21359,8 @@ async function initApp() {
     return source;
   }
 
-  async function ensureCutlistCommentTargetReady() {
+  async function ensureCutlistCommentTargetReady(options) {
+    const shouldContinue = typeof options?.shouldContinue === 'function' ? options.shouldContinue : () => true;
     if (!cutlistUIState.active) return true;
     const cutlistManager = getCutlistManager();
     if (!cutlistManager.isActive()) return true;
@@ -21106,7 +21371,11 @@ async function initApp() {
       return false;
     }
 
+    const loadIntent = videoLoadIntentGeneration;
+    const isCurrentTarget = () => shouldContinue() && cutlistUIState.active &&
+      cutlistManager.currentCutId === cut.id;
     const source = await resolveCutlistSourceForPlayback(cut);
+    if (!isCurrentTarget() || loadIntent !== videoLoadIntentGeneration) return false;
     if (!source?.videoPath) return false;
 
     if (isSameFilePath(state.currentFile, source.videoPath)) {
@@ -21120,19 +21389,23 @@ async function initApp() {
       }
 
       await seekPlaybackToCutStart(cut);
-      return true;
+      return isCurrentTarget() && loadIntent === videoLoadIntentGeneration;
     }
 
-    const loaded = await loadVideo(source.videoPath, {
+    const loading = loadVideo(source.videoPath, {
       initialFrame: Number(cut.startFrame),
       revealAfterInitialSeek: true,
       holdPreviousFrameUntilReady: true,
-      deferCollaborationStart: true
+      deferCollaborationStart: true,
+      shouldContinue: isCurrentTarget
     });
+    const targetLoadIntent = videoLoadIntentGeneration;
+    const loaded = await loading;
     if (!loaded) return false;
+    if (!isCurrentTarget() || targetLoadIntent !== videoLoadIntentGeneration) return false;
 
     await seekPlaybackToCutStart(cut);
-    return true;
+    return isCurrentTarget() && targetLoadIntent === videoLoadIntentGeneration;
   }
 
   function formatCutlistFrameRange(startFrame, endFrame) {
@@ -22150,6 +22423,23 @@ async function initApp() {
       }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
   }
+
+  commentPanelPopout = createCommentPanelPopout({
+    panel: elements.commentPanel,
+    toggleButton: document.getElementById('btnDetachComments'),
+    focusButton: document.getElementById('btnCommentWindow'),
+    windowRef: window,
+    onReady: installCommentPopoutDocument,
+    onChange: () => {
+      mentionManager.hide();
+      syncCanvasOverlay();
+      window.dispatchEvent(new Event('resize'));
+    },
+    onError: error => {
+      log.warn('댓글 창 분리 실패', { error: error.message });
+      showToast('댓글 창을 열지 못해 원래 패널로 돌아왔습니다.', 'warning');
+    }
+  });
 
   // 리사이저
   function initPlaylistResizer() {

@@ -1,0 +1,187 @@
+{
+  "scope": "새 .bedit 편집창 UI 심층리뷰 근거. 앱 코드 변경 없음. 완성 보고서가 아닌 독립 관찰 목록.",
+  "baseline": "5d1cb89afcae21429c1e076a6964bc11cd990228",
+  "evidenceDirectory": "docs/reports/2026-09-06-ui-deep-review/evidence/editor",
+  "method": "프로덕션 renderer/editor.html 및 현재 UMD/드로잉 번들을 격리 Chrome에서 실행. 실제 마우스/키보드 입력, 실제 영상 디코딩, 실제 V3 드로잉. 파일 대화상자/저장은 fixture IPC이며 영상 출력43%는 진행 표시 검토용 주입. 원본 누락 오류는 실제 probeMedia가 생성한 ENOENT를 IPC에서 다시 반환. 테스트 영상만 생성·사용.",
+  "limitations": [
+    "Electron 네이티브 제목 표시줄/파일 대화상자/운영체제 확대 설정은 이 캡처에 포함하지 않음.",
+    "11번은 computed font-size를 두 배로 만든 text-only 스트레스이며 네이티브 Windows 글자200% 설정을 검증했다고 주장하지 않음.",
+    "리뷰창과의 비교는 현재 CSS/설정 코드 대조이며 리뷰창 실제 조작은 부모 작업의 별도 근거와 합쳐야 함.",
+    "대비 샘플은 summary-metrics.json. disabled/decorative 항목은 위반으로 판정하지 않으며 44px 일괄 기준을 적용하지 않음.",
+    "14장 중 05/06은 도구 및 개선 보존 근거. 최종 본문은 나머지12장으로 구성 가능."
+  ],
+  "findings": [
+    {
+      "id": "ED-01", "priority": "P2", "confidence": "high", "kind": "reproduced behavior",
+      "title": "열기 오류 뒤 준비 상태가 남아 현재 그림 입력이 가려짐",
+      "images": ["13-missing-media-1440.png"],
+      "state": "정상 프로젝트를 연 상태에서 안전한 missing-original.mp4의 실제 ENOENT를 반환하는 프로젝트 열기 실행.",
+      "sequence": ["정상 프로젝트 열기", "열기에서 누락 원본 오류 반환", "오류 상태와 미리보기 입력 상태 확인"],
+      "observed": "처리가 끝나 state.busy=false, drawMode.disabled=false이지만 body.editor-seeking=true이고 previewStill.ready=true다. CSS가 video와 live drawing overlay를 visibility:hidden으로 유지한다. 이전 스틸이 보이므로 정지 여부를 알아차리기 어렵고 그림 입력은 가려진다.",
+      "why": "파일 열기에 실패했을 뿐인데 현재 작업 화면도 준비 중처럼 남아 사용자가 그림 도구를 눌러도 처음에는 입력 대상이 보이지 않는다.",
+      "proposal": "실패 시 이전 composite-ready 상태를 복원하거나 현재 프로젝트의 미리보기를 다시 준비하고, pending 카운트와 표시 상태를 모든 종료 경로에서 해제한다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":117},{"file":"renderer/scripts/editor/editor.js","line":264},{"file":"renderer/styles/editor.css","line":349}],
+      "evidence": "measurements.json checks.afterError={seeking:true,busy:false,still:'true',drawModeDisabled:false}",
+      "limit": "추가 seek/도구 변경 등 성공하는 작업으로 회복 가능하다. 앱 전체 영구 멈춤이나 데이터 손실로 판정하지 않는다."
+    },
+    {
+      "id": "ED-02", "priority": "P2", "confidence": "high", "kind": "reproduced behavior",
+      "title": "새 창의 활성 V 표시와 실제 그림 선택 입력이 다름",
+      "images": ["03-reopened-drawing-selection-1440.png","04-v-selection-1440.png"],
+      "state": "저장된 V3 그림이 있는 프로젝트를 새 편집 페이지에서 열기.",
+      "sequence": ["새 편집창에서 그림 프로젝트 열기", "현재 V 표시를 확인하고 그림 둘레를 마우스로 드래그", "V를 다시 누르고 같은 영역 드래그"],
+      "observed": "첫 상태에서 V aria-pressed=true와 선택 라벨이 보이지만 drawingMode=false, upper-canvas/overlay pointer-events=none이다. 첫 드래그는 선택되지 않고 V를 다시 누른 뒤에는 동일 그림의 선택 사각형이 정상 표시된다.",
+      "why": "이미 선택된 것처럼 보이는 도구를 다시 선택해야만 작동하는 두 단계 상태가 사용자의 작업 확신을 떨어뜨린다.",
+      "proposal": "V를 기본 입력 가능 상태로 시작하거나 영상 선택과 그림 입력 잠금을 명확히 분리해 표시한다. 활성 도구 표시가 실제 실행 가능 동작을 뜻하도록 상태를 합친다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":12},{"file":"renderer/scripts/editor/editor.js","line":26},{"file":"renderer/scripts/editor/editor.js","line":745},{"file":"renderer/scripts/editor/editor.js","line":767}],
+      "evidence": "checks.initialSelect + 03/04 실제 동일 그림 비교",
+      "limit": "현재 그림 좌표 오류가 아니다. V를 명시적으로 선택한 뒤 위치와 선택 영역은 정상이다."
+    },
+    {
+      "id": "ED-03", "priority": "P2", "confidence": "high", "kind": "reproduced behavior",
+      "title": "프로젝트 이름 입력 중 Ctrl+S가 저장을 수행하지 않음",
+      "images": ["14-name-save-focus-1440.png"],
+      "state": "프로젝트 이름 입력칸의 값을 바꾸고 포커스를 유지한 상태.",
+      "sequence": ["이름 입력칸에서 새 이름 작성", "Ctrl+S", "저장 호출과 현재 프로젝트 이름 확인", "마우스로 저장 버튼 클릭"],
+      "observed": "Ctrl+S 후 save 호출0, 입력 DOM값만 새 값이며 프로젝트 이름은 이전 값이다. document keydown이 모든 input/select/textarea에서 먼저 반환한다. 이어 마우스 저장은 새 이름까지 정상 저장1회로 완료된다.",
+      "why": "이름/수치를 바꾼 직후 저장하는 기본 작업 순서에서 저장 단축키가 아무 피드백 없이 무시된다.",
+      "proposal": "문자 도구 단축키와 전역 문서 단축키를 분리한다. Ctrl+S는 입력값을 확정한 뒤 저장하고, 문자 입력 및 입력칸 undo는 기존 동작을 유지한다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":1289},{"file":"renderer/scripts/editor/editor.js","line":1303},{"file":"renderer/scripts/editor/editor.js","line":1220}],
+      "evidence": "checks.nameShortcut / nameFirstSave / nameSecondSave",
+      "limit": "기존 이름 onchange 유실 버그는 재현되지 않았다. 마우스 저장은 정상이며 그 개선을 보존해야 한다."
+    },
+    {
+      "id": "ED-04", "priority": "P2", "confidence": "high", "kind": "recovery design gap",
+      "title": "원본이 이동된 프로젝트에서 누락 파일 복구 경로가 없음",
+      "images": ["13-missing-media-1440.png"],
+      "state": "참조 원본 경로 하나가 존재하지 않는 .bedit 열기.",
+      "observed": "backend는 모든 저장 원본을 순서대로 probe한 후에만 프로젝트를 반환한다. 하나라도 없으면 전체 열기를 거절하고, renderer는 영문 ENOENT와 경로를 footer에 출력한다. 누락 파일 목록, 다시 연결 버튼, 사용할 수 있는 컷을 먼저 확인하는 상태가 없다.",
+      "why": "파일 이동·폴더 교체 시 편집 구조를 확인하거나 새 원본 위치를 연결할 수 없어 사용자에게 원인 분석과 경로 복원을 맡긴다.",
+      "proposal": "한국어로 누락 파일명과 실패 이유를 설명하고 '원본 다시 연결'을 제공한다. 가능하면 편집 구조는 읽기 전용으로 열고 출력은 복구 전까지 막는다.",
+      "sources": [{"file":"main/editor-window.js","line":156},{"file":"main/editor-window.js","line":172},{"file":"main/editor-media.js","line":69},{"file":"renderer/scripts/editor/editor.js","line":39}],
+      "evidence": "실제 probeMedia ENOENT + open handler 코드 + 13 오류 화면",
+      "limit": "새로운 복구 기능 제안이며 원본 파일을 임의로 수정하거나 자동 대체하자는 뜻이 아니다. ED-01의 오류 후 현재 화면 가림과는 다른 문제다."
+    },
+    {
+      "id": "ED-05", "priority": "P2", "confidence": "high", "kind": "selection clarity",
+      "title": "동일 원본의 여러 컷에서 속성 패널이 어느 컷인지 식별하기 어려움",
+      "images": ["02-landscape-longname-1440.png","08-dense-layers-1050.png","09-lower-inspector-1050.png"],
+      "state": "이름이 긴 동일 원본을 12개 컷으로 배치한 6분 편집.",
+      "observed": "타임라인에는 컷 번호가 있지만 속성 제목은 source.name만 사용하고 말줄임한다. 드로잉 제목은 '선택한 컷의 드로잉'이라는 고정 문구다. 속성 영역에 컷 번호·타임라인 시작/끝·원본 in/out이 없다. 1050px에서 원본 위치 표시도 display:none이다.",
+      "why": "전체 화면을 오가며 자르기/정지/레이어 작업을 할 때 동일 파일의 다른 컷을 구분할 지속적인 단서가 부족하다.",
+      "proposal": "속성 상단에 '컷 04 · 파일명'과 편집 시작/끝 및 길이를 고정 표시한다. 드로잉 행에도 같은 컷 번호를 연결하고 긴 파일명은 전체 이름을 읽을 수 있는 상세 영역/툴팁을 제공한다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":588},{"file":"renderer/scripts/editor/editor.js","line":589},{"file":"renderer/styles/editor.css","line":526},{"file":"renderer/styles/editor.css","line":1093}],
+      "evidence": "12컷 각각71.83px, label source-name동일, sourceTime display:none. 타임라인 버튼에는 title로 전체이름/길이가 있어 hover 대안은 존재한다.",
+      "limit": "선택 대상이 내부적으로 잘못되는 버그로 판정하지 않는다. 현재 선택 강조와 hover title은 보존한다."
+    },
+    {
+      "id": "ED-06", "priority": "P2", "confidence": "high", "kind": "time/range clarity",
+      "title": "프레임 시계·초 단위 자르기·원본 위치의 단위가 연결되지 않음",
+      "images": ["08-dense-layers-1050.png","09-lower-inspector-1050.png"],
+      "state": "24fps 편집의36F(1.5초)에서 양끝 자르기와 정지 길이를 설정하는 흐름.",
+      "observed": "재생 시계는 00:01:12 / 06:00:00으로 마지막 칸이 프레임인 형식이지만 라벨/툴팁이 없다. 원본 영상 시간은 별도 초 단위이고 작은 창에서 숨겨진다. 양끝 자르기 입력 step은0.05초이며 내부적으로 round(seconds*fps)를 적용한다. 현재 컷의 로컬 프레임/최종 실제 제거 프레임 수를 확인하는 표시가 없다.",
+      "why": "출력 전체 위치, 현재 컷 안 위치, 원본 위치를 머릿속으로 환산해야 하며 프레임 단위로 자른 결과를 적용 전에 확인하기 어렵다.",
+      "proposal": "편집 MM:SS:FF 라벨과 컷 로컬F를 구분하고, 프레임/초 입력 선택 또는 실제 적용될 프레임 수를 함께 표시한다. 적용 후 in/out과 길이를 지속적으로 남긴다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":582},{"file":"renderer/scripts/editor/editor.js","line":1166},{"file":"renderer/scripts/editor/preview-clock.js","line":17},{"file":"renderer/editor.html","line":223}],
+      "evidence": "08에서 fixture 영상 내장1.500초와 UI00:01:12 동시 표시. 24fps에서0.05초는1F, 60fps에서는3F가 되는 코드 환산.",
+      "limit": "현재 frameTimecode나 mixed-fps 매핑 계산이 틀렸다는 주장이 아니다. 단위 노출과 편집 확인의 문제다."
+    },
+    {
+      "id": "ED-07", "priority": "P2", "confidence": "high", "kind": "dense timeline interaction",
+      "title": "전체 타임라인 맞춤에서 인접 키프레임이 겹쳐 개별 선택이 어려움",
+      "images": ["08-dense-layers-1050.png"],
+      "state": "6분 전체 맞춤, 한 컷의0/12/24/36F 키프레임.",
+      "observed": "각 키 버튼은18×20px지만 인접 키의x차이는약1.23px다. 첫 행0/12/24F 버튼 중심은 다른 버튼에 가려 elementFromPoint가 자기 버튼을 반환하지 않고36F만 중심 hit가 성공한다. 숨은 빈 키도 모두 같은 모양으로 겹친다.",
+      "why": "키가 여러 개인지 알기 어렵고 마우스로 원하는 앞쪽 키를 고르기 어렵다. 영상 컷을 찾는 확대 수준에서 그림의 시간 구조가 왜곡돼 보인다.",
+      "proposal": "축소 수준에서는 겹친 키를 개수/범위가 있는 묶음으로 표시하고 클릭하면 해당 구간 확대, 확대 후 개별 키를 보여준다. 이전/다음 키 이동도 제공한다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":417},{"file":"renderer/styles/editor.css","line":943}],
+      "evidence": "summary-metrics.json geometry.keysFirstRow; centers false,false,false,true",
+      "limit": "단순히44px 미만이어서 접근성 위반이라고 판정하지 않는다. 확대/키보드 대안은 있으며 핵심은 실제 버튼 겹침과 시간 구조 인지다."
+    },
+    {
+      "id": "ED-08", "priority": "P2", "confidence": "high", "kind": "workspace allocation",
+      "title": "고정 패널 배분이 세로 영상과 다중 레이어 작업 모두에 맞지 않음",
+      "images": ["07-portrait-1050.png","08-dense-layers-1050.png","09-lower-inspector-1050.png"],
+      "state": "앱 최소폭 근처인1050×720 데스크톱, 세로 영상 또는9레이어 프로젝트.",
+      "observed": "속성246px(전체폭23.4%), 타임라인266.39px(전체높이37.0%)가 고정된다. 세로 fit영상은150.75×267.61px이고 타임라인 실제 스크롤 영역은172.39px다. 9개32px 레이어 중 한 행이 완전히, 둘째 행이 대부분 보이며 나머지는 스크롤해야 한다. 프로젝트/선택 컷 속성은 하단 조작 시 위로 사라진다.",
+      "why": "영상 중심 작업에서는 타임라인 빈 공간이 남고, 레이어 중심 작업에서는 같은 공간이 모자란다. 작업에 맞춰 패널 크기를 조절할 수 없다.",
+      "proposal": "타임라인/미리보기 경계 드래그와 속성 접기, 작업별 레이아웃 기억을 제공한다. 선택 정체성 요약은 속성 상단에 고정하고 실제 설정만 스크롤한다.",
+      "sources": [{"file":"renderer/styles/editor.css","line":32},{"file":"renderer/styles/editor.css","line":506},{"file":"renderer/styles/editor.css","line":1103},{"file":"main/editor-window.js","line":102}],
+      "evidence": "summary-metrics.json geometry 및07/08/09",
+      "limit": "화면비 계산 오류는 현재 재현되지 않는다. 모바일 미지원 문제가 아니라 실제 허용된 데스크톱 작업 면적의 배분 문제다."
+    },
+    {
+      "id": "ED-09", "priority": "P2", "confidence": "medium-high", "kind": "readability / controlled text stress",
+      "title": "작은 고정 글자와 고정 높이가 글자 확대를 어렵게 함",
+      "images": ["08-dense-layers-1050.png","11-text200-stress-1440.png"],
+      "state": "기본1050×720와 text-only200% stress1440×900 비교.",
+      "observed": "설정 라벨·타임라인 도구·눈금·footer는10px, 시계와 주요 설정값은11px다. computed font를2배로 올린 스트레스에서는 정지 생성 문구가 버튼 밖으로 잘리고 도구 이름이 고정 행을 넘어 줄바꿈하며 아이콘 옆 단축키가 겹친다. 주요 표본의 대비는 충분한 경우에도 글자가 작은 상태다.",
+      "why": "긴 시간 프레임과 값을 확인하는 작업에서 색 대비만으로 읽기 부담을 해결할 수 없고, 글자를 키우면 일부 조작 문구가 사라진다.",
+      "proposal": "공통 UI 글자 배율/밀도 설정과 최소 읽기 크기를 제공하고 확대 시 toolbar 높이/줄바꿈/우선순위를 함께 조정한다. 숫자·선택대상·현재시간부터 계층을 분명히 한다.",
+      "sources": [{"file":"renderer/styles/editor.css","line":20},{"file":"renderer/styles/editor.css","line":551},{"file":"renderer/styles/editor.css","line":648},{"file":"renderer/styles/editor.css","line":1045}],
+      "evidence": "summary-metrics.json textSamples, 11번 text-only수동배율 스트레스",
+      "limit": "정상 화면10px라는 사실만으로 WCAG위반 판정하지 않는다. 200%는 브라우저 테스트 주입이며 네이티브 운영체제의 실제 확대 동작 검증은 별도 필요하다."
+    },
+    {
+      "id": "ED-10", "priority": "P2", "confidence": "high", "kind": "document identity",
+      "title": "현재 저장 파일의 이름·위치를 지속적으로 확인하기 어려움",
+      "images": ["02-landscape-longname-1440.png","09-lower-inspector-1050.png","12-export-progress-1440.png","13-missing-media-1440.png"],
+      "state": ".bedit 열기·저장 후 출력이나 오류 메시지가 footer를 차지하는 흐름.",
+      "observed": "controller.state.path는 존재하지만 헤더/속성은 project.name만 표시한다. 저장 완료 때만 footer에 path가 나오고 다음 상태 메시지가 이를 덮는다. 새로 연 프로젝트에는 경로가 헤더에 나타나지 않는다. document.title도 프로젝트 이름만 포함하며 '저장 안 됨'은 긴 프로젝트명 뒤에 붙어 내부 헤더에서 잘릴 수 있다.",
+      "why": "비슷한 이름의 버전 파일들을 열고 저장할 때 어느 .bedit에 쓰는지 작업 중 다시 확인할 지속적 단서가 부족하다.",
+      "proposal": "문서 이름/수정표시/저장 위치 확인을 한 곳에 고정한다. 긴 이름과 분리된 수정 점, 경로 툴팁 또는 폴더 열기, 새 문서의 '아직 저장 안 함' 상태를 제공한다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":578},{"file":"renderer/scripts/editor/editor.js","line":1134},{"file":"renderer/scripts/editor/controller.js","line":210},{"file":"renderer/styles/editor.css","line":281}],
+      "evidence": "measurements state.project.path는review-fixture.bedit, header에는project.name; footer가save→export/error로교체됨",
+      "limit": "잘못된 경로에 저장하거나 원본을 덮어쓰는 버그는 재현하지 않았다. 네이티브 제목에는 수정●표시가 있으므로 수정 상태가 앱 전체에서 완전히 사라진다고 주장하지 않는다."
+    },
+    {
+      "id": "ED-11", "priority": "P3", "confidence": "high", "kind": "state feedback",
+      "title": "수동 확대 후에도 타임라인 보기 선택값이 '전체'로 남음",
+      "images": ["08-dense-layers-1050.png"],
+      "state": "전체 맞춤에서+버튼 또는Ctrl휠로 확대.",
+      "observed": "zoomTimeline은 timelineMode='manual'로 변경하지만 timelineZoom select값은 갱신하지 않는다. 실제 표시 범위는 줄었어도 보기 드롭다운은all(전체)이다. 눈금/표시시간 텍스트와 overview는 올바르게 갱신된다.",
+      "why": "같은 도구 모음에서 서로 다른 범위 상태를 안내해 전체가 다 보이는지 확인하기 어렵다.",
+      "proposal": "드롭다운을 상태표시로 쓸 경우 수동/사용자지정 상태를 추가하고 맞춤/선택컷/수동을 동기화한다. 명령 메뉴라면 선택된 상태처럼 보이지 않게 표현한다.",
+      "sources": [{"file":"renderer/scripts/editor/editor.js","line":538},{"file":"renderer/scripts/editor/editor.js","line":554},{"file":"renderer/scripts/editor/editor.js","line":1200}],
+      "evidence": "checks.timelineZoomBefore=all, timelineZoomAfter=all; zoomTimeline내manual전환 코드",
+      "limit": "맞춤 버튼 및 확대 기준점 계산은 정상이며 사용자가 복구할 수 있다. 확대 동작 자체의 회귀는 아니다."
+    },
+    {
+      "id": "ED-12", "priority": "P2", "confidence": "high for visible state, medium for prioritization", "kind": "export feedback",
+      "title": "출력 중 저장 대상과 진행 단계를 확인할 정보가 부족함",
+      "images": ["12-export-progress-1440.png"],
+      "state": "실제 overlay준비 후 fixture IPC가 진행43%를 전달한 출력 상태.",
+      "observed": "대부분 조작은 잠기고 footer에 '영상 출력 중…', 약100px 진행막대, 출력 취소만 표시된다. 화면에 파일명/저장 폴더·현재 단계·숫자 진행률은 없다. progress요소에는 label/aria-label/aria-labelledby도 없다.",
+      "why": "짧은 작업 외에는 출력할 파일이 맞는지, 진행이 얼마나 되었는지 다시 확인하기 어렵다. 비시각적 접근에서도 진행막대의 이름이 없다.",
+      "proposal": "작업 화면을 밀지 않는 출력 상태 영역에 파일명/위치·규격·현재 단계와 숫자 진행률을 제공하고 취소를 유지한다. progress에 명시적인 접근 가능한 이름을 준다.",
+      "sources": [{"file":"renderer/editor.html","line":354},{"file":"renderer/scripts/editor/editor.js","line":1268},{"file":"renderer/scripts/editor/editor.js","line":1285},{"file":"renderer/styles/editor.css","line":1063}],
+      "evidence": "12번 진행43% fixture캡처, productionHTMLprogress속성",
+      "limit": "실제FFmpeg진행률정확성/출력취소신뢰성/실제파일품질은 이UI하니스의 검증 범위가 아니다. 저장 위치 대화상자가 출력 전에 존재한다는 사실은 유지한다."
+    },
+    {
+      "id": "ED-13", "priority": "P3", "confidence": "high for code difference, medium for UX impact", "kind": "review/editor consistency comparison",
+      "title": "리뷰창의 설정·글자 규칙과 편집창의 공통 시각 문법이 분리됨",
+      "images": ["02-landscape-longname-1440.png","08-dense-layers-1050.png"],
+      "state": "리뷰창과 편집창의 현재CSS/설정 코드를 비교.",
+      "observed": "리뷰창은 Pretendard Variable 계열과 공유theme변수/light-mode를 쓰고 편집창은Segoe UI/Malgun Gothic·별도고정dark색을 쓴다. 리뷰 기본드로잉행44px와 편집32px, 같은소스/레이어정보의명칭·크기규칙이독립되어있다. dark+yellow 및 고정 팔레트같은 연결점은 존재한다.",
+      "why": "같은 앱 안에서 선택·시간·저장 등의 핵심 상태 문법을 두 번 배우게 되고 접근성/밀도 설정을 공통으로 적용하기 어렵다.",
+      "proposal": "화면 전체를 똑같이 복사하지 말고 문서정체성·현재시간·선택·포커스·에러·기본타이포 토큰을 공유한다. 편집창의 트랙밀도와역할색은 작업특성에맞춰 유지한다.",
+      "sources": [{"file":"renderer/styles/main.css","line":50},{"file":"renderer/styles/main.css","line":77},{"file":"renderer/styles/main.css","line":90},{"file":"renderer/scripts/app.js","line":16230},{"file":"renderer/styles/editor.css","line":1}],
+      "evidence": "현재코드수치 대조 + 편집창실측. 리뷰창실제light-mode화면은부모근거와추가대조필요.",
+      "limit": "스타일차이를기능오류나WCAG위반으로판정하지않는다. 디자인시스템통합후보이며앞의재현문제보다우선순위낮음."
+    }
+  ],
+  "preserve": [
+    {"item":"V/C/H 전환의 고정 화면", "evidence":"03/04/05/06 stage 크기 모두661.33×371.98px. 실제선택과H+middle pan 수행."},
+    {"item":"팬 조작의 그림 보존", "evidence":"checks.panPreservesDrawing=true; H와middle pan전후V3JSON동일."},
+    {"item":"V선택의 현재 좌표 정확성", "evidence":"04마우스marquee가실제그림을선택하며box가그림위치와일치. 초기V입력상태문제와구분."},
+    {"item":"선택/빈 키/유지 구간의 모델 구분", "evidence":"9레이어 fixture에서그림없는레이어는빈원, 실제획있는레이어만filled/hold투영. 축소시겹침은표시문제."},
+    {"item":"기존이름저장수정", "evidence":"checks.nameFirstSave 호출1, 새프로젝트이름,dirty=false. 입력캡처유실은재현안됨."},
+    {"item":"미리보기화면비", "evidence":"landscape661.328×371.984,portrait150.75×267.609의비율은16:9/9:16에근접. 기존padding오류재신고안함."},
+    {"item":"현재색대비", "evidence":"summary-metrics.json의활성텍스트표본값확인. 대비가충분한경우에도10px읽기문제는별도설계판단."}
+  ],
+  "secondaryObservations": [
+    {"item":"버튼 포커스의 Space", "images":["10-keyboard-focus-1050.png"], "observed":"영상추가버튼에키보드focus후Space는import호출0,playingfalse→true. globalSpace가nativebutton활성화를우선가로챈다.", "decision":"영상편집기의전역Space관례와Enter대안이있어주요결함목록에는독립등재하지않음. 명령/입력포커스정책정리때함께검토."},
+    {"item":"줄인 글자/작은 타겟", "observed":"활성timeline+버튼21×25px,레이어추가53.59×21px,키18×20px.", "decision":"WCAG2.2의24px+간격/예외·동등조작을평가하지않고사이즈만으로실패판정하지않음. 실제겹친키만ED-07로등재."}
+  ]
+}

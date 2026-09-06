@@ -1,0 +1,3792 @@
+
+> baeframe@2.9.0-beta test:fabric-drawing-pilot
+> node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-pilot-display-controller.test.js scripts/tests/fabric-drawing-persistence-controller.test.js scripts/tests/mpv-fabric-overlay-runtime.test.js
+
+TAP version 13
+# Subtest: review hydrate is fenced, silent, and completes before Fabric can own B
+ok 1 - review hydrate is fenced, silent, and completes before Fabric can own B
+  ---
+  duration_ms: 22.6909
+  type: 'test'
+  ...
+# Subtest: committed transitions update the shared store while stale fences are ignored
+ok 2 - committed transitions update the shared store while stale fences are ignored
+  ---
+  duration_ms: 3.5658
+  type: 'test'
+  ...
+# Subtest: future or malformed persistence data degrades saving while Fabric keeps owning B
+ok 3 - future or malformed persistence data degrades saving while Fabric keeps owning B
+  ---
+  duration_ms: 1.5681
+  type: 'test'
+  ...
+# Subtest: hydrate failure leaves the saved document intact while Fabric keeps owning B
+ok 4 - hydrate failure leaves the saved document intact while Fabric keeps owning B
+  ---
+  duration_ms: 1.6238
+  type: 'test'
+  ...
+# Subtest: resync-required events coalesce in flight and pull one trailing authoritative snapshot
+ok 5 - resync-required events coalesce in flight and pull one trailing authoritative snapshot
+  ---
+  duration_ms: 3.1779
+  type: 'test'
+  ...
+# Subtest: 백그라운드 resync 타임아웃은 입력을 차단하지 않고 다음 이벤트에서 재시도한다
+ok 6 - 백그라운드 resync 타임아웃은 입력을 차단하지 않고 다음 이벤트에서 재시도한다
+  ---
+  duration_ms: 126.9742
+  type: 'test'
+  ...
+# Subtest: final save pull catches a lost last event without disabling active input
+ok 7 - final save pull catches a lost last event without disabling active input
+  ---
+  duration_ms: 3.1636
+  type: 'test'
+  ...
+# Subtest: a video-switch save still performs its final pull after drawing input is disabled
+ok 8 - a video-switch save still performs its final pull after drawing input is disabled
+  ---
+  duration_ms: 1.9945
+  type: 'test'
+  ...
+# Subtest: a clean external drawingsV3 refresh rehydrates the overlay before final export
+ok 9 - a clean external drawingsV3 refresh rehydrates the overlay before final export
+  ---
+  duration_ms: 2.6107
+  type: 'test'
+  ...
+# Subtest: an active external drawingsV3 refresh resumes drawing only after rehydrate verification
+ok 10 - an active external drawingsV3 refresh resumes drawing only after rehydrate verification
+  ---
+  duration_ms: 2.8138
+  type: 'test'
+  ...
+# Subtest: source rebind superseded input timeout stays retryable without a blocking latch
+ok 11 - source rebind superseded input timeout stays retryable without a blocking latch
+  ---
+  duration_ms: 50.7232
+  type: 'test'
+  ...
+# Subtest: source rebind input-on timeout stays retryable without a blocking latch
+ok 12 - source rebind input-on timeout stays retryable without a blocking latch
+  ---
+  duration_ms: 45.416
+  type: 'test'
+  ...
+# Subtest: source rebind hydrate timeout stays non-blocking after the owner is superseded
+ok 13 - source rebind hydrate timeout stays non-blocking after the owner is superseded
+  ---
+  duration_ms: 46.7796
+  type: 'test'
+  ...
+# Subtest: source rebind rejection stays blocking even when its error text says timeout
+ok 14 - source rebind rejection stays blocking even when its error text says timeout
+  ---
+  duration_ms: 2.743
+  type: 'test'
+  ...
+# Subtest: source rebind superseded rejection preserves the latest disable intent
+ok 15 - source rebind superseded rejection preserves the latest disable intent
+  ---
+  duration_ms: 1.763
+  type: 'test'
+  ...
+# Subtest: source rebind hydrate rejection stays blocking
+ok 16 - source rebind hydrate rejection stays blocking
+  ---
+  duration_ms: 4.9247
+  type: 'test'
+  ...
+# Subtest: source rebind verification rejection stays blocking
+ok 17 - source rebind verification rejection stays blocking
+  ---
+  duration_ms: 3.1216
+  type: 'test'
+  ...
+# Subtest: an external future drawingsV3 refresh preserves the root and keeps Fabric owning B without blocking save
+ok 18 - an external future drawingsV3 refresh preserves the root and keeps Fabric owning B without blocking save
+  ---
+  duration_ms: 3.4662
+  type: 'test'
+  ...
+# Subtest: authoritative pull failure blocks leave and ends the session while Fabric keeps owning B
+ok 19 - authoritative pull failure blocks leave and ends the session while Fabric keeps owning B
+  ---
+  duration_ms: 1.9119
+  type: 'test'
+  ...
+# Subtest: overlay host recovery rehydrates before restoring an active Fabric session
+ok 20 - overlay host recovery rehydrates before restoring an active Fabric session
+  ---
+  duration_ms: 2.5737
+  type: 'test'
+  ...
+# Subtest: active source refresh disables input, pulls the old source, installs, hydrates, verifies, and only then resumes
+ok 21 - active source refresh disables input, pulls the old source, installs, hydrates, verifies, and only then resumes
+  ---
+  duration_ms: 5.0272
+  type: 'test'
+  ...
+# Subtest: source refresh pull timeout preserves the current overlay and retries without a blocking latch
+ok 22 - source refresh pull timeout preserves the current overlay and retries without a blocking latch
+  ---
+  duration_ms: 48.6572
+  type: 'test'
+  ...
+# Subtest: active source refresh rejects old-session transitions while source installation is pending
+ok 23 - active source refresh rejects old-session transitions while source installation is pending
+  ---
+  duration_ms: 3.0577
+  type: 'test'
+  ...
+# Subtest: quit preparation disables input before the final pull, rejects a late transition, and resumes only after cancellation
+ok 24 - quit preparation disables input before the final pull, rejects a late transition, and resumes only after cancellation
+  ---
+  duration_ms: 2.7276
+  type: 'test'
+  ...
+# Subtest: quit final pull timeout preserves cancellation recovery and retries without a blocking latch
+ok 25 - quit final pull timeout preserves cancellation recovery and retries without a blocking latch
+  ---
+  duration_ms: 54.0252
+  type: 'test'
+  ...
+# Subtest: quit cancellation cannot resume Fabric after the prepared video owner has changed
+ok 26 - quit cancellation cannot resume Fabric after the prepared video owner has changed
+  ---
+  duration_ms: 1.5639
+  type: 'test'
+  ...
+# Subtest: explicit persistence abandon preserves the current video so B can recover before target inspection
+ok 27 - explicit persistence abandon preserves the current video so B can recover before target inspection
+  ---
+  duration_ms: 1.0397
+  type: 'test'
+  ...
+# Subtest: explicit persistence abandon preserves rollback when the target load later fails
+ok 28 - explicit persistence abandon preserves rollback when the target load later fails
+  ---
+  duration_ms: 1.1589
+  type: 'test'
+  ...
+# Subtest: explicit persistence abandon preserves active drawing intent when the target load succeeds
+ok 29 - explicit persistence abandon preserves active drawing intent when the target load succeeds
+  ---
+  duration_ms: 1.1861
+  type: 'test'
+  ...
+# Subtest: explicit persistence abandon keeps the first active intent across two queued final-pull failures
+ok 30 - explicit persistence abandon keeps the first active intent across two queued final-pull failures
+  ---
+  duration_ms: 4.3888
+  type: 'test'
+  ...
+# Subtest: explicit persistence abandon preserves a drawing resume cancellation made during the final pull
+ok 31 - explicit persistence abandon preserves a drawing resume cancellation made during the final pull
+  ---
+  duration_ms: 1.5691
+  type: 'test'
+  ...
+# Subtest: explicit persistence abandon preserves a drawing resume cancellation when the old video is restored
+ok 32 - explicit persistence abandon preserves a drawing resume cancellation when the old video is restored
+  ---
+  duration_ms: 1.778
+  type: 'test'
+  ...
+# Subtest: an explicit drawing resume request during recovery activates the old video when the load is cancelled
+ok 33 - an explicit drawing resume request during recovery activates the old video when the load is cancelled
+  ---
+  duration_ms: 1.2035
+  type: 'test'
+  ...
+# Subtest: overlay-host-unavailable save preserves the current video for host recovery rehydrate
+ok 34 - overlay-host-unavailable save preserves the current video for host recovery rehydrate
+  ---
+  duration_ms: 1.1313
+  type: 'test'
+  ...
+# Subtest: 오버레이 호스트가 응답하지 않으면 전환 게이트는 데드라인 안에 안전하게 실패한다
+ok 35 - 오버레이 호스트가 응답하지 않으면 전환 게이트는 데드라인 안에 안전하게 실패한다
+  ---
+  duration_ms: 180.8067
+  type: 'test'
+  ...
+# Subtest: 최종 회수 타임아웃 취소는 최신 오버레이를 보존하고 재시도에서 마지막 획을 회수한다
+ok 36 - 최종 회수 타임아웃 취소는 최신 오버레이를 보존하고 재시도에서 마지막 획을 회수한다
+  ---
+  duration_ms: 182.1398
+  type: 'test'
+  ...
+# Subtest: 최종 회수 차단 뒤 최신 오버레이를 보존하면 입력을 재개하지 않고 안전하게 복귀한다
+ok 37 - 최종 회수 차단 뒤 최신 오버레이를 보존하면 입력을 재개하지 않고 안전하게 복귀한다
+  ---
+  duration_ms: 0.8066
+  type: 'test'
+  ...
+# Subtest: 전환 게이트는 진행 중인 영상 확정 처리를 기다린 뒤 회수한다
+ok 38 - 전환 게이트는 진행 중인 영상 확정 처리를 기다린 뒤 회수한다
+  ---
+  duration_ms: 1.2776
+  type: 'test'
+  ...
+# Subtest: a rejected passive source refresh skips hydration and stays passive
+ok 39 - a rejected passive source refresh skips hydration and stays passive
+  ---
+  duration_ms: 0.5982
+  type: 'test'
+  ...
+# Subtest: a rejected active source refresh skips hydration and restores drawing input
+ok 40 - a rejected active source refresh skips hydration and restores drawing input
+  ---
+  duration_ms: 0.7263
+  type: 'test'
+  ...
+# Subtest: a throwing source install releases the refresh queue for a later refresh
+ok 41 - a throwing source install releases the refresh queue for a later refresh
+  ---
+  duration_ms: 2.1862
+  type: 'test'
+  ...
+# Subtest: a rejected source refresh preserves quit suspension resume intent
+ok 42 - a rejected source refresh preserves quit suspension resume intent
+  ---
+  duration_ms: 0.9578
+  type: 'test'
+  ...
+# Subtest: hold resolver returns the last exact or held keyframe while preserving an empty hold break
+ok 43 - hold resolver returns the last exact or held keyframe while preserving an empty hold break
+  ---
+  duration_ms: 0.5604
+  type: 'test'
+  ...
+# Subtest: single keyframe move preserves the source snapshot and emits one revision
+ok 44 - single keyframe move preserves the source snapshot and emits one revision
+  ---
+  duration_ms: 0.5976
+  type: 'test'
+  ...
+# Subtest: multi-keyframe move uses the starting snapshot for overlap and overwrites destinations atomically
+ok 45 - multi-keyframe move uses the starting snapshot for overlap and overwrites destinations atomically
+  ---
+  duration_ms: 0.5241
+  type: 'test'
+  ...
+# Subtest: invalid keyframe move batches leave the document, revision, and events untouched
+ok 46 - invalid keyframe move batches leave the document, revision, and events untouched
+  ---
+  duration_ms: 1.1807
+  type: 'test'
+  ...
+# Subtest: keyframe move edit restores an overwritten destination on undo and can redo the move
+ok 47 - keyframe move edit restores an overwritten destination on undo and can redo the move
+  ---
+  duration_ms: 1.2177
+  type: 'test'
+  ...
+# Subtest: keyframe edit rejects wrong documents, malformed tokens, and changed touched frames atomically
+ok 48 - keyframe edit rejects wrong documents, malformed tokens, and changed touched frames atomically
+  ---
+  duration_ms: 0.4545
+  type: 'test'
+  ...
+# Subtest: B 소유권 술어는 저장 실패 래치를 참조하지 않는다
+ok 49 - B 소유권 술어는 저장 실패 래치를 참조하지 않는다
+  ---
+  duration_ms: 1.7063
+  type: 'test'
+  ...
+# Subtest: 비차단 저장 저하는 드로잉 세션을 강제로 내리지 않는다
+ok 50 - 비차단 저장 저하는 드로잉 세션을 강제로 내리지 않는다
+  ---
+  duration_ms: 0.9731
+  type: 'test'
+  ...
+# Subtest: 저장 회수의 일시 실패는 즉시 1회 재시도하고 차단 래치를 걸지 않는다
+ok 51 - 저장 회수의 일시 실패는 즉시 1회 재시도하고 차단 래치를 걸지 않는다
+  ---
+  duration_ms: 1.1008
+  type: 'test'
+  ...
+# Subtest: 구조 위반 회수 실패는 재시도 없이 곧바로 차단 래치를 건다
+ok 52 - 구조 위반 회수 실패는 재시도 없이 곧바로 차단 래치를 건다
+  ---
+  duration_ms: 0.786
+  type: 'test'
+  ...
+# {"benchmark":"fabric-drawing-pilot","environment":{"node":"v22.18.0","platform":"win32","arch":"x64","fabric":"7.4.0"},"paths500":{"count":500,"elapsedMs":71.4985},"paths2000":{"count":2000,"elapsedMs":148.09770000000003},"inputToggles100":{"accepted":100,"elapsedMs":0.314200000000028}}
+# Subtest: Fabric path and input-toggle benchmark emits one environment JSON record
+ok 53 - Fabric path and input-toggle benchmark emits one environment JSON record
+  ---
+  duration_ms: 510.2601
+  type: 'test'
+  ...
+# Subtest: passive display resolves held sources and resends the same source when viewport geometry changes
+ok 54 - passive display resolves held sources and resends the same source when viewport geometry changes
+  ---
+  duration_ms: 6.4249
+  type: 'test'
+  ...
+# Subtest: passive display resolves only the source frame without cloning held scene payloads
+ok 55 - passive display resolves only the source frame without cloning held scene payloads
+  ---
+  duration_ms: 0.5724
+  type: 'test'
+  ...
+# Subtest: passive display serializes one request and keeps only the newest trailing source
+ok 56 - passive display serializes one request and keeps only the newest trailing source
+  ---
+  duration_ms: 1.0032
+  type: 'test'
+  ...
+# Subtest: an unresolved passive presentation times out and releases the newest trailing frame
+ok 57 - an unresolved passive presentation times out and releases the newest trailing frame
+  ---
+  duration_ms: 54.2247
+  type: 'test'
+  ...
+# Subtest: seeking A to B and back to in-flight A replaces the stale B trailing request
+ok 58 - seeking A to B and back to in-flight A replaces the stale B trailing request
+  ---
+  duration_ms: 0.805
+  type: 'test'
+  ...
+# Subtest: active state syncs the latest playhead as an edit candidate while B-off force-presents it
+ok 59 - active state syncs the latest playhead as an edit candidate while B-off force-presents it
+  ---
+  duration_ms: 1.7324
+  type: 'test'
+  ...
+# Subtest: active frame sync sends a coalesced latest target concurrently without waiting for an older invoke
+ok 60 - active frame sync sends a coalesced latest target concurrently without waiting for an older invoke
+  ---
+  duration_ms: 2.748
+  type: 'test'
+  ...
+# Subtest: active frame sync stays bounded and a replacement session sends without waiting for a stale owner
+ok 61 - active frame sync stays bounded and a replacement session sends without waiting for a stale owner
+  ---
+  duration_ms: 2.5775
+  type: 'test'
+  ...
+# Subtest: two unresolved active frame invokes time out locally so the newest pending frame can advance
+ok 62 - two unresolved active frame invokes time out locally so the newest pending frame can advance
+  ---
+  duration_ms: 22.239
+  type: 'test'
+  ...
+# Subtest: an unresolved burst coalesces to one newest target after the local deadline
+ok 63 - an unresolved burst coalesces to one newest target after the local deadline
+  ---
+  duration_ms: 91.453
+  type: 'test'
+  ...
+# Subtest: drawing actions capture the keypress frame and do not wait for a forced preview update
+ok 64 - drawing actions capture the keypress frame and do not wait for a forced preview update
+  ---
+  duration_ms: 1.3546
+  type: 'test'
+  ...
+# Subtest: pointerdown handshake confirms the current renderer frame and drops a stale session request
+ok 65 - pointerdown handshake confirms the current renderer frame and drops a stale session request
+  ---
+  duration_ms: 1.2972
+  type: 'test'
+  ...
+# Subtest: B-on activation samples the live frame after a delayed input acknowledgement
+ok 66 - B-on activation samples the live frame after a delayed input acknowledgement
+  ---
+  duration_ms: 2.2905
+  type: 'test'
+  ...
+# Subtest: pointerdown rejected sends a fenced negative acknowledgement
+ok 67 - pointerdown rejected sends a fenced negative acknowledgement
+  ---
+  duration_ms: 0.7345
+  type: 'test'
+  ...
+# Subtest: pointerdown timeout sends a fenced negative acknowledgement
+ok 68 - pointerdown timeout sends a fenced negative acknowledgement
+  ---
+  duration_ms: 24.939
+  type: 'test'
+  ...
+# Subtest: pointerdown throw sends a fenced negative acknowledgement
+ok 69 - pointerdown throw sends a fenced negative acknowledgement
+  ---
+  duration_ms: 0.9158
+  type: 'test'
+  ...
+# Subtest: B-off blocks passive state-hook presentation until the disable acknowledgement
+ok 70 - B-off blocks passive state-hook presentation until the disable acknowledgement
+  ---
+  duration_ms: 1.1525
+  type: 'test'
+  ...
+# Subtest: an early B-off without a host cannot permanently block a later passive owner
+ok 71 - an early B-off without a host cannot permanently block a later passive owner
+  ---
+  duration_ms: 0.3773
+  type: 'test'
+  ...
+# Subtest: a stale disable owner neither blocks nor releases the replacement passive owner
+ok 72 - a stale disable owner neither blocks nor releases the replacement passive owner
+  ---
+  duration_ms: 1.2036
+  type: 'test'
+  ...
+# Subtest: active frame sync drops a stale owner response on disable
+ok 73 - active frame sync drops a stale owner response on disable
+  ---
+  duration_ms: 0.4998
+  type: 'test'
+  ...
+# Subtest: a presentation response is discarded when its host owner changes while in flight
+ok 74 - a presentation response is discarded when its host owner changes while in flight
+  ---
+  duration_ms: 0.4308
+  type: 'test'
+  ...
+# Subtest: an in-flight presentation is discarded when the store revision and held source change
+ok 75 - an in-flight presentation is discarded when the store revision and held source change
+  ---
+  duration_ms: 0.4054
+  type: 'test'
+  ...
+# [90m[17:34:57.098][0m [90m[DEBUG][0m [MPVOverlayHost] Drawing V3 shadow bootstrap was not installed; continuing disabled
+# [90m[17:34:57.101][0m [90m[DEBUG][0m [MPVOverlayHost] Drawing V3 disabled bootstrap was not installed; loading bundle off
+# Subtest: controller history shortcuts round-trip a real Fabric stroke without persistence
+ok 76 - controller history shortcuts round-trip a real Fabric stroke without persistence
+  ---
+  duration_ms: 35.1877
+  type: 'test'
+  ...
+# Subtest: passive playback without enabling B presents held and empty keyframes through controller host and runtime
+ok 77 - passive playback without enabling B presents held and empty keyframes through controller host and runtime
+  ---
+  duration_ms: 16.3512
+  type: 'test'
+  ...
+# Subtest: synthetic controller/runtime boundary restores native stack order and preserves all other canaries
+ok 78 - synthetic controller/runtime boundary restores native stack order and preserves all other canaries
+  ---
+  duration_ms: 42.6403
+  type: 'test'
+  ...
+# Subtest: a late generation N response cannot reactivate or replace the ready N+1 session
+ok 79 - a late generation N response cannot reactivate or replace the ready N+1 session
+  ---
+  duration_ms: 1.6186
+  type: 'test'
+  ...
+# Subtest: validator rejects playback, save, host, file, owner, media, timeline, controller, and stale mutations
+ok 80 - validator rejects playback, save, host, file, owner, media, timeline, controller, and stale mutations
+  ---
+  duration_ms: 3.6097
+  type: 'test'
+  ...
+# Subtest: validator rejects missing and malformed raw before/after/staleProbe fields without throwing
+ok 81 - validator rejects missing and malformed raw before/after/staleProbe fields without throwing
+  ---
+  duration_ms: 0.4201
+  type: 'test'
+  ...
+# Subtest: CLI reads raw JSON, emits only the bounded summary, and exits 1 for violations
+ok 82 - CLI reads raw JSON, emits only the bounded summary, and exits 1 for violations
+  ---
+  duration_ms: 252.2338
+  type: 'test'
+  ...
+# Subtest: package exposes focused Fabric pilot test and diagnostics commands
+ok 83 - package exposes focused Fabric pilot test and diagnostics commands
+  ---
+  duration_ms: 0.4614
+  type: 'test'
+  ...
+# Subtest: session scenes are separated by stable video identity and target frame
+ok 84 - session scenes are separated by stable video identity and target frame
+  ---
+  duration_ms: 4.7158
+  type: 'test'
+  ...
+# Subtest: a newer video generation permanently rejects activation from the previous generation
+ok 85 - a newer video generation permanently rejects activation from the previous generation
+  ---
+  duration_ms: 0.3826
+  type: 'test'
+  ...
+# Subtest: input and tool revisions only move forward and disable does not require a session
+ok 86 - input and tool revisions only move forward and disable does not require a session
+  ---
+  duration_ms: 0.5515
+  type: 'test'
+  ...
+# Subtest: selection is clean while stroke, real move, delete, and clear are mutations
+ok 87 - selection is clean while stroke, real move, delete, and clear are mutations
+  ---
+  duration_ms: 1.54
+  type: 'test'
+  ...
+# Subtest: delete and clear action ids are accepted exactly once within a bounded LRU window
+ok 88 - delete and clear action ids are accepted exactly once within a bounded LRU window
+  ---
+  duration_ms: 0.2625
+  type: 'test'
+  ...
+# Subtest: pressure defaults to 0.5 when absent and clamps supplied values
+ok 89 - pressure defaults to 0.5 when absent and clamps supplied values
+  ---
+  duration_ms: 0.1514
+  type: 'test'
+  ...
+# Subtest: scene cache evicts least recently used videos by count and byte budget
+ok 90 - scene cache evicts least recently used videos by count and byte budget
+  ---
+  duration_ms: 0.88
+  type: 'test'
+  ...
+# Subtest: scene object count is bounded before accepting another stroke
+ok 91 - scene object count is bounded before accepting another stroke
+  ---
+  duration_ms: 0.5936
+  type: 'test'
+  ...
+# Subtest: pilot metrics retain bounded samples while accumulating full counters
+ok 92 - pilot metrics retain bounded samples while accumulating full counters
+  ---
+  duration_ms: 0.7536
+  type: 'test'
+  ...
+# Subtest: controller exposes the complete public API and initialize reads a boolean once
+ok 93 - controller exposes the complete public API and initialize reads a boolean once
+  ---
+  duration_ms: 2.6489
+  type: 'test'
+  ...
+# Subtest: a disabled Fabric controller treats video changes as a no-op success
+ok 94 - a disabled Fabric controller treats video changes as a no-op success
+  ---
+  duration_ms: 1.6141
+  type: 'test'
+  ...
+# Subtest: B reports a failed surface after video readiness settles without an overlay capability
+ok 95 - B reports a failed surface after video readiness settles without an overlay capability
+  ---
+  duration_ms: 0.8349
+  type: 'test'
+  ...
+# Subtest: capability adoption validates passive readiness and never creates a video generation
+ok 96 - capability adoption validates passive readiness and never creates a video generation
+  ---
+  duration_ms: 0.5038
+  type: 'test'
+  ...
+# Subtest: initial video confirmation queues B and auto-enables after the disable settles
+ok 97 - initial video confirmation queues B and auto-enables after the disable settles
+  ---
+  duration_ms: 3.421
+  type: 'test'
+  ...
+# Subtest: 100 direct B toggles issue exactly 50 enables and 50 disables after setup
+ok 98 - 100 direct B toggles issue exactly 50 enables and 50 disables after setup
+  ---
+  duration_ms: 5.9317
+  type: 'test'
+  ...
+# Subtest: an accepted disable remembers the overlay toolbar tool for the next B session
+ok 99 - an accepted disable remembers the overlay toolbar tool for the next B session
+  ---
+  duration_ms: 0.5994
+  type: 'test'
+  ...
+# Subtest: a stale disable tool response cannot overwrite the newer active tool preference
+ok 100 - a stale disable tool response cannot overwrite the newer active tool preference
+  ---
+  duration_ms: 0.5625
+  type: 'test'
+  ...
+# Subtest: a preparing B exits immediately and a stale enable response cannot reactivate input
+ok 101 - a preparing B exits immediately and a stale enable response cannot reactivate input
+  ---
+  duration_ms: 0.6261
+  type: 'test'
+  ...
+# Subtest: B cancels a recovering resume with a newer disable instead of reactivating
+ok 102 - B cancels a recovering resume with a newer disable instead of reactivating
+  ---
+  duration_ms: 13.0856
+  type: 'test'
+  ...
+# Subtest: targetFrame is pinned once for each fresh enable session
+ok 103 - targetFrame is pinned once for each fresh enable session
+  ---
+  duration_ms: 0.9301
+  type: 'test'
+  ...
+# Subtest: V updates desired tool during preparing and sends one monotonic update after activation
+ok 104 - V updates desired tool during preparing and sends one monotonic update after activation
+  ---
+  duration_ms: 1.3935
+  type: 'test'
+  ...
+# Subtest: the configured selection shortcut replaces V and preserves input exclusions
+ok 105 - the configured selection shortcut replaces V and preserves input exclusions
+  ---
+  duration_ms: 1.0027
+  type: 'test'
+  ...
+# Subtest: B always exits active mode directly even when the current tool is select
+ok 106 - B always exits active mode directly even when the current tool is select
+  ---
+  duration_ms: 1.0674
+  type: 'test'
+  ...
+# Subtest: a configured Q drawing shortcut enters and exits Fabric without leaving B hardcoded
+ok 107 - a configured Q drawing shortcut enters and exits Fabric without leaving B hardcoded
+  ---
+  duration_ms: 1.4876
+  type: 'test'
+  ...
+# Subtest: Delete is consumed while preparing or active and only active invokes the pilot action
+ok 108 - Delete is consumed while preparing or active and only active invokes the pilot action
+  ---
+  duration_ms: 1.1775
+  type: 'test'
+  ...
+# Subtest: active Ctrl or Cmd history shortcuts send exactly one semantic action
+ok 109 - active Ctrl or Cmd history shortcuts send exactly one semantic action
+  ---
+  duration_ms: 1.2572
+  type: 'test'
+  ...
+# Subtest: delayed empty Fabric history falls back only while global history is unchanged
+ok 110 - delayed empty Fabric history falls back only while global history is unchanged
+  ---
+  duration_ms: 1.3234
+  type: 'test'
+  ...
+# Subtest: queued empty Fabric history preserves each shortcut but still fences unrelated changes
+ok 111 - queued empty Fabric history preserves each shortcut but still fences unrelated changes
+  ---
+  duration_ms: 3.0636
+  type: 'test'
+  ...
+# Subtest: preparing and auto-repeat history shortcuts are consumed without actions
+ok 112 - preparing and auto-repeat history shortcuts are consumed without actions
+  ---
+  duration_ms: 0.7483
+  type: 'test'
+  ...
+# Subtest: history routing rejects editable, IME, ambiguous modifiers, and unrelated keys
+ok 113 - history routing rejects editable, IME, ambiguous modifiers, and unrelated keys
+  ---
+  duration_ms: 0.8159
+  type: 'test'
+  ...
+# Subtest: queued history requests keep keydown tokens and order across B disable
+ok 114 - queued history requests keep keydown tokens and order across B disable
+  ---
+  duration_ms: 0.8322
+  type: 'test'
+  ...
+# Subtest: queued history requests cannot retarget across a media transition
+ok 115 - queued history requests cannot retarget across a media transition
+  ---
+  duration_ms: 1.1517
+  type: 'test'
+  ...
+# Subtest: editable targets, modifiers, non-mpv, audio, and pilot OFF never consume keys
+ok 116 - editable targets, modifiers, non-mpv, audio, and pilot OFF never consume keys
+  ---
+  duration_ms: 0.7921
+  type: 'test'
+  ...
+# Subtest: IME composition is ignored while repeated pilot keys are consumed without actions
+ok 117 - IME composition is ignored while repeated pilot keys are consumed without actions
+  ---
+  duration_ms: 0.9986
+  type: 'test'
+  ...
+# Subtest: B input counters distinguish accepted, repeated, IME, and rejected attempts
+ok 118 - B input counters distinguish accepted, repeated, IME, and rejected attempts
+  ---
+  duration_ms: 1.24
+  type: 'test'
+  ...
+# Subtest: video confirmations advance exactly once, disable first, and resume with a fresh session
+ok 119 - video confirmations advance exactly once, disable first, and resume with a fresh session
+  ---
+  duration_ms: 0.5814
+  type: 'test'
+  ...
+# Subtest: a settled load token rejects a later conflicting identity without dropping the active session
+ok 120 - a settled load token rejects a later conflicting identity without dropping the active session
+  ---
+  duration_ms: 0.4553
+  type: 'test'
+  ...
+# Subtest: a ready event without a pending transition cannot replace a settled active video
+ok 121 - a ready event without a pending transition cannot replace a settled active video
+  ---
+  duration_ms: 0.3017
+  type: 'test'
+  ...
+# Subtest: afterVideoReady uses its confirmed context when resuming before getContext catches up
+ok 122 - afterVideoReady uses its confirmed context when resuming before getContext catches up
+  ---
+  duration_ms: 0.4075
+  type: 'test'
+  ...
+# Subtest: a pending load token rejects late confirmation without advancing or reactivating
+ok 123 - a pending load token rejects late confirmation without advancing or reactivating
+  ---
+  duration_ms: 0.3554
+  type: 'test'
+  ...
+# Subtest: HTML5 or audio fallback settles an active resume request back to passive
+ok 124 - HTML5 or audio fallback settles an active resume request back to passive
+  ---
+  duration_ms: 0.8041
+  type: 'test'
+  ...
+# Subtest: a fresh unsupported confirmation can settle a tokenless pending transition
+ok 125 - a fresh unsupported confirmation can settle a tokenless pending transition
+  ---
+  duration_ms: 0.4918
+  type: 'test'
+  ...
+# Subtest: a late unsupported confirmation from the prior video cannot cancel a tokenless transition
+ok 126 - a late unsupported confirmation from the prior video cannot cancel a tokenless transition
+  ---
+  duration_ms: 0.4837
+  type: 'test'
+  ...
+# Subtest: an unsupported confirmation without a pending load cannot silently drop active input
+ok 127 - an unsupported confirmation without a pending load cannot silently drop active input
+  ---
+  duration_ms: 0.5048
+  type: 'test'
+  ...
+# Subtest: only the current load token can cancel a recovering video change
+ok 128 - only the current load token can cancel a recovering video change
+  ---
+  duration_ms: 0.2895
+  type: 'test'
+  ...
+# Subtest: a pre-destructive cancelled video change restores the confirmed video and a fresh drawing session
+ok 129 - a pre-destructive cancelled video change restores the confirmed video and a fresh drawing session
+  ---
+  duration_ms: 5.5767
+  type: 'test'
+  ...
+# Subtest: a rejected transition disable restores the old video instead of leaving Fabric failed
+ok 130 - a rejected transition disable restores the old video instead of leaving Fabric failed
+  ---
+  duration_ms: 0.503
+  type: 'test'
+  ...
+# Subtest: a late disable response from an older beforeVideoChange cannot restore recovering
+ok 131 - a late disable response from an older beforeVideoChange cannot restore recovering
+  ---
+  duration_ms: 1.2994
+  type: 'test'
+  ...
+# Subtest: a superseding video change confirms its own disable after an older disable is rejected
+ok 132 - a superseding video change confirms its own disable after an older disable is rejected
+  ---
+  duration_ms: 0.6797
+  type: 'test'
+  ...
+# Subtest: cancel wins while afterVideoReady reconciliation is in flight
+ok 133 - cancel wins while afterVideoReady reconciliation is in flight
+  ---
+  duration_ms: 0.5966
+  type: 'test'
+  ...
+# Subtest: duplicate ready confirmations share one in-flight reconciliation
+ok 134 - duplicate ready confirmations share one in-flight reconciliation
+  ---
+  duration_ms: 0.5843
+  type: 'test'
+  ...
+# Subtest: tokenless duplicate ready confirmations share one in-flight reconciliation
+ok 135 - tokenless duplicate ready confirmations share one in-flight reconciliation
+  ---
+  duration_ms: 0.7259
+  type: 'test'
+  ...
+# Subtest: a token cannot replace an in-flight tokenless confirmation in the same transition epoch
+ok 136 - a token cannot replace an in-flight tokenless confirmation in the same transition epoch
+  ---
+  duration_ms: 0.7181
+  type: 'test'
+  ...
+# Subtest: the same pending load token rejects a conflicting ready identity
+ok 137 - the same pending load token rejects a conflicting ready identity
+  ---
+  duration_ms: 0.7399
+  type: 'test'
+  ...
+# Subtest: a tokenless transition rejects the prior identity until a fresh load token arrives
+ok 138 - a tokenless transition rejects the prior identity until a fresh load token arrives
+  ---
+  duration_ms: 0.4988
+  type: 'test'
+  ...
+# Subtest: a tokenless transition rejects the prior load token even when its identity conflicts
+ok 139 - a tokenless transition rejects the prior load token even when its identity conflicts
+  ---
+  duration_ms: 0.293
+  type: 'test'
+  ...
+# Subtest: a recovered host generation reconciles disable-first before an optional fresh session
+ok 140 - a recovered host generation reconciles disable-first before an optional fresh session
+  ---
+  duration_ms: 0.2558
+  type: 'test'
+  ...
+# Subtest: current failures enter failed, clear draw state, and issue a newer best-effort disable
+ok 141 - current failures enter failed, clear draw state, and issue a newer best-effort disable
+  ---
+  duration_ms: 0.2523
+  type: 'test'
+  ...
+# Subtest: a later B press retries a transient enable failure with a fresh session
+ok 142 - a later B press retries a transient enable failure with a fresh session
+  ---
+  duration_ms: 0.3073
+  type: 'test'
+  ...
+# Subtest: all dependencies and request envelopes stay inside the Task 3 pilot bridge
+ok 143 - all dependencies and request envelopes stay inside the Task 3 pilot bridge
+  ---
+  duration_ms: 4.0209
+  type: 'test'
+  ...
+# Subtest: B cancellation during deferred hydration prevents a queued recovery from enabling
+ok 144 - B cancellation during deferred hydration prevents a queued recovery from enabling
+  ---
+  duration_ms: 6.6518
+  type: 'test'
+  ...
+# Subtest: routeKeydown consumes bracket keys and sends a relative brush size step
+ok 145 - routeKeydown consumes bracket keys and sends a relative brush size step
+  ---
+  duration_ms: 0.6363
+  type: 'test'
+  ...
+# Subtest: bracket shortcuts never send an absolute size, so palette changes cannot go stale
+ok 146 - bracket shortcuts never send an absolute size, so palette changes cannot go stale
+  ---
+  duration_ms: 0.2919
+  type: 'test'
+  ...
+# Subtest: every bracket press dispatches a step and lets the overlay clamp
+ok 147 - every bracket press dispatches a step and lets the overlay clamp
+  ---
+  duration_ms: 0.5288
+  type: 'test'
+  ...
+# Subtest: brush size shortcuts follow the injected action-id matcher
+ok 148 - brush size shortcuts follow the injected action-id matcher
+  ---
+  duration_ms: 0.3797
+  type: 'test'
+  ...
+# Subtest: brush size shortcuts are ignored while the pilot session is not active
+ok 149 - brush size shortcuts are ignored while the pilot session is not active
+  ---
+  duration_ms: 0.178
+  type: 'test'
+  ...
+# Subtest: a configured tool shortcut actually switches the drawing tool
+ok 150 - a configured tool shortcut actually switches the drawing tool
+  ---
+  duration_ms: 0.46
+  type: 'test'
+  ...
+# Subtest: Fabric pilot controller is initialized with live mpv video and canvas context
+ok 151 - Fabric pilot controller is initialized with live mpv video and canvas context
+  ---
+  duration_ms: 22.2545
+  type: 'test'
+  ...
+# Subtest: overlay capability and real load tokens reconcile only confirmed normal video loads
+ok 152 - overlay capability and real load tokens reconcile only confirmed normal video loads
+  ---
+  duration_ms: 4.2894
+  type: 'test'
+  ...
+# Subtest: pilot state and B routing avoid every legacy playback and persistence mutation
+ok 153 - pilot state and B routing avoid every legacy playback and persistence mutation
+  ---
+  duration_ms: 1.4946
+  type: 'test'
+  ...
+# Subtest: capture keyboard and click firewalls stop legacy drawing mutations while keeping navigation separate
+ok 154 - capture keyboard and click firewalls stop legacy drawing mutations while keeping navigation separate
+  ---
+  duration_ms: 17.1478
+  type: 'test'
+  ...
+# Subtest: Fabric persistence is pulled after root refresh and before save and video leave
+ok 155 - Fabric persistence is pulled after root refresh and before save and video leave
+  ---
+  duration_ms: 2.6111
+  type: 'test'
+  ...
+# Subtest: quit transaction disables Fabric before dirty/save decisions and resumes every cancelled quit path
+ok 156 - quit transaction disables Fabric before dirty/save decisions and resumes every cancelled quit path
+  ---
+  duration_ms: 0.9315
+  type: 'test'
+  ...
+# Subtest: video teardown drains any late autosave after pausing it and before clearing review managers
+ok 157 - video teardown drains any late autosave after pausing it and before clearing review managers
+  ---
+  duration_ms: 0.4243
+  type: 'test'
+  ...
+# Subtest: freeze and system shutdown paths are conditional on pilot ownership
+ok 158 - freeze and system shutdown paths are conditional on pilot ownership
+  ---
+  duration_ms: 3.6651
+  type: 'test'
+  ...
+# Subtest: Fabric toolbar reports review persistence as active without the old session-only warning
+ok 159 - Fabric toolbar reports review persistence as active without the old session-only warning
+  ---
+  duration_ms: 1.6314
+  type: 'test'
+  ...
+# Subtest: stable Fabric UI does not create or poll the old manual verification HUD
+ok 160 - stable Fabric UI does not create or poll the old manual verification HUD
+  ---
+  duration_ms: 1.7246
+  type: 'test'
+  ...
+# Subtest: persistence gate abandon stays manual, load-local, and clears overlay preservation
+ok 161 - persistence gate abandon stays manual, load-local, and clears overlay preservation
+  ---
+  duration_ms: 0.8543
+  type: 'test'
+  ...
+# Subtest: Fabric 툴바 표시는 페이드 없이 한 프레임에 완성된다
+ok 162 - Fabric 툴바 표시는 페이드 없이 한 프레임에 완성된다
+  ---
+  duration_ms: 6.3093
+  type: 'test'
+  ...
+# Subtest: 파일럿 드로잉은 타임라인에 이동 가능한 합성 행으로 투영된다
+ok 163 - 파일럿 드로잉은 타임라인에 이동 가능한 합성 행으로 투영된다
+  ---
+  duration_ms: 2.2491
+  type: 'test'
+  ...
+# Subtest: HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레이어를 렌더한다
+ok 164 - HTML5 fallback은 합성 키프레임 선택을 지운 뒤 레거시 레이어를 렌더한다
+  ---
+  duration_ms: 1.3156
+  type: 'test'
+  ...
+# Subtest: 동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만 선택을 지운다
+ok 165 - 동일 mpv 원본 복구는 선택을 유지하고 실제 소스 교체만 선택을 지운다
+  ---
+  duration_ms: 0.6257
+  type: 'test'
+  ...
+# Subtest: 영상이 바뀌면 배정 추적을 초기화가 아니라 재시딩한다
+ok 166 - 영상이 바뀌면 배정 추적을 초기화가 아니라 재시딩한다
+  ---
+  duration_ms: 0.3543
+  type: 'test'
+  ...
+# Subtest: 읽기 전용 합성 행과 투영 행의 가시성·잠금 버튼은 숨긴다
+ok 167 - 읽기 전용 합성 행과 투영 행의 가시성·잠금 버튼은 숨긴다
+  ---
+  duration_ms: 0.187
+  type: 'test'
+  ...
+# Subtest: passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단한다
+ok 168 - passive 파일럿 투영은 레거시 드로잉 변이 단축키만 차단한다
+  ---
+  duration_ms: 1.2181
+  type: 'test'
+  ...
+# Subtest: 집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 숨긴다
+ok 169 - 집계 타임라인에서는 현재 영상의 로컬 드로잉 투영을 숨긴다
+  ---
+  duration_ms: 0.863
+  type: 'test'
+  ...
+# Subtest: 파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬리까지 hold한다
+ok 170 - 파일럿 투영 범위는 다음 exact 키프레임 직전과 영상 꼬리까지 hold한다
+  ---
+  duration_ms: 0.7653
+  type: 'test'
+  ...
+# Subtest: Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸고 선택과 전역 undo를 갱신한다
+ok 171 - Fabric 키프레임 이동은 controller refresh 안에서 store만 바꾸고 선택과 전역 undo를 갱신한다
+  ---
+  duration_ms: 1.7185
+  type: 'test'
+  ...
+# Subtest: Fabric 이동 tail 중 추가된 후속 action은 이동 뒤에 순서대로 Undo된다
+ok 172 - Fabric 이동 tail 중 추가된 후속 action은 이동 뒤에 순서대로 Undo된다
+  ---
+  duration_ms: 21.3422
+  type: 'test'
+  ...
+# Subtest: 전역 Undo가 진행 중이면 Fabric 이동은 store를 commit하지 않고 기존 action을 보존한다
+ok 173 - 전역 Undo가 진행 중이면 Fabric 이동은 store를 commit하지 않고 기존 action을 보존한다
+  ---
+  duration_ms: 1.4021
+  type: 'test'
+  ...
+# Subtest: timeline move router sends only the synthetic layer to Fabric and preserves the legacy route
+ok 174 - timeline move router sends only the synthetic layer to Fabric and preserves the legacy route
+  ---
+  duration_ms: 0.8253
+  type: 'test'
+  ...
+# Subtest: primary play handler force-syncs the current Fabric display frame exactly once at start
+ok 175 - primary play handler force-syncs the current Fabric display frame exactly once at start
+  ---
+  duration_ms: 0.2953
+  type: 'test'
+  ...
+# Subtest: playback frame consumers and passive landings request the current Fabric display frame
+ok 176 - playback frame consumers and passive landings request the current Fabric display frame
+  ---
+  duration_ms: 0.6426
+  type: 'test'
+  ...
+# Subtest: 집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다
+ok 177 - 집계 모드 전환은 드로잉 투영 캐시를 즉시 다시 그린다
+  ---
+  duration_ms: 2.0631
+  type: 'test'
+  ...
+# Subtest: 레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 투영된다
+ok 178 - 레거시 드로잉은 파일럿 소유 중에도 읽기 전용 행으로 투영된다
+  ---
+  duration_ms: 0.5998
+  type: 'test'
+  ...
+# Subtest: mpv 재생 중 B는 소유 실패에도 레거시 그리기로 폴백하지 않는다
+ok 179 - mpv 재생 중 B는 소유 실패에도 레거시 그리기로 폴백하지 않는다
+  ---
+  duration_ms: 0.3217
+  type: 'test'
+  ...
+# Subtest: 투영된 레거시 행은 읽기 전용 표식을 달고 편집 핸들러를 붙이지 않는다
+ok 180 - 투영된 레거시 행은 읽기 전용 표식을 달고 편집 핸들러를 붙이지 않는다
+  ---
+  duration_ms: 0.3243
+  type: 'test'
+  ...
+# Subtest: B 토글 상태기계는 정착 지점마다 예약을 소비하고 창 순서를 대칭으로 복원한다
+ok 181 - B 토글 상태기계는 정착 지점마다 예약을 소비하고 창 순서를 대칭으로 복원한다
+  ---
+  duration_ms: 3.5327
+  type: 'test'
+  ...
+# Subtest: 오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레트로 조립된다
+ok 182 - 오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레트로 조립된다
+  ---
+  duration_ms: 3.9242
+  type: 'test'
+  ...
+# Subtest: 오버레이 슬라이더를 탭 순서에 넣지 않는다 — 키가 도달하지 못한다
+ok 183 - 오버레이 슬라이더를 탭 순서에 넣지 않는다 — 키가 도달하지 못한다
+  ---
+  duration_ms: 0.5127
+  type: 'test'
+  ...
+# Subtest: 오버레이 스크롤바는 본체 테마와 같은 값을 쓴다
+ok 184 - 오버레이 스크롤바는 본체 테마와 같은 값을 쓴다
+  ---
+  duration_ms: 0.536
+  type: 'test'
+  ...
+# Subtest: 팔레트가 붙이는 모든 클래스는 스타일 출처를 갖는다
+ok 185 - 팔레트가 붙이는 모든 클래스는 스타일 출처를 갖는다
+  ---
+  duration_ms: 0.588
+  type: 'test'
+  ...
+# Subtest: 팔레트 모듈은 레거시 헤더·접기·경계 클램프·안전한 저장을 갖춘다
+ok 186 - 팔레트 모듈은 레거시 헤더·접기·경계 클램프·안전한 저장을 갖춘다
+  ---
+  duration_ms: 0.5014
+  type: 'test'
+  ...
+# Subtest: 키프레임 이동 단축키는 소유자에 맞는 데이터 출처를 고른다
+ok 187 - 키프레임 이동 단축키는 소유자에 맞는 데이터 출처를 고른다
+  ---
+  duration_ms: 1.3106
+  type: 'test'
+  ...
+# Subtest: drawing tool set lives in one shared module that both process layers require
+ok 188 - drawing tool set lives in one shared module that both process layers require
+  ---
+  duration_ms: 0.7448
+  type: 'test'
+  ...
+# Subtest: controller drawing tool literal matches the shared tool set
+ok 189 - controller drawing tool literal matches the shared tool set
+  ---
+  duration_ms: 0.4214
+  type: 'test'
+  ...
+# Subtest: shape and pen tools are registered as assignable shortcut actions without default keys
+ok 190 - shape and pen tools are registered as assignable shortcut actions without default keys
+  ---
+  duration_ms: 3.3126
+  type: 'test'
+  ...
+# Subtest: 타임라인은 레이어마다 한 행을 만들고 그 레이어의 획만 채운다
+ok 191 - 타임라인은 레이어마다 한 행을 만들고 그 레이어의 획만 채운다
+  ---
+  duration_ms: 1.1124
+  type: 'test'
+  ...
+# Subtest: 새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을 덮지 않는다
+ok 192 - 새로 그린 획은 활성 레이어에 붙고 처음 로드는 배정을 덮지 않는다
+  ---
+  duration_ms: 0.3495
+  type: 'test'
+  ...
+# Subtest: 키프레임 이동 라우터는 레이어별 행 id 를 알아본다
+ok 193 - 키프레임 이동 라우터는 레이어별 행 id 를 알아본다
+  ---
+  duration_ms: 0.4023
+  type: 'test'
+  ...
+# Subtest: 오브젝트 추적은 세션이 살아나는 순간 심는다
+ok 194 - 오브젝트 추적은 세션이 살아나는 순간 심는다
+  ---
+  duration_ms: 0.3752
+  type: 'test'
+  ...
+# Subtest: brush size shortcuts are routed by action id, not by a hard-coded key code
+ok 195 - brush size shortcuts are routed by action id, not by a hard-coded key code
+  ---
+  duration_ms: 0.6809
+  type: 'test'
+  ...
+# Subtest: drawing shortcuts bypass the remembered-editor relay while the overlay owns the keyboard
+ok 196 - drawing shortcuts bypass the remembered-editor relay while the overlay owns the keyboard
+  ---
+  duration_ms: 1.0997
+  type: 'test'
+  ...
+# Subtest: palette height changes reclamp the position so revealed controls stay on screen
+ok 197 - palette height changes reclamp the position so revealed controls stay on screen
+  ---
+  duration_ms: 0.1889
+  type: 'test'
+  ...
+# Subtest: section labels do not advertise keyboard activation the overlay cannot deliver
+ok 198 - section labels do not advertise keyboard activation the overlay cannot deliver
+  ---
+  duration_ms: 0.1503
+  type: 'test'
+  ...
+# Subtest: the outline section sits under the colour palette in the brush panel
+ok 199 - the outline section sits under the colour palette in the brush panel
+  ---
+  duration_ms: 0.974
+  type: 'test'
+  ...
+# Subtest: 같은 문서 프레임을 여러 행에서 골라도 이동이 무산되지 않는다
+ok 200 - 같은 문서 프레임을 여러 행에서 골라도 이동이 무산되지 않는다
+  ---
+  duration_ms: 0.2108
+  type: 'test'
+  ...
+# Subtest: 삭제된 획의 레이어 배정은 실행취소가 되살릴 때까지 남는다
+ok 201 - 삭제된 획의 레이어 배정은 실행취소가 되살릴 때까지 남는다
+  ---
+  duration_ms: 0.1803
+  type: 'test'
+  ...
+# Subtest: 실행취소로 되살아난 획은 원래 레이어에 남는다
+ok 202 - 실행취소로 되살아난 획은 원래 레이어에 남는다
+  ---
+  duration_ms: 0.1688
+  type: 'test'
+  ...
+# Subtest: 레이어 헤더 클릭은 레이어 모델의 활성 레이어를 바꾼다
+ok 203 - 레이어 헤더 클릭은 레이어 모델의 활성 레이어를 바꾼다
+  ---
+  duration_ms: 0.0848
+  type: 'test'
+  ...
+# Subtest: 배정 걷어내기는 문서마다 한 번만 하고 본 목록은 같은 문서에서 유지한다
+ok 204 - 배정 걷어내기는 문서마다 한 번만 하고 본 목록은 같은 문서에서 유지한다
+  ---
+  duration_ms: 1.0598
+  type: 'test'
+  ...
+# Subtest: 파일럿 레이어 헤더 클릭은 캡처 방화벽을 통과한다
+ok 205 - 파일럿 레이어 헤더 클릭은 캡처 방화벽을 통과한다
+  ---
+  duration_ms: 0.4243
+  type: 'test'
+  ...
+# Subtest: 잘린 획의 조각은 원본 레이어를 물려받는다
+ok 206 - 잘린 획의 조각은 원본 레이어를 물려받는다
+  ---
+  duration_ms: 0.8228
+  type: 'test'
+  ...
+# Subtest: 표시·잠금 단축키는 레이어 모델의 플래그만 뒤집는다
+ok 207 - 표시·잠금 단축키는 레이어 모델의 플래그만 뒤집는다
+  ---
+  duration_ms: 0.9176
+  type: 'test'
+  ...
+# Subtest: 표시·잠금과 겹침 순서는 오브젝트 id 집합으로 바뀌어 오버레이로 간다
+ok 208 - 표시·잠금과 겹침 순서는 오브젝트 id 집합으로 바뀌어 오버레이로 간다
+  ---
+  duration_ms: 1.2441
+  type: 'test'
+  ...
+# Subtest: 표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시 보낸다
+ok 209 - 표시·잠금 집합은 모델·문서·세션이 바뀔 때마다 다시 보낸다
+  ---
+  duration_ms: 0.2905
+  type: 'test'
+  ...
+# Subtest: 표시·잠금 토글은 그리기 모드일 때만 받는다
+ok 210 - 표시·잠금 토글은 그리기 모드일 때만 받는다
+  ---
+  duration_ms: 0.4958
+  type: 'test'
+  ...
+# Subtest: 체크인된 오버레이 번들은 런타임 API 를 모두 담고 있다
+ok 211 - 체크인된 오버레이 번들은 런타임 API 를 모두 담고 있다
+  ---
+  duration_ms: 9.7516
+  type: 'test'
+  ...
+# Subtest: 레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만 모델을 바꾼다
+ok 212 - 레이어 삭제·이동은 문서를 먼저 바꾸고 성공했을 때만 모델을 바꾼다
+  ---
+  duration_ms: 1.7097
+  type: 'test'
+  ...
+# Subtest: 겹침 순서 랭크는 표시·잠금과 같은 경로로 계속 밀어 넣는다
+ok 213 - 겹침 순서 랭크는 표시·잠금과 같은 경로로 계속 밀어 넣는다
+  ---
+  duration_ms: 0.2917
+  type: 'test'
+  ...
+# Subtest: 레이어 히스토리 예산은 프레임마다의 스냅샷을 모두 센다
+ok 214 - 레이어 히스토리 예산은 프레임마다의 스냅샷을 모두 센다
+  ---
+  duration_ms: 0.3872
+  type: 'test'
+  ...
+# Subtest: 레이어 모델은 짝 id 로 씬과 함께 되돌아가되 그 사이의 편집을 지킨다
+ok 215 - 레이어 모델은 짝 id 로 씬과 함께 되돌아가되 그 사이의 편집을 지킨다
+  ---
+  duration_ms: 0.7385
+  type: 'test'
+  ...
+# Subtest: 씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다
+ok 216 - 씬이 바뀌지 않아도 표식으로 짝 id 를 남긴다
+  ---
+  duration_ms: 0.8406
+  type: 'test'
+  ...
+# Subtest: 지운 레이어는 이웃 정체를 기준으로 되돌아온다
+ok 217 - 지운 레이어는 이웃 정체를 기준으로 되돌아온다
+  ---
+  duration_ms: 0.599
+  type: 'test'
+  ...
+# Subtest: 랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다
+ok 218 - 랭크가 닿기 전에 커밋된 획은 한 번 바로잡는다
+  ---
+  duration_ms: 0.3047
+  type: 'test'
+  ...
+# Subtest: 정규화 랭크는 같은 층 안에서 새 획을 위로 보낸다
+ok 219 - 정규화 랭크는 같은 층 안에서 새 획을 위로 보낸다
+  ---
+  duration_ms: 0.3221
+  type: 'test'
+  ...
+# Subtest: 팔레트 버튼으로 되돌린 레이어 조작도 모델을 함께 되돌린다
+ok 220 - 팔레트 버튼으로 되돌린 레이어 조작도 모델을 함께 되돌린다
+  ---
+  duration_ms: 0.5394
+  type: 'test'
+  ...
+# Subtest: 레이어 조작이 도는 동안 팔레트 되돌리기를 잠근다
+ok 221 - 레이어 조작이 도는 동안 팔레트 되돌리기를 잠근다
+  ---
+  duration_ms: 0.3786
+  type: 'test'
+  ...
+# Subtest: 정규화는 사용자 히스토리에 남기지 않는다
+ok 222 - 정규화는 사용자 히스토리에 남기지 않는다
+  ---
+  duration_ms: 0.1794
+  type: 'test'
+  ...
+# Subtest: 정규화 재정렬은 그림자 관찰자를 다시 심는다
+ok 223 - 정규화 재정렬은 그림자 관찰자를 다시 심는다
+  ---
+  duration_ms: 0.1077
+  type: 'test'
+  ...
+# Subtest: 정규화는 손댄 씬을 그림자에서 다시 심게 한다
+ok 224 - 정규화는 손댄 씬을 그림자에서 다시 심게 한다
+  ---
+  duration_ms: 0.0972
+  type: 'test'
+  ...
+# Subtest: runtime hydrate and export round-trip one video atomically while drawing input is off
+ok 225 - runtime hydrate and export round-trip one video atomically while drawing input is off
+  ---
+  duration_ms: 21.3519
+  type: 'test'
+  ...
+# Subtest: runtime hydrate rejects every persistence-store record violation atomically
+ok 226 - runtime hydrate rejects every persistence-store record violation atomically
+  ---
+  duration_ms: 8.5548
+  type: 'test'
+  ...
+# Subtest: render geometry topology validation fails closed at explicit budgets
+ok 227 - render geometry topology validation fails closed at explicit budgets
+  ---
+  duration_ms: 0.2827
+  type: 'test'
+  ...
+# Subtest: runtime persistence bridge ignores hover and cannot roll back a committed stroke
+ok 228 - runtime persistence bridge ignores hover and cannot roll back a committed stroke
+  ---
+  duration_ms: 16.5956
+  type: 'test'
+  ...
+# Subtest: auto singleton enables Drawing V3 shadow only for a strict true bootstrap field and consumes it
+ok 229 - auto singleton enables Drawing V3 shadow only for a strict true bootstrap field and consumes it
+  ---
+  duration_ms: 94.2736
+  type: 'test'
+  ...
+# Subtest: auto singleton ignores non-configurable bootstrap accessors and stays safely off
+ok 230 - auto singleton ignores non-configurable bootstrap accessors and stays safely off
+  ---
+  duration_ms: 186.466
+  type: 'test'
+  ...
+# Subtest: auto singleton stays off and initializes when bootstrap descriptor inspection throws
+ok 231 - auto singleton stays off and initializes when bootstrap descriptor inspection throws
+  ---
+  duration_ms: 85.7153
+  type: 'test'
+  ...
+# Subtest: auto singleton keeps Drawing V3 shadow off for missing or non-boolean bootstrap values
+ok 232 - auto singleton keeps Drawing V3 shadow off for missing or non-boolean bootstrap values
+  ---
+  duration_ms: 350.5099
+  type: 'test'
+  ...
+# Subtest: late bootstrap is consumed without replacing or mutating an existing singleton
+ok 233 - late bootstrap is consumed without replacing or mutating an existing singleton
+  ---
+  duration_ms: 76.0631
+  type: 'test'
+  ...
+# Subtest: module cache re-evaluation consumes late bootstrap without replacing the auto singleton
+ok 234 - module cache re-evaluation consumes late bootstrap without replacing the auto singleton
+  ---
+  duration_ms: 87.479
+  type: 'test'
+  ...
+# Subtest: Drawing V3 runtime shadow is disabled by default and never constructs an adapter
+ok 235 - Drawing V3 runtime shadow is disabled by default and never constructs an adapter
+  ---
+  duration_ms: 2.5994
+  type: 'test'
+  ...
+# Subtest: enabled runtime-owned store wires one adapter and exposes only bounded shadow diagnostics
+ok 236 - enabled runtime-owned store wires one adapter and exposes only bounded shadow diagnostics
+  ---
+  duration_ms: 6.9291
+  type: 'test'
+  ...
+# Subtest: enabled runtime never monkey-patches a caller-supplied scene store
+ok 237 - enabled runtime never monkey-patches a caller-supplied scene store
+  ---
+  duration_ms: 1.6465
+  type: 'test'
+  ...
+# Subtest: shadow adapter startup failure leaves the Fabric primary fully usable
+ok 238 - shadow adapter startup failure leaves the Fabric primary fully usable
+  ---
+  duration_ms: 1.2706
+  type: 'test'
+  ...
+# Subtest: runtime exposes a fixed sanitized Drawing V3 diagnostic schema only
+ok 239 - runtime exposes a fixed sanitized Drawing V3 diagnostic schema only
+  ---
+  duration_ms: 1.2431
+  type: 'test'
+  ...
+# Subtest: runtime shadow teardown drops scenes before one idempotent adapter destroy
+ok 240 - runtime shadow teardown drops scenes before one idempotent adapter destroy
+  ---
+  duration_ms: 1.1178
+  type: 'test'
+  ...
+# Subtest: runtime shadow keeps video and frame documents isolated across warm restoration
+ok 241 - runtime shadow keeps video and frame documents isolated across warm restoration
+  ---
+  duration_ms: 4.7889
+  type: 'test'
+  ...
+# Subtest: shadow enqueue failure stays out of Fabric errors saves and the next gesture
+ok 242 - shadow enqueue failure stays out of Fabric errors saves and the next gesture
+  ---
+  duration_ms: 3.1599
+  type: 'test'
+  ...
+# Subtest: one hundred B-style warm reentries never duplicate the shadow document or revision
+ok 243 - one hundred B-style warm reentries never duplicate the shadow document or revision
+  ---
+  duration_ms: 10.7261
+  type: 'test'
+  ...
+# Subtest: B disable keeps committed Fabric drawings visible and restores the same scene on reentry
+ok 244 - B disable keeps committed Fabric drawings visible and restores the same scene on reentry
+  ---
+  duration_ms: 1459.8703
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso selects two touched pressure strokes by original ID without mutation
+ok 245 - whole-stroke lasso selects two touched pressure strokes by original ID without mutation
+  ---
+  duration_ms: 52.9852
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso follows the rendered perfect-freehand L-turn fill
+ok 246 - whole-stroke lasso follows the rendered perfect-freehand L-turn fill
+  ---
+  duration_ms: 71.0948
+  type: 'test'
+  ...
+# Subtest: whole and partial lasso ignore a raw centerline-radius false positive outside the actual fill
+ok 247 - whole and partial lasso ignore a raw centerline-radius false positive outside the actual fill
+  ---
+  duration_ms: 96.1688
+  type: 'test'
+  ...
+# Subtest: whole selection accepts but partial selection atomically rejects a short noncanonical record
+ok 248 - whole selection accepts but partial selection atomically rejects a short noncanonical record
+  ---
+  duration_ms: 30.1619
+  type: 'test'
+  ...
+# Subtest: partial selection keeps a fully enclosed self-crossing stroke whole
+ok 249 - partial selection keeps a fully enclosed self-crossing stroke whole
+  ---
+  duration_ms: 69.6255
+  type: 'test'
+  ...
+# Subtest: partial selection moves exactly partitioned branches at a self-crossing stroke
+ok 250 - partial selection moves exactly partitioned branches at a self-crossing stroke
+  ---
+  duration_ms: 92.9367
+  type: 'test'
+  ...
+# Subtest: partial selection moves a U-turn whose retained fill maps to wrapped source intervals
+ok 251 - partial selection moves a U-turn whose retained fill maps to wrapped source intervals
+  ---
+  duration_ms: 140.5535
+  type: 'test'
+  ...
+# Subtest: partial rectangle moves a non-monotone U-turn and restores it with Undo
+ok 252 - partial rectangle moves a non-monotone U-turn and restores it with Undo
+  ---
+  duration_ms: 104.2738
+  type: 'test'
+  ...
+# Subtest: persisted render geometry supports equal shared and external tangent partial selection
+ok 253 - persisted render geometry supports equal shared and external tangent partial selection
+  ---
+  duration_ms: 43.4939
+  type: 'test'
+  ...
+# Subtest: partial lasso stages the rendered perfect-freehand L-turn corner
+ok 254 - partial lasso stages the rendered perfect-freehand L-turn corner
+  ---
+  duration_ms: 110.798
+  type: 'test'
+  ...
+# Subtest: partial rectangle stages a sparse curved stroke when display smoothing splits its centerline coverage
+ok 255 - partial rectangle stages a sparse curved stroke when display smoothing splits its centerline coverage
+  ---
+  duration_ms: 44.1166
+  type: 'test'
+  ...
+# Subtest: partial lasso stages a sparse curved stroke when display smoothing splits its centerline coverage
+ok 256 - partial lasso stages a sparse curved stroke when display smoothing splits its centerline coverage
+  ---
+  duration_ms: 46.0461
+  type: 'test'
+  ...
+# Subtest: partial rectangle ignores rounded near-duplicate cap edges on a thick curve
+ok 257 - partial rectangle ignores rounded near-duplicate cap edges on a thick curve
+  ---
+  duration_ms: 51.3444
+  type: 'test'
+  ...
+# Subtest: partial lasso ignores rounded near-duplicate cap edges on a thick curve
+ok 258 - partial lasso ignores rounded near-duplicate cap edges on a thick curve
+  ---
+  duration_ms: 53.6408
+  type: 'test'
+  ...
+# Subtest: partial rectangle detaches a source segment when the selection only covers part of the stroke thickness
+ok 259 - partial rectangle detaches a source segment when the selection only covers part of the stroke thickness
+  ---
+  duration_ms: 76.5063
+  type: 'test'
+  ...
+# Subtest: partial lasso detaches a source segment when the selection only covers part of the stroke thickness
+ok 260 - partial lasso detaches a source segment when the selection only covers part of the stroke thickness
+  ---
+  duration_ms: 78.8708
+  type: 'test'
+  ...
+# Subtest: partial rectangle detaches a middle band without duplicating same-owner source lineage
+ok 261 - partial rectangle detaches a middle band without duplicating same-owner source lineage
+  ---
+  duration_ms: 73.9833
+  type: 'test'
+  ...
+# Subtest: partial lasso detaches a middle band without duplicating same-owner source lineage
+ok 262 - partial lasso detaches a middle band without duplicating same-owner source lineage
+  ---
+  duration_ms: 61.7475
+  type: 'test'
+  ...
+# Subtest: partial rectangle stages an asymmetric monotone curve with multiple wrapped fill components
+ok 263 - partial rectangle stages an asymmetric monotone curve with multiple wrapped fill components
+  ---
+  duration_ms: 106.6331
+  type: 'test'
+  ...
+# Subtest: partial lasso stages an asymmetric monotone curve with multiple wrapped fill components
+ok 264 - partial lasso stages an asymmetric monotone curve with multiple wrapped fill components
+  ---
+  duration_ms: 77.2905
+  type: 'test'
+  ...
+# Subtest: partial rectangle retains a visible fill backed by a sub-unit centerline interval
+ok 265 - partial rectangle retains a visible fill backed by a sub-unit centerline interval
+  ---
+  duration_ms: 89.5988
+  type: 'test'
+  ...
+# Subtest: a partial-thickness curve survives hydration and remains free-selectable
+ok 266 - a partial-thickness curve survives hydration and remains free-selectable
+  ---
+  duration_ms: 92.306
+  type: 'test'
+  ...
+# Subtest: persisted clipped fill reselects when hidden source lineage leaves an endpoint projection gap
+ok 267 - persisted clipped fill reselects when hidden source lineage leaves an endpoint projection gap
+  ---
+  duration_ms: 91.2951
+  type: 'test'
+  ...
+# Subtest: partial selection rejects interval bridging that would leave an unassigned source gap
+ok 268 - partial selection rejects interval bridging that would leave an unassigned source gap
+  ---
+  duration_ms: 43.2458
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso selects a visible point stroke without mutation
+ok 269 - whole-stroke lasso selects a visible point stroke without mutation
+  ---
+  duration_ms: 45.2584
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso selects a sub-unit stroke while leaving a distant point unselected
+ok 270 - whole-stroke lasso selects a sub-unit stroke while leaving a distant point unselected
+  ---
+  duration_ms: 31.3238
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso uses visible radius without selecting a point beyond the brush edge
+ok 271 - whole-stroke lasso uses visible radius without selecting a point beyond the brush edge
+  ---
+  duration_ms: 30.2663
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso ignores duplicate pressure that exceeds the rendered point radius
+ok 272 - whole-stroke lasso ignores duplicate pressure that exceeds the rendered point radius
+  ---
+  duration_ms: 28.2605
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso keeps a normal stroke when only a sub-unit visible cap touches
+ok 273 - whole-stroke lasso keeps a normal stroke when only a sub-unit visible cap touches
+  ---
+  duration_ms: 30.2419
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso hits the visible affine stroke under scaleY
+ok 274 - whole-stroke lasso hits the visible affine stroke under scaleY
+  ---
+  duration_ms: 30.4961
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso hits the visible affine stroke under scale and rotate
+ok 275 - whole-stroke lasso hits the visible affine stroke under scale and rotate
+  ---
+  duration_ms: 30.7775
+  type: 'test'
+  ...
+# Subtest: whole-stroke lasso hits the visible affine stroke under scale skew and flip
+ok 276 - whole-stroke lasso hits the visible affine stroke under scale skew and flip
+  ---
+  duration_ms: 30.729
+  type: 'test'
+  ...
+# Subtest: partial rectangle selects and moves the original point stroke atomically
+ok 277 - partial rectangle selects and moves the original point stroke atomically
+  ---
+  duration_ms: 45.6322
+  type: 'test'
+  ...
+# Subtest: partial rectangle selects and moves the original 0.4-unit stroke atomically
+ok 278 - partial rectangle selects and moves the original 0.4-unit stroke atomically
+  ---
+  duration_ms: 45.2089
+  type: 'test'
+  ...
+# Subtest: partial lasso selects and moves the original point stroke atomically
+ok 279 - partial lasso selects and moves the original point stroke atomically
+  ---
+  duration_ms: 59.7347
+  type: 'test'
+  ...
+# Subtest: partial lasso selects and moves the original 0.4-unit stroke atomically
+ok 280 - partial lasso selects and moves the original 0.4-unit stroke atomically
+  ---
+  duration_ms: 45.3058
+  type: 'test'
+  ...
+# Subtest: partial affine fragments preserve source transform and source-point scene position
+ok 281 - partial affine fragments preserve source transform and source-point scene position
+  ---
+  duration_ms: 30.8983
+  type: 'test'
+  ...
+# Subtest: partial fragment plus point stroke move round-trips original IDs transforms and z-order once
+ok 282 - partial fragment plus point stroke move round-trips original IDs transforms and z-order once
+  ---
+  duration_ms: 65.0986
+  type: 'test'
+  ...
+# Subtest: partial fragment plus point stroke Delete round-trips original IDs and z-order once
+ok 283 - partial fragment plus point stroke Delete round-trips original IDs and z-order once
+  ---
+  duration_ms: 57.1988
+  type: 'test'
+  ...
+# Subtest: partial selection aborts atomically when the shared geometry operation budget is exhausted
+ok 284 - partial selection aborts atomically when the shared geometry operation budget is exhausted
+  ---
+  duration_ms: 28.0266
+  type: 'test'
+  ...
+# Subtest: realistic 300 and 400-sample partial rectangles stage move and undo under budget
+ok 285 - realistic 300 and 400-sample partial rectangles stage move and undo under budget
+  ---
+  duration_ms: 548.7397
+  type: 'test'
+  ...
+# Subtest: partial selection aborts atomically for a near-singular Fabric transform
+ok 286 - partial selection aborts atomically for a near-singular Fabric transform
+  ---
+  duration_ms: 26.1936
+  type: 'test'
+  ...
+# Subtest: whole-stroke selection aborts for a scale-relative near-singular Fabric transform
+ok 287 - whole-stroke selection aborts for a scale-relative near-singular Fabric transform
+  ---
+  duration_ms: 31.8628
+  type: 'test'
+  ...
+# Subtest: whole-stroke selection accepts a well-conditioned uniform 1e-5 Fabric scale
+ok 288 - whole-stroke selection accepts a well-conditioned uniform 1e-5 Fabric scale
+  ---
+  duration_ms: 30.75
+  type: 'test'
+  ...
+# Subtest: whole-stroke selection rejects a Fabric object without local Path geometry
+ok 289 - whole-stroke selection rejects a Fabric object without local Path geometry
+  ---
+  duration_ms: 29.7655
+  type: 'test'
+  ...
+# Subtest: whole-stroke selection rejects a Fabric Path without its source offset
+ok 290 - whole-stroke selection rejects a Fabric Path without its source offset
+  ---
+  duration_ms: 30.3145
+  type: 'test'
+  ...
+# Subtest: whole-stroke selection rejects a non-Path Fabric object even with compatible fields
+ok 291 - whole-stroke selection rejects a non-Path Fabric object even with compatible fields
+  ---
+  duration_ms: 29.6084
+  type: 'test'
+  ...
+# Subtest: partial selection aborts before fragment work when its Fabric object is missing
+ok 292 - partial selection aborts before fragment work when its Fabric object is missing
+  ---
+  duration_ms: 43.5935
+  type: 'test'
+  ...
+# Subtest: runtime respects flat stroke caps for whole and partial selection
+ok 293 - runtime respects flat stroke caps for whole and partial selection
+  ---
+  duration_ms: 31.999
+  type: 'test'
+  ...
+# Subtest: runtime respects flat stroke caps when a short stroke cannot be split
+ok 294 - runtime respects flat stroke caps when a short stroke cannot be split
+  ---
+  duration_ms: 45.9415
+  type: 'test'
+  ...
+# Subtest: partial pressure-chain fragments keep exact shapes through Move Delete Undo and Redo
+ok 295 - partial pressure-chain fragments keep exact shapes through Move Delete Undo and Redo
+  ---
+  duration_ms: 112.2534
+  type: 'test'
+  ...
+# Subtest: rectangle partial selection stages without mutation and moves only the inside fragment
+ok 296 - rectangle partial selection stages without mutation and moves only the inside fragment
+  ---
+  duration_ms: 97.0021
+  type: 'test'
+  ...
+# Subtest: rectangle partial selection reverse drag selects the same middle fragment range
+ok 297 - rectangle partial selection reverse drag selects the same middle fragment range
+  ---
+  duration_ms: 119.4608
+  type: 'test'
+  ...
+# Subtest: rectangle partial selection Delete Undo and Redo round-trip one atomic split command
+ok 298 - rectangle partial selection Delete Undo and Redo round-trip one atomic split command
+  ---
+  duration_ms: 100.4168
+  type: 'test'
+  ...
+# Subtest: real Fabric brush mutations stay in exact runtime-owned V3 shadow parity
+ok 299 - real Fabric brush mutations stay in exact runtime-owned V3 shadow parity
+  ---
+  duration_ms: 102.5555
+  type: 'test'
+  ...
+# Subtest: real Fabric primary mutation history and selection are identical with shadow off and on
+ok 300 - real Fabric primary mutation history and selection are identical with shadow off and on
+  ---
+  duration_ms: 150.7886
+  type: 'test'
+  ...
+# Subtest: real Fabric lasso split caps order translation undo and redo stay in V3 shadow parity
+ok 301 - real Fabric lasso split caps order translation undo and redo stay in V3 shadow parity
+  ---
+  duration_ms: 93.4765
+  type: 'test'
+  ...
+# Subtest: successful empty partial lasso retires the prior pending split before Delete
+ok 302 - successful empty partial lasso retires the prior pending split before Delete
+  ---
+  duration_ms: 37.0379
+  type: 'test'
+  ...
+# Subtest: successful persisted-only partial lasso replaces the prior pending split selection
+ok 303 - successful persisted-only partial lasso replaces the prior pending split selection
+  ---
+  duration_ms: 34.5668
+  type: 'test'
+  ...
+# Subtest: whole lasso selects a new stroke after retiring a prior pending partial selection
+ok 304 - whole lasso selects a new stroke after retiring a prior pending partial selection
+  ---
+  duration_ms: 60.7053
+  type: 'test'
+  ...
+# Subtest: failed zero-area replacement keeps the same pending lasso usable
+ok 305 - failed zero-area replacement keeps the same pending lasso usable
+  ---
+  duration_ms: 47.9256
+  type: 'test'
+  ...
+# Subtest: failed geometry replacement keeps the same pending lasso usable
+ok 306 - failed geometry replacement keeps the same pending lasso usable
+  ---
+  duration_ms: 40.362
+  type: 'test'
+  ...
+# Subtest: failed proxy-stage replacement keeps the same pending lasso usable
+ok 307 - failed proxy-stage replacement keeps the same pending lasso usable
+  ---
+  duration_ms: 42.198
+  type: 'test'
+  ...
+# Subtest: stale failed replacement never resurrects or retains the prior pending lasso
+ok 308 - stale failed replacement never resurrects or retains the prior pending lasso
+  ---
+  duration_ms: 35.8777
+  type: 'test'
+  ...
+# Subtest: lasso pointerup keeps scene objects mutation dirty undo and redo unchanged
+ok 309 - lasso pointerup keeps scene objects mutation dirty undo and redo unchanged
+  ---
+  duration_ms: 57.8858
+  type: 'test'
+  ...
+# Subtest: partial lasso Delete commits one command and round-trips exact ID path and z-order
+ok 310 - partial lasso Delete commits one command and round-trips exact ID path and z-order
+  ---
+  duration_ms: 77.4304
+  type: 'test'
+  ...
+# Subtest: partial fragments plus a fully enclosed stroke Delete round-trip as one command
+ok 311 - partial fragments plus a fully enclosed stroke Delete round-trip as one command
+  ---
+  duration_ms: 89.5442
+  type: 'test'
+  ...
+# Subtest: whole-selection geometry failure restores the exact prior multi-selection
+ok 312 - whole-selection geometry failure restores the exact prior multi-selection
+  ---
+  duration_ms: 37.4511
+  type: 'test'
+  ...
+# Subtest: zero-area whole selection restores the exact prior multi-selection
+ok 313 - zero-area whole selection restores the exact prior multi-selection
+  ---
+  duration_ms: 37.8228
+  type: 'test'
+  ...
+# Subtest: partial-selection budget failure restores the exact prior multi-selection
+ok 314 - partial-selection budget failure restores the exact prior multi-selection
+  ---
+  duration_ms: 32.0717
+  type: 'test'
+  ...
+# Subtest: zero-area partial selection restores the exact prior multi-selection
+ok 315 - zero-area partial selection restores the exact prior multi-selection
+  ---
+  duration_ms: 29.5203
+  type: 'test'
+  ...
+# Subtest: stale custom-lasso cancellation never resurrects selection after a source mutation
+ok 316 - stale custom-lasso cancellation never resurrects selection after a source mutation
+  ---
+  duration_ms: 47.7068
+  type: 'test'
+  ...
+# Subtest: lasso selection preserves the rendered stroke until a fragment actually moves
+ok 317 - lasso selection preserves the rendered stroke until a fragment actually moves
+  ---
+  duration_ms: 132.5812
+  type: 'test'
+  ...
+# Subtest: dragging a lasso-selected fragment moves only that fragment
+ok 318 - dragging a lasso-selected fragment moves only that fragment
+  ---
+  duration_ms: 34.8556
+  type: 'test'
+  ...
+# Subtest: moving the same lasso fragment twice records two separate commands
+ok 319 - moving the same lasso fragment twice records two separate commands
+  ---
+  duration_ms: 73.1488
+  type: 'test'
+  ...
+# Subtest: one undo restores the original stroke after lasso split and fragment move
+ok 320 - one undo restores the original stroke after lasso split and fragment move
+  ---
+  duration_ms: 58.5237
+  type: 'test'
+  ...
+# Subtest: one undo restores both a split fragment move and a fully enclosed stroke move
+ok 321 - one undo restores both a split fragment move and a fully enclosed stroke move
+  ---
+  duration_ms: 85.0375
+  type: 'test'
+  ...
+# Subtest: later drawing mutations keep ordered undo redo history without skipping newer work
+ok 322 - later drawing mutations keep ordered undo redo history without skipping newer work
+  ---
+  duration_ms: 78.3545
+  type: 'test'
+  ...
+# Subtest: a failed fragment build aborts the whole lasso split without losing stroke data
+ok 323 - a failed fragment build aborts the whole lasso split without losing stroke data
+  ---
+  duration_ms: 31.2513
+  type: 'test'
+  ...
+# Subtest: first fragment Fabric constructor failure restores the exact prior selection
+ok 324 - first fragment Fabric constructor failure restores the exact prior selection
+  ---
+  duration_ms: 40.3389
+  type: 'test'
+  ...
+# Subtest: fragment transform exceptions restore the exact prior selection
+    # Subtest: calcTransformMatrix throw
+    ok 1 - calcTransformMatrix throw
+      ---
+      duration_ms: 36.835
+      type: 'test'
+      ...
+    # Subtest: transformPoint throw
+    ok 2 - transformPoint throw
+      ---
+      duration_ms: 34.5664
+      type: 'test'
+      ...
+    # Subtest: setPositionByOrigin throw
+    ok 3 - setPositionByOrigin throw
+      ---
+      duration_ms: 32.2405
+      type: 'test'
+      ...
+    1..3
+ok 325 - fragment transform exceptions restore the exact prior selection
+  ---
+  duration_ms: 104.3327
+  type: 'test'
+  ...
+# Subtest: lasso fragment limits abort before replacing a complex stroke
+ok 326 - lasso fragment limits abort before replacing a complex stroke
+  ---
+  duration_ms: 37.8795
+  type: 'test'
+  ...
+# Subtest: cancelling an in-progress lasso leaves the original stroke untouched
+ok 327 - cancelling an in-progress lasso leaves the original stroke untouched
+  ---
+  duration_ms: 30.8633
+  type: 'test'
+  ...
+# Subtest: cancelling a no-move pending fragment selection rolls back to the original stroke
+ok 328 - cancelling a no-move pending fragment selection rolls back to the original stroke
+  ---
+  duration_ms: 29.6499
+  type: 'test'
+  ...
+# Subtest: pending lasso cancellation paths leave no proxy mutation or history
+    # Subtest: blur
+    ok 1 - blur
+      ---
+      duration_ms: 29.5971
+      type: 'test'
+      ...
+    # Subtest: pointercancel
+    ok 2 - pointercancel
+      ---
+      duration_ms: 28.343
+      type: 'test'
+      ...
+    # Subtest: pointercancel after materialize
+    ok 3 - pointercancel after materialize
+      ---
+      duration_ms: 31.3306
+      type: 'test'
+      ...
+    # Subtest: B disable
+    ok 4 - B disable
+      ---
+      duration_ms: 59.2861
+      type: 'test'
+      ...
+    # Subtest: tool mode change
+    ok 5 - tool mode change
+      ---
+      duration_ms: 32.6206
+      type: 'test'
+      ...
+    # Subtest: selection preset change
+    ok 6 - selection preset change
+      ---
+      duration_ms: 31.8095
+      type: 'test'
+      ...
+    # Subtest: new lasso
+    ok 7 - new lasso
+      ---
+      duration_ms: 41.0777
+      type: 'test'
+      ...
+    1..7
+ok 329 - pending lasso cancellation paths leave no proxy mutation or history
+  ---
+  duration_ms: 255.4263
+  type: 'test'
+  ...
+# Subtest: pending lasso Undo and Redo abort selection before applying committed history
+ok 330 - pending lasso Undo and Redo abort selection before applying committed history
+  ---
+  duration_ms: 58.9128
+  type: 'test'
+  ...
+# Subtest: zero-distance pending lasso move restores original visual and remains a no-op
+ok 331 - zero-distance pending lasso move restores original visual and remains a no-op
+  ---
+  duration_ms: 33.1082
+  type: 'test'
+  ...
+# Subtest: stale pending lasso session revision and source mutation never commit a split
+    # Subtest: input revision
+    ok 1 - input revision
+      ---
+      duration_ms: 60.1919
+      type: 'test'
+      ...
+    # Subtest: session
+    ok 2 - session
+      ---
+      duration_ms: 43.3753
+      type: 'test'
+      ...
+    # Subtest: source mutation count
+    ok 3 - source mutation count
+      ---
+      duration_ms: 32.5953
+      type: 'test'
+      ...
+    1..3
+ok 332 - stale pending lasso session revision and source mutation never commit a split
+  ---
+  duration_ms: 136.7831
+  type: 'test'
+  ...
+# Subtest: pending lasso commit failure restores the original scene and Fabric paths
+ok 333 - pending lasso commit failure restores the original scene and Fabric paths
+  ---
+  duration_ms: 29.2787
+  type: 'test'
+  ...
+# Subtest: pending lasso history capacity rejection preserves the original scene atomically
+ok 334 - pending lasso history capacity rejection preserves the original scene atomically
+  ---
+  duration_ms: 30.5558
+  type: 'test'
+  ...
+# Subtest: pending multi-lasso aborts if Fabric transforms only a subset of its selection
+ok 335 - pending multi-lasso aborts if Fabric transforms only a subset of its selection
+  ---
+  duration_ms: 29.8582
+  type: 'test'
+  ...
+# Subtest: pending lasso proxy construction failure restores the untouched original
+ok 336 - pending lasso proxy construction failure restores the untouched original
+  ---
+  duration_ms: 41.2906
+  type: 'test'
+  ...
+# Subtest: pending lasso materialization failure restores the untouched original
+ok 337 - pending lasso materialization failure restores the untouched original
+  ---
+  duration_ms: 34.9491
+  type: 'test'
+  ...
+# Subtest: the newest viewport update applies as soon as a lasso gesture settles
+ok 338 - the newest viewport update applies as soon as a lasso gesture settles
+  ---
+  duration_ms: 42.3103
+  type: 'test'
+  ...
+# Subtest: a zero-area lasso line never cuts a nearby thick stroke
+ok 339 - a zero-area lasso line never cuts a nearby thick stroke
+  ---
+  duration_ms: 33.2742
+  type: 'test'
+  ...
+# Subtest: empty and fully enclosing lassos select non-destructively
+ok 340 - empty and fully enclosing lassos select non-destructively
+  ---
+  duration_ms: 30.1214
+  type: 'test'
+  ...
+# Subtest: lasso commits an already moved stroke at its visible position without jumping
+ok 341 - lasso commits an already moved stroke at its visible position without jumping
+  ---
+  duration_ms: 42.0295
+  type: 'test'
+  ...
+# Subtest: lasso stages the visible edge of a thick stroke without mutating the scene
+ok 342 - lasso stages the visible edge of a thick stroke without mutating the scene
+  ---
+  duration_ms: 30.4457
+  type: 'test'
+  ...
+# Subtest: one lasso moves matching segments from two strokes and releases the group box
+ok 343 - one lasso moves matching segments from two strokes and releases the group box
+  ---
+  duration_ms: 38.2015
+  type: 'test'
+  ...
+# Subtest: lasso keeps untouched strokes between the replacement fragments at their original z-order
+ok 344 - lasso keeps untouched strokes between the replacement fragments at their original z-order
+  ---
+  duration_ms: 51.6782
+  type: 'test'
+  ...
+# Subtest: real Fabric thin stroke hit margin drives honest hover cursors
+ok 345 - real Fabric thin stroke hit margin drives honest hover cursors
+  ---
+  duration_ms: 32.4604
+  type: 'test'
+  ...
+# Subtest: switching a whole-stroke selection to partial target clears it immediately
+ok 346 - switching a whole-stroke selection to partial target clears it immediately
+  ---
+  duration_ms: 30.1834
+  type: 'test'
+  ...
+# Subtest: switching a whole-stroke selection to lasso shape clears it immediately
+ok 347 - switching a whole-stroke selection to lasso shape clears it immediately
+  ---
+  duration_ms: 30.8535
+  type: 'test'
+  ...
+# Subtest: selected stroke owns its full bounds with a move cursor and restores pixel hit testing on switch
+ok 348 - selected stroke owns its full bounds with a move cursor and restores pixel hit testing on switch
+  ---
+  duration_ms: 32.2207
+  type: 'test'
+  ...
+# Subtest: active selection bounds use move and released strokes return to grab
+ok 349 - active selection bounds use move and released strokes return to grab
+  ---
+  duration_ms: 29.9415
+  type: 'test'
+  ...
+# Subtest: moved real Fabric marquee settles before the next single-stroke drag
+ok 350 - moved real Fabric marquee settles before the next single-stroke drag
+  ---
+  duration_ms: 46.3517
+  type: 'test'
+  ...
+# Subtest: captured select pointerup settles a moved marquee without a direct document mouseup
+ok 351 - captured select pointerup settles a moved marquee without a direct document mouseup
+  ---
+  duration_ms: 30.9147
+  type: 'test'
+  ...
+# Subtest: viewport update during a stroke click waits and preserves the new selection
+ok 352 - viewport update during a stroke click waits and preserves the new selection
+  ---
+  duration_ms: 29.5437
+  type: 'test'
+  ...
+# Subtest: document fallback settles a select gesture when pointer capture fails
+ok 353 - document fallback settles a select gesture when pointer capture fails
+  ---
+  duration_ms: 30.6855
+  type: 'test'
+  ...
+# Subtest: cancelled select gestures restore Fabric input for paths, active selections, and blank marquees
+ok 354 - cancelled select gestures restore Fabric input for paths, active selections, and blank marquees
+  ---
+  duration_ms: 37.514
+  type: 'test'
+  ...
+# Subtest: a real preset change settles the latest viewport after cancelling a native select drag
+ok 355 - a real preset change settles the latest viewport after cancelling a native select drag
+  ---
+  duration_ms: 36.0453
+  type: 'test'
+  ...
+# Subtest: a real preset change settles a deferred viewport after cancelling a custom lasso
+ok 356 - a real preset change settles a deferred viewport after cancelling a custom lasso
+  ---
+  duration_ms: 30.6679
+  type: 'test'
+  ...
+# Subtest: custom lasso pointer cancellation and blur discard a deferred viewport
+    # Subtest: pointercancel
+    ok 1 - pointercancel
+      ---
+      duration_ms: 30.9976
+      type: 'test'
+      ...
+    # Subtest: blur
+    ok 2 - blur
+      ---
+      duration_ms: 29.4312
+      type: 'test'
+      ...
+    1..2
+ok 357 - custom lasso pointer cancellation and blur discard a deferred viewport
+  ---
+  duration_ms: 60.9816
+  type: 'test'
+  ...
+# Subtest: preset change rolls back a moving pending partial selection before applying viewport
+ok 358 - preset change rolls back a moving pending partial selection before applying viewport
+  ---
+  duration_ms: 36.6444
+  type: 'test'
+  ...
+# Subtest: same-value preset click leaves an active select gesture and deferred viewport untouched
+ok 359 - same-value preset click leaves an active select gesture and deferred viewport untouched
+  ---
+  duration_ms: 39.4941
+  type: 'test'
+  ...
+# Subtest: latest deferred viewport wins after one select gesture settles
+ok 360 - latest deferred viewport wins after one select gesture settles
+  ---
+  duration_ms: 0.982
+  type: 'test'
+  ...
+# Subtest: brush stroke from a replaced enabled input cannot mutate the new session
+ok 361 - brush stroke from a replaced enabled input cannot mutate the new session
+  ---
+  duration_ms: 0.9615
+  type: 'test'
+  ...
+# Subtest: stale deferred viewport is discarded by input disable or session replacement
+ok 362 - stale deferred viewport is discarded by input disable or session replacement
+  ---
+  duration_ms: 1.0864
+  type: 'test'
+  ...
+# Subtest: stale multi-selection release respects membership and input revisions
+ok 363 - stale multi-selection release respects membership and input revisions
+  ---
+  duration_ms: 2.41
+  type: 'test'
+  ...
+# Subtest: stale multi-selection release preserves a newer active object with identical membership
+ok 364 - stale multi-selection release preserves a newer active object with identical membership
+  ---
+  duration_ms: 1.4542
+  type: 'test'
+  ...
+# Subtest: stale multi-selection release preserves selection after a higher enabled input revision
+ok 365 - stale multi-selection release preserves selection after a higher enabled input revision
+  ---
+  duration_ms: 1.2546
+  type: 'test'
+  ...
+# Subtest: pure exports load without constructing a DOM or Fabric canvas
+ok 366 - pure exports load without constructing a DOM or Fabric canvas
+  ---
+  duration_ms: 0.1384
+  type: 'test'
+  ...
+# Subtest: prepare creates one Fabric canvas and the browser runtime stays reusable
+ok 367 - prepare creates one Fabric canvas and the browser runtime stays reusable
+  ---
+  duration_ms: 0.643
+  type: 'test'
+  ...
+# Subtest: responsive toolbar keeps one accessible DOM and a compact persistence badge
+ok 368 - responsive toolbar keeps one accessible DOM and a compact persistence badge
+  ---
+  duration_ms: 0.979
+  type: 'test'
+  ...
+# Subtest: a failed partial prepare rolls back its surface and retries without duplicate listeners
+ok 369 - a failed partial prepare rolls back its surface and retries without duplicate listeners
+  ---
+  duration_ms: 1.268
+  type: 'test'
+  ...
+# Subtest: viewport separates Fabric source backstore from display CSS dimensions
+ok 370 - viewport separates Fabric source backstore from display CSS dimensions
+  ---
+  duration_ms: 0.704
+  type: 'test'
+  ...
+# Subtest: viewport updates keep source coordinates aligned across resize, zoom, and pan
+ok 371 - viewport updates keep source coordinates aligned across resize, zoom, and pan
+  ---
+  duration_ms: 0.832
+  type: 'test'
+  ...
+# Subtest: selection hit tolerance converts displayed pixels to source coordinates within bounds
+ok 372 - selection hit tolerance converts displayed pixels to source coordinates within bounds
+  ---
+  duration_ms: 0.1997
+  type: 'test'
+  ...
+# Subtest: selection hit margin and cursors follow displayed pixels without scene mutations
+ok 373 - selection hit margin and cursors follow displayed pixels without scene mutations
+  ---
+  duration_ms: 0.9064
+  type: 'test'
+  ...
+# Subtest: selection updates synchronize the complete Fabric active selection
+ok 374 - selection updates synchronize the complete Fabric active selection
+  ---
+  duration_ms: 1.3952
+  type: 'test'
+  ...
+# Subtest: local toolbar changes do not consume controller tool revisions
+ok 375 - local toolbar changes do not consume controller tool revisions
+  ---
+  duration_ms: 0.5716
+  type: 'test'
+  ...
+# Subtest: V exposes independent selection target and shape controls
+ok 376 - V exposes independent selection target and shape controls
+  ---
+  duration_ms: 0.8427
+  type: 'test'
+  ...
+# Subtest: selection controls apply on pointerdown before a Windows activation click can be lost
+ok 377 - selection controls apply on pointerdown before a Windows activation click can be lost
+  ---
+  duration_ms: 0.4175
+  type: 'test'
+  ...
+# Subtest: brush settings expose the familiar bounded palette without mutating the scene
+ok 378 - brush settings expose the familiar bounded palette without mutating the scene
+  ---
+  duration_ms: 1.2485
+  type: 'test'
+  ...
+# Subtest: add stroke undo redo restores the exact record and z-order through runtime controls
+ok 379 - add stroke undo redo restores the exact record and z-order through runtime controls
+  ---
+  duration_ms: 1.7673
+  type: 'test'
+  ...
+# Subtest: single and multi stroke moves each round-trip through one undo and one redo
+ok 380 - single and multi stroke moves each round-trip through one undo and one redo
+  ---
+  duration_ms: 0.836
+  type: 'test'
+  ...
+# Subtest: a rejected Fabric multi-stroke move rolls the visible selection back to the authoritative scene
+ok 381 - a rejected Fabric multi-stroke move rolls the visible selection back to the authoritative scene
+  ---
+  duration_ms: 2.4597
+  type: 'test'
+  ...
+# Subtest: a rejected Fabric single-stroke move preserves its active selection and visible transform
+ok 382 - a rejected Fabric single-stroke move preserves its active selection and visible transform
+  ---
+  duration_ms: 0.8374
+  type: 'test'
+  ...
+# Subtest: undo redo during an active stroke drag cancels the gesture and ignores its late modified event
+ok 383 - undo redo during an active stroke drag cancels the gesture and ignores its late modified event
+  ---
+  duration_ms: 1.1876
+  type: 'test'
+  ...
+# Subtest: redo during an active multi-stroke drag ignores the cancelled group modified event
+ok 384 - redo during an active multi-stroke drag ignores the cancelled group modified event
+  ---
+  duration_ms: 1.3945
+  type: 'test'
+  ...
+# Subtest: replaceObjects applies structure and selected transforms as one undo redo command
+ok 385 - replaceObjects applies structure and selected transforms as one undo redo command
+  ---
+  duration_ms: 0.992
+  type: 'test'
+  ...
+# Subtest: full stroke Delete undo redo restores the deleted record and its z-order
+ok 386 - full stroke Delete undo redo restores the deleted record and its z-order
+  ---
+  duration_ms: 0.9099
+  type: 'test'
+  ...
+# Subtest: Clear undo redo restores every record in its original z-order
+ok 387 - Clear undo redo restores every record in its original z-order
+  ---
+  duration_ms: 2.4642
+  type: 'test'
+  ...
+# Subtest: undo then selection-only and no-op edits preserve redo while a new stroke clears it
+ok 388 - undo then selection-only and no-op edits preserve redo while a new stroke clears it
+  ---
+  duration_ms: 0.6741
+  type: 'test'
+  ...
+# Subtest: two consecutive moves create two distinct undo redo commands
+ok 389 - two consecutive moves create two distinct undo redo commands
+  ---
+  duration_ms: 0.4986
+  type: 'test'
+  ...
+# Subtest: undo and redo follow visual order within a video while videos stay independent
+ok 390 - undo and redo follow visual order within a video while videos stay independent
+  ---
+  duration_ms: 0.6425
+  type: 'test'
+  ...
+# Subtest: 전역 실행취소는 재생헤드와 무관하게 가장 최근 편집부터 되돌린다
+ok 391 - 전역 실행취소는 재생헤드와 무관하게 가장 최근 편집부터 되돌린다
+  ---
+  duration_ms: 0.4404
+  type: 'test'
+  ...
+# Subtest: 재생헤드가 키프레임에 없어도 전역 실행취소가 동작한다
+ok 392 - 재생헤드가 키프레임에 없어도 전역 실행취소가 동작한다
+  ---
+  duration_ms: 0.2975
+  type: 'test'
+  ...
+# Subtest: 새 편집은 전역 redo 를 전부 무효화하고 다른 씬의 redo 도 함께 비운다
+ok 393 - 새 편집은 전역 redo 를 전부 무효화하고 다른 씬의 redo 도 함께 비운다
+  ---
+  duration_ms: 0.4917
+  type: 'test'
+  ...
+# Subtest: 용량 초과로 축출된 항목은 전역 순서에서도 사라진다
+ok 394 - 용량 초과로 축출된 항목은 전역 순서에서도 사라진다
+  ---
+  duration_ms: 0.4977
+  type: 'test'
+  ...
+# Subtest: 영상을 축출하면 그 영상의 전역 순서도 사라진다
+ok 395 - 영상을 축출하면 그 영상의 전역 순서도 사라진다
+  ---
+  duration_ms: 0.4721
+  type: 'test'
+  ...
+# Subtest: 영상을 재수화하면 그 영상의 전역 순서가 초기화된다
+ok 396 - 영상을 재수화하면 그 영상의 전역 순서가 초기화된다
+  ---
+  duration_ms: 0.4361
+  type: 'test'
+  ...
+# Subtest: 활성 씬이 아닌 곳을 되돌려도 지속화 관찰자에게 전파된다
+ok 397 - 활성 씬이 아닌 곳을 되돌려도 지속화 관찰자에게 전파된다
+  ---
+  duration_ms: 0.389
+  type: 'test'
+  ...
+# Subtest: 적용에 실패한 항목이 전역 스택을 막지 않는다
+ok 398 - 적용에 실패한 항목이 전역 스택을 막지 않는다
+  ---
+  duration_ms: 0.6955
+  type: 'test'
+  ...
+# Subtest: 프레임을 옮겨 그린 뒤 되돌리면 그때 만들어진 키프레임도 함께 사라진다
+ok 399 - 프레임을 옮겨 그린 뒤 되돌리면 그때 만들어진 키프레임도 함께 사라진다
+  ---
+  duration_ms: 0.769
+  type: 'test'
+  ...
+# Subtest: 되돌려서 임시가 된 키프레임은 화면도 원본을 따라가고 새 편집이 지워진 내용을 되살리지 않는다
+ok 400 - 되돌려서 임시가 된 키프레임은 화면도 원본을 따라가고 새 편집이 지워진 내용을 되살리지 않는다
+  ---
+  duration_ms: 0.6725
+  type: 'test'
+  ...
+# Subtest: 되돌린 임시 씬에 새로 그리면 지워진 내용이 되살아나지 않는다
+ok 401 - 되돌린 임시 씬에 새로 그리면 지워진 내용이 되살아나지 않는다
+  ---
+  duration_ms: 0.6007
+  type: 'test'
+  ...
+# Subtest: 키프레임이 생기거나 사라지는 되돌리기만 재동기를 요청한다
+ok 402 - 키프레임이 생기거나 사라지는 되돌리기만 재동기를 요청한다
+  ---
+  duration_ms: 0.3821
+  type: 'test'
+  ...
+# Subtest: redo history bytes remain in the store-wide maxBytes calculation across scenes
+ok 403 - redo history bytes remain in the store-wide maxBytes calculation across scenes
+  ---
+  duration_ms: 0.3896
+  type: 'test'
+  ...
+# Subtest: later commands on sibling frames cannot consume the capacity reserved for an admitted undo redo
+ok 404 - later commands on sibling frames cannot consume the capacity reserved for an admitted undo redo
+  ---
+  duration_ms: 7.5969
+  type: 'test'
+  ...
+# Subtest: undo and redo history apply failures after validation injection are atomic
+ok 405 - undo and redo history apply failures after validation injection are atomic
+  ---
+  duration_ms: 0.9706
+  type: 'test'
+  ...
+# Subtest: each stroke snapshots color size and opacity and warm reactivation restores mixed styles
+ok 406 - each stroke snapshots color size and opacity and warm reactivation restores mixed styles
+  ---
+  duration_ms: 2.3707
+  type: 'test'
+  ...
+# Subtest: an active stroke keeps the pointerdown style while controls change
+ok 407 - an active stroke keeps the pointerdown style while controls change
+  ---
+  duration_ms: 0.9925
+  type: 'test'
+  ...
+# Subtest: Phase 0 selection moves while scale rotate and skew remain locked across reactivation
+ok 408 - Phase 0 selection moves while scale rotate and skew remain locked across reactivation
+  ---
+  duration_ms: 0.8807
+  type: 'test'
+  ...
+# Subtest: pressure strokes, selection, move, delete, clear, cancellation, and stale revisions stay local
+ok 409 - pressure strokes, selection, move, delete, clear, cancellation, and stale revisions stay local
+  ---
+  duration_ms: 1.733
+  type: 'test'
+  ...
+# Subtest: stroke path data preserves source pressure separately from its Fabric path outline
+ok 410 - stroke path data preserves source pressure separately from its Fabric path outline
+  ---
+  duration_ms: 0.3187
+  type: 'test'
+  ...
+# Subtest: stored normalized pressure reconstructs the exact pen path without changing live mouse input
+ok 411 - stored normalized pressure reconstructs the exact pen path without changing live mouse input
+  ---
+  duration_ms: 0.4115
+  type: 'test'
+  ...
+# Subtest: destructive command over maxHistoryBytes is rejected without changing the scene
+ok 412 - destructive command over maxHistoryBytes is rejected without changing the scene
+  ---
+  duration_ms: 1.003
+  type: 'test'
+  ...
+# Subtest: destructive command whose undo state would exceed maxBytes is rejected atomically
+ok 413 - destructive command whose undo state would exceed maxBytes is rejected atomically
+  ---
+  duration_ms: 0.3465
+  type: 'test'
+  ...
+# Subtest: maxEntries eviction lets a replacement history command use the freed store bytes
+ok 414 - maxEntries eviction lets a replacement history command use the freed store bytes
+  ---
+  duration_ms: 0.3908
+  type: 'test'
+  ...
+# Subtest: lasso split interpolates a crossing stroke into selected and remaining runs
+ok 415 - lasso split interpolates a crossing stroke into selected and remaining runs
+  ---
+  duration_ms: 0.9529
+  type: 'test'
+  ...
+# Subtest: bounded whole-stroke hit exits early for 20k points and 512 or 1024 polygon edges
+ok 416 - bounded whole-stroke hit exits early for 20k points and 512 or 1024 polygon edges
+  ---
+  duration_ms: 11.3562
+  type: 'test'
+  ...
+# Subtest: bounded whole-stroke no-hit never exceeds the deterministic operation cap
+ok 417 - bounded whole-stroke no-hit never exceeds the deterministic operation cap
+  ---
+  duration_ms: 34.4075
+  type: 'test'
+  ...
+# Subtest: bounded proximity finds a sub-unit edge overlap at the middle of a long segment
+ok 418 - bounded proximity finds a sub-unit edge overlap at the middle of a long segment
+  ---
+  duration_ms: 1.1573
+  type: 'test'
+  ...
+# Subtest: parameter-domain cuts preserve a visible two-unit selection on a 100-million-unit stroke
+ok 419 - parameter-domain cuts preserve a visible two-unit selection on a 100-million-unit stroke
+  ---
+  duration_ms: 0.5797
+  type: 'test'
+  ...
+# Subtest: quadratic proximity does not invent contact on million-scale diagonal strokes
+ok 420 - quadratic proximity does not invent contact on million-scale diagonal strokes
+  ---
+  duration_ms: 1.931
+  type: 'test'
+  ...
+# Subtest: pressure changes at one coordinate affect the following visible segment without stationary hits
+ok 421 - pressure changes at one coordinate affect the following visible segment without stationary hits
+  ---
+  duration_ms: 0.522
+  type: 'test'
+  ...
+# Subtest: partial split preserves leading trailing and internal same-position pressure chains
+ok 422 - partial split preserves leading trailing and internal same-position pressure chains
+  ---
+  duration_ms: 0.4627
+  type: 'test'
+  ...
+# Subtest: partial split keeps separate pressure chains when a stroke revisits one position
+ok 423 - partial split keeps separate pressure chains when a stroke revisits one position
+  ---
+  duration_ms: 0.2033
+  type: 'test'
+  ...
+# Subtest: perfect-freehand smoothed centerline keeps monotonic source-position provenance
+ok 424 - perfect-freehand smoothed centerline keeps monotonic source-position provenance
+  ---
+  duration_ms: 0.8254
+  type: 'test'
+  ...
+# Subtest: actual fill clipping reconstructs simple intersection and disjoint difference loops
+ok 425 - actual fill clipping reconstructs simple intersection and disjoint difference loops
+  ---
+  duration_ms: 0.3883
+  type: 'test'
+  ...
+# Subtest: flattened fill clipping removes sub-tolerance closing seams without losing the contour
+ok 426 - flattened fill clipping removes sub-tolerance closing seams without losing the contour
+  ---
+  duration_ms: 0.2461
+  type: 'test'
+  ...
+# Subtest: thin actual fill boundaries stay selectable and remain clip-safe after repeated selection
+ok 427 - thin actual fill boundaries stay selectable and remain clip-safe after repeated selection
+  ---
+  duration_ms: 2.3583
+  type: 'test'
+  ...
+# Subtest: collinear equal and shared boundaries clip as valid boolean geometry
+ok 428 - collinear equal and shared boundaries clip as valid boolean geometry
+  ---
+  duration_ms: 1.2428
+  type: 'test'
+  ...
+# Subtest: boolean clipping keeps equal and unequal point-touching fills as separate loops
+ok 429 - boolean clipping keeps equal and unequal point-touching fills as separate loops
+  ---
+  duration_ms: 0.5918
+  type: 'test'
+  ...
+# Subtest: actual fill clipping handles both containment directions and nested evenodd islands
+ok 430 - actual fill clipping handles both containment directions and nested evenodd islands
+  ---
+  duration_ms: 0.4926
+  type: 'test'
+  ...
+# Subtest: fill overlap ignores contours canceled by evenodd and nonzero rules
+ok 431 - fill overlap ignores contours canceled by evenodd and nonzero rules
+  ---
+  duration_ms: 0.2738
+  type: 'test'
+  ...
+# Subtest: large canceled contours stay a bounded no-hit under the 250k selection budget
+ok 432 - large canceled contours stay a bounded no-hit under the 250k selection budget
+  ---
+  duration_ms: 27.6741
+  type: 'test'
+  ...
+# Subtest: canceled contours beside a thin real fill never bridge the empty clearance gap
+ok 433 - canceled contours beside a thin real fill never bridge the empty clearance gap
+  ---
+  duration_ms: 1.1253
+  type: 'test'
+  ...
+# Subtest: fill overlap distinguishes active and canceled portions of one collinear edge
+ok 434 - fill overlap distinguishes active and canceled portions of one collinear edge
+  ---
+  duration_ms: 0.5266
+  type: 'test'
+  ...
+# Subtest: Fabric path flattening is strict immutable and atomically rejects malformed commands
+ok 435 - Fabric path flattening is strict immutable and atomically rejects malformed commands
+  ---
+  duration_ms: 0.7845
+  type: 'test'
+  ...
+# Subtest: Fabric path flattening rejects an open contour before a new move command
+ok 436 - Fabric path flattening rejects an open contour before a new move command
+  ---
+  duration_ms: 0.0849
+  type: 'test'
+  ...
+# Subtest: Fabric path flattening rejects an open contour at end of input
+ok 437 - Fabric path flattening rejects an open contour at end of input
+  ---
+  duration_ms: 0.1038
+  type: 'test'
+  ...
+# Subtest: spatial contour validation accepts 1024 simple points and rejects a self-cross
+ok 438 - spatial contour validation accepts 1024 simple points and rejects a self-cross
+  ---
+  duration_ms: 1.5774
+  type: 'test'
+  ...
+# Subtest: paired clipping fits a realistic 400-sample gesture and caps 1000 samples atomically
+ok 439 - paired clipping fits a realistic 400-sample gesture and caps 1000 samples atomically
+  ---
+  duration_ms: 25.2251
+  type: 'test'
+  ...
+# Subtest: paired clipping discards both outputs when the second loop exhausts the budget
+ok 440 - paired clipping discards both outputs when the second loop exhausts the budget
+  ---
+  duration_ms: 0.6602
+  type: 'test'
+  ...
+# Subtest: fill cache logical cost makes cold and warm budgets identical and caps 20k edges
+ok 441 - fill cache logical cost makes cold and warm budgets identical and caps 20k edges
+  ---
+  duration_ms: 27.6408
+  type: 'test'
+  ...
+# Subtest: source-position interval splitting preserves pressure chains at fragment cuts
+ok 442 - source-position interval splitting preserves pressure chains at fragment cuts
+  ---
+  duration_ms: 0.8014
+  type: 'test'
+  ...
+# Subtest: source-position interval splitting keeps duplicate source indexes and rejects malformed ranges
+ok 443 - source-position interval splitting keeps duplicate source indexes and rejects malformed ranges
+  ---
+  duration_ms: 0.3008
+  type: 'test'
+  ...
+# Subtest: source-position interval splitting can retain sub-unit lineage for exact render geometry
+ok 444 - source-position interval splitting can retain sub-unit lineage for exact render geometry
+  ---
+  duration_ms: 0.2146
+  type: 'test'
+  ...
+# Subtest: round cap hit testing uses the actual trailing pressure sample
+ok 445 - round cap hit testing uses the actual trailing pressure sample
+  ---
+  duration_ms: 0.9995
+  type: 'test'
+  ...
+# Subtest: stroke cap flags distinguish flat endpoints from round endpoint contact
+ok 446 - stroke cap flags distinguish flat endpoints from round endpoint contact
+  ---
+  duration_ms: 0.9001
+  type: 'test'
+  ...
+# Subtest: analytic proximity keeps an isolated tangent as a whole hit without a fake fragment
+ok 447 - analytic proximity keeps an isolated tangent as a whole hit without a fake fragment
+  ---
+  duration_ms: 0.5052
+  type: 'test'
+  ...
+# Subtest: analytic splitting preserves a centerline collinear with a polygon edge
+ok 448 - analytic splitting preserves a centerline collinear with a polygon edge
+  ---
+  duration_ms: 0.4642
+  type: 'test'
+  ...
+# Subtest: analytic proximity tolerates a zero-length polygon edge without NaN or false abort
+ok 449 - analytic proximity tolerates a zero-length polygon edge without NaN or false abort
+  ---
+  duration_ms: 0.6595
+  type: 'test'
+  ...
+# Subtest: analytic proximity follows linearly varying pressure radius
+ok 450 - analytic proximity follows linearly varying pressure radius
+  ---
+  duration_ms: 1.0348
+  type: 'test'
+  ...
+# Subtest: analytic proximity handles near-parallel edges and a negative-discriminant no-hit safely
+ok 451 - analytic proximity handles near-parallel edges and a negative-discriminant no-hit safely
+  ---
+  duration_ms: 0.4488
+  type: 'test'
+  ...
+# Subtest: lasso split discards sub-pixel fragments that cannot be manipulated reliably
+ok 452 - lasso split discards sub-pixel fragments that cannot be manipulated reliably
+  ---
+  duration_ms: 0.3254
+  type: 'test'
+  ...
+# Subtest: lasso splitting stops as soon as its run budget is exhausted
+ok 453 - lasso splitting stops as soon as its run budget is exhausted
+  ---
+  duration_ms: 0.7433
+  type: 'test'
+  ...
+# Subtest: a non-collinear lasso that exactly retraces its path still has zero area
+ok 454 - a non-collinear lasso that exactly retraces its path still has zero area
+  ---
+  duration_ms: 0.1408
+  type: 'test'
+  ...
+# Subtest: runtime and adapter sources have no review persistence or IPC integration
+ok 455 - runtime and adapter sources have no review persistence or IPC integration
+  ---
+  duration_ms: 3.8494
+  type: 'test'
+  ...
+# Subtest: 재진입 재도색은 rAF를 기다리지 않고 화면 컨텍스트에 동기 반영된다
+ok 456 - 재진입 재도색은 rAF를 기다리지 않고 화면 컨텍스트에 동기 반영된다
+  ---
+  duration_ms: 43.5059
+  type: 'test'
+  ...
+# Subtest: passive 수화 직후 현재 씬이 캔버스에 재도색된다
+ok 457 - passive 수화 직후 현재 씬이 캔버스에 재도색된다
+  ---
+  duration_ms: 44.1
+  type: 'test'
+  ...
+# Subtest: lastPaintedScene이 없는 초기 상태의 disable은 예외 없이 완료된다
+ok 458 - lastPaintedScene이 없는 초기 상태의 disable은 예외 없이 완료된다
+  ---
+  duration_ms: 0.5563
+  type: 'test'
+  ...
+# Subtest: pointerdown confirmation pins the controller-captured frame instead of an older delivered candidate
+ok 459 - pointerdown confirmation pins the controller-captured frame instead of an older delivered candidate
+  ---
+  duration_ms: 3.7188
+  type: 'test'
+  ...
+# Subtest: pending pointerdown replays every coalesced move sample before its buffered pointerup
+ok 460 - pending pointerdown replays every coalesced move sample before its buffered pointerup
+  ---
+  duration_ms: 1.2113
+  type: 'test'
+  ...
+# Subtest: a coalesced pending move cannot exceed the existing pointer event buffer limit
+ok 461 - a coalesced pending move cannot exceed the existing pointer event buffer limit
+  ---
+  duration_ms: 0.611
+  type: 'test'
+  ...
+# Subtest: implicit capture loss after buffered pointerup preserves the fenced pending gesture
+ok 462 - implicit capture loss after buffered pointerup preserves the fenced pending gesture
+  ---
+  duration_ms: 0.8741
+  type: 'test'
+  ...
+# Subtest: capture loss before any buffered pointerup still cancels the pending gesture
+ok 463 - capture loss before any buffered pointerup still cancels the pending gesture
+  ---
+  duration_ms: 0.4331
+  type: 'test'
+  ...
+# Subtest: unanswered pointerdown frame request times out and releases the next gesture
+ok 464 - unanswered pointerdown frame request times out and releases the next gesture
+  ---
+  duration_ms: 0.9862
+  type: 'test'
+  ...
+# Subtest: pointerdown frame confirmation before the deadline clears its timer and commits once
+ok 465 - pointerdown frame confirmation before the deadline clears its timer and commits once
+  ---
+  duration_ms: 1.1404
+  type: 'test'
+  ...
+# Subtest: pointerdown frame deadline is cleared by disable, session replacement, and destroy
+ok 466 - pointerdown frame deadline is cleared by disable, session replacement, and destroy
+  ---
+  duration_ms: 1.6376
+  type: 'test'
+  ...
+# Subtest: a fenced negative pointerdown acknowledgement releases input while stale cancel leaves the next gesture intact
+ok 467 - a fenced negative pointerdown acknowledgement releases input while stale cancel leaves the next gesture intact
+  ---
+  duration_ms: 1.4205
+  type: 'test'
+  ...
+# Subtest: B-off drops a pending pointerdown confirmation without materializing its armed frame
+ok 468 - B-off drops a pending pointerdown confirmation without materializing its armed frame
+  ---
+  duration_ms: 0.7923
+  type: 'test'
+  ...
+# Subtest: passive presentation applies viewport geometry and B-off viewport updates without mutating scenes
+ok 469 - passive presentation applies viewport geometry and B-off viewport updates without mutating scenes
+  ---
+  duration_ms: 1.4518
+  type: 'test'
+  ...
+# Subtest: passive viewport ownership survives same-video disable and resets on identity, generation, and release boundaries
+ok 470 - passive viewport ownership survives same-video disable and resets on identity, generation, and release boundaries
+  ---
+  duration_ms: 1.5829
+  type: 'test'
+  ...
+# Subtest: passive frame presentation follows exact, held, empty-break, and reverse-seek sources without mutation
+ok 471 - passive frame presentation follows exact, held, empty-break, and reverse-seek sources without mutation
+  ---
+  duration_ms: 4.2535
+  type: 'test'
+  ...
+# Subtest: frame presentation is passive-only and rejects stale revisions, identities, and invalid source frames
+ok 472 - frame presentation is passive-only and rejects stale revisions, identities, and invalid source frames
+  ---
+  duration_ms: 1.009
+  type: 'test'
+  ...
+# Subtest: held frame first stroke materializes the target while preserving the source and undo base
+ok 473 - held frame first stroke materializes the target while preserving the source and undo base
+  ---
+  duration_ms: 2.2388
+  type: 'test'
+  ...
+# Subtest: held materialization keeps the Drawing V3 shadow sequence aligned without duplicate base insertion
+ok 474 - held materialization keeps the Drawing V3 shadow sequence aligned without duplicate base insertion
+  ---
+  duration_ms: 1.7809
+  type: 'test'
+  ...
+# Subtest: held frame first transform and clear materialize only the target scene
+    # Subtest: transform
+    ok 1 - transform
+      ---
+      duration_ms: 0.8686
+      type: 'test'
+      ...
+    # Subtest: clear
+    ok 2 - clear
+      ---
+      duration_ms: 0.5454
+      type: 'test'
+      ...
+    1..2
+ok 475 - held frame first transform and clear materialize only the target scene
+  ---
+  duration_ms: 1.6591
+  type: 'test'
+  ...
+# Subtest: no-edit disable discards held provisional state and an empty held source waits for a real object
+ok 476 - no-edit disable discards held provisional state and an empty held source waits for a real object
+  ---
+  duration_ms: 1.9805
+  type: 'test'
+  ...
+# Subtest: active playback previews runtime-local held sources without mutation and retargets each gesture at pointerdown
+ok 477 - active playback previews runtime-local held sources without mutation and retargets each gesture at pointerdown
+  ---
+  duration_ms: 4.6018
+  type: 'test'
+  ...
+# Subtest: active frame candidates are fenced by the current input session and are dropped on disable
+ok 478 - active frame candidates are fenced by the current input session and are dropped on disable
+  ---
+  duration_ms: 0.5701
+  type: 'test'
+  ...
+# Subtest: toolbar clear undo and redo retarget the armed frame without changing the held source keyframe
+ok 479 - toolbar clear undo and redo retarget the armed frame without changing the held source keyframe
+  ---
+  duration_ms: 0.9084
+  type: 'test'
+  ...
+# Subtest: select pointerdown retargets before transform hit-testing and writes only the armed frame
+ok 480 - select pointerdown retargets before transform hit-testing and writes only the armed frame
+  ---
+  duration_ms: 0.743
+  type: 'test'
+  ...
+# Subtest: pointer and toolbar mutations fail closed when an armed frame cannot be materialized
+ok 481 - pointer and toolbar mutations fail closed when an armed frame cannot be materialized
+  ---
+  duration_ms: 0.5565
+  type: 'test'
+  ...
+# Subtest: enabled session replacement drops only the old provisional scene and preserves it on failure
+    # Subtest: successful replacement
+    ok 1 - successful replacement
+      ---
+      duration_ms: 0.4095
+      type: 'test'
+      ...
+    # Subtest: failed replacement
+    ok 2 - failed replacement
+      ---
+      duration_ms: 0.3815
+      type: 'test'
+      ...
+    1..2
+ok 482 - enabled session replacement drops only the old provisional scene and preserves it on failure
+  ---
+  duration_ms: 0.9631
+  type: 'test'
+  ...
+# Subtest: active preview skips same-version held sources and repaints when source or mutation changes
+ok 483 - active preview skips same-version held sources and repaints when source or mutation changes
+  ---
+  duration_ms: 1.0545
+  type: 'test'
+  ...
+# Subtest: failed active preview rendering leaves the prior armed frame and canvas intact
+ok 484 - failed active preview rendering leaves the prior armed frame and canvas intact
+  ---
+  duration_ms: 0.5244
+  type: 'test'
+  ...
+# Subtest: canvas add failure rolls active preview objects and scene selection back atomically
+ok 485 - canvas add failure rolls active preview objects and scene selection back atomically
+  ---
+  duration_ms: 0.6839
+  type: 'test'
+  ...
+# Subtest: source-changing preview failure restores the same pending partial-lasso proxy and delete path
+ok 486 - source-changing preview failure restores the same pending partial-lasso proxy and delete path
+  ---
+  duration_ms: 32.1367
+  type: 'test'
+  ...
+# Subtest: B-off preserves the active held or blank preview when passive force-present fails
+    # Subtest: held source
+    ok 1 - held source
+      ---
+      duration_ms: 0.877
+      type: 'test'
+      ...
+    # Subtest: blank hold
+    ok 2 - blank hold
+      ---
+      duration_ms: 0.53
+      type: 'test'
+      ...
+    1..2
+ok 487 - B-off preserves the active held or blank preview when passive force-present fails
+  ---
+  duration_ms: 1.7802
+  type: 'test'
+  ...
+# Subtest: B-off rejects a stale persisted source after a just-committed local stroke
+ok 488 - B-off rejects a stale persisted source after a just-committed local stroke
+  ---
+  duration_ms: 1.3293
+  type: 'test'
+  ...
+# Subtest: controller action targets its captured frame while duplicate actions never retarget
+ok 489 - controller action targets its captured frame while duplicate actions never retarget
+  ---
+  duration_ms: 1.1258
+  type: 'test'
+  ...
+# Subtest: a failed explicit action retarget releases its action id for a safe retry
+ok 490 - a failed explicit action retarget releases its action id for a safe retry
+  ---
+  duration_ms: 0.6402
+  type: 'test'
+  ...
+# Subtest: Alt 드래그는 브러시 크기를 1~50으로 조절하고 팔레트·HUD에 반영한다
+ok 491 - Alt 드래그는 브러시 크기를 1~50으로 조절하고 팔레트·HUD에 반영한다
+  ---
+  duration_ms: 0.7169
+  type: 'test'
+  ...
+# Subtest: Alt 크기조절 HUD는 실제 브러시 굵기만 한 원을 브러시 색으로 그린다
+ok 492 - Alt 크기조절 HUD는 실제 브러시 굵기만 한 원을 브러시 색으로 그린다
+  ---
+  duration_ms: 0.4542
+  type: 'test'
+  ...
+# Subtest: Alt 드래그는 획을 만들지 않고 우클릭 시작과 컨텍스트 메뉴 차단을 지원한다
+ok 493 - Alt 드래그는 획을 만들지 않고 우클릭 시작과 컨텍스트 메뉴 차단을 지원한다
+  ---
+  duration_ms: 0.329
+  type: 'test'
+  ...
+# Subtest: 펜 태블릿처럼 altKey가 비어 와도 문서 전역 Alt 상태로 크기 조절이 시작된다
+ok 494 - 펜 태블릿처럼 altKey가 비어 와도 문서 전역 Alt 상태로 크기 조절이 시작된다
+  ---
+  duration_ms: 27.4486
+  type: 'test'
+  ...
+# Subtest: window blur는 Alt/Ctrl 래치를 해제하고 진행 중인 제스처를 취소한다
+ok 495 - window blur는 Alt/Ctrl 래치를 해제하고 진행 중인 제스처를 취소한다
+  ---
+  duration_ms: 31.2998
+  type: 'test'
+  ...
+# Subtest: pointerdown 표본은 래치 자가복구보다 먼저 찍힌다
+ok 496 - pointerdown 표본은 래치 자가복구보다 먼저 찍힌다
+  ---
+  duration_ms: 29.0148
+  type: 'test'
+  ...
+# Subtest: 오버레이 Alt/Ctrl keydown 횟수가 포커스 손실과 메시지 계층 손실을 가른다
+ok 497 - 오버레이 Alt/Ctrl keydown 횟수가 포커스 손실과 메시지 계층 손실을 가른다
+  ---
+  duration_ms: 29.9394
+  type: 'test'
+  ...
+# Subtest: 재생된 pointerdown은 제스처 표본에 표시된다
+ok 498 - 재생된 pointerdown은 제스처 표본에 표시된다
+  ---
+  duration_ms: 0.8759
+  type: 'test'
+  ...
+# Subtest: Ctrl 드래그는 지나간 획만 지우고 undo 1건으로 되돌아온다
+ok 499 - Ctrl 드래그는 지나간 획만 지우고 undo 1건으로 되돌아온다
+  ---
+  duration_ms: 49.5393
+  type: 'test'
+  ...
+# Subtest: Ctrl 드래그는 새 획을 만들지 않고 도구는 brush로 남는다
+ok 500 - Ctrl 드래그는 새 획을 만들지 않고 도구는 brush로 남는다
+  ---
+  duration_ms: 42.9464
+  type: 'test'
+  ...
+# Subtest: 같은 획 위를 여러 번 지나가도 삭제는 1회로 집계된다
+ok 501 - 같은 획 위를 여러 번 지나가도 삭제는 1회로 집계된다
+  ---
+  duration_ms: 43.0403
+  type: 'test'
+  ...
+# Subtest: Ctrl 지우개 취소는 은닉한 획을 되살리고 히스토리를 남기지 않는다
+ok 502 - Ctrl 지우개 취소는 은닉한 획을 되살리고 히스토리를 남기지 않는다
+  ---
+  duration_ms: 63.5134
+  type: 'test'
+  ...
+# Subtest: Alt/Ctrl 제스처는 select 도구와 pointerdown 프레임 확정 왕복을 침범하지 않는다
+ok 503 - Alt/Ctrl 제스처는 select 도구와 pointerdown 프레임 확정 왕복을 침범하지 않는다
+  ---
+  duration_ms: 1.4167
+  type: 'test'
+  ...
+# Subtest: 전역 modifier 래치가 stuck이어도 마우스 브러시 입력은 획을 그린다
+ok 504 - 전역 modifier 래치가 stuck이어도 마우스 브러시 입력은 획을 그린다
+  ---
+  duration_ms: 31.5393
+  type: 'test'
+  ...
+# Subtest: 펜 입력은 modifier가 비어 와도 전역 래치를 계속 신뢰한다
+ok 505 - 펜 입력은 modifier가 비어 와도 전역 래치를 계속 신뢰한다
+  ---
+  duration_ms: 41.8857
+  type: 'test'
+  ...
+# Subtest: 시각이 역행하는 포인터 표본이 와도 획의 시간 단조가 유지된다
+ok 506 - 시각이 역행하는 포인터 표본이 와도 획의 시간 단조가 유지된다
+  ---
+  duration_ms: 31.5515
+  type: 'test'
+  ...
+# Subtest: 재생된 pointerdown은 재생 시각이 아니라 원본 timeStamp를 유지한다
+ok 507 - 재생된 pointerdown은 재생 시각이 아니라 원본 timeStamp를 유지한다
+  ---
+  duration_ms: 1.0151
+  type: 'test'
+  ...
+# Subtest: shape centerline for line is a dense two-point interpolation
+ok 508 - shape centerline for line is a dense two-point interpolation
+  ---
+  duration_ms: 0.2082
+  type: 'test'
+  ...
+# Subtest: rect centerline closes back on the origin
+ok 509 - rect centerline closes back on the origin
+  ---
+  duration_ms: 0.1159
+  type: 'test'
+  ...
+# Subtest: circle centerline inscribes the drag rectangle
+ok 510 - circle centerline inscribes the drag rectangle
+  ---
+  duration_ms: 0.5667
+  type: 'test'
+  ...
+# Subtest: arrow centerline passes through the tip twice
+ok 511 - arrow centerline passes through the tip twice
+  ---
+  duration_ms: 0.1475
+  type: 'test'
+  ...
+# Subtest: shape samples have monotonically increasing time
+ok 512 - shape samples have monotonically increasing time
+  ---
+  duration_ms: 0.2351
+  type: 'test'
+  ...
+# Subtest: shape commit stores a stroke record with the unchanged drawingsV3 schema
+ok 513 - shape commit stores a stroke record with the unchanged drawingsV3 schema
+  ---
+  duration_ms: 42.291
+  type: 'test'
+  ...
+# Subtest: shape preview is transient and never enters the scene
+ok 514 - shape preview is transient and never enters the scene
+  ---
+  duration_ms: 30.3778
+  type: 'test'
+  ...
+# Subtest: cancelled shape gesture leaves no object and no preview
+ok 515 - cancelled shape gesture leaves no object and no preview
+  ---
+  duration_ms: 28.0974
+  type: 'test'
+  ...
+# Subtest: a click without drag creates no shape
+ok 516 - a click without drag creates no shape
+  ---
+  duration_ms: 30.3674
+  type: 'test'
+  ...
+# Subtest: document pointerup commits a shape when capture was lost
+ok 517 - document pointerup commits a shape when capture was lost
+  ---
+  duration_ms: 32.1601
+  type: 'test'
+  ...
+# Subtest: every declared drawing tool is accepted by setLocalTool
+ok 518 - every declared drawing tool is accepted by setLocalTool
+  ---
+  duration_ms: 28.3501
+  type: 'test'
+  ...
+# Subtest: disabling drawing input preserves the active tool
+ok 519 - disabling drawing input preserves the active tool
+  ---
+  duration_ms: 31.1541
+  type: 'test'
+  ...
+# Subtest: eraser tool opens the erase gesture without modifiers
+ok 520 - eraser tool opens the erase gesture without modifiers
+  ---
+  duration_ms: 30.3779
+  type: 'test'
+  ...
+# Subtest: ctrl drag still erases while the brush or pen tool is active
+ok 521 - ctrl drag still erases while the brush or pen tool is active
+  ---
+  duration_ms: 60.9841
+  type: 'test'
+  ...
+# Subtest: ctrl temporary eraser is always stroke mode
+ok 522 - ctrl temporary eraser is always stroke mode
+  ---
+  duration_ms: 29.9693
+  type: 'test'
+  ...
+# Subtest: eraser mode is latched at gesture start
+ok 523 - eraser mode is latched at gesture start
+  ---
+  duration_ms: 45.1255
+  type: 'test'
+  ...
+# Subtest: stroke-mode erase commits as a single undo entry
+ok 524 - stroke-mode erase commits as a single undo entry
+  ---
+  duration_ms: 45.7555
+  type: 'test'
+  ...
+# Subtest: pixel-mode erase splits a stroke through the ribbon polygon
+ok 525 - pixel-mode erase splits a stroke through the ribbon polygon
+  ---
+  duration_ms: 33.5851
+  type: 'test'
+  ...
+# Subtest: updateDrawingBrush applies the size and flashes the HUD at the viewport center
+ok 526 - updateDrawingBrush applies the size and flashes the HUD at the viewport center
+  ---
+  duration_ms: 26.8663
+  type: 'test'
+  ...
+# Subtest: updateDrawingBrush clamps the size to the runtime brush range
+ok 527 - updateDrawingBrush clamps the size to the runtime brush range
+  ---
+  duration_ms: 30.5102
+  type: 'test'
+  ...
+# Subtest: a relative brush step applies against the overlay size, not a caller guess
+ok 528 - a relative brush step applies against the overlay size, not a caller guess
+  ---
+  duration_ms: 29.9233
+  type: 'test'
+  ...
+# Subtest: updateDrawingBrush is rejected while drawing input is disabled
+ok 529 - updateDrawingBrush is rejected while drawing input is disabled
+  ---
+  duration_ms: 30.9972
+  type: 'test'
+  ...
+# Subtest: an Alt size gesture takes the HUD away from the keyboard flash timer
+ok 530 - an Alt size gesture takes the HUD away from the keyboard flash timer
+  ---
+  duration_ms: 29.9697
+  type: 'test'
+  ...
+# Subtest: the tool row is five icon buttons with the shape tools folded into a dropdown
+ok 531 - the tool row is five icon buttons with the shape tools folded into a dropdown
+  ---
+  duration_ms: 30.5189
+  type: 'test'
+  ...
+# Subtest: the shape button opens the dropdown and remembers the last shape used
+ok 532 - the shape button opens the dropdown and remembers the last shape used
+  ---
+  duration_ms: 30.7274
+  type: 'test'
+  ...
+# Subtest: only the sections that matter for the active tool stay visible
+ok 533 - only the sections that matter for the active tool stay visible
+  ---
+  duration_ms: 30.8365
+  type: 'test'
+  ...
+# Subtest: the always-on status row reports size, opacity and tool without moving panel elements
+ok 534 - the always-on status row reports size, opacity and tool without moving panel elements
+  ---
+  duration_ms: 30.4873
+  type: 'test'
+  ...
+# Subtest: recent colors keep the newest first without duplicates and cap at four
+ok 535 - recent colors keep the newest first without duplicates and cap at four
+  ---
+  duration_ms: 30.4622
+  type: 'test'
+  ...
+# Subtest: collapsing a section and reopening it keeps the tool grid layout
+ok 536 - collapsing a section and reopening it keeps the tool grid layout
+  ---
+  duration_ms: 29.5927
+  type: 'test'
+  ...
+# Subtest: a retraced pixel eraser never deletes whole strokes
+ok 537 - a retraced pixel eraser never deletes whole strokes
+  ---
+  duration_ms: 33.8698
+  type: 'test'
+  ...
+# Subtest: a pixel eraser splits shapes and pen strokes, not just brush strokes
+ok 538 - a pixel eraser splits shapes and pen strokes, not just brush strokes
+  ---
+  duration_ms: 60.5488
+  type: 'test'
+  ...
+# Subtest: a shape commits at the pointerup position even without an intervening move
+ok 539 - a shape commits at the pointerup position even without an intervening move
+  ---
+  duration_ms: 29.2514
+  type: 'test'
+  ...
+# Subtest: expanding a collapsed section does not force its appended panels open
+ok 540 - expanding a collapsed section does not force its appended panels open
+  ---
+  duration_ms: 27.8755
+  type: 'test'
+  ...
+# Subtest: circling around a stroke never erases what the eraser did not touch
+ok 541 - circling around a stroke never erases what the eraser did not touch
+  ---
+  duration_ms: 32.6997
+  type: 'test'
+  ...
+# Subtest: pixel mode deletes strokes the ribbon fully covers
+ok 542 - pixel mode deletes strokes the ribbon fully covers
+  ---
+  duration_ms: 42.7795
+  type: 'test'
+  ...
+# Subtest: a viewport change during a shape gesture cancels it instead of distorting it
+ok 543 - a viewport change during a shape gesture cancels it instead of distorting it
+  ---
+  duration_ms: 30.1721
+  type: 'test'
+  ...
+# Subtest: showing a section restores its stacked layout rather than forcing a row
+ok 544 - showing a section restores its stacked layout rather than forcing a row
+  ---
+  duration_ms: 31.0147
+  type: 'test'
+  ...
+# Subtest: the retrace corridor never reaches further than the eraser actually swept
+ok 545 - the retrace corridor never reaches further than the eraser actually swept
+  ---
+  duration_ms: 35.7349
+  type: 'test'
+  ...
+# Subtest: a viewport change during a pixel erase cancels the gesture instead of bridging coordinates
+ok 546 - a viewport change during a pixel erase cancels the gesture instead of bridging coordinates
+  ---
+  duration_ms: 27.1219
+  type: 'test'
+  ...
+# Subtest: a collapsed section keeps its appended panel shut even when the panel resyncs
+ok 547 - a collapsed section keeps its appended panel shut even when the panel resyncs
+  ---
+  duration_ms: 29.2024
+  type: 'test'
+  ...
+# Subtest: a panel closed while its section was collapsed stays closed when the section reopens
+ok 548 - a panel closed while its section was collapsed stays closed when the section reopens
+  ---
+  duration_ms: 30.5438
+  type: 'test'
+  ...
+# Subtest: a sharp eraser turn commits the corner it actually swept
+ok 549 - a sharp eraser turn commits the corner it actually swept
+  ---
+  duration_ms: 30.287
+  type: 'test'
+  ...
+# Subtest: pixel mode never hides a stroke it might not cut
+ok 550 - pixel mode never hides a stroke it might not cut
+  ---
+  duration_ms: 35.5169
+  type: 'test'
+  ...
+# Subtest: stroke mode still previews the strokes it is about to delete
+ok 551 - stroke mode still previews the strokes it is about to delete
+  ---
+  duration_ms: 26.8571
+  type: 'test'
+  ...
+# Subtest: an outlined stroke stores a paired record behind the body in one undo step
+ok 552 - an outlined stroke stores a paired record behind the body in one undo step
+  ---
+  duration_ms: 34.3906
+  type: 'test'
+  ...
+# Subtest: an outline record keeps the drawingsV3 schema unchanged
+ok 553 - an outline record keeps the drawingsV3 schema unchanged
+  ---
+  duration_ms: 30.1033
+  type: 'test'
+  ...
+# Subtest: an outline is never selectable on its own
+ok 554 - an outline is never selectable on its own
+  ---
+  duration_ms: 30.2503
+  type: 'test'
+  ...
+# Subtest: moving a body carries its outline with the same transform
+ok 555 - moving a body carries its outline with the same transform
+  ---
+  duration_ms: 29.8648
+  type: 'test'
+  ...
+# Subtest: deleting a body deletes its outline too
+ok 556 - deleting a body deletes its outline too
+  ---
+  duration_ms: 30.1958
+  type: 'test'
+  ...
+# Subtest: a pixel erase rebuilds a clipped outline for each body fragment
+ok 557 - a pixel erase rebuilds a clipped outline for each body fragment
+  ---
+  duration_ms: 32.8101
+  type: 'test'
+  ...
+# Subtest: drawing with the outline off is unchanged from before
+ok 558 - drawing with the outline off is unchanged from before
+  ---
+  duration_ms: 27.3075
+  type: 'test'
+  ...
+# Subtest: shapes and pen strokes get outlines built with their own geometry options
+ok 559 - shapes and pen strokes get outlines built with their own geometry options
+  ---
+  duration_ms: 61.517
+  type: 'test'
+  ...
+# Subtest: an outline is skipped when the body id leaves no room for the suffix
+ok 560 - an outline is skipped when the body id leaves no room for the suffix
+  ---
+  duration_ms: 26.4263
+  type: 'test'
+  ...
+# Subtest: an orphaned outline record behaves like an ordinary stroke
+ok 561 - an orphaned outline record behaves like an ordinary stroke
+  ---
+  duration_ms: 33.6872
+  type: 'test'
+  ...
+# Subtest: an outline follows its body when a partial selection is dragged
+ok 562 - an outline follows its body when a partial selection is dragged
+  ---
+  duration_ms: 31.036
+  type: 'test'
+  ...
+# Subtest: an eraser that only grazes the outline still erases the pair
+ok 563 - an eraser that only grazes the outline still erases the pair
+  ---
+  duration_ms: 40.4221
+  type: 'test'
+  ...
+# Subtest: a lasso that only touches the outline selects the paired body
+ok 564 - a lasso that only touches the outline selects the paired body
+  ---
+  duration_ms: 33.6449
+  type: 'test'
+  ...
+# Subtest: repeated moves never collapse the body-to-outline offset
+ok 565 - repeated moves never collapse the body-to-outline offset
+  ---
+  duration_ms: 30.2463
+  type: 'test'
+  ...
+# Subtest: a pixel eraser grazing only the outline changes nothing
+ok 566 - a pixel eraser grazing only the outline changes nothing
+  ---
+  duration_ms: 30.1895
+  type: 'test'
+  ...
+# Subtest: an outline follows its body during the drag, not just at commit
+ok 567 - an outline follows its body during the drag, not just at commit
+  ---
+  duration_ms: 30.2297
+  type: 'test'
+  ...
+# Subtest: an outlined stroke stays within the persistable geometry format
+ok 568 - an outlined stroke stays within the persistable geometry format
+  ---
+  duration_ms: 30.4053
+  type: 'test'
+  ...
+# Subtest: a cancelled drag puts the outline back where the body goes
+ok 569 - a cancelled drag puts the outline back where the body goes
+  ---
+  duration_ms: 31.0677
+  type: 'test'
+  ...
+# Subtest: a partial lasso delete removes outlines of fully covered strokes too
+ok 570 - a partial lasso delete removes outlines of fully covered strokes too
+  ---
+  duration_ms: 32.0632
+  type: 'test'
+  ...
+# Subtest: an outline is skipped when the ring path would exceed the persistence limit
+ok 571 - an outline is skipped when the ring path would exceed the persistence limit
+  ---
+  duration_ms: 1777.1727
+  type: 'test'
+  ...
+# Subtest: an enabled outline shows up in the gesture preview, not only at commit
+ok 572 - an enabled outline shows up in the gesture preview, not only at commit
+  ---
+  duration_ms: 34.747
+  type: 'test'
+  ...
+# Subtest: a shape gesture previews its outline too
+ok 573 - a shape gesture previews its outline too
+  ---
+  duration_ms: 31.5424
+  type: 'test'
+  ...
+# Subtest: splitting an already-split outlined stroke leaves no orphan outline
+ok 574 - splitting an already-split outlined stroke leaves no orphan outline
+  ---
+  duration_ms: 29.7355
+  type: 'test'
+  ...
+# Subtest: the gesture preview matches the committed outline representation
+ok 575 - the gesture preview matches the committed outline representation
+  ---
+  duration_ms: 29.9246
+  type: 'test'
+  ...
+# Subtest: a regenerated fragment outline gets its own natural transform
+ok 576 - a regenerated fragment outline gets its own natural transform
+  ---
+  duration_ms: 32.0161
+  type: 'test'
+  ...
+# Subtest: outline settings are frozen when the gesture starts
+ok 577 - outline settings are frozen when the gesture starts
+  ---
+  duration_ms: 44.076
+  type: 'test'
+  ...
+# Subtest: 프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바꾼다
+ok 578 - 프레임 조작 7종이 키프레임 집합을 애니메이트처럼 바꾼다
+  ---
+  duration_ms: 101.7551
+  type: 'test'
+  ...
+# Subtest: 파괴적인 프레임 조작은 Ctrl+Z 로 되돌아온다
+ok 579 - 파괴적인 프레임 조작은 Ctrl+Z 로 되돌아온다
+  ---
+  duration_ms: 45.3676
+  type: 'test'
+  ...
+# Subtest: 구조 조작은 지속화 한도와 그림자 수명주기를 지킨다
+ok 580 - 구조 조작은 지속화 한도와 그림자 수명주기를 지킨다
+  ---
+  duration_ms: 60.2592
+  type: 'test'
+  ...
+# Subtest: 구조 히스토리는 한도 없이 쌓이지 않는다
+ok 581 - 구조 히스토리는 한도 없이 쌓이지 않는다
+  ---
+  duration_ms: 136.7037
+  type: 'test'
+  ...
+# Subtest: every record an outlined gesture produces survives persistence validation
+ok 582 - every record an outlined gesture produces survives persistence validation
+  ---
+  duration_ms: 35.2874
+  type: 'test'
+  ...
+# Subtest: 레이어 숨김은 캔버스에만 반영되고 저장 문서는 그대로다
+ok 583 - 레이어 숨김은 캔버스에만 반영되고 저장 문서는 그대로다
+  ---
+  duration_ms: 0.982
+  type: 'test'
+  ...
+# Subtest: 레이어 잠금은 선택만 막고 화면에는 그대로 보인다
+ok 584 - 레이어 잠금은 선택만 막고 화면에는 그대로 보인다
+  ---
+  duration_ms: 0.3327
+  type: 'test'
+  ...
+# Subtest: 숨김은 캔버스를 다시 만들어도 유지된다
+ok 585 - 숨김은 캔버스를 다시 만들어도 유지된다
+  ---
+  duration_ms: 0.339
+  type: 'test'
+  ...
+# Subtest: 활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다
+ok 586 - 활성 레이어가 숨겨졌거나 잠겼으면 새 획을 받지 않는다
+  ---
+  duration_ms: 0.7775
+  type: 'test'
+  ...
+# Subtest: 레이어 뷰 갱신은 낡은 세션이면 거절한다
+ok 587 - 레이어 뷰 갱신은 낡은 세션이면 거절한다
+  ---
+  duration_ms: 0.2774
+  type: 'test'
+  ...
+# Subtest: 라쏘는 숨긴 레이어의 획을 잡지 않는다
+ok 588 - 라쏘는 숨긴 레이어의 획을 잡지 않는다
+  ---
+  duration_ms: 38.2752
+  type: 'test'
+  ...
+# Subtest: 라쏘는 잠근 레이어의 획을 잡지 않는다
+ok 589 - 라쏘는 잠근 레이어의 획을 잡지 않는다
+  ---
+  duration_ms: 30.8833
+  type: 'test'
+  ...
+# Subtest: 부분 선택 라쏘는 잠근 레이어의 획을 자르지 않는다
+ok 590 - 부분 선택 라쏘는 잠근 레이어의 획을 자르지 않는다
+  ---
+  duration_ms: 49.4031
+  type: 'test'
+  ...
+# Subtest: 획 지우개는 숨긴 레이어의 획을 지우지 않는다
+ok 591 - 획 지우개는 숨긴 레이어의 획을 지우지 않는다
+  ---
+  duration_ms: 39.3088
+  type: 'test'
+  ...
+# Subtest: 선택 중이던 획이 잠기면 선택에서 빠진다
+ok 592 - 선택 중이던 획이 잠기면 선택에서 빠진다
+  ---
+  duration_ms: 32.2285
+  type: 'test'
+  ...
+# Subtest: 다른 영상을 수화하면 표시·잠금 집합을 버린다
+ok 593 - 다른 영상을 수화하면 표시·잠금 집합을 버린다
+  ---
+  duration_ms: 1.4798
+  type: 'test'
+  ...
+# Subtest: 스테이징된 조각은 원본 레이어가 잠기면 취소된다
+ok 594 - 스테이징된 조각은 원본 레이어가 잠기면 취소된다
+  ---
+  duration_ms: 30.2052
+  type: 'test'
+  ...
+# Subtest: 드래그 중인 지우개는 그 레이어가 잠기면 물린다
+ok 595 - 드래그 중인 지우개는 그 레이어가 잠기면 물린다
+  ---
+  duration_ms: 28.4098
+  type: 'test'
+  ...
+# Subtest: 그리는 도중 활성 레이어를 잠그면 그 획은 커밋되지 않는다
+ok 596 - 그리는 도중 활성 레이어를 잠그면 그 획은 커밋되지 않는다
+  ---
+  duration_ms: 0.908
+  type: 'test'
+  ...
+# Subtest: 선택을 끄는 도중 그 레이어를 잠그면 이동을 되돌린다
+ok 597 - 선택을 끄는 도중 그 레이어를 잠그면 이동을 되돌린다
+  ---
+  duration_ms: 0.7391
+  type: 'test'
+  ...
+# Subtest: 활성 레이어가 잠기면 다른 레이어를 담은 지우개도 물린다
+ok 598 - 활성 레이어가 잠기면 다른 레이어를 담은 지우개도 물린다
+  ---
+  duration_ms: 28.7873
+  type: 'test'
+  ...
+# Subtest: 전체 지우기는 숨기거나 잠근 레이어의 획을 남긴다
+ok 599 - 전체 지우기는 숨기거나 잠근 레이어의 획을 남긴다
+  ---
+  duration_ms: 1.2715
+  type: 'test'
+  ...
+# Subtest: 보는 중(passive)에도 저장된 숨김이 적용된다
+ok 600 - 보는 중(passive)에도 저장된 숨김이 적용된다
+  ---
+  duration_ms: 0.4423
+  type: 'test'
+  ...
+# Subtest: 레이어 삭제는 모든 키프레임에서 그 오브젝트를 걷고 한 번에 되돌아간다
+ok 601 - 레이어 삭제는 모든 키프레임에서 그 오브젝트를 걷고 한 번에 되돌아간다
+  ---
+  duration_ms: 1.1251
+  type: 'test'
+  ...
+# Subtest: 레이어 순서 이동은 키프레임마다 랭크대로 다시 세운다
+ok 602 - 레이어 순서 이동은 키프레임마다 랭크대로 다시 세운다
+  ---
+  duration_ms: 0.8225
+  type: 'test'
+  ...
+# Subtest: 레이어 조작은 잘못된 요청을 거절한다
+ok 603 - 레이어 조작은 잘못된 요청을 거절한다
+  ---
+  duration_ms: 0.4352
+  type: 'test'
+  ...
+# Subtest: 새 획은 레이어 랭크가 정한 자리에 들어간다
+ok 604 - 새 획은 레이어 랭크가 정한 자리에 들어간다
+  ---
+  duration_ms: 1.1567
+  type: 'test'
+  ...
+# Subtest: id 가 __proto__ 인 획도 랭크를 잃지 않는다
+ok 605 - id 가 __proto__ 인 획도 랭크를 잃지 않는다
+  ---
+  duration_ms: 0.4826
+  type: 'test'
+  ...
+# Subtest: 레이어 조작은 지속화 재동기를 요청한다
+ok 606 - 레이어 조작은 지속화 재동기를 요청한다
+  ---
+  duration_ms: 0.6651
+  type: 'test'
+  ...
+# Subtest: 정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지킨다
+ok 607 - 정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지킨다
+  ---
+  duration_ms: 0.9343
+  type: 'test'
+  ...
+1..607
+# tests 628
+# suites 0
+# pass 628
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 15012.9374

@@ -1,0 +1,128 @@
+
+> baeframe@2.9.0-beta test:comment-input
+> node --test scripts/tests/comment-input-focus-source.test.js
+
+TAP version 13
+# Subtest: comment editable fields recover focus when a parent pointer handler blocks default focus
+ok 1 - comment editable fields recover focus when a parent pointer handler blocks default focus
+  ---
+  duration_ms: 5.2261
+  type: 'test'
+  ...
+# Subtest: text entry focus recovery can reactivate the main Electron window
+ok 2 - text entry focus recovery can reactivate the main Electron window
+  ---
+  duration_ms: 0.4143
+  type: 'test'
+  ...
+# Subtest: right sidebar comment input is covered by the same focus recovery path
+ok 3 - right sidebar comment input is covered by the same focus recovery path
+  ---
+  duration_ms: 0.1626
+  type: 'test'
+  ...
+# Subtest: video panning does not steal mouse down from comment editors
+ok 4 - video panning does not steal mouse down from comment editors
+  ---
+  duration_ms: 0.2613
+  type: 'test'
+  ...
+# Subtest: pending marker input stops pointer events from bubbling into video panning
+ok 5 - pending marker input stops pointer events from bubbling into video panning
+  ---
+  duration_ms: 0.2715
+  type: 'test'
+  ...
+# Subtest: comment mode is visibly marked on the video surface outside fullscreen
+ok 6 - comment mode is visibly marked on the video surface outside fullscreen
+  ---
+  duration_ms: 1.0295
+  type: 'test'
+  ...
+# Subtest: comment mode pauses mpv and waits for a shared review freeze before native input is blocked
+ok 7 - comment mode pauses mpv and waits for a shared review freeze before native input is blocked
+  ---
+  duration_ms: 6.4893
+  type: 'test'
+  ...
+# Subtest: pending comment editor stays visible near video edges
+ok 8 - pending comment editor stays visible near video edges
+  ---
+  duration_ms: 3.7232
+  type: 'test'
+  ...
+# Subtest: comment mode shortcut follows the same readiness guard as the toolbar button
+ok 9 - comment mode shortcut follows the same readiness guard as the toolbar button
+  ---
+  duration_ms: 0.8832
+  type: 'test'
+  ...
+# Subtest: media load keeps the current review input until navigation is committed
+ok 10 - media load keeps the current review input until navigation is committed
+  ---
+  duration_ms: 0.7265
+  type: 'test'
+  ...
+# Subtest: media change resets comment mode through its event and unconditionally clears stale DOM readiness
+ok 11 - media change resets comment mode through its event and unconditionally clears stale DOM readiness
+  ---
+  duration_ms: 0.5602
+  type: 'test'
+  ...
+# Subtest: loading review comments refreshes the right sidebar comment list
+ok 12 - loading review comments refreshes the right sidebar comment list
+  ---
+  duration_ms: 0.2407
+  type: 'test'
+  ...
+# Subtest: comment notifications are cancelled when creation is undone while save is pending
+ok 13 - comment notifications are cancelled when creation is undone while save is pending
+  ---
+  duration_ms: 0.1398
+  type: 'test'
+  ...
+# Subtest: right sidebar reply editors grow with long replies
+ok 14 - right sidebar reply editors grow with long replies
+  ---
+  duration_ms: 0.6715
+  type: 'test'
+  ...
+# Subtest: playlist aggregate comments can submit inline replies from the sidebar list
+ok 15 - playlist aggregate comments can submit inline replies from the sidebar list
+  ---
+  duration_ms: 1.1733
+  type: 'test'
+  ...
+# Subtest: playlist aggregate comment rerenders detach reply editors before empty state
+ok 16 - playlist aggregate comment rerenders detach reply editors before empty state
+  ---
+  duration_ms: 0.1893
+  type: 'test'
+  ...
+# Subtest: playlist aggregate replies can expand and resolved state can be toggled from sidebar
+ok 17 - playlist aggregate replies can expand and resolved state can be toggled from sidebar
+  ---
+  duration_ms: 3.6954
+  type: 'test'
+  ...
+# Subtest: resolved author metadata is synced and visible for every resolved tooltip
+ok 18 - resolved author metadata is synced and visible for every resolved tooltip
+  ---
+  duration_ms: 1.4031
+  type: 'test'
+  ...
+# Subtest: comment edit textarea participates in mention autocomplete
+ok 19 - comment edit textarea participates in mention autocomplete
+  ---
+  duration_ms: 0.641
+  type: 'test'
+  ...
+1..19
+# tests 19
+# suites 0
+# pass 19
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 145.2362

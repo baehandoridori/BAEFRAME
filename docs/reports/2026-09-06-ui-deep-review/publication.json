@@ -1,0 +1,35 @@
+{
+  "date": "2026-09-06",
+  "access": "owner-only",
+  "projectId": "appgprj_6a9c832c25308191a72c1fe7c8bbf643",
+  "versionId": "appgprj_6a9c832c25308191a72c1fe7c8bbf643~appgver_22c490f64d408191b08aac61379bb54a",
+  "versionNumber": 2,
+  "deploymentId": "appgdep_6a9d06973b908191ba3562d605880d73",
+  "status": "succeeded",
+  "url": "https://baeframe-ui-review-20260906.animators1.chatgpt.site",
+  "siteCommit": "3d0211a8ba0f6c050d7f07c7b76eb637e0a3ca58",
+  "archiveHash": "sha256:d753f3d7e82c16f026c8541032df4bbcbfd918655d922a061538065e9a18554f",
+  "siteSource": "C:/Users/user/Documents/Codex/Sites/baeframe-ui-review-20260906",
+  "appBaseline": "5d1cb89afcae21429c1e076a6964bc11cd990228",
+  "content": {
+    "chapters": 14,
+    "issues": 26,
+    "images": 31,
+    "currentScreenshotsInBody": 17,
+    "referenceImages": 6,
+    "finishedScreens": 4,
+    "proposalDiagrams": 4,
+    "officialDocuments": 15
+  },
+  "verification": {
+    "structural": "passed",
+    "localHttp": 200,
+    "finishedScreenRender": "4 passed, inspected",
+    "extraSitesBrowserQA": false,
+    "appCodeChanged": false,
+    "oldUXFiles": 57,
+    "oldUXHashMismatches": 0,
+    "archiveFiles": 34
+  },
+  "priorPublication": "publication-v1.json"
+}

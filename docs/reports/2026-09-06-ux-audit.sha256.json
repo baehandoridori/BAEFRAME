@@ -1,0 +1,293 @@
+{
+  "preservedOn": "2026-09-06",
+  "baselineCommit": "d72f6b7a87af9e5805eb03a0e0a6017bba999f32",
+  "fileCount": 57,
+  "totalBytes": 2427014.0,
+  "files": [
+    {
+      "path": "DEVLOG/2026-09-06-UX-심층점검-보고서.md",
+      "bytes": 3732,
+      "sha256": "e021b3e660c118be0080ba6bb3aaa5bf46129d346eaf1d1e30850d6ef32c104c"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/mobile-publication.json",
+      "bytes": 898,
+      "sha256": "440e8760d2f9ece5e9c950e976d9d0816a6115bcf4ade7d1ca937b3c11eff251"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/render-report.cjs",
+      "bytes": 23144,
+      "sha256": "2cf8570ebefcffc7fe4b311fcdeb7e467815c20724e6f10aa8fabfc8adb2bcad"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/report.html",
+      "bytes": 86686,
+      "sha256": "eadbc9b27e11aa0a8cdb94adc6732f2d5085c5b605cf464b28e6af7a5b1a8097"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/report.md",
+      "bytes": 56003,
+      "sha256": "772e222b115257f8a2e6672f814d99432f71c49d194b4a3a2a467c6cb0ea645c"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/01-player.png",
+      "bytes": 135754,
+      "sha256": "bdbdb2f2bda22db8d458f5302cc5a777994c279ebbc5b18d350a7c3557a3511d"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/02-playlist-panels.png",
+      "bytes": 132360,
+      "sha256": "1d7857096604ccee345709af08b82a0d9c84ba8076eb5d27c8396c3f5e435c05"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/03-drawing-mode.png",
+      "bytes": 130601,
+      "sha256": "4bbaf260f88e5489f5cb27105f386005946695a4fd69bcf319fe53becb85132e"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/04-drawing-stroke.png",
+      "bytes": 132024,
+      "sha256": "97567d01177639c301f32262ca2e27d8b621e924abc5f97b85aa71906890128d"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/05-drawing-redo.png",
+      "bytes": 133772,
+      "sha256": "5881f4a51254041e21e4a62b1f8447c0156b46d74fa14afa7bcc875fe1982fd4"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/06-comment-pending.png",
+      "bytes": 123170,
+      "sha256": "e6d40414c92faba52d7a783d02ef208398e143da3c9dcc78ffefb9ad9e5c8616"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/07-comment-hybrid.png",
+      "bytes": 131703,
+      "sha256": "afd802763f91d4edf76e1199104829c6c1e647ea3ab8239bbc309885742a2de5"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/08-comment-cancel.png",
+      "bytes": 120940,
+      "sha256": "eeab0261fb4c0eaf283ef47be60510fbc811a8bb1dca802f6c97e530cd2bf7aa"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/assets/09-continuous-review.png",
+      "bytes": 120691,
+      "sha256": "91e06fb08b21ed127adf884cee24df7af40d4bdaaff4bfddf19ab958a24b2276"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/additional-export-findings.md",
+      "bytes": 12100,
+      "sha256": "3f86bbe2fc1947c43d3394465950eb7f17d9371a4df5a5576214203bdd675dc1"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/additional-save-close-findings.md",
+      "bytes": 24541,
+      "sha256": "10caea0c9a378558f6c738a21cf762478acdabbea9977023b073ef20eaed864f"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/competitor-sources.md",
+      "bytes": 6933,
+      "sha256": "9021bf0da7ae74f0836aaeb0fafed066dbf046947735f13da826d794322107b5"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/native-comment-draft.json",
+      "bytes": 513,
+      "sha256": "33bd266f4fac1d922db1167b7e89be566a007aff627e887def4c0e8f3d709df0"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/native-drawing-sample.bframe",
+      "bytes": 4726,
+      "sha256": "3245882d62e99b0cdfdffed1d6003501f301eabe241f0d47bcc405f180e20802"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/native-playback-autoplay.json",
+      "bytes": 27874,
+      "sha256": "b72019936055294d09f063b473d980eeb273ae4bf24b70974b8dee10ea477260"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/native-playback-samples.json",
+      "bytes": 13246,
+      "sha256": "169be7895fa69d432c6a1ebc55403e89cc215c7a386bccd991986e5b9a51faf5"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/native-ui-metrics.json",
+      "bytes": 2944,
+      "sha256": "49a91c4906cd599865abeea8165ee1a812fd55ec9d179be460a4f5ebabaf24fb"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-create-fixture.cjs",
+      "bytes": 1518,
+      "sha256": "db00ed1e8afe93cf8774c03594b7a88c1fa5956c6dc0f8a7af90862b9fcb3b0c"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-findings.md",
+      "bytes": 11708,
+      "sha256": "83acdbe773dae45ac390fdb80cf3ad0043fecadd87ad2907ce8278b9cd8dd2bb"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-live-transition-analysis.md",
+      "bytes": 8578,
+      "sha256": "69f5cd52889c0d6d36c1ae309d6b106204ef466ba954b373f39f1540c218182d"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-live-transition-log-excerpt.txt",
+      "bytes": 12901,
+      "sha256": "0fbdb2c1043fc8e925c748bdfcab66cfbedce4ec5781c93127f085d9652a3de6"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-live-transition-probe.cjs",
+      "bytes": 1940,
+      "sha256": "9608c1fab740bc432395c7fe1873fd09ba63292d8912664a84e9347ae0b69707"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-live-transition-probe.json",
+      "bytes": 2594,
+      "sha256": "1e17f26937e7dc019d7507b75b0a336bd4a4c2529f0872c6fbcba7aeb742eca3"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-mpv.log",
+      "bytes": 90605,
+      "sha256": "791b873d8056c4be48b9007f40abdac8f2c546217bf9eabffc7c1f0e6cab8c4f"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-playlist.log",
+      "bytes": 206121,
+      "sha256": "07495ba3b54742fff9ee099ff622e32f8e46de27692fd12a8b102258b24e2d54"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-probes.cjs",
+      "bytes": 2504,
+      "sha256": "481d28ca13474b442f6b7c515847906898d9bb16011ce7e89be41d863aec1b6d"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-probes.log",
+      "bytes": 426,
+      "sha256": "dde1325524977157f8cdabb42a06588a21c6d860b682ba2bc71d6a210250687b"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-recent-thumb-control.log",
+      "bytes": 4367,
+      "sha256": "c30fc90f7769c6128f56cf519d1336f0cf901a1473ebcf76ed0879bb00be1390"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-recent-thumb-findings.md",
+      "bytes": 2248,
+      "sha256": "4995ca28b3b20c0093dc8e0078495f48e4490d64bbe93387098a63d7b08ee210"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/playback-recent-thumb.log",
+      "bytes": 3640,
+      "sha256": "06068c3d85e235297b9794859feb8681d28fdd81fc9e1231734846424d66fee6"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/report-additional-validation.json",
+      "bytes": 396,
+      "sha256": "4b27bed1208b8aad4d3249b2c896492f3abb641885e31b7b088171eb67416b55"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/report-desktop.png",
+      "bytes": 96563,
+      "sha256": "2255a74c2b8591baba3e363e98af0b7491fba256568b1cacda749437ba5fefc0"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/report-mobile.png",
+      "bytes": 35697,
+      "sha256": "683f9adc5a6e65fdcded9aaf00ee466fc9868ca804a2588435d093c0d921ce49"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/report-validation.json",
+      "bytes": 4131,
+      "sha256": "8fcf9bf1a86882d2f566afba756591e9e3360435fc5462d9119b64a42339200c"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-cluster.log",
+      "bytes": 9724,
+      "sha256": "3f82fe1a0f29240416f42e887819156af8d59a111374c1dcc6e9aa310d131c74"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-collaboration.log",
+      "bytes": 2040,
+      "sha256": "3653eb053425411f918bb333cda072de230aad80656b408edf958f0218f21353"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-comment-input.log",
+      "bytes": 4426,
+      "sha256": "c5785bab026177b0212bda22ce9eb7d4e6bd358a3ed1303c82f2f91b447faff6"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-drawing.log",
+      "bytes": 123874,
+      "sha256": "4b51411a6b0a845be9f12492f86b2a9a174cc05547485577e3704f203c7144d6"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-fabric-drawing-pilot.log",
+      "bytes": 144512,
+      "sha256": "5264d0a3f802adcc8eb568a45c505b7b8f13a45157c707f9d59be711071530c4"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-findings.md",
+      "bytes": 29756,
+      "sha256": "16481fc4564bfe50039c49d55a06e849ea6c18d6daf5b265c98e8721f857be9e"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-native-sample-check-result.log",
+      "bytes": 395,
+      "sha256": "2e9be1ed5ec7fc49f00aab2bc1ca4cb34ebbda10b218b63d7a9d45ad4676cb4a"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-native-sample-check.cjs",
+      "bytes": 2631,
+      "sha256": "59a0edbd4fc880e109a16acd76b3a6ea54243733d4e597d211c9ceb89ec13e70"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-persistence.log",
+      "bytes": 160695,
+      "sha256": "a82a0be557e238dca29a2bd013e5740816553edcab8c71beabf0544a6d8987d8"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-reproduce-result.log",
+      "bytes": 920,
+      "sha256": "52620dcd347de279a7465d2c26a666a9140c7070e1132da5059d410fb4b8e1ba"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-reproduce.cjs",
+      "bytes": 4112,
+      "sha256": "dbd2ac82db64f2e5a85064c8767bf31476381d519bec8dabc1682e690e7bb9b5"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-self-audit-result.log",
+      "bytes": 1776,
+      "sha256": "2c1d704efed38504f953c79657ac6d99357601c2154b367bed70b1c762664f64"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-self-audit.cjs",
+      "bytes": 6068,
+      "sha256": "e9808072d343073a310159f756a08530f7c5b6decca863ba190f2dd55d5aaeba"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-sha256.json",
+      "bytes": 2172,
+      "sha256": "5322da028e07a67ba2eaf4e151c188651b43a772e77090eb604d9dc381c5f25f"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/review-test-results.json",
+      "bytes": 2634,
+      "sha256": "b2daeae90efb7f6f1c7302cd680f94cae2a85af3b6ce7deee3066f182749cea0"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/web-compatibility-probe.cjs",
+      "bytes": 8015,
+      "sha256": "0692723a65936309ef24093ff08e07abc5d41475d67554a68ab8f749bca95973"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/web-compatibility-result.json",
+      "bytes": 5130,
+      "sha256": "fe35e21e957cede5f0c58fdf204d6df1e229c9f28a728db03a846ac9ba76dcb2"
+    },
+    {
+      "path": "docs/reports/2026-09-06-ux-audit/evidence/web-compatibility.md",
+      "bytes": 7842,
+      "sha256": "ff20508a2ec4f6b2064e965ae30410f62e90accbf89a52f5eb37468e601b33c7"
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "scope": "Actual production image-utils module, Blob decode and Chrome Canvas encode/decode; synthetic pixels, no OS clipboard",
+  "composition": {
+    "mime": "data:image/png",
+    "corner": [
+      0,
+      0,
+      0,
+      0
+    ],
+    "center": [
+      255,
+      0,
+      0,
+      255
+    ],
+    "width": 4,
+    "height": 4
+  },
+  "commentDefault": {
+    "mime": "data:image/jpeg",
+    "corner": [
+      43,
+      0,
+      0,
+      255
+    ],
+    "center": [
+      123,
+      66,
+      59,
+      255
+    ],
+    "width": 4,
+    "height": 4
+  }
+}

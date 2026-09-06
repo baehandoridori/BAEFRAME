@@ -1,0 +1,58 @@
+[
+  {
+    "command": "npm.cmd run test:mpv",
+    "exit": 0,
+    "pass": "# pass 355",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-mpv.log"
+  },
+  {
+    "command": "npm.cmd run test:fabric-drawing-pilot",
+    "exit": 0,
+    "pass": "# pass 628",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-fabric-drawing-pilot.log"
+  },
+  {
+    "command": "npm.cmd run test:editor",
+    "exit": 0,
+    "pass": "# pass 147",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-editor.log"
+  },
+  {
+    "command": "npm.cmd run test:frame-grid",
+    "exit": 0,
+    "pass": "# pass 38",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-frame-grid.log"
+  },
+  {
+    "command": "npm.cmd run test:ux",
+    "exit": 0,
+    "pass": "# pass 70",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-ux.log"
+  },
+  {
+    "command": "npm.cmd run test:comment-input",
+    "exit": 0,
+    "pass": "# pass 19",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-comment-input.log"
+  },
+  {
+    "command": "npm.cmd run test:comment-popout",
+    "exit": 0,
+    "pass": "# pass 51",
+    "fail": "# fail 0",
+    "cancelled": "# cancelled 0",
+    "log": ".cache/release-test-comment-popout.log"
+  }
+]

@@ -1,0 +1,314 @@
+{
+  "scope": "리뷰창 실제 UI 증거 및 관찰 목록. 완성 보고서 아님. 앱 코드 변경 없음.",
+  "baselineCommit": "5d1cb89",
+  "appVersion": "2.9.0-beta",
+  "dateKst": "2026-09-06",
+  "evidenceMethod": {
+    "app": "기존 빌드의 실제 패키지 EXE / 실제 renderer,index,preload,main 사용",
+    "fixtures": "6초1280×720/24fps testsrc2합성영상,3개합성댓글,과거합성샘플V3 drawing복제; 고정된별도reviewDocumentId",
+    "actions": "실제파일열기버튼,설정/단축키,그리기/선택네이티브overlay,Shift+F1레이어추가2회,재생목록,크기/zoom,긴이름,저장",
+    "capture": "실제화면캡처를Electron내부에서테스트mainWindowbounds로즉시자름.주변데스크톱저장없음.네이티브영상/overlay포함.",
+    "viewports": "1440×900,DPR1.5;1100×720,DPR1.5;1440×900contentwindow에pagezoom1.25→CSS1152×720,DPR1.875",
+    "network": "HTTP(S)요청차단.동기화/공유활성화나외부전송은테스트하지않음.",
+    "isolation": "전용APPDATA/LOCALAPPDATA/userData와skip-shell-registration.실사용프로필접근없음."
+  },
+  "limitations": [
+    "네트워크 차단으로 Pretendard CDN 한국어 서브셋 15개 요청이 차단되었다. 일부 글리프의 대체 글꼴 사용 가능성이 있어 폭·줄바꿈 실측은 이 오프라인 상태의 결과로 제한한다. 모든 글리프의 실제 폰트 선택을 별도로 추적하지 않았다.",
+    "125%는 Electron webContents page zoom으로 설정한 스트레스 조건이며 Windows디스플레이125%검증이 아니다.",
+    "10-zoom125.png에서 native영상/overlay와DOMviewer위치불일치가보이나정확한원인과지원계약은검증하지않아확정결함목록에서제외했다.",
+    "raw metrics.visible은DOMbox필터이며부모opacity0/화면중첩까지모두판정하지않는다.이목록은스크린샷과소스를교차확인한항목만사용했다.",
+    "gradient/image가있는배경의자동contrast는평면색합성추정이다.정확한대비주장에는평면배경의실측값만사용했다.",
+    "초기실험의mainWindow-only캡처에서영상이검은것은별도mpv/nativeoverlay창누락문제였다.최종캡처는실화면영역crop이며이를제품결함으로보고하지않는다.",
+    "첫하니스의잘못된comment필드와reviewDocumentId를수정후재실행했다.초기saveblocked/댓글공백은하니스결함이며현재목록에서제외했다.",
+    "선택획이튀는과거버그나편집창개선사항은이번리뷰창검증으로재보고하지않는다.외부공유/멀티사용자상태/OS키보드접근성완전검사는수행하지않았다."
+  ],
+  "positiveChecks": [
+    "13개상태캡처,하니스errors0,프로세스exit0",
+    "Fabric선택버튼aria-pressed와현재선택방식문구정상",
+    "도구버튼약35.73×40px,선택옵션높이40px",
+    "앱설정탭명확하고본문영역겹침없음",
+    "댓글시간칩대비약8.827:1,미해결/해결텍스트가색상과함께표시됨",
+    "합성리뷰4회저장IPCsuccess=true,renderer저장완료ack후정상quit"
+  ],
+  "findings": [
+    {
+      "id": "RV-01",
+      "title": "긴 파일명·경로가 고정 헤더 밖으로 넘치고 작업 버튼을 밀어냄",
+      "priority": "P1",
+      "state": "오프라인 / 1440×900 / 긴 합성 파일 경로 / 저장 직후",
+      "screenshots": [
+        "review/11-long-name.png",
+        "review/12-save-share-ui.png"
+      ],
+      "source": [
+        "renderer/styles/main.css:522",
+        "renderer/styles/main.css:546",
+        "renderer/styles/main.css:561",
+        "renderer/index.html:33"
+      ],
+      "measuredFact": "52px 헤더 안에서 파일명 rect y=-17.67,height=86.67px, 경로 y=-14.33,height=80px. 저장 직후 header scrollWidth=1706/clientWidth=1440; 저장 버튼 x=1502.09로 화면 밖이다. 파일명은 합성 긴 이름이며 경로 길이는 하니스가 만든 깊은 작업 폴더다.",
+      "designInference": "파일 식별 영역의 최소 너비·한 줄 정책과 우측 작업 영역의 보존 규칙이 부족하다. 한국어 CDN 서브셋이 차단된 환경에서 재현한 폭이며 온라인 글꼴 폭과 동일하다고 단정하지 않는다.",
+      "userImpact": "현재 파일과 버전을 읽기 어렵고 저장·공유 조작을 화면에서 찾을 수 없다.",
+      "proposedSolution": "파일명 1줄 ellipsis와 고정 높이를 적용하고 전체 경로는 상세 팝오버에 둔다. 우측 저장 영역은 flex-shrink:0으로 보존하고 보조 작업은 더보기로 옮긴다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-02",
+      "title": "좁은 창에서 패널 공간 배분이 타임라인 제목과 도구를 밀어냄",
+      "priority": "P1",
+      "state": "1100×720 / 재생목록·댓글·3개 드로잉 레이어",
+      "screenshots": [
+        "review/09-narrow-panels.png",
+        "review/08-layers-timeline.png"
+      ],
+      "source": [
+        "renderer/styles/main.css:2979",
+        "renderer/styles/main.css:2999",
+        "renderer/index.html:960"
+      ],
+      "measuredFact": "재생목록 280px, 댓글 320px가 열린 상태에서 viewer/timeline 너비는 490px. timeline clientWidth=490,scrollWidth=571. 220px 높이 안에서 여러 레이어는 세로 스크롤이 필요하다. 캡처에서 타임라인 제목이 세로로 갈라진다.",
+      "designInference": "좁은 폭에서 보조 패널·타임라인 명령을 단계적으로 접는 우선순위가 없다. 여러 레이어 스크롤 자체는 정상 기능이며 결함으로 보지 않는다.",
+      "userImpact": "사용자가 레이어 이름·현재 프레임·명령을 동시에 유지하기 어렵다.",
+      "proposedSolution": "타임라인 제목/주요 시간 입력은 한 줄 고정, 보조 옵션은 더보기로 이동. 작은 폭에서는 한쪽 보조 패널을 자동 접거나 최소 영상 영역을 사용자가 유지할 수 있게 한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-03",
+      "title": "재생·주석·합성·볼륨이 하나의 가로 스크롤 줄에 묶임",
+      "priority": "P2",
+      "state": "1440×900 및 1100×720 / 댓글 표시",
+      "screenshots": [
+        "review/02-video-comments.png",
+        "review/09-narrow-panels.png"
+      ],
+      "source": [
+        "renderer/styles/main.css:2583",
+        "renderer/index.html:770"
+      ],
+      "measuredFact": "1440px에서도 playback-controls-scroll clientWidth=1022,scrollWidth=1142이다. 좁은 창에서는458 대1142이며 볼륨 등 오른쪽 도구가 가려진다. 6px 스크롤바가 제공되므로 기능 자체가 사라진 것은 아니다.",
+      "designInference": "일상 재생 조작과 고급 명령을 한 줄로 이어 놓아 숨겨진 명령을 발견하기 어렵다.",
+      "userImpact": "작업 중 도구를 찾으려고 가로 스크롤하거나 현재 재생 정보를 시야에서 잃게 된다.",
+      "proposedSolution": "재생/프레임/시간은 고정 그룹으로, 그리기·댓글은 문맥 그룹으로 유지하고 합성·반복·볼륨은 이름 있는 팝오버로 묶는다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-04",
+      "title": "꺼진 동기화 패널이 댓글 입력 영역을 덮음",
+      "priority": "P2",
+      "state": "로컬 합성 리뷰를 불러온 뒤 / 동기화 꺼짐 / 패널 미조작",
+      "screenshots": [
+        "review/07-selection-tools.png",
+        "review/12-save-share-ui.png"
+      ],
+      "source": [
+        "renderer/styles/main.css:12383",
+        "renderer/scripts/app.js:18611"
+      ],
+      "measuredFact": "캡처에서 동기화 꺼짐 패널이 별도 열기 조작 없이 나타나 댓글 입력부와 전송 근처를 덮는다. CSS는 fixed,right20,bottom80,width220,z-index1000. 입력 rect는 x1076.67,y786.67,w287.33,h60, 패널의 하단은820px이다. 접기/닫기 버튼은 각각20×20px, 중심 간격26px다.",
+      "designInference": "로컬 작업의 낮은 우선순위 상태가 댓글 작성보다 높은 시각 계층을 차지한다. 자동 노출 계기는 collaborationStarted 리스너와 관련 있어 보이지만 근본 원인은 추적하지 않았다.",
+      "userImpact": "댓글 내용을 확인하거나 입력할 때 불필요하게 창을 닫거나 옮겨야 한다.",
+      "proposedSolution": "동기화 비활성/참여자 없음은 작은 상태칩으로 시작한다. 사용자 요청 후 패널을 열고 댓글 작성 영역과 겹치지 않도록 도킹한다. 20px 버튼은 공간과 인접 간격을 함께 평가하며 크기만으로 WCAG 위반을 선언하지 않는다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-05",
+      "title": "선택 팔레트가 검토할 영상 위를 크게 덮음",
+      "priority": "P2",
+      "state": "선택 도구 활성 /1440×900",
+      "screenshots": [
+        "review/07-selection-tools.png"
+      ],
+      "source": [
+        "main/mpv-overlay-host.js:438",
+        "main/mpv-overlay-host.js:480",
+        "renderer/scripts/modules/mpv-fabric-toolbar.js:134"
+      ],
+      "measuredFact": "팔레트 CSS 너비220px,max-height70vh. 실제 화면은 좌상단의 영상 색상과 선을 가리고, 선택 대상/영역 모양/편집 명령이 세로로 이어진다. 실제 도구 버튼은 약35.73×40px, 선택/부분/라쏘 버튼도 높이40px. select aria-pressed=true, 나머지 도구false로 활성 상태는 정상이다.",
+      "designInference": "버튼이 작거나 활성 표시가 없는 문제가 아니라, 상시 펼친 설명과 편집 명령의 공간 배분 문제다.",
+      "userImpact": "영상 왼쪽의 선을 선택할 때 팔레트를 이동하거나 접어야 하고 선택 상태와 레이어 정보를 여러 곳에서 확인해야 한다.",
+      "proposedSolution": "도구 아이콘은 짧은 고정 바에, 선택 대상·영역은 선택 도구의 짧은 문맥 줄에 배치한다. 상세 편집은 접힘 섹션으로 두고 현재 레이어/프레임/선택 수를 한 줄로 함께 표시한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-06",
+      "title": "댓글 카드에서 적용 시간의 끝이 지속적으로 보이지 않음",
+      "priority": "P2",
+      "state": "서로 다른 시작·끝 프레임을 가진 합성 댓글3개",
+      "screenshots": [
+        "review/02-video-comments.png"
+      ],
+      "source": [
+        "renderer/scripts/app.js:13468",
+        "renderer/scripts/app.js:13524"
+      ],
+      "measuredFact": "합성 댓글 범위는33–60,72–96,100–130프레임이다. 카드의 노란 시간칩은 각각00:00:01:09,00:00:03:00,00:00:04:04 시작만 보여준다. 코드도 단일 영상에서 marker.startTimecode를 사용한다. 타임라인에는 범위가 표시된다.",
+      "designInference": "댓글 카드만 읽을 때 점 코멘트와 구간 코멘트가 같은 시간 표현을 사용한다.",
+      "userImpact": "사용자가 피드백이 한 프레임인지 여러 프레임인지 타임라인으로 이동해 확인해야 한다.",
+      "proposedSolution": "구간 댓글은 시작–끝 또는 시작+지속 프레임을 표시한다. 선택한 카드와 타임라인 범위를 같은 강조 상태로 연결한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-07",
+      "title": "작성자가 짧은 이름에서도 잘려 공동 검토자를 구분하기 어려움",
+      "priority": "P2",
+      "state": "합성 검토자A/B 이름을 가진 댓글",
+      "screenshots": [
+        "review/02-video-comments.png",
+        "review/12-save-share-ui.png"
+      ],
+      "source": [
+        "renderer/styles/main.css:6097",
+        "renderer/scripts/app.js:13538"
+      ],
+      "measuredFact": "캡처에서 합성 검토자 A/B가 모두 합성 검토...로 잘린다. comment-author-inline은max-width80px,nowrap,ellipsis,flex-shrink1이며 같은 줄에 시간·수정·답글·삭제가 배치된다. 작성자span자체에title은 없다.",
+      "designInference": "작성자 구분보다 반복 액션 세 개에 더 많은 고정 공간이 배정된다.",
+      "userImpact": "색을 기억하거나 추가 문맥을 찾지 않으면 어느 검토자의 피드백인지 구분하기 어렵다.",
+      "proposedSolution": "작성자·작성시간을 독립 메타 줄로 두고 전체 이름에 충분한 공간을 준다. 자주 쓰지 않는 삭제/수정은 명확한 더보기 메뉴로 묶고 축약 시 전체 이름 tooltip을 제공한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-08",
+      "title": "실제 작업 안내의 낮은 대비와 작은 보조 글자",
+      "priority": "P2",
+      "state": "빈 상태 및 댓글 작성부",
+      "screenshots": [
+        "review/01-empty.png",
+        "review/02-video-comments.png"
+      ],
+      "source": [
+        "renderer/styles/main.css:1152",
+        "renderer/styles/main.css:2704",
+        "renderer/styles/main.css:6325"
+      ],
+      "measuredFact": "평면 배경의 입력안내11px: 전경#666666/배경#1a1a1a=3.031:1. 지원형식 안내12px: #666666/#000000=3.657:1. 둘 다 비활성 명령이 아닌 읽는 안내 문장이다. 프레임표시는10px,#666666이며 배경에 gradient가 있으므로 raw JSON3.448값은 gradient를 제외한 추정치이고 정확한 대비로 쓰지 않는다.",
+      "designInference": "가장 희미한 텍스트 토큰이 작업을 안내하는 정보에도 적용된다.",
+      "userImpact": "지원 파일 종류·피드백 입력 방법·프레임 정보를 읽기 어렵다.",
+      "proposedSolution": "의미 있는 보조 문장은 실제 배경 대비4.5:1 이상인 별도 토큰으로 정하고 기본12–13px부터 검토한다. 장식선·disabled상태까지 같은 기준을 일괄 적용하지 않는다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-09",
+      "title": "그리기 단축키 안내가 실제 기본 키와 다름",
+      "priority": "P2",
+      "state": "댓글 입력부 안내 / 기본 단축키 설정",
+      "screenshots": [
+        "review/02-video-comments.png",
+        "review/05-shortcuts.png"
+      ],
+      "source": [
+        "renderer/index.html:1214",
+        "renderer/scripts/modules/user-settings.js:31"
+      ],
+      "measuredFact": "댓글 입력부는 그리기 도구(D)라고 안내한다. 재생줄 그리기 버튼은B이며 기본설정drawMode는KeyB이다.",
+      "designInference": "하드코딩된 도움말과 설정 가능한 단축키가 서로 다른 출처를 사용한다.",
+      "userImpact": "안내대로 D를 눌러도 원하는 그리기 모드로 들어가지 못해 학습을 방해한다.",
+      "proposedSolution": "도움말과 버튼의 키 표기를 userSettings의 같은 액션 값에서 렌더하고 재지정 즉시 동기화한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-10",
+      "title": "앱 전체 설정이 댓글 설정 메뉴 안에 섞여 있음",
+      "priority": "P2",
+      "state": "댓글 패널의 톱니→댓글 설정→앱 설정",
+      "screenshots": [
+        "review/03-settings-menu.png",
+        "review/04-app-settings.png",
+        "review/05-shortcuts.png"
+      ],
+      "source": [
+        "renderer/index.html:1026",
+        "renderer/index.html:1032",
+        "renderer/index.html:1060",
+        "renderer/index.html:1075"
+      ],
+      "measuredFact": "댓글 설정이라는 제목 아래 썸네일·협업 효과 외에 이름 변경, 단축키, Windows통합 진단/복구, 캐시 설정, 앱 설정이 함께 있다. 실제 앱 설정은 개인정보/알람/테마/재생/단축키 탭이다.",
+      "designInference": "전역 환경설정의 진입점과 메뉴 제목이 실제 범위를 설명하지 않는다.",
+      "userImpact": "재생이나 키 설정을 찾는 사용자가 댓글 패널을 먼저 찾아야 한다.",
+      "proposedSolution": "전역 설정은 앱 상단 또는 앱 메뉴의 일관된 위치에 두고 댓글 메뉴는 댓글 표현 옵션에 집중한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-11",
+      "title": "첫 실행에서 이름 입력이 단순 영상 열기까지 막음",
+      "priority": "P2",
+      "state": "깨끗한 격리 프로필 / 파일 없음",
+      "screenshots": [
+        "review/00-required-name.png"
+      ],
+      "source": [
+        "renderer/scripts/app.js:15702",
+        "renderer/scripts/app.js:15711",
+        "renderer/scripts/app.js:15720",
+        "renderer/index.html:1632"
+      ],
+      "measuredFact": "첫 실행 이름 모달은 닫기와 취소 버튼을 숨긴다. required상태에서는 closeUserSettingsModal도 이름 입력 경고 후 반환한다. 합성 이름 입력 후에야 파일열기 화면으로 진행했다.",
+      "designInference": "작성자 식별이 필요한 시점보다 앞서 읽기 전용 탐색에 필수 입력을 요구한다. 이것은 의도된 제품정책일 수 있어 기능결함으로 분류하지 않는다.",
+      "userImpact": "새 사용자가 영상을 빠르게 확인하기 전에 불필요한 절차를 거친다.",
+      "proposedSolution": "첫 댓글 작성/공유 직전에 표시 이름을 요청하거나 임시 방문자로 먼저 열 수 있게 하고 이름의 저장 범위를 짧게 설명한다.",
+      "confidence": "medium",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-12",
+      "title": "작성자 필터의 아이콘에 프로그램이 읽는 이름과 힌트가 없음",
+      "priority": "P2",
+      "state": "댓글 필터 바",
+      "screenshots": [
+        "review/02-video-comments.png"
+      ],
+      "source": [
+        "renderer/index.html:1109"
+      ],
+      "measuredFact": "authorFilterBtn은 실제 48.68×28.67px. textContent 빈 문자열, title 빈 문자열, aria-label=null이며 아이콘과 화살표만 있다. 옆 설정 버튼에는 title=설정이 존재한다.",
+      "designInference": "작성자 필터라는 의미를 시각 기호에만 맡긴다. 버튼 크기 자체는24px 기준 이상이며 크기 위반으로 보고하지 않는다.",
+      "userImpact": "아이콘 의미를 모르는 사용자와 접근성 도구 사용자가 필터 목적을 알기 어렵다.",
+      "proposedSolution": "aria-label=작성자로 필터링, title=작성자 필터를 제공하고 선택된 작성자가 있으면 이름 또는 선택 수를 시각적으로 노출한다.",
+      "confidence": "high",
+      "status": "current observation; application code unchanged"
+    },
+    {
+      "id": "RV-13",
+      "title": "저장 상태는 있으나 저장 대상과 마지막 완료 시각이 지속되지 않음",
+      "priority": "P2",
+      "state": "합성.bframe 저장 성공 직후",
+      "screenshots": [
+        "review/12-save-share-ui.png",
+        "review/11-long-name.png"
+      ],
+      "source": [
+        "renderer/index.html:90",
+        "renderer/scripts/app.js:2426",
+        "renderer/scripts/app.js:2446"
+      ],
+      "measuredFact": "저장 칩 role=status와 aria-live가 존재하고 로그에서 4회 file:save-review success=true를 확인했다. saved 상태는 2000ms 후 숨기는 코드다. 캡처12는 저장됨 toast와 후속 저장 중 chip이 겹친 일시 상태이며 저장 실패라고 해석하지 않는다. 헤더 경로는 영상의 디렉터리이며 저장된 .bframe 전체 대상을 지속 표시하지 않는다.",
+      "designInference": "자동 저장·수동 저장·공유의 범위가 잠깐의 성공 알림만으로 충분히 구분되기 어렵다.",
+      "userImpact": "사용자는 어느 파일에 언제 반영되었는지 다시 확인하기 어렵다.",
+      "proposedSolution": "작은 문서 상태 영역에 저장됨/수정 중·마지막 완료 시간·현재 .bframe 이름을 지속 표시하고 클릭 시 정확한 로컬 저장 위치와 공유 범위를 보여준다. 동기화 상태와 로컬 저장 상태를 분리한다.",
+      "confidence": "medium",
+      "status": "current observation; application code unchanged"
+    }
+  ],
+  "followUp": [
+    "125%페이지zoomnativehost변환을지원하는지확인후DOMviewer와nativebounds를동일좌표계로실측",
+    "온라인Pretendard가정상로드된환경에서긴경로/좁은헤더를재확인",
+    "레이어가많을때도선택대상/현재프레임/적용범위/저장대상이동시에보이는문맥줄설계",
+    "실사용자와단축키/메뉴검색과제를수행해발견성추론검증"
+  ],
+  "cleanup": {
+    "pid": 5976,
+    "exitCode": 0,
+    "pidAbsentAfterExit": true,
+    "evidence": "capture-result.json.exit 및 격리 로그에서 Renderer 저장 완료, 앱 종료→메인 윈도우 닫힘. 30초timeout없음",
+    "rawRuntimePolicy": "프로필·로그·합성영상은review/_runtime/아래.gitignore로제외.보고서에는측정JSON/테스트화면만포함."
+  }
+}

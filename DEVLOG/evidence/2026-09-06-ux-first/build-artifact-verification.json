@@ -1,0 +1,59 @@
+{
+  "schemaVersion": 1,
+  "scope": "Local UX verification build only; no deployment",
+  "checkedAt": "2026-09-06T07:21:16.747Z",
+  "sourcePath": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME",
+  "buildPath": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\dist\\win-unpacked",
+  "version": {
+    "source": "2.9.0-beta",
+    "packaged": "2.9.0-beta",
+    "exeFileVersion": "2.9.0-beta",
+    "exeProductVersion": "2.9.0.0"
+  },
+  "runtimeProfile": {
+    "channel": "fabric-v3-stable",
+    "features": {
+      "mpvPlaybackPilot": true,
+      "fabricDrawingPilot": true,
+      "fabricDrawingV3Shadow": true,
+      "fabricDrawingPersistence": true
+    }
+  },
+  "sourceToAsar": {
+    "directories": [
+      "main",
+      "preload",
+      "renderer",
+      "shared"
+    ],
+    "checkedFiles": 121,
+    "mismatchCount": 0
+  },
+  "requiredRuntime": {
+    "ffmpeg": 2,
+    "mpv": 4,
+    "casHelper": 1,
+    "icon": 1,
+    "allNonzero": true,
+    "sourceHashMismatchCount": 0
+  },
+  "buildTree": {
+    "fileCount": 82,
+    "bytes": 753706749,
+    "zeroByteFiles": 0,
+    "sha256Manifest": "1699d0d7d898fdbbab933a7519d5ef807fde1a823291d9a6ce0f5b987ae56997",
+    "manifestMethod": "SHA256(sorted relativePath TAB bytes TAB sha256 joined with LF)"
+  },
+  "sha256": {
+    "exe": "af6c0068a6c4b9d3df54ba906822b8cc469191c00868b21e07a1b163dd291783",
+    "asar": "17989ebbde885d4d187ad879cbc0d6050ad7a33b2e5d27882c3c6d84c043340a",
+    "appJs": "223971e96ec389a1b5fa058ca5d7c12af2770d3cbe19439b305eb415a9f01649",
+    "editorJs": "4f52cad55d4cd2f8c0e70c0e4689c226c1c14a8e0ba617d43da73dfd3a2e1c24",
+    "reviewFreezeBundle": "b058d7898021a2a70c8d5972276cafa8a363667d9960dcba5c9bd23ed1f44fc5",
+    "playlistManagerJs": "f9645c4f0f46796b15f69f709899aa57e12ae17245511d6d8ab88f2c5bd1e8d7"
+  },
+  "verified": true,
+  "remoteDeploymentVerified": false,
+  "verifier": "Independent release-artifact-verifier; read-only checks. Root saved this summary from the verifier result.",
+  "executionEvidence": "review-native-result.json records the parent's separate packaged-app execution."
+}

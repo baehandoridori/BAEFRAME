@@ -1,0 +1,15 @@
+{
+  "result": "PASS",
+  "sourceSha256": "772e222b115257f8a2e6672f814d99432f71c49d194b4a3a2a467c6cb0ea645c",
+  "issues": 19,
+  "priorities": {
+    "P1": 9,
+    "P2": 9,
+    "P3": 1
+  },
+  "localLinksChecked": 101,
+  "missingLinks": [],
+  "duplicateIds": 0,
+  "scope": "Static structure and source agreement; unchanged responsive UI previously verified in report-validation.json",
+  "exitCode": 0
+}

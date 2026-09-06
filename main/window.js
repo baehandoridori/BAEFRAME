@@ -9,6 +9,7 @@ const { createLogger } = require('./logger');
 const { mpvManager } = require('./mpv-manager');
 const { mpvEmbedHost } = require('./mpv-embed-host');
 const { mpvOverlayHost } = require('./mpv-overlay-host');
+const { configureCommentPanelWindow } = require('./comment-panel-window');
 
 const log = createLogger('Window');
 
@@ -147,6 +148,8 @@ function createMainWindow() {
       sandbox: false // electron-store 등 사용을 위해
     }
   });
+
+  configureCommentPanelWindow(mainWindow);
 
   // 렌더러 로드
   const indexPath = path.join(__dirname, '..', 'renderer', 'index.html');

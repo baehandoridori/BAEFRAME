@@ -4808,7 +4808,7 @@ test('호스트 창이 파일 드롭 네비게이션을 가로채 메인 창으�
   assert.match(hostSource, /open-from-protocol/);
 });
 
-test('Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 계승한다', () => {
+test('Fabric 드로잉 팔레트는 드래그형 구조를 유지하고 승인한 크기로 정돈된다', () => {
   const fs = require('node:fs');
   const path = require('node:path');
   const hostSource = fs.readFileSync(path.join(__dirname, '../../main/mpv-overlay-host.js'), 'utf8');
@@ -4816,14 +4816,14 @@ test('Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 �
   // (e)가 툴바의 인라인 display:'flex'를 제거하므로 세로 팔레트 레이아웃을 CSS로 고정한다
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*display:\s*block/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*--fabric-palette-gap:\s*6px/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*width:\s*220px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*width:\s*212px/s);
   assert.match(
     hostSource,
     /\.mpv-fabric-pilot-toolbar\s*\{[^}]*max-width:\s*calc\(100% - 24px\)/s
   );
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*box-sizing:\s*border-box/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*border-radius:\s*12px/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*background:\s*rgba\(/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*border-radius:\s*7px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*background:\s*var\(--fabric-palette-bg\)/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*user-select:\s*none/s);
 
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar-header\s*\{[^}]*cursor:\s*move/s);
@@ -4834,7 +4834,7 @@ test('Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 �
   );
   assert.match(
     hostSource,
-    /\.mpv-fabric-pilot-toolbar-content\s*\{[^}]*max-height:\s*70vh[^}]*overflow-y:\s*auto/s
+    /\.mpv-fabric-pilot-toolbar-content\s*\{[^}]*max-height:\s*min\(70vh, max\(0px, calc\(100vh - 58px\)\)\)[^}]*overflow-y:\s*auto/s
   );
   assert.match(
     hostSource,
@@ -4847,7 +4847,7 @@ test('Fabric 드로잉 팔레트는 레거시 드래그형 패널 룩앤필을 �
 
   assert.match(hostSource, /\.mpv-fabric-pilot-section-row\s*\{[^}]*flex-flow:\s*row wrap/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-section-row\s*>\s*\*\s*\{[^}]*flex:\s*0 0 auto/s);
-  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*min-width:\s*40px[^}]*min-height:\s*40px/s);
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*min-width:\s*28px[^}]*min-height:\s*30px/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button\s*\{[^}]*white-space:\s*nowrap/s);
   assert.match(hostSource, /button\[data-active="true"\]\s*\{/);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button:active\s*\{[^}]*transform:\s*scale\(0\.96\)/s);

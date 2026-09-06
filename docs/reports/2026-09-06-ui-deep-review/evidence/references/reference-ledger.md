@@ -1,0 +1,555 @@
+# BAEFRAME 하이브리드 작업 화면 검토용 공식 UI 근거 장부
+
+접근일: 2026-09-06 (Asia/Seoul). 공식 5개 제품·15개 문서·6개 UI 이미지. 완성 보고서가 아닌 비교 근거와 적용 검토 장부다.
+
+공개된 공식 문서와 그 문서에 실제 삽입된 UI 이미지의 관측. 문서의 제품 동작 설명, 이미지에서 보이는 사실, BAEFRAME 적용 추론을 구분한다.
+
+## 읽는 방법
+
+- **문서 사실**: 공식 출처의 설명을 요약했다.
+- **이미지 관측**: 저장한 그림을 직접 열어 실제 보이는 요소만 기록했다.
+- **BAEFRAME 적용**: 해당 사실에서 도출한 설계 제안이며 구현 완료나 사용성 측정 결과가 아니다.
+- 문서 갱신일과 이미지 촬영 시점이 다를 수 있다. 갱신 날짜가 없는 페이지는 미표기로 남겼다.
+
+## 문제별 적용 비교
+
+### P01 · 프레임·키프레임·유지·클립을 같은 시간축에서 어떻게 구분할 것인가
+
+| 제품 | 확인한 방식 | 근거 |
+|---|---|---|
+| Premiere | 영상·음성 클립 구간과 편집점이 중심이다. | R01 |
+| DaVinci Resolve | 전체 클립 배열과 확대된 현재 편집 구간을 동시에 보여 준다. 효과 키프레임은 클립 아래 상세 영역에 둔다. | R06, R07 |
+| Animate | 그림이 바뀌는 키프레임, 빈 프레임, 같은 내용을 유지하는 구간을 구분한다. | R04, R05 |
+| Harmony | 그림의 정체성과 그 그림을 노출하는 프레임 수가 별개다. 구간 채우기는 명시적 조작이다. | R08, R09, R10 |
+| Frame.io | 피드백을 단일 시간 또는 시작·끝 시간으로 연결한다. 댓글 범위는 클립 자체가 아니다. | R11 |
+
+**BAEFRAME 적용 추론:** 전체 영상 클립 행, 선택한 컷의 그림 노출 행, 리뷰 시간 표시를 구분한다. ‘영상 정지 구간’과 ‘그림 유지’를 다른 이름·표식으로 표시하고, 컷을 바꿔도 프레임 눈금의 단위와 현재 위치가 사라지지 않게 한다.
+
+**그대로 옮길 때의 문제:** 클립·그림 노출·속성 키프레임·댓글을 같은 점 또는 같은 색 블록으로 표현하면 선택 범위와 수정 결과가 모호해진다.
+
+확신: high for distinction; medium for exact layout
+
+### P02 · 현재 모드·도구·선택 대상의 문맥을 어떻게 보이게 할 것인가
+
+| 제품 | 확인한 방식 | 근거 |
+|---|---|---|
+| Premiere | 활성 도구와 커서가 대응하며 보조 키에 따른 기능 변화도 커서로 드러낸다. | R01 |
+| DaVinci Resolve | 포인터가 닿은 편집점과 선택한 클립에 따라 트림 도구·Inspector 내용이 달라진다. | R06, R07 |
+| Animate | 프레임 기반 선택과 구간 기반 선택은 적용 범위가 다르다. | R04 |
+| Harmony | 여러 그림을 먼저 선택하고 공통 노출 길이 명령을 실행한다. | R09 |
+| Frame.io | 핀 활성 상태와 비교 중 피드백 대상 자산을 커서·헤더 선택으로 구별한다. | R11, R14 |
+
+**BAEFRAME 적용 추론:** 활성 도구에 짧은 텍스트를 두고 ‘컷 선택’, ‘그림 2개 선택’, ‘화면 이동’처럼 실제 대상을 표시한다. 선택된 대상에만 해당 속성을 노출하며 댓글 입력·숫자 입력 중에는 영상 편집 단축키가 실행되지 않게 한다.
+
+**그대로 옮길 때의 문제:** 프로그램 전체에 한 가지 Selection 의미를 강제하면 컷 선택·프레임 선택·획 선택이 충돌한다. 자동 문맥 변화가 발생했을 때 표시가 없으면 오동작처럼 느낄 수 있다.
+
+확신: high for visible context; keyboard isolation is a BAEFRAME design inference
+
+### P03 · 컴팩트함과 가독성을 동시에 유지하는 공간 배치는 무엇인가
+
+| 제품 | 확인한 방식 | 근거 |
+|---|---|---|
+| Premiere | 목적별 작업 영역, 패널 접기·재배치·경계 크기 조절로 밀도를 바꾼다. | R02, R03 |
+| DaVinci Resolve | 전체 개요와 확대 작업 영역을 나누고 자주 쓰는 도구와 상세 Inspector를 분리한다. | R06 |
+| Animate | 레이어 범위, 행 높이, 프레임 표시 크기와 썸네일을 조절한다. | R05 |
+| Harmony | Xsheet와 가로 Timeline이 같은 노출을 다른 방향으로 표시한다. | R08, R09 |
+| Frame.io | 큰 미디어 영역과 별도 댓글/속성 패널을 두며 비교에서도 자산 헤더를 유지한다. | R11, R14, I05, I06 |
+
+**BAEFRAME 적용 추론:** 상단 작업 상태·중앙 미리보기·하단 타임라인을 안정적으로 유지하고, 오른쪽 패널과 드로잉 상세 행을 접는다. 영상 클립 개요를 항상 남긴 상태에서 선택 컷의 레이어만 펼치는 방안과 모든 레이어를 펼치는 전문가 보기의 필요성을 비교한다.
+
+**그대로 옮길 때의 문제:** 모든 패널·모든 전문 도구를 작은 글자와 아이콘으로 압축하는 것은 정보 구조 개선이 아니다. 경쟁 제품의 큰 데스크톱 화면을 모바일에 그대로 축소할 수 없다.
+
+확신: medium; no measured optimal dimensions or mobile validation
+
+### P04 · 댓글·검토 버전·작업 저장 상태를 어떻게 분리할 것인가
+
+| 제품 | 확인한 방식 | 근거 |
+|---|---|---|
+| Frame.io | 댓글 완료, 자산 버전, 특정 Drive 환경의 버전 내 저장 이력이 각각 존재한다. | R12, R13 |
+| Premiere + Frame.io | 편집 타임라인의 댓글 표시와 새 버전 출력 흐름이 연결되지만 각각 별도 작업이다. | R15 |
+| DaVinci Resolve | 마커와 화면 주석에 시간·텍스트·기간을 연결한다. 이것만으로 공유 리뷰 버전이나 로컬 저장 상태를 설명할 수는 없다. | R07 |
+| Animate / Harmony | 이번에 선정한 시간·노출 문서는 댓글·공유 버전·저장 상태 UI의 근거를 제공하지 않는다. | R04, R05, R08, R09, R10 |
+
+**BAEFRAME 적용 추론:** ‘현재 편집 저장됨’, ‘리뷰 원본 v2’, ‘MP4 출력 완료’를 서로 다른 상태로 표시한다. 리뷰 주석은 원본의 시간과 버전에 연결해 보존하고, 편집 결과 시간으로 옮겨 표시할 때는 매핑 관계를 드러낸다.
+
+**그대로 옮길 때의 문제:** 체크 하나로 댓글 해결·파일 저장·팀 공유·출력 성공을 표현하면 사용자가 실제로 보존된 범위를 오해한다. 클립을 움직였다고 원본 리뷰 데이터까지 수정하면 안 된다.
+
+확신: high for semantic separation; exact persistence behavior needs BAEFRAME source review
+
+### P05 · 확대·손 도구·입력 결과를 어떻게 예측 가능하게 만들 것인가
+
+| 제품 | 확인한 방식 | 근거 |
+|---|---|---|
+| Premiere | Hand는 타임라인 보기 이동이며 활성 도구에 따라 커서가 변한다. | R01 |
+| DaVinci Resolve | 편집점 커서로 트림을 예고한다. Dynamic Zoom은 최종 영상에 적용되는 기능이다. | R06, R07 |
+| Animate | 타임라인 표시 크기를 바꾸는 것과 문서 프레임·내용을 바꾸는 것은 구분되어 있다. | R04, R05 |
+| Harmony | 선택한 끝 프레임과 노출 연장 명령으로 시간 변화 범위를 지정한다. 이번 자료는 Hand의 세부 단축키 근거를 제공하지 않는다. | R09, R10 |
+| Frame.io | 비교에서 연결된 확대·이동을 사용하며 정적 자산은 제어 연결을 해제할 수 있다. 핀 입력 상태도 커서로 표시한다. | R11, R14 |
+
+**BAEFRAME 적용 추론:** ‘보기 100%/화면에 맞춤’과 출력 크기·위치를 따로 둔다. H/가운데 버튼 팬 동안 커서를 바꾸고 입력 대상을 잠시 명확히 전환한다. 컷 분할 예정 프레임과 트림 후 길이를 실행 전에 표시한다.
+
+**그대로 옮길 때의 문제:** 타사 제품마다 Hand가 움직이는 대상이 다르므로 단축키만 복사하지 않는다. 화면 확대·팬이 저장된 획 좌표나 출력 프레이밍을 바꾸면 안 된다.
+
+확신: high for view/content separation; H and middle-button behavior is BAEFRAME proposal
+
+## 공식 문서 목록
+
+### R01 · Tools panel in Premiere
+
+출처: [Tools panel in Premiere](https://helpx.adobe.com/premiere/desktop/get-started/tour-the-workspace/tools-panel-and-options-panel.html) · Adobe
+
+갱신: 2026-01-07 · 공식 페이지의 Last updated 표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Premiere 데스크톱 도움말
+
+**문서 사실**
+
+- 선택 도구가 기본 도구이며, 도구를 바꾸면 포인터가 바뀐다. 같은 도구도 작업 위치와 보조 키에 따라 기능과 포인터가 달라질 수 있다.
+- Razor는 클릭 지점에서 클립을 나누며, Hand는 타임라인 보기를 수평 이동한다. 도구에 마우스를 올리면 이름과 단축키를 확인할 수 있다.
+- 도구 패널은 세로 또는 가로로 배치할 수 있다.
+
+**BAEFRAME 적용:** 선택·그리기·컷·화면 이동의 활성 상태를 아이콘, 짧은 도구 이름, 커서로 함께 표시한다. 타임라인에서의 C와 화면에서의 H는 가리키는 대상과 실행 결과를 사전에 보여 준다.
+
+**그대로 베끼면 안 될 점:** 전문 편집용 Ripple·Slip·Track Select까지 첫 화면에 늘어놓지 않는다. Premiere의 Pen은 주로 효과 키프레임을 다루므로 BAEFRAME의 자유 드로잉 펜과 같은 의미로 인용하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 공식 설명과 삽입 이미지의 관측이며 실제 최신 바이너리의 모든 커서·보조 키 조합을 실행 검증하지 않았다.
+
+이미지: I01
+
+### R02 · Overview of workspaces
+
+출처: [Overview of workspaces](https://helpx.adobe.com/premiere/desktop/get-started/tour-the-workspace/what-are-workspaces.html) · Adobe
+
+갱신: 2026-01-07 · 공식 페이지의 Last updated 표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Premiere 데스크톱 도움말
+
+**문서 사실**
+
+- 패널의 배치를 작업 영역으로 저장하며, 패널을 다시 배치하면 다른 패널의 크기도 조정된다.
+- Essentials는 단일 모니터 사용을, Vertical은 같은 패널에서 Source와 Program 보기를 전환하는 구성을, Review는 Frame.io 연동을 지원한다.
+
+**BAEFRAME 적용:** 리뷰·드로잉·간단 편집별로 패널 우선순위만 바뀌는 소수의 작업 영역을 검토한다. 세로 영상에서는 미리보기 두 개를 고정하기보다 하나의 큰 미리보기에 집중한다.
+
+**그대로 베끼면 안 될 점:** Premiere의 많은 기본 작업 영역과 자유로운 부동 창 체계를 모두 도입하면 작은 앱의 길 찾기가 더 어려워진다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 작업 영역 구성의 공식 설명이다. BAEFRAME 사용자에게 몇 개의 모드가 적절한지는 별도 검증이 필요하다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R03 · Customize panels
+
+출처: [Customize panels](https://helpx.adobe.com/premiere/desktop/get-started/tour-the-workspace/customize-panels.html) · Adobe
+
+갱신: 2026-01-07 · 공식 페이지의 Last updated 표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Premiere 데스크톱 도움말
+
+**문서 사실**
+
+- 패널 탭은 열기·닫기·재배치할 수 있고 패널 그룹 경계를 끌어 크기를 조절한다.
+- 경계에서는 크기 조절 포인터가 표시되고, 그룹을 닫으면 빈 공간이 남은 패널에 재분배된다.
+
+**BAEFRAME 적용:** 타임라인 높이와 댓글 패널 너비를 경계에서 직접 조절하게 하고, 최소 크기와 접기 상태를 둔다. 글자와 버튼을 일괄 축소하는 대신 덜 필요한 패널을 접어 밀도를 조절한다.
+
+**그대로 베끼면 안 될 점:** 부동 패널·다중 모니터 구성을 기본 요구로 만들지 않는다. 주요 조작의 위치가 예측 가능해야 한다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 구체적인 최소 너비·행 높이는 이 문서가 제시하는 값이 아니며 BAEFRAME에서 결정해야 한다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R04 · How to use frames and keyframes in Animate
+
+출처: [How to use frames and keyframes in Animate](https://helpx.adobe.com/animate/desktop/animation/frames-keyframes.html) · Adobe
+
+갱신: 2026-06-09 · 공식 페이지의 Last updated 표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Animate 도움말; 페이지는 제품이 maintenance mode임을 안내
+
+**문서 사실**
+
+- 키프레임은 새로운 내용을 도입하고 빈 키프레임은 내용이 없는 시작점을 둔다. 정적 프레임 구간은 같은 내용을 계속 보여 주며 트윈 구간은 내용을 변화시킨다.
+- 개별 프레임 선택과 키프레임 사이 구간 선택을 구분한다. 프레임 기반 선택이 기본이다.
+- F5는 프레임 삽입, F6는 키프레임 삽입에 사용한다.
+
+**BAEFRAME 적용:** 영상 클립의 길이와 그림 한 장의 노출 길이를 다른 행과 명칭으로 표시한다. 기존 그림 키프레임·빈 키프레임·유지 구간을 보존하고, 프레임 선택인지 구간 선택인지 강조를 달리한다.
+
+**그대로 베끼면 안 될 점:** 트윈과 효과 키프레임까지 같은 표시로 섞지 않는다. 영상 정지 구간을 넣는 것과 그림을 유지하는 것을 하나의 홀드 명령으로 합치지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 high. ●·○ 표기의 유지 제안은 BAEFRAME의 기존 요구다. 저장한 Animate 이미지에는 검은 키 점과 구간이 보이지만 빈 ○의 세부 형태를 이미지 증거로 단정하지 않는다. 제품의 현재 문서가 존재한다는 사실은 향후 신규 기능 개발을 의미하지 않는다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R05 · How to use the timeline in Animate
+
+출처: [How to use the timeline in Animate](https://helpx.adobe.com/animate/desktop/workspace-and-workflow/timeline.html) · Adobe
+
+갱신: 2026-06-09 · 공식 페이지의 Last updated 표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Animate 도움말
+
+**문서 사실**
+
+- 타임라인은 레이어·프레임·플레이헤드로 구성되며 레이어 표시·잠금·윤곽 보기 상태를 관리한다.
+- 전체 레이어와 현재 레이어 보기, 프레임 표시 크기, Short·Medium·Tall 행 높이 등 표시 밀도를 조정한다.
+- 타임라인의 위치와 제어 영역 배치를 바꿀 수 있으며, 썸네일 표시에는 추가 공간이 필요하다.
+
+**BAEFRAME 적용:** 전체 컷 행은 계속 표시하고 선택한 컷의 드로잉 레이어만 펼치는 구성이 적합한지 검토한다. 눈금 확대와 레이어 행 높이를 별도 설정으로 두고, 현재 컷·레이어·프레임의 강조가 이어지게 한다.
+
+**그대로 베끼면 안 될 점:** 현재 단계에 없는 트윈·부모 연결·깊이 조절 아이콘을 밀도 개선이라는 이유로 가져오지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 공식 이미지에는 트윈과 프레임별 그림이 혼재한다. BAEFRAME가 트윈 기능을 갖췄다는 증거로 사용할 수 없다.
+
+이미지: I02
+
+### R06 · DaVinci Resolve – Cut
+
+출처: [DaVinci Resolve – Cut](https://www.blackmagicdesign.com/products/davinciresolve/cut) · Blackmagic Design
+
+갱신: 미표기 · 페이지에 갱신 날짜 미표기; 접근 시 제품 내비게이션은 DaVinci Resolve 21 · 접근: 2026-09-06
+
+적용 범위: 현재 제품 페이지; 개별 이미지의 정확한 앱 빌드 번호는 미확인
+
+**문서 사실**
+
+- Cut 페이지는 위에 전체 편집을, 아래에 현재 부분을 확대한 두 타임라인을 제공한다. 공식 설명상 두 곳에서 모두 편집할 수 있다.
+- 편집점에 대한 포인터 위치에 따라 트림 도구와 아이콘이 달라지며, 뷰어의 트리머는 프레임 단위 필름스트립을 제공한다.
+- 뷰어에서 자주 쓰는 조절 도구에 접근하고 Inspector에서 상세 값을 다룬다. 작은 화면에 맞는 자동 배치를 제품 특징으로 설명한다.
+
+**BAEFRAME 적용:** 긴 편집에서는 전체 길이와 현재 확대 구간을 알려 주는 얇은 개요를 유지하고, 실제 작업은 상세 프레임 축에서 수행하는 방안을 검토한다. 자주 쓰는 값은 선택 근처에, 상세 값은 접히는 속성 패널에 둔다.
+
+**그대로 베끼면 안 될 점:** 두 타임라인을 모두 편집 가능하게 복제하면 컷 행과 그림 행의 역할이 더 혼동될 수 있다. 작은 화면에서 빠르다는 문구는 제조사의 설계 설명이며 측정된 사용성 결과가 아니다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 저장 이미지는 제품 소개용 합성 배치다. 실제 앱 전체 창의 여백·픽셀 크기나 최신 버전의 정확한 모양을 나타낸다고 단정하지 않는다.
+
+이미지: I03
+
+### R07 · DaVinci Resolve – Edit
+
+출처: [DaVinci Resolve – Edit](https://www.blackmagicdesign.com/products/davinciresolve/edit) · Blackmagic Design
+
+갱신: 미표기 · 페이지에 갱신 날짜 미표기; 접근 시 제품 내비게이션은 DaVinci Resolve 21 · 접근: 2026-09-06
+
+적용 범위: 현재 제품 페이지
+
+**문서 사실**
+
+- 클립 선택 후 Inspector에서 매개변수를 조정한다. 다이아몬드 버튼으로 속성을 키프레임화하고 클립 아래에서 키프레임·곡선 편집기를 연다.
+- 마커에는 이름·메모·키워드·기간을 둘 수 있다. 화면 주석을 통해 영상에서 수정이 필요한 지점을 표시할 수 있다.
+- Dynamic Zoom은 최종 영상의 프레이밍을 바꾸는 편집 기능이다.
+
+**BAEFRAME 적용:** 클립을 선택했을 때의 속성과 그림 획을 선택했을 때의 속성을 분리한다. 향후 속성 애니메이션을 넣는다면 그림 교체 키프레임과 기호·행을 구분한다. 화면 보기 확대와 최종 출력의 크기·위치를 다르게 이름 붙인다.
+
+**그대로 베끼면 안 될 점:** Hand/보기 확대 조작을 출력 프레이밍 변경과 연결하지 않는다. 고급 효과 곡선을 기본 드로잉 노출 UI에 추가하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 high. 이 자료는 기능 소개이며 개별 도구가 언제 어떤 입력을 가로채는지까지 정의한 단축키 사양은 아니다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R08 · Harmony 25 Advanced Documentation: About Exposure
+
+출처: [Harmony 25 Advanced Documentation: About Exposure](https://docs.toonboom.com/help/harmony-25/advanced/timing/about-exposure.html) · Toon Boom Animation
+
+갱신: 미표기 · 갱신 날짜 미표기; URL과 문서 제목에 Harmony 25 명시 · 접근: 2026-09-06
+
+적용 범위: Harmony 25 Advanced
+
+**문서 사실**
+
+- 노출은 프레임 셀과 그림 사이의 연결이다. 하나의 그림을 여러 프레임에서 노출할 수 있다.
+- Xsheet에서는 프레임이 행, 레이어가 열이다. 같은 그림을 사용하는 여러 노출은 그 그림의 수정 결과를 공유한다.
+
+**BAEFRAME 적용:** ‘현재 그림을 몇 프레임 보여 주는가’와 ‘그림을 새로 만드는가’를 구분한다. 유지 구간을 늘릴 때 같은 그림을 참조한다는 사실과 수정의 적용 범위를 선택 강조로 전달한다.
+
+**그대로 베끼면 안 될 점:** 세로 Xsheet를 작은 영상 편집기의 기본 시간표로 바꾸지 않는다. 참조 공유 모델을 검토 근거로 쓰되 BAEFRAME의 기존 V3 저장 구조를 임의 변경하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 검색과 공식 URL 직접 HTTP 200 본문으로 확인했다. 브라우징 도구의 해당 페이지 열기에는 일시적 오류가 있었으나 비공식 대체 문서를 사용하지 않았다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R09 · How do I change my drawings to all have the same exposure?
+
+출처: [How do I change my drawings to all have the same exposure?](https://helpcentre.toonboom.com/hc/en-ca/articles/41575716406547-How-do-I-change-my-drawings-to-all-have-the-same-exposure) · Toon Boom
+
+갱신: 2026-07-21T13:28 · 공식 도움말 표시 21 July 2026 13:28; 시간대 미표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Harmony 지원 문서; 세부 에디션 미명시
+
+**문서 사실**
+
+- Xsheet 또는 Timeline에서 여러 그림을 Shift로 선택한 뒤 Set Exposure로 같은 노출 길이를 지정한다.
+- 1·2·3 프레임 또는 사용자 지정 길이를 선택할 수 있다.
+
+**BAEFRAME 적용:** 여러 그림의 유지 길이를 바꾸는 경우 2F·3F·직접 입력 같은 길이 선택을 제공한다. 적용될 그림과 끝 프레임을 먼저 보여 준다.
+
+**그대로 베끼면 안 될 점:** 이 문서는 뒤 프레임 밀기·덮어쓰기의 모든 충돌 규칙을 설명하지 않는다. BAEFRAME가 그 정책을 정하지 않은 채 동일한 메뉴만 제공하면 안 된다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 문서 HTML 직접 요청은 403이었으며 공식 공개 Zendesk article API에서 본문과 삽입 이미지 URL을 확인했다. 저장 이미지는 작은 타임라인 부분 그림이며 메뉴 동작을 직접 보여 주지 않는다.
+
+이미지: I04
+
+공식 대체 열람 경로: [공개 article API](https://helpcentre.toonboom.com/api/v2/help_center/en-ca/articles/41575716406547.json)
+
+### R10 · How do I fill in gaps between my drawing frames?
+
+출처: [How do I fill in gaps between my drawing frames?](https://helpcentre.toonboom.com/hc/en-ca/articles/44457300755347-How-do-I-fill-in-gaps-between-my-drawing-frames) · Toon Boom
+
+갱신: 2026-07-21T13:28 · 공식 도움말 표시 21 July 2026 13:28; 시간대 미표기 · 접근: 2026-09-06
+
+적용 범위: 현재 Harmony 지원 문서
+
+**문서 사실**
+
+- 선택 구간의 Fill Empty Cells는 앞선 그림을 이어 빈 셀을 채운다.
+- 빈 프레임을 선택하고 F5로 노출을 그 위치까지 연장할 수 있다.
+
+**BAEFRAME 적용:** 그림 유지 연장은 명시적인 명령으로 제공하고 결과 범위를 미리 표시한다. 빈 키프레임은 사용자가 의도한 사라짐일 수 있으므로 자동으로 채우지 않는다.
+
+**그대로 베끼면 안 될 점:** 빈 프레임을 전부 오류로 취급하거나, 컷 길이 변경 때 모든 빈 그림 구간을 자동 연장하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 high. Harmony의 셀 채우기 기능 설명으로, BAEFRAME 컷 분할·이동 시 그림 매핑을 증명하지 않는다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R11 · Commenting on your media
+
+출처: [Commenting on your media](https://help.frame.io/en/articles/9105251-commenting-on-your-media) · Frame.io / Adobe · 작성 Chiyani Babbar
+
+갱신: 2025-03-14T17:47:49Z · 공식 페이지 time/dateModified; 화면 표시는 March 14, 2025 · 접근: 2026-09-06
+
+적용 범위: Frame.io V4 Knowledge Center
+
+**문서 사실**
+
+- 댓글은 특정 프레임이나 시작·끝 시간이 있는 구간에 연결할 수 있다. 댓글의 타임코드를 클릭하면 해당 시점으로 이동한다.
+- 구간 댓글은 카드의 두 타임코드와 타임라인의 길어진 표시로 나타난다. I/O로 범위를 지정할 수 있다.
+- 주석은 댓글에 연결된다. 일반 영상 재생 중 항상 나타나는 제작 그림이 아니라 해당 댓글을 선택했을 때 보여 주는 피드백이다.
+- 핀 모드에서는 커서와 핀 색상으로 활성 상태를 알린다. 댓글 작성 시작 시 자동 일시정지 동작도 설명한다.
+
+**BAEFRAME 적용:** 리뷰 주석과 출력되는 제작 그림의 소속을 배지·도구 상태로 구분한다. 구간 댓글은 시작·끝 시간과 범위 표시를 함께 제공하고, 댓글 작성 중 재생·단축키가 입력을 방해하지 않게 한다.
+
+**그대로 베끼면 안 될 점:** 제작용 그림까지 댓글 선택 때만 보이게 하지 않는다. Public/Internal 표식을 실제 권한 제어 없이 흉내 내지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 high. 현재 공개 V4 문서이나 글과 저장 화면은 2025년 자료다. 댓글 자동 정지 정책은 BAEFRAME에서 사용자 의도와 함께 검증해야 한다.
+
+이미지: I05
+
+### R12 · Comments Panel Overview
+
+출처: [Comments Panel Overview](https://help.frame.io/en/articles/9105278-comments-panel-overview) · Frame.io / Adobe · 작성 Chiyani Babbar
+
+갱신: 2024-10-11 · 공식 페이지 표시 October 11, 2024 · 접근: 2026-09-06
+
+적용 범위: Frame.io V4 Knowledge Center
+
+**문서 사실**
+
+- 댓글 패널은 답글, 완료 처리, 핀·주석 표시를 제공한다. 기본 정렬은 타임코드 기준이며 작성자·완료 여부 등으로 찾거나 좁힐 수 있다.
+- 문서는 답글이 필터·정렬·검색에 포함되지 않는다는 제한도 안내한다.
+
+**BAEFRAME 적용:** 댓글 카드에 시간·작성자·스레드·해결 상태를 함께 두고, 완료된 댓글은 삭제하지 않은 채 숨기거나 다시 표시한다. 주석 포함 여부를 작은 표식으로 보여 준다.
+
+**그대로 베끼면 안 될 점:** 답글 검색 제외라는 제한을 설계 장점으로 복제하지 않는다. 댓글 완료와 프로젝트 저장 완료·출력 완료를 같은 체크 표식으로 혼동시키지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 2024년 공식 V4 문서이며 이후 모든 세부 변경을 실앱에서 검증한 것은 아니다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R13 · Versioning in Frame.io
+
+출처: [Versioning in Frame.io](https://help.frame.io/en/articles/9101068-versioning-in-frame-io) · Frame.io / Adobe · 작성 Jared
+
+갱신: 2026-09-04T14:06:06Z · 공식 HTML time/dateModified; 상대 표기 Updated yesterday 대신 절대 ISO 시각 사용 · 접근: 2026-09-06
+
+적용 범위: Frame.io V4; Version Saves 부분은 Frame.io Drive의 Mounted Storage에 한정
+
+**문서 사실**
+
+- 새 파일을 기존 파일 위로 끌어 버전 묶음을 만들 수 있고 기본적으로 최신 버전이 열린다. 상단 버전 선택으로 이전 버전을 열거나 비교한다.
+- Version Saves는 Mounted Storage 환경의 저장 이력을 최신 버전 안에 묶는다. 저장 횟수·시각·작성자를 보여 주며 버전과 저장을 구분한다.
+
+**BAEFRAME 적용:** 현재 작업의 ‘저장됨’, 리뷰 대상의 ‘버전’, 생성된 ‘출력 파일’을 분리해 표시한다. 사용자가 보는 영상의 버전 정체성을 미리보기 근처에서 확인할 수 있어야 한다.
+
+**그대로 베끼면 안 될 점:** Drive 전용 자동 저장 기능을 모든 파일의 일반 동작으로 확대하지 않는다. BAEFRAME의 로컬 문서 저장과 리뷰 버전 업로드가 같은 행위라고 가정하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 high. BAEFRAME 저장 상태의 정확한 노출 시점·실패 복구는 자체 저장 프로토콜 검토가 필요하다. 이 문서는 BAEFRAME 저장의 안전성을 보증하지 않는다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+### R14 · Comparison Viewer
+
+출처: [Comparison Viewer](https://help.frame.io/en/articles/9952618-comparison-viewer) · Frame.io / Adobe · 작성 Chiyani Babbar
+
+갱신: 2026-05-19 · 공식 페이지 표시 May 19, 2026 · 접근: 2026-09-06
+
+적용 범위: Frame.io V4 Knowledge Center
+
+**문서 사실**
+
+- 두 자산을 나란히 비교하고 확대·재생 제어를 연결한다. 왼쪽 또는 오른쪽 자산의 헤더를 선택해 어느 쪽에 댓글을 남길지 지정한다.
+- 비디오가 아닌 정적 자산에는 제어 연결 해제·겹쳐 보기·차이 비교 등의 추가 도구가 있다. 겹쳐 보기는 같은 크기 조건을 갖는다.
+
+**BAEFRAME 적용:** 버전 비교를 넣는다면 좌우 파일명·버전과 현재 피드백 대상을 뚜렷하게 표시한다. 연결된 보기 확대와 독립 확대의 차이를 사용자가 확인할 수 있어야 한다.
+
+**그대로 베끼면 안 될 점:** 정적 자산 전용 차이 비교를 일반 영상 기능으로 인용하지 않는다. 세로 화면이 좁을 때 비교 패널을 항상 두 개 고정하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 medium. 저장한 공식 화면의 파일명은 2024-10-03을 가리킨다. 문서 갱신은 2026년이지만 화면이 최신 UI라는 보장은 없다.
+
+이미지: I06
+
+### R15 · Adobe Premiere Frame.io V4 Panel Overview (25.6 and later)
+
+출처: [Adobe Premiere Frame.io V4 Panel Overview (25.6 and later)](https://help.frame.io/en/articles/12833113-adobe-premiere-frame-io-v4-panel-overview-25-6-and-later) · Frame.io / Adobe · 작성 Jared
+
+갱신: 2026-06-16T18:43:54Z · 공식 HTML time/dateModified; 화면 표시는 June 16, 2026 · 접근: 2026-09-06
+
+적용 범위: Premiere 25.6 이상 내장 Frame.io V4 패널
+
+**문서 사실**
+
+- Review 작업 영역에서 Frame.io 댓글을 타임라인 마커와 함께 확인하고, 댓글 선택으로 해당 위치로 이동할 수 있다.
+- 수정한 결과를 New Version으로 출력하고 기존 자산의 버전 묶음에 넣는 흐름을 제공한다. 자동 버전 묶음은 설정에서 바꿀 수 있다.
+
+**BAEFRAME 적용:** 리뷰와 편집을 한 화면에서 연결하되 검토 중인 원본·버전과 현재 편집 결과의 시간축을 명시한다. 댓글 위치는 출처에 대한 정보로 보존하고 출력 시간과의 관계를 별도로 표현한다.
+
+**그대로 베끼면 안 될 점:** 전문 제품의 연동 소개만으로 임의 컷 분할·이동 후에도 모든 댓글 시간이 정확히 자동 보정된다고 단정하지 않는다.
+
+**확신·제한:** 문서 사실 high, 적용 추론 high. 문서는 동기화 흐름을 설명하지만 BAEFRAME의 source/output 시간 매핑이나 로컬 파일 구조의 구현 근거는 아니다.
+
+이미지: 별도 저장 없음; 공식 본문 URL을 근거로 사용
+
+## 실제 공식 UI 이미지와 출처
+
+아래 파일은 공식 문서에 삽입된 URL을 관측한 뒤 원본 그대로 내려받았다. 생성형 이미지나 BAEFRAME 실사용 화면이 아니다. 출처의 예시 댓글·영상·레이어 이름을 포함한다.
+
+### I01 · Premiere 도구 패널과 영상·음성 트랙
+
+![Premiere 도구 패널과 영상·음성 트랙](premiere-tools.jpg)
+
+출처: Adobe · [공식 문서](https://helpx.adobe.com/premiere/desktop/get-started/tour-the-workspace/tools-panel-and-options-panel.html) · 접근 2026-09-06 · R01
+
+**실제 보이는 내용:** A–J 표시가 붙은 세로 도구 열, 파란 선택 도구, 옆의 V1 영상 클립과 A1 파형 클립, 트랙 헤더와 타임코드가 실제로 보인다.
+
+**BAEFRAME 적용:** 작은 도구 열과 명확한 활성 상태를 참고한다. 영상·음성 트랙 헤더는 내용 행과 분리된다.
+
+**제한:** 공식 문서의 주석 처리 이미지다. 커서 변화나 기능 실행 결과를 정지 이미지가 입증하지는 않는다.
+
+원본: [관측한 이미지 URL](https://helpx-prod.scene7.com/is/image/HelpxProd/Premiere-Pro-s-Tools-panel--highlighting-editing-t?$pjpeg$&jpegSize=200&wid=1200)
+
+파일: premiere-tools.jpg · 1200×775 · 73,238 bytes · image/jpeg
+
+SHA-256: `59ae1395c6b755205074674e9b1d9d9e7575738f195c1ebf26db67de60146fc7`
+
+수집 시각(UTC): 2026-09-05T21:01:50.518Z
+
+### I02 · Animate의 레이어·프레임 타임라인
+
+![Animate의 레이어·프레임 타임라인](animate-timeline.png)
+
+출처: Adobe · [공식 문서](https://helpx.adobe.com/animate/desktop/workspace-and-workflow/timeline.html) · 접근 2026-09-06 · R05
+
+**실제 보이는 내용:** 왼쪽 레이어 이름과 색상, 선택 행의 파란 강조, 위쪽 초·프레임 눈금, 세로 플레이헤드, 검은 키 점과 보라색 트윈 화살표 및 회색 프레임 칸이 보인다.
+
+**BAEFRAME 적용:** 레이어의 선택 강조가 시간 행까지 이어지는 방식, 프레임 단위와 초 단위를 함께 읽는 방식을 참고한다.
+
+**제한:** 트윈이 포함된 복잡한 예시다. BAEFRAME가 트윈을 지원한다는 뜻이 아니며 빈 ○의 세부 모양은 이 이미지로 확인하지 않았다.
+
+원본: [관측한 이미지 URL](https://helpx-prod.scene7.com/is/image/HelpxProd/new_timeline?$png$&jpegSize=300&wid=1920)
+
+파일: animate-timeline.png · 1920×412 · 203,366 bytes · image/png
+
+SHA-256: `c78d1f2d234e5ef9553d5eb44b9bf84acb1bef339829cb344a072844289ba5df`
+
+수집 시각(UTC): 2026-09-05T21:01:51.953Z
+
+### I03 · Resolve Cut의 전체 개요와 확대 타임라인
+
+![Resolve Cut의 전체 개요와 확대 타임라인](resolve-dual-timeline.jpg)
+
+출처: Blackmagic Design · [공식 문서](https://www.blackmagicdesign.com/products/davinciresolve/cut) · 접근 2026-09-06 · R06
+
+**실제 보이는 내용:** 영상 미리보기 아래 위쪽에 작은 전체 클립 배열, 아래쪽에 썸네일이 있는 상세 클립과 초록 음성 파형이 배치되어 있다. 두 타임라인에 현재 위치가 표시된다.
+
+**BAEFRAME 적용:** 전체 편집 중 어디를 확대해 보는지 잃지 않는 정보 계층을 참고한다.
+
+**제한:** 제조사 제품 페이지의 합성 소개 이미지다. 실제 전체 앱 창의 픽셀 배치를 그대로 재현한 자료로 쓰지 않는다.
+
+원본: [관측한 이미지 URL](https://images.blackmagicdesign.com/images/products/davinciresolve/cut/timelines/timelines-md.jpg?_v=1774493811)
+
+파일: resolve-dual-timeline.jpg · 1000×660 · 223,373 bytes · image/jpeg
+
+SHA-256: `1a0b943d481a70f8861435396f61c634773dc5030b22c37133dc27fdaa80e49e`
+
+수집 시각(UTC): 2026-09-05T21:01:52.018Z
+
+### I04 · Harmony 노출 변경 도움말의 Timeline 부분 이미지
+
+![Harmony 노출 변경 도움말의 Timeline 부분 이미지](harmony-exposure-timeline.png)
+
+출처: Toon Boom · [공식 문서](https://helpcentre.toonboom.com/hc/en-ca/articles/41575716406547-How-do-I-change-my-drawings-to-all-have-the-same-exposure) · 접근 2026-09-06 · R09
+
+**실제 보이는 내용:** triangle·rectangle·square 관련 레이어 이름, 프레임 셀, 세로 청록 선택 구간과 빨간 현재 프레임 표식이 보이는 작은 타임라인 조각이다.
+
+**BAEFRAME 적용:** 레이어 이름과 선택된 프레임 범위가 동시에 읽히는 방식을 참고한다.
+
+**제한:** 600×95의 작은 예시이며 Set Exposure 메뉴·대화상자·실행 결과는 이 이미지에 없다. 기능 설명은 R09 본문이 근거다.
+
+원본: [관측한 이미지 URL](https://helpcentre.toonboom.com/hc/article_attachments/41575716404243)
+
+파일: harmony-exposure-timeline.png · 600×95 · 5,154 bytes · image/png
+
+SHA-256: `7523d2c145da2cd045ae5bf432afc7c7a2f83b266bde9369ecd24adfe0a073ef`
+
+수집 시각(UTC): 2026-09-05T21:01:52.418Z
+
+### I05 · Frame.io의 구간 댓글
+
+![Frame.io의 구간 댓글](frameio-range-comments.png)
+
+출처: Frame.io / Adobe · [공식 문서](https://help.frame.io/en/articles/9105251-commenting-on-your-media) · 접근 2026-09-06 · R11
+
+**실제 보이는 내용:** 큰 영상과 오른쪽 Comments 패널, 단일 타임코드 댓글과 두 타임코드 댓글, 하단 재생바의 길어진 범위 표시가 보인다. 주황 테두리는 공식 설명 이미지에 원래 포함되어 있다.
+
+**BAEFRAME 적용:** 구간 댓글의 시작·끝 시간과 타임라인 범위를 함께 표시하는 방식을 참고한다.
+
+**제한:** 저장 화면은 2025년 문서에 실린 이미지이며 댓글은 예시 데이터다. 실제 BAEFRAME 조작 화면이 아니다. CDN 링크는 서명 만료 가능성이 있다.
+
+원본: [관측한 이미지 URL](https://downloads.intercomcdn.com/i/o/999528020/f659675cb5740465e321f6c6/f024d9e5-121f-42aa-ae27-8e3a09d171ed?expires=1788643800&signature=1ab95e3fb63f784c51de35e5893823255da655271bb02660887cc8822235bfef&req=fSkuE8t2nYNfFb4f3HP0gDjmZFlFX3Z%2FI4WL%2BKv%2BLAiFfo2i%2FF%2FukQj1hGdm%0A9s67HArZ1Hhri16aig%3D%3D%0A) (서명 만료 가능; 위 공식 문서에서 다시 접근)
+
+파일: frameio-range-comments.png · 2880×1468 · 2,764,885 bytes · image/png
+
+SHA-256: `7a4450bdd40e7fbf45a7e15a682a1ad41e5236e22c81a4865144aef4c4896588`
+
+수집 시각(UTC): 2026-09-05T21:01:57.168Z
+
+### I06 · Frame.io의 두 버전 비교와 댓글 대상
+
+![Frame.io의 두 버전 비교와 댓글 대상](frameio-comparison.png)
+
+출처: Frame.io / Adobe · [공식 문서](https://help.frame.io/en/articles/9952618-comparison-viewer) · 접근 2026-09-06 · R14
+
+**실제 보이는 내용:** Phone ad v1.mp4와 v2.mp4가 좌우에 있고 각각 상단 파일명이 보인다. 왼쪽 헤더 아래 보라색 선택선, 공유 재생바, 오른쪽 시간 댓글 패널이 보인다.
+
+**BAEFRAME 적용:** 비교 중에도 파일명·버전과 댓글 대상 자산을 계속 보이게 하는 방식을 참고한다.
+
+**제한:** 이미지 파일명에 2024-10-03이 포함되어 문서의 2026년 갱신일보다 오래됐다. 최신 UI라는 주장이나 정적 자산 전용 Overlay 기능의 증거로 사용하지 않는다. CDN 링크는 서명 만료 가능성이 있다.
+
+원본: [관측한 이미지 URL](https://downloads.intercomcdn.com/i/o/mbz4oxgz/1202859917/d82f99ff621a0a844eff00c72bf5/Screenshot%2B2024-10-03%2Bat%2B10_36_03-E2-80-AFAM.png?expires=1788643800&signature=1486a5ef767179dbb13e145a7c6b12ed624fc2329ffa167d2c8bac331c6d92a8&req=dSInFMF7lIheXvMW1HO4zT9Lc1aaUlBma%2FEKyq1gye7wO1jzumqZ%2FCFnpK5C%0AXNdbfixYUZlM56%2BYNjM%3D%0A) (서명 만료 가능; 위 공식 문서에서 다시 접근)
+
+파일: frameio-comparison.png · 2914×1520 · 2,386,586 bytes · image/png
+
+SHA-256: `9365373142e5c97391bb70808340acfcfd7ebba71deb6778dbc9a92504c632f5`
+
+수집 시각(UTC): 2026-09-05T21:04:30.199Z
+
+## 범위·검증 한계
+
+- 공식 현재 페이지와 버전별 문서를 확인했으며, 오래된 공식 스크린샷의 촬영 시점과 문서 갱신일을 구분했다.
+- 경쟁 제품의 기능 설명은 BAEFRAME의 구현·성능·저장 정합성을 검증한 결과가 아니다.
+- UI 이미지 6개는 문서 삽입 URL을 관측한 뒤 원본 바이트를 저장하고 직접 열어 확인했다. AI 생성·재구성·크롭을 하지 않았다.
+- 이미지 저작권은 각 출처에 있다. 연구 근거로 출처와 맥락을 유지하며, 공개 사이트에 재사용할 권리 허락을 확인한 것은 아니다.
+- 모바일 적합성·최소 터치 크기·접근성 기준은 이 장부의 범위가 아니다. 데스크톱 UI를 모바일에 단순 축소하는 근거로 쓰지 않는다.
+
+추가 검색 중단 기준: 5개 제품의 5개 문제 영역을 15개 공식 출처와 6개 UI 이미지로 충족했다. 유사 문서 추가 검색을 중단했다.
+
+검증: JSON 구문, 출처 ID 연결, 6개 이미지의 원본 바이트·SHA-256 및 PNG 크기를 검사했다. 6개 이미지 모두 직접 열어 확인했다. 앱 테스트·빌드·실제 타사 앱 조작은 하지 않았다.

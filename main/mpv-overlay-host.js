@@ -438,32 +438,57 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-toolbar {
       display: block;
       --fabric-palette-gap: 6px;
-      width: 220px;
+      --fabric-palette-accent: var(--mpv-theme-accent, #ffd000);
+      --fabric-palette-bg: #1b1b1e;
+      --fabric-palette-header: #242427;
+      --fabric-palette-button: #2a2a2e;
+      --fabric-palette-hover: #343439;
+      --fabric-palette-inset: #161618;
+      --fabric-palette-border: #424247;
+      --fabric-palette-muted: #a7a7ad;
+      width: 212px;
       max-width: calc(100% - 24px);
       box-sizing: border-box;
-      border-radius: 12px;
-      border: 1px solid rgba(255, 255, 255, 0.18);
-      background: rgba(15, 15, 15, 0.86);
-      box-shadow: var(--shadow-lg);
+      border-radius: 7px;
+      border: 1px solid var(--fabric-palette-border);
+      background: var(--fabric-palette-bg);
+      box-shadow: 0 3px 8px rgba(0, 0, 0, 0.33);
       color: var(--text-primary);
       font-family: Inter, Pretendard, "Segoe UI", sans-serif;
       -webkit-font-smoothing: antialiased;
       user-select: none;
     }
+    /* 획 기본색과 분리된 테마 변수를 사용하며 밝은 팔레트에서는 대비를 높인다. */
+    :root:has(#collaborationMirror[data-theme="light"]) .mpv-fabric-pilot-toolbar {
+      --fabric-palette-accent: color-mix(in srgb, var(--mpv-theme-accent, #ffd000) 65%, #000);
+      --fabric-palette-bg: #fafafa;
+      --fabric-palette-header: #f0f0f2;
+      --fabric-palette-button: #e7e7ea;
+      --fabric-palette-hover: #dcdce1;
+      --fabric-palette-inset: #efeff1;
+      --fabric-palette-border: #cacacf;
+      --fabric-palette-muted: #606069;
+      --text-primary: #202124;
+      --text-tertiary: #606069;
+      --text-faint: #707079;
+      --track-idle: rgba(32, 33, 36, 0.18);
+      --border-subtle: rgba(32, 33, 36, 0.16);
+    }
     .mpv-fabric-pilot-toolbar-header {
       display: flex;
       align-items: center;
       gap: 8px;
-      padding: 8px 10px;
+      min-height: 32px;
+      padding: 4px 8px;
       box-sizing: border-box;
-      border-radius: 12px 12px 0 0;
+      border-radius: 7px 7px 0 0;
       border-bottom: 1px solid var(--border-subtle);
-      background: rgba(255, 255, 255, 0.03);
+      background: var(--fabric-palette-header);
       cursor: move;
       touch-action: none;
     }
     .mpv-fabric-pilot-toolbar[data-collapsed="true"] .mpv-fabric-pilot-toolbar-header {
-      border-radius: 12px;
+      border-radius: 7px;
       border-bottom: none;
     }
     .mpv-fabric-pilot-toolbar-handle {
@@ -473,17 +498,25 @@ const OVERLAY_HTML = String.raw`
     }
     .mpv-fabric-pilot-toolbar-title {
       flex: 1;
+      min-width: 0;
       font-size: 12px;
       font-weight: 600;
       color: var(--text-primary);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mpv-fabric-pilot-toolbar-tool {
+      color: var(--fabric-palette-accent);
+      font-size: 11px;
     }
     .mpv-fabric-pilot-toolbar-content {
       display: flex;
       flex-direction: column;
-      gap: 10px;
-      padding: 10px;
+      gap: 8px;
+      padding: 8px;
       box-sizing: border-box;
-      max-height: 70vh;
+      max-height: min(70vh, max(0px, calc(100vh - 58px)));
       overflow-y: auto;
       overscroll-behavior: contain;
     }
@@ -494,8 +527,8 @@ const OVERLAY_HTML = String.raw`
       display: flex;
       align-items: center;
       justify-content: space-between;
-      margin-bottom: 6px;
-      color: var(--text-tertiary);
+      margin-bottom: 5px;
+      color: var(--fabric-palette-muted);
       font-size: 11px;
       font-weight: 600;
     }
@@ -508,44 +541,43 @@ const OVERLAY_HTML = String.raw`
       flex: 0 0 auto;
     }
     .mpv-fabric-pilot-toolbar button {
-      min-width: 40px;
-      min-height: 40px;
-      padding: 0 12px;
+      min-width: 28px;
+      min-height: 30px;
+      height: 30px;
+      padding: 0 7px;
       border: 0;
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.08);
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06);
+      border-radius: 4px;
+      background: var(--fabric-palette-button);
+      box-shadow: none;
       color: var(--text-primary);
       cursor: pointer;
       font: inherit;
-      font-size: 12px;
-      font-weight: 650;
+      font-size: 11px;
+      font-weight: 500;
       white-space: nowrap;
       transition-property: transform, background-color, box-shadow;
       transition-duration: 120ms;
       transition-timing-function: ease-out;
     }
     .mpv-fabric-pilot-toolbar button:hover {
-      background: rgba(255, 255, 255, 0.14);
-      box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.12);
+      background: var(--fabric-palette-hover);
     }
     .mpv-fabric-pilot-toolbar button[data-active="true"] {
-      background: rgba(255, 85, 85, 0.22);
-      box-shadow:
-        0 0 0 1px rgba(255, 112, 112, 0.72),
-        0 0 16px rgba(255, 85, 85, 0.18);
-      color: #fff;
+      background: color-mix(in srgb, var(--fabric-palette-accent) 16%, var(--fabric-palette-bg));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fabric-palette-accent) 55%, transparent);
+      color: var(--fabric-palette-accent);
     }
     .mpv-fabric-pilot-toolbar button:active {
       transform: scale(0.96);
     }
     .mpv-fabric-pilot-toolbar button:focus-visible {
-      outline: 2px solid var(--accent-secondary);
+      outline: 2px solid var(--fabric-palette-accent);
       outline-offset: 2px;
     }
     .mpv-fabric-pilot-toolbar button.mpv-fabric-pilot-collapse-button {
       min-width: 24px;
       min-height: 24px;
+      height: 24px;
       padding: 0;
       background: transparent;
       box-shadow: none;
@@ -557,10 +589,18 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button:not([data-fabric-pilot-color]) {
       min-width: 32px;
       min-height: 32px;
+      height: auto;
       padding: 0;
     }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-action="brush-settings"] {
+      min-height: 30px !important;
+    }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] {
+      background: var(--fabric-palette-header) !important;
+      color: var(--text-primary) !important;
+    }
     /* 색 견본은 한 줄에 넷이 들어가야 8개가 두 줄로 끝난다.
-       팔레트 220px → 패널 안쪽 166px, 4*36 + 3*6 = 162 <= 166. */
+       팔레트 212px → 스크롤바가 있어도 패널 안쪽 170px, 4*36 + 3*6 = 162. */
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button[data-fabric-pilot-color] {
       width: 36px;
       height: 36px;
@@ -630,7 +670,7 @@ const OVERLAY_HTML = String.raw`
       margin-top: -3px;
     }
     .mpv-fabric-pilot-toolbar input[type="range"]:focus-visible {
-      outline: 2px solid var(--accent-secondary);
+      outline: 2px solid var(--fabric-palette-accent);
       outline-offset: 2px;
     }
     .mpv-fabric-pilot-brush-status {
@@ -638,7 +678,8 @@ const OVERLAY_HTML = String.raw`
       align-items: center;
       gap: 6px;
       min-width: 0;
-      color: var(--text-tertiary);
+      min-height: 20px;
+      color: var(--fabric-palette-muted);
       font-size: 11px;
       font-variant-numeric: tabular-nums;
     }
@@ -657,16 +698,49 @@ const OVERLAY_HTML = String.raw`
       flex-flow: row wrap;
       gap: var(--fabric-palette-gap);
     }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-controls"] {
+      gap: 6px !important;
+      padding: 6px !important;
+      border-radius: 5px !important;
+      background: var(--fabric-palette-inset) !important;
+    }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-target"],
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-shape"] {
+      display: grid !important;
+      grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr);
+      align-items: center;
+      gap: 3px !important;
+      border-bottom: 0 !important;
+      padding-bottom: 0 !important;
+    }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-label] {
+      color: var(--fabric-palette-muted) !important;
+      font-size: 10px !important;
+      line-height: 1.4;
+    }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-controls"] button {
+      padding: 0 3px;
+      min-height: 28px;
+      height: 28px;
+      min-width: 0;
+      font-size: 10px;
+    }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="selection-summary"] {
+      margin-top: 2px;
+      font-size: 10px !important;
+      line-height: 1.5;
+      color: var(--fabric-palette-muted) !important;
+    }
     .mpv-fabric-pilot-badge {
       display: block;
       width: 100%;
-      min-height: 28px;
-      line-height: 28px;
-      padding: 0 10px;
+      min-height: 24px;
+      line-height: 24px;
+      padding: 0 6px;
       box-sizing: border-box;
-      border-radius: 8px;
-      background: rgba(0, 0, 0, 0.28);
-      color: var(--text-tertiary);
+      border-radius: 4px;
+      background: var(--fabric-palette-inset);
+      color: var(--fabric-palette-muted);
       font-size: 11px;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
@@ -1367,6 +1441,8 @@ const OVERLAY_HTML = String.raw`
       const playback = document.getElementById('mpvPlaybackSyncPanel');
       if (!root || !indicator || !plexus || !playback) return false;
       root.dataset.theme = state.theme;
+      document.documentElement.style.setProperty('--mpv-theme-accent', state.accentColor);
+      root.style.setProperty('--accent-primary', state.accentColor);
 
       applyMpvCollaborationBounds(indicator, state.indicator, 'flex');
       applyMpvCollaborationUsers(state.indicator.users);
@@ -1720,13 +1796,18 @@ function normalizeMpvCollaborationSnapshotDataUrl(value) {
 
 function normalizeMpvCollaborationState(value) {
   try {
-    if (!isExactPlainRecord(value, [
+    const keys = [
       'revision',
       'theme',
       'indicator',
       'plexus',
       'playback'
-    ])) return null;
+    ];
+    const hasAccentColor = value !== null && typeof value === 'object' && Object.hasOwn(value, 'accentColor');
+    if (hasAccentColor) keys.push('accentColor');
+    if (!isExactPlainRecord(value, keys)) return null;
+    if (hasAccentColor && (typeof value.accentColor !== 'string' ||
+        !/^#[0-9a-f]{6}$/i.test(value.accentColor))) return null;
     if (Buffer.byteLength(JSON.stringify(value), 'utf8') > MAX_MPV_COLLABORATION_STATE_BYTES ||
         !Number.isSafeInteger(value.revision) || value.revision < 0 ||
         !['dark', 'light'].includes(value.theme)) {
@@ -1777,6 +1858,7 @@ function normalizeMpvCollaborationState(value) {
     return {
       revision: value.revision,
       theme: value.theme,
+      accentColor: hasAccentColor ? value.accentColor.toLowerCase() : MPV_COLLABORATION_FALLBACK_COLOR,
       indicator: {
         visible: value.indicator.visible,
         bounds: indicatorBounds,

@@ -1,0 +1,236 @@
+{
+  "status": "passed",
+  "issues": 26,
+  "imageCategories": {
+    "current": 17,
+    "official": 6,
+    "proposal": 8
+  },
+  "officialDocuments": 15,
+  "officialImageHashes": "6 match",
+  "priorUX": {
+    "checkedLocation": "C:/Users/user/.codex/worktrees/baeframe-reel-editor/BAEFRAME",
+    "files": 57,
+    "mismatches": []
+  },
+  "rawMarkdownMarkers": 0,
+  "images": [
+    {
+      "path": "evidence/review/07-selection-tools.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 775749,
+      "sha256": "08e6da3376c7fbe97eaabf699bc17e630a878038618c4482deca8c0ec3cdadfa"
+    },
+    {
+      "path": "evidence/editor/08-dense-layers-1050.png",
+      "width": 1050,
+      "height": 720,
+      "bytes": 126438,
+      "sha256": "82139081cdae5c5ed925cc7cfc5524f87209c5657f9dd5ef92dad4359af2fd7c"
+    },
+    {
+      "path": "evidence/references/premiere-tools.jpg",
+      "width": 1200,
+      "height": 775,
+      "bytes": 73238,
+      "sha256": "59ae1395c6b755205074674e9b1d9d9e7575738f195c1ebf26db67de60146fc7"
+    },
+    {
+      "path": "evidence/references/animate-timeline.png",
+      "width": 1920,
+      "height": 412,
+      "bytes": 203366,
+      "sha256": "c78d1f2d234e5ef9553d5eb44b9bf84acb1bef339829cb344a072844289ba5df"
+    },
+    {
+      "path": "evidence/references/resolve-dual-timeline.jpg",
+      "width": 1000,
+      "height": 660,
+      "bytes": 223373,
+      "sha256": "1a0b943d481a70f8861435396f61c634773dc5030b22c37133dc27fdaa80e49e"
+    },
+    {
+      "path": "evidence/references/harmony-exposure-timeline.png",
+      "width": 600,
+      "height": 95,
+      "bytes": 5154,
+      "sha256": "7523d2c145da2cd045ae5bf432afc7c7a2f83b266bde9369ecd24adfe0a073ef"
+    },
+    {
+      "path": "evidence/references/frameio-range-comments.png",
+      "width": 2880,
+      "height": 1468,
+      "bytes": 2764885,
+      "sha256": "7a4450bdd40e7fbf45a7e15a682a1ad41e5236e22c81a4865144aef4c4896588"
+    },
+    {
+      "path": "evidence/references/frameio-comparison.png",
+      "width": 2914,
+      "height": 1520,
+      "bytes": 2386586,
+      "sha256": "9365373142e5c97391bb70808340acfcfd7ebba71deb6778dbc9a92504c632f5"
+    },
+    {
+      "path": "evidence/editor/03-reopened-drawing-selection-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 143349,
+      "sha256": "06e260d96531007594b13824772c21afb9bc18c292fc9a5dfeb74f1f42073595"
+    },
+    {
+      "path": "evidence/editor/04-v-selection-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 147097,
+      "sha256": "34ae8dfc26fe7acbb37ec141a7ab505e881cba7a3c0a9dfc36c709d4c87d75a1"
+    },
+    {
+      "path": "evidence/editor/13-missing-media-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 153135,
+      "sha256": "79317b9108863a6fcc5d2c0c9303f28de06c544714e5666126108aae483020e8"
+    },
+    {
+      "path": "evidence/editor/14-name-save-focus-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 141260,
+      "sha256": "a822960d08071336c63862555ad02db72b2a4e813f30ffdfdae41839061679c6"
+    },
+    {
+      "path": "evidence/review/12-save-share-ui.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 612384,
+      "sha256": "baa836e08012900e8f1148c237451c1532e39ff6e3a72b01fafdd7c672b0f56e"
+    },
+    {
+      "path": "evidence/editor/12-export-progress-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 147295,
+      "sha256": "1d88508880ca5da0e6376de0a1c8b9cf94565d15df19311d43983fda35f0f11e"
+    },
+    {
+      "path": "evidence/review/11-long-name.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 609438,
+      "sha256": "7965016ba598b1dd9d29f815fd855e5ed023040433e114b5d6777f91aa044962"
+    },
+    {
+      "path": "evidence/review/09-narrow-panels.png",
+      "width": 1671,
+      "height": 1137,
+      "bytes": 341809,
+      "sha256": "1b33b1b5056dbb9334b7c71bf1cf22983a5134cc65dd71a3d03ab5a7083760ae"
+    },
+    {
+      "path": "evidence/editor/07-portrait-1050.png",
+      "width": 1050,
+      "height": 720,
+      "bytes": 69731,
+      "sha256": "c583d9708c5e569ca78886bd02d0eccea694951bb9e5847914946f7efbd0704b"
+    },
+    {
+      "path": "evidence/editor/02-landscape-longname-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 140954,
+      "sha256": "50ec57df5b2a146e941a231ed1060caa6ba855a0e40356aece2e972f15842745"
+    },
+    {
+      "path": "evidence/review/02-video-comments.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 775128,
+      "sha256": "933e8ca2e18ae53b99bf00733dcc632653aeccece0698dd3b093801f84481a06"
+    },
+    {
+      "path": "evidence/editor/11-text200-stress-1440.png",
+      "width": 1440,
+      "height": 900,
+      "bytes": 179995,
+      "sha256": "c4cfc1c5395a417e0625ee8892dab8c890a2c0c9b60a2786c05b8a1ae9fc9e76"
+    },
+    {
+      "path": "evidence/review/03-settings-menu.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 781619,
+      "sha256": "7dc2184a0d82dcbd8f19a2aa94347766c1c4c9411a9dbf26e08c44c038df1c26"
+    },
+    {
+      "path": "evidence/review/05-shortcuts.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 324138,
+      "sha256": "282d6007c3a5b08c3d3c9af591c48eecaedb6b510202bac0dfafbed7c622a5c0"
+    },
+    {
+      "path": "evidence/review/00-required-name.png",
+      "width": 2181,
+      "height": 1407,
+      "bytes": 206878,
+      "sha256": "c270cb0dd2dca06d414c3416a22eee8c3dbdcce01a5aa9e077bf36bd0e8d263b"
+    },
+    {
+      "path": "assets/finished-ui/01-baeframe-review.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 1799941,
+      "sha256": "ba4e0ac43f2618b828aa857dbe84ec39a94c68a1e4931f2f70f7b7a5cc45f7a7"
+    },
+    {
+      "path": "assets/finished-ui/02-baeframe-drawing.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 1771679,
+      "sha256": "ad85cc08be50a3b0ff8373b3fb5774901ca145cb5cf4a567b8ae7b2ffaee306c"
+    },
+    {
+      "path": "assets/finished-ui/03-bediter-edit.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 1923968,
+      "sha256": "baacb413d6bd60ab4f479bbad5aea867f4b51abb2f931f5a74bef9db230fd2c2"
+    },
+    {
+      "path": "assets/finished-ui/04-bediter-portrait.png",
+      "width": 3200,
+      "height": 2000,
+      "bytes": 784870,
+      "sha256": "679e908d0ae610a64c507efe20ea57db7ebb570d5fdc913d6e482077dc44eb0d"
+    },
+    {
+      "path": "assets/proposals/01-workspace-proposal.svg",
+      "width": 1440,
+      "height": 900,
+      "bytes": 12074,
+      "sha256": "966295a8f8a357673b5da8923c52ee4e55aaf579366820d8af5830a2e0b412d4"
+    },
+    {
+      "path": "assets/proposals/02-time-language.svg",
+      "width": 1440,
+      "height": 900,
+      "bytes": 4740,
+      "sha256": "fbfdbd6053feb696c8470be46a67517159390e1658d1ea14497af24a9cee42a8"
+    },
+    {
+      "path": "assets/proposals/03-state-language.svg",
+      "width": 1440,
+      "height": 900,
+      "bytes": 5363,
+      "sha256": "619179bcc772d58a6f66636c0edf2a851c9760cd57f8942a4bee332dfbb1a818"
+    },
+    {
+      "path": "assets/proposals/04-two-contexts.svg",
+      "width": 1440,
+      "height": 900,
+      "bytes": 4504,
+      "sha256": "a466170da0814ed1e8e4d7e8f2abbd5adc77662735d63ddb6f8d6aef7c44b8f7"
+    }
+  ]
+}

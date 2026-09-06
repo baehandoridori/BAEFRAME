@@ -1,0 +1,72 @@
+body.comments-detached #panelResizer {
+  display: none;
+}
+
+#btnDetachComments[aria-pressed="true"] {
+  color: var(--accent-primary);
+  background: var(--accent-glow);
+}
+
+#btnDetachComments[aria-pressed="true"] svg {
+  transform: rotate(180deg);
+}
+
+.comment-popout,
+.comment-popout #commentPopoutMount {
+  width: 100%;
+  height: 100vh;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+}
+
+.comment-popout #commentPopoutMount {
+  display: flex;
+  flex-direction: column;
+}
+
+.comment-popout #commentPanel {
+  display: flex;
+  flex: 1;
+  width: 100% !important;
+  min-width: 0;
+  max-width: none;
+  height: 100%;
+  min-height: 0;
+  border-left: 0;
+}
+
+.comment-popout .comment-popout-loading {
+  margin: 0;
+  padding: 24px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.comment-popout #commentPopoutMount:has(#commentPanel) > .comment-popout-loading {
+  display: none;
+}
+
+.comment-popout .comment-settings-dropdown {
+  max-height: calc(100vh - 70px);
+  overflow-y: auto;
+}
+
+.comment-popout .filter-dropdown-menu {
+  max-width: calc(100vw - 24px);
+}
+
+.comment-popout .new-comment {
+  flex-shrink: 0;
+}
+
+.comment-popout .comments-list {
+  overflow-x: hidden;
+}
+
+.comment-popout .comment-panel-toggle {
+  display: none;
+}
+#btnCommentWindow[hidden] {
+  display: none;
+}

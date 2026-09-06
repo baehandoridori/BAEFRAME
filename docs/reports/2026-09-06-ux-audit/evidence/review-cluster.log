@@ -1,0 +1,276 @@
+
+> baeframe@2.9.0-beta test:cluster
+> node --test scripts/tests/comment-cluster.test.js scripts/tests/comment-track-header-sync-source.test.js
+
+TAP version 13
+# (node:54892) [MODULE_TYPELESS_PACKAGE_JSON] Warning: Module type of file:///C:/BAEframe/BAEFRAME/renderer/scripts/modules/comment-cluster.js is not specified and it doesn't parse as CommonJS.
+# Reparsing as ES module because module syntax was detected. This incurs a performance overhead.
+# To eliminate this warning, add "type": "module" to C:\\BAEframe\\BAEFRAME\\package.json.
+# (Use `node --trace-warnings ...` to show where the warning was created)
+# Subtest: 모듈 로드
+ok 1 - 모듈 로드
+  ---
+  duration_ms: 6.8282
+  type: 'test'
+  ...
+# Subtest: 빈 배열 → 빈 클러스터
+ok 2 - 빈 배열 → 빈 클러스터
+  ---
+  duration_ms: 0.5724
+  type: 'test'
+  ...
+# Subtest: 단일 댓글 → 단일 클러스터 (크기 1)
+ok 3 - 단일 댓글 → 단일 클러스터 (크기 1)
+  ---
+  duration_ms: 0.2288
+  type: 'test'
+  ...
+# Subtest: 비중첩 둘 → 독립 클러스터 2개
+ok 4 - 비중첩 둘 → 독립 클러스터 2개
+  ---
+  duration_ms: 0.1514
+  type: 'test'
+  ...
+# Subtest: 인접하지만 겹치지 않음 (end == start): 독립
+ok 5 - 인접하지만 겹치지 않음 (end == start): 독립
+  ---
+  duration_ms: 0.1465
+  type: 'test'
+  ...
+# Subtest: 정확히 겹치는 두 댓글: 하나의 클러스터
+ok 6 - 정확히 겹치는 두 댓글: 하나의 클러스터
+  ---
+  duration_ms: 0.1241
+  type: 'test'
+  ...
+# Subtest: 전이적 겹침 (A-B, B-C): 단일 클러스터로 병합
+ok 7 - 전이적 겹침 (A-B, B-C): 단일 클러스터로 병합
+  ---
+  duration_ms: 0.2277
+  type: 'test'
+  ...
+# Subtest: 정렬되지 않은 입력 — 결과는 정렬됨
+ok 8 - 정렬되지 않은 입력 — 결과는 정렬됨
+  ---
+  duration_ms: 0.1132
+  type: 'test'
+  ...
+# Subtest: 동일 startFrame: 단일 클러스터
+ok 9 - 동일 startFrame: 단일 클러스터
+  ---
+  duration_ms: 0.2711
+  type: 'test'
+  ...
+# Subtest: 단일 댓글: 레인 0
+ok 10 - 단일 댓글: 레인 0
+  ---
+  duration_ms: 0.3437
+  type: 'test'
+  ...
+# Subtest: 비중첩 둘: 둘 다 레인 0 (같은 레인에 순차)
+ok 11 - 비중첩 둘: 둘 다 레인 0 (같은 레인에 순차)
+  ---
+  duration_ms: 0.1958
+  type: 'test'
+  ...
+# Subtest: 완전 겹침 둘: 레인 0, 1
+ok 12 - 완전 겹침 둘: 레인 0, 1
+  ---
+  duration_ms: 0.1084
+  type: 'test'
+  ...
+# Subtest: 세 개 겹침: 레인 0, 1, 2
+ok 13 - 세 개 겹침: 레인 0, 1, 2
+  ---
+  duration_ms: 0.0854
+  type: 'test'
+  ...
+# Subtest: 재사용 가능한 레인: A(0-10), B(5-15), C(12-20) → A,C는 레인 0 공유
+ok 14 - 재사용 가능한 레인: A(0-10), B(5-15), C(12-20) → A,C는 레인 0 공유
+  ---
+  duration_ms: 0.0805
+  type: 'test'
+  ...
+# Subtest: 렌더 단위 레인: 접힌 클러스터와 단일 댓글이 시간상 겹치면 다른 줄에 배치한다
+ok 15 - 렌더 단위 레인: 접힌 클러스터와 단일 댓글이 시간상 겹치면 다른 줄에 배치한다
+  ---
+  duration_ms: 0.1799
+  type: 'test'
+  ...
+# Subtest: 렌더 단위 레인: 펼친 클러스터는 내부 레인 수만큼 세로 공간을 예약한다
+ok 16 - 렌더 단위 레인: 펼친 클러스터는 내부 레인 수만큼 세로 공간을 예약한다
+  ---
+  duration_ms: 0.0904
+  type: 'test'
+  ...
+# Subtest: clusterKey: 빈 클러스터 → null
+ok 17 - clusterKey: 빈 클러스터 → null
+  ---
+  duration_ms: 0.7612
+  type: 'test'
+  ...
+# Subtest: clusterKey: 단일 댓글 클러스터 → 해당 markerId
+ok 18 - clusterKey: 단일 댓글 클러스터 → 해당 markerId
+  ---
+  duration_ms: 0.1023
+  type: 'test'
+  ...
+# Subtest: clusterKey: 여러 댓글 클러스터 → 정렬된 markerId 조합
+ok 19 - clusterKey: 여러 댓글 클러스터 → 정렬된 markerId 조합
+  ---
+  duration_ms: 0.0824
+  type: 'test'
+  ...
+# Subtest: clusterKey: 멤버 순서가 달라도 동일한 키 반환 (안정성)
+ok 20 - clusterKey: 멤버 순서가 달라도 동일한 키 반환 (안정성)
+  ---
+  duration_ms: 0.0766
+  type: 'test'
+  ...
+# Subtest: resizeClusterMembersByEdge: 왼쪽 끝 조절은 모든 멤버 startFrame을 같은 delta로 변경한다
+ok 21 - resizeClusterMembersByEdge: 왼쪽 끝 조절은 모든 멤버 startFrame을 같은 delta로 변경한다
+  ---
+  duration_ms: 0.2977
+  type: 'test'
+  ...
+# Subtest: resizeClusterMembersByEdge: 오른쪽 끝 조절은 모든 멤버 endFrame을 같은 delta로 변경한다
+ok 22 - resizeClusterMembersByEdge: 오른쪽 끝 조절은 모든 멤버 endFrame을 같은 delta로 변경한다
+  ---
+  duration_ms: 0.2293
+  type: 'test'
+  ...
+# Subtest: resizeClusterMembersByEdge: 너무 많이 줄이면 모든 댓글이 최소 1프레임을 유지하도록 delta를 제한한다
+ok 23 - resizeClusterMembersByEdge: 너무 많이 줄이면 모든 댓글이 최소 1프레임을 유지하도록 delta를 제한한다
+  ---
+  duration_ms: 0.1292
+  type: 'test'
+  ...
+# Subtest: 접힌 댓글 클러스터 바는 손잡이와 Ctrl 드래그로 그룹 범위를 조절한다
+ok 24 - 접힌 댓글 클러스터 바는 손잡이와 Ctrl 드래그로 그룹 범위를 조절한다
+  ---
+  duration_ms: 1.144
+  type: 'test'
+  ...
+# Subtest: 일반 댓글 바도 Ctrl 드래그 시 클릭한 절반 기준으로 길이를 조절한다
+ok 25 - 일반 댓글 바도 Ctrl 드래그 시 클릭한 절반 기준으로 길이를 조절한다
+  ---
+  duration_ms: 0.2707
+  type: 'test'
+  ...
+# Subtest: Ctrl 드래그는 짧은 댓글 바 근처의 넓은 영역에서도 리사이즈 대상을 찾는다
+ok 26 - Ctrl 드래그는 짧은 댓글 바 근처의 넓은 영역에서도 리사이즈 대상을 찾는다
+  ---
+  duration_ms: 1.8117
+  type: 'test'
+  ...
+# Subtest: Ctrl 키를 누르고 댓글 트랙에 마우스를 올리면 넓어진 리사이즈 후보 영역을 시각적으로 표시한다
+ok 27 - Ctrl 키를 누르고 댓글 트랙에 마우스를 올리면 넓어진 리사이즈 후보 영역을 시각적으로 표시한다
+  ---
+  duration_ms: 1.5767
+  type: 'test'
+  ...
+# Subtest: 긴 영상 댓글 범위 목업은 5분/10분 타임라인과 Ctrl 리사이즈 시각화를 포함한다
+ok 28 - 긴 영상 댓글 범위 목업은 5분/10분 타임라인과 Ctrl 리사이즈 시각화를 포함한다
+  ---
+  duration_ms: 1.7763
+  type: 'test'
+  ...
+# Subtest: 댓글 지속시간 타임라인 표시는 체크 토글로 켜고 끈다
+ok 29 - 댓글 지속시간 타임라인 표시는 체크 토글로 켜고 끈다
+  ---
+  duration_ms: 0.2926
+  type: 'test'
+  ...
+# Subtest: split: 빈 배열 입력 → 빈 배열 반환
+ok 30 - split: 빈 배열 입력 → 빈 배열 반환
+  ---
+  duration_ms: 0.2716
+  type: 'test'
+  ...
+# Subtest: split: 단일 멤버 클러스터는 그대로 통과
+ok 31 - split: 단일 멤버 클러스터는 그대로 통과
+  ---
+  duration_ms: 0.1142
+  type: 'test'
+  ...
+# Subtest: split: 모든 spacing이 minSpacingPx 미만 → 원본 클러스터 그대로
+ok 32 - split: 모든 spacing이 minSpacingPx 미만 → 원본 클러스터 그대로
+  ---
+  duration_ms: 0.1134
+  type: 'test'
+  ...
+# Subtest: split: 한 지점만 spacing ≥ minSpacingPx → 2개로 분리
+ok 33 - split: 한 지점만 spacing ≥ minSpacingPx → 2개로 분리
+  ---
+  duration_ms: 0.0897
+  type: 'test'
+  ...
+# Subtest: split: 여러 spacing ≥ minSpacingPx → N+1개로 분리
+ok 34 - split: 여러 spacing ≥ minSpacingPx → N+1개로 분리
+  ---
+  duration_ms: 0.0858
+  type: 'test'
+  ...
+# Subtest: split: pxPerFrame = 0 → 원본 그대로 (안전 가드)
+ok 35 - split: pxPerFrame = 0 → 원본 그대로 (안전 가드)
+  ---
+  duration_ms: 0.089
+  type: 'test'
+  ...
+# Subtest: split: pxPerFrame 음수 → 원본 그대로
+ok 36 - split: pxPerFrame 음수 → 원본 그대로
+  ---
+  duration_ms: 0.0837
+  type: 'test'
+  ...
+# Subtest: split: minSpacingPx 옵션 생략 → 기본 20px 적용
+ok 37 - split: minSpacingPx 옵션 생략 → 기본 20px 적용
+  ---
+  duration_ms: 0.1549
+  type: 'test'
+  ...
+# Subtest: split: 정렬되지 않은 멤버도 처리
+ok 38 - split: 정렬되지 않은 멤버도 처리
+  ---
+  duration_ms: 0.1151
+  type: 'test'
+  ...
+# Subtest: split: pxPerFrame이 작으면 spacing이 커도 묶임 유지 (줌 아웃)
+ok 39 - split: pxPerFrame이 작으면 spacing이 커도 묶임 유지 (줌 아웃)
+  ---
+  duration_ms: 0.0824
+  type: 'test'
+  ...
+# Subtest: split: 긴 구간이 중간에 있어도 startFrame만 가까우면 같은 클러스터
+ok 40 - split: 긴 구간이 중간에 있어도 startFrame만 가까우면 같은 클러스터
+  ---
+  duration_ms: 0.097
+  type: 'test'
+  ...
+# Subtest: comment range track synchronizes the left header height with dynamic lanes
+ok 41 - comment range track synchronizes the left header height with dynamic lanes
+  ---
+  duration_ms: 1.4891
+  type: 'test'
+  ...
+# Subtest: comment row spacing matches between the layer header column and track column
+ok 42 - comment row spacing matches between the layer header column and track column
+  ---
+  duration_ms: 0.582
+  type: 'test'
+  ...
+# Subtest: playlist and empty comment states reset the shared comment row height
+ok 43 - playlist and empty comment states reset the shared comment row height
+  ---
+  duration_ms: 0.305
+  type: 'test'
+  ...
+1..43
+# tests 43
+# suites 0
+# pass 43
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 146.3232

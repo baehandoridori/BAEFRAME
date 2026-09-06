@@ -7,6 +7,7 @@
   <title>배프레임 - For Studio JBBJ - by BAE</title>
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" rel="stylesheet">
   <link rel="stylesheet" href="styles/main.css">
+  <link rel="stylesheet" href="styles/comment-panel-popout.css">
   <link rel="stylesheet" href="styles/playlist-panel.css">
   <link rel="stylesheet" href="styles/cutlist-panel.css">
 </head>
@@ -162,7 +163,12 @@
         </svg>
         컷 묶음
       </button>
-      <button class="btn btn-secondary" id="btnSave">
+        <button class="btn btn-secondary" id="btnCommentWindow" title="분리한 댓글 창 보기" aria-label="분리한 댓글 창 보기" hidden>
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+        댓글 창
+      </button>
+      <button class="btn btn-secondary" id="btnOpenEditor" title="BEditer · 프로토타입 — 영상 자르기·정지·드로잉 편집">영상 편집</button>
+      <button class="btn btn-secondary" id="btnSave" title="저장">
         <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
           <polyline points="17 21 17 13 7 13 7 21"/>
@@ -1019,6 +1025,9 @@
           <span class="comment-count" id="commentCount">0</span>
         </div>
         <div class="panel-actions">
+          <button class="panel-btn" id="btnDetachComments" title="댓글을 별도 창으로 분리" aria-label="댓글을 별도 창으로 분리" aria-pressed="false">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3h7v7M21 3l-9 9"/><path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-5"/></svg>
+          </button>
           <button class="panel-btn" id="btnCompactView" title="컴팩트 뷰 토글">
             <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="20" y2="18"/></svg>
           </button>

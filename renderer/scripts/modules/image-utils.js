@@ -25,14 +25,26 @@ export const IMAGE_CONFIG = {
 function loadImage(source) {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(new Error('이미지 로드 실패'));
+    let objectUrl = null;
+    const release = () => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      objectUrl = null;
+    };
+    img.onload = () => { release(); resolve(img); };
+    img.onerror = () => { release(); reject(new Error('이미지 로드 실패')); };
 
-    if (source instanceof Blob || source instanceof File) {
-      img.src = URL.createObjectURL(source);
-    } else if (typeof source === 'string') {
-      img.src = source;
-    } else {
+    try {
+      if (typeof source === 'string') {
+        img.src = source;
+        return;
+      }
+      // 분리 창의 File/Blob은 부모 instanceof 검사를 통과하지 않는다.
+      // 네이티브 getter로 실제 Blob 브랜드를 검사하므로 흉내 낸 일반 객체는 거부한다.
+      Object.getOwnPropertyDescriptor(Blob.prototype, 'size').get.call(source);
+      objectUrl = URL.createObjectURL(source);
+      img.src = objectUrl;
+    } catch {
+      release();
       reject(new Error('지원하지 않는 이미지 소스'));
     }
   });
@@ -71,7 +83,7 @@ function canvasToBase64(canvas, format, targetQuality, maxSize) {
   let base64 = canvas.toDataURL(format, quality);
 
   // 용량 초과 시 품질 낮춰서 재시도
-  while (base64.length > maxSize * 1.37 && quality > 0.3) { // Base64는 ~37% 증가
+  while (format !== 'image/png' && base64.length > maxSize * 1.37 && quality > 0.3) { // PNG는 quality를 무시한다.
     quality -= 0.1;
     base64 = canvas.toDataURL(format, quality);
     log.debug('품질 조정', { quality: quality.toFixed(2), size: Math.round(base64.length / 1024) + 'KB' });
@@ -107,11 +119,6 @@ export async function compressImage(source, options = {}) {
       config.quality,
       config.maxFileSize
     );
-
-    // ObjectURL 해제
-    if (source instanceof Blob || source instanceof File) {
-      URL.revokeObjectURL(img.src);
-    }
 
     const result = {
       base64,
@@ -186,9 +193,10 @@ export function hasImageInClipboard(event) {
 /**
  * 클립보드에서 이미지 가져오기
  * @param {ClipboardEvent} event - 붙여넣기 이벤트
+ * @param {Object} options - 압축 옵션 (합성 레이어는 PNG로 투명도 유지)
  * @returns {Promise<{base64: string, width: number, height: number}|null>}
  */
-export async function getImageFromClipboard(event) {
+export async function getImageFromClipboard(event, options = {}) {
   const items = event.clipboardData?.items;
   if (!items) return null;
 
@@ -196,7 +204,7 @@ export async function getImageFromClipboard(event) {
     if (item.type.startsWith('image/')) {
       const blob = item.getAsFile();
       if (blob) {
-        return await compressImage(blob);
+        return await compressImage(blob, options);
       }
     }
   }
@@ -206,13 +214,15 @@ export async function getImageFromClipboard(event) {
 
 /**
  * 파일 선택으로 이미지 가져오기
+ * @param {Document} ownerDocument - 선택 버튼이 있는 창의 document
  * @returns {Promise<{base64: string, width: number, height: number}|null>}
  */
-export function selectImageFile() {
+export function selectImageFile(ownerDocument = document) {
   return new Promise((resolve) => {
-    const input = document.createElement('input');
+    const input = ownerDocument.createElement('input');
     input.type = 'file';
     input.accept = 'image/*';
+    input.oncancel = () => resolve(null);
 
     input.onchange = async (e) => {
       const file = e.target.files?.[0];

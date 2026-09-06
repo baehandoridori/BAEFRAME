@@ -1,0 +1,109 @@
+{
+  "scope": "Real source Electron BAEFRAME main button to BEditer, real media IPC and FFmpeg, isolated profile; only native file dialog choices simulated. Controller exposed for read-only assertions.",
+  "runtime": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064",
+  "checks": [
+    {
+      "name": "main button opens the real prototype editor window",
+      "title": "새 편집 · BEditer · 프로토타입"
+    },
+    {
+      "name": "two video sources imported and joined by the real media pipeline",
+      "sourceCount": 2,
+      "totalFrames": 96
+    },
+    {
+      "name": "C then clicking a clip splits at the clicked frame",
+      "durations": [
+        24,
+        24,
+        48
+      ]
+    },
+    {
+      "name": "a 12-frame hold inserts a half second without changing source files",
+      "clipCount": 5,
+      "holdFrames": 12
+    },
+    {
+      "name": "pointer drawing and an extra layer persist through Ctrl+S",
+      "drawingObjects": 1
+    },
+    {
+      "name": "saved bedit reopens with identical clips, layers, and drawings"
+    },
+    {
+      "name": "real MP4 export contains all 108 frames and AAC audio",
+      "path": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064\\prototype.mp4",
+      "sha256": "870e8225f4e909b47f1b3f55f8a27c9994ae4996c91e441ed9cde1d4f6249ee4",
+      "bytes": 168063,
+      "width": 1920,
+      "height": 1080,
+      "frames": 108,
+      "duration": 4.5,
+      "videoCodec": "h264",
+      "audioCodec": "aac"
+    },
+    {
+      "name": "drawing is visibly composited into the exported hold after its keyframe",
+      "strokePixels": 2403,
+      "sampleTime": 0.8333333333333334
+    },
+    {
+      "name": "cancel on unsaved-close confirmation keeps the editor and edits open"
+    },
+    {
+      "name": "undo to the saved project clears dirty and closes without an unnecessary prompt"
+    },
+    {
+      "name": "both original video hashes remain unchanged"
+    }
+  ],
+  "errors": [],
+  "screenshots": [
+    "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064\\01-drawing-and-hold.png",
+    "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064\\02-project-reopened.png",
+    "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064\\03-exported-hold-frame.png"
+  ],
+  "originalHashes": {
+    "a": "c4b1b149b24864d2e73f830159b5e83aaba6044e9dc98235fced8de1bc449412",
+    "b": "0880e0085e27dec13802afa54ba3003e7d2155189accd31a6c4e14297e64e78c"
+  },
+  "executable": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\node_modules\\electron\\dist\\electron.exe",
+  "profile": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064\\profile",
+  "export": {
+    "path": "C:\\Users\\user\\.codex\\worktrees\\baeframe-ux-first\\BAEFRAME\\.cache\\editor-release-e2e\\run-1788728827064\\prototype.mp4",
+    "sha256": "870e8225f4e909b47f1b3f55f8a27c9994ae4996c91e441ed9cde1d4f6249ee4",
+    "bytes": 168063,
+    "width": 1920,
+    "height": 1080,
+    "frames": 108,
+    "duration": 4.5,
+    "videoCodec": "h264",
+    "audioCodec": "aac"
+  },
+  "dialogs": [
+    {
+      "kind": "open",
+      "title": "편집할 영상 가져오기"
+    },
+    {
+      "kind": "save",
+      "title": "편집 프로젝트 저장"
+    },
+    {
+      "kind": "open",
+      "title": "편집 프로젝트 열기"
+    },
+    {
+      "kind": "save",
+      "title": "MP4 영상 만들기"
+    },
+    {
+      "kind": "message",
+      "title": "BEditer · 프로토타입",
+      "message": "저장하지 않은 편집 내용을 버릴까요?",
+      "response": 0
+    }
+  ],
+  "passed": true
+}

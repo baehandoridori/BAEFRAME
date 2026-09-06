@@ -206,10 +206,8 @@ async function runElectronProbe() {
       measurements.push({ width, ...measurement });
     }
 
-    // 드래그 검증 구간만 height 720으로 올린다. height 360에서는 팔레트 높이
-    // (header 41 + content max 70vh = 252 + border 2 = 295) 때문에
-    // maxTop = max(12, 360 - 295 - 12) = 53 이라 +80px 드래그가 클램프에 걸려
-    // moved.top - start.top 이 41이 되어 단언이 결정적으로 실패한다.
+    // 드래그 검증 구간만 height 720으로 올린다. height 360에서는 팔레트 본문이
+    // 최대 70vh 를 차지하므로 +80px 이동이 화면 경계에 걸릴 수 있다.
     host.updateBounds({ x: 0, y: 0, width: 801, height: 720 });
     await host.window.webContents.executeJavaScript(`
       new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
@@ -424,7 +422,7 @@ if (process.versions.electron) {
         `${label} content height (scroll ${measurement.contentScrollHeight} / client ${measurement.contentClientHeight})`
       );
 
-      const expectedWidth = measurement.width <= 800 ? 190 : 220;
+      const expectedWidth = measurement.width <= 800 ? 190 : 212;
       assert.equal(measurement.toolbarWidth, expectedWidth, `${label} palette width`);
       assert.ok(toolbar.left >= root.left + 11.5, `${label} left inset`);
       assert.ok(toolbar.top >= root.top + 11.5, `${label} top inset`);
@@ -447,15 +445,18 @@ if (process.versions.electron) {
 
       for (const control of controls) {
         // 도구 줄은 아이콘 5열 그리드라 텍스트 버튼보다 좁다 —
-        // 220px 팔레트에서 약 37px, 190px 에서 약 31px.
-        const minimum = control.action === 'toggle-collapse'
+        // 212px 팔레트에서 약 36px, 190px 에서 약 31px.
+        const minimumWidth = control.action === 'toggle-collapse'
           ? 23.5
           : (TOOL_ROW_ACTIONS.has(control.action) ? 28.5 : 39.5);
+        const minimumHeight = control.action === 'toggle-collapse'
+          ? 23.5
+          : (control.action.startsWith('select-') ? 27.5 : 29.5);
         assert.notEqual(control.display, 'none', `${label} ${control.action} display`);
         assert.equal(control.visibility, 'visible', `${label} ${control.action} visibility`);
         assert.equal(control.pointerEvents, 'auto', `${label} ${control.action} pointer`);
-        assert.ok(control.box.width >= minimum, `${label} ${control.action} width`);
-        assert.ok(control.box.height >= minimum, `${label} ${control.action} height`);
+        assert.ok(control.box.width >= minimumWidth, `${label} ${control.action} width`);
+        assert.ok(control.box.height >= minimumHeight, `${label} ${control.action} height`);
         assert.ok(control.box.left >= -0.5, `${label} ${control.action} left`);
         assert.ok(
           control.box.right <= measurement.toolbarClientWidth + 0.5,

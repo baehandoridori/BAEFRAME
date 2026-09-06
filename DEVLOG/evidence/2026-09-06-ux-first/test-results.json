@@ -1,0 +1,65 @@
+[
+  {
+    "command": "npm run test:ux",
+    "tests": 69,
+    "pass": 69,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "ux-final.log"
+  },
+  {
+    "command": "npm run test:editor",
+    "tests": 137,
+    "pass": 137,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "editor-final-recheck.log"
+  },
+  {
+    "command": "npm run test:composition",
+    "tests": 60,
+    "pass": 60,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "composition-suite.log"
+  },
+  {
+    "command": "npm run test:playlist",
+    "tests": 330,
+    "pass": 330,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "playlist-final.log"
+  },
+  {
+    "command": "npm run test:mpv",
+    "tests": 353,
+    "pass": 353,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "mpv-final.log"
+  },
+  {
+    "command": "npm run test:fabric-drawing-pilot",
+    "tests": 628,
+    "pass": 628,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "fabric-pilot-final.log"
+  },
+  {
+    "command": "npm run test:fabric-drawing-persistence",
+    "tests": 164,
+    "pass": 164,
+    "fail": 0,
+    "cancelled": 0,
+    "exitCode": 0,
+    "log": "persistence-final.log"
+  }
+]

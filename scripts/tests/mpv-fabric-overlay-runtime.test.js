@@ -15318,17 +15318,20 @@ test('only the sections that matter for the active tool stay visible', async () 
   try {
     const brushSection = paletteSection(harness.root, 'brush');
     const eraserSection = paletteSection(harness.root, 'eraser');
-    const expect = (tool, brushVisible, eraserVisible) => {
+    const activeToolLabel = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === 'active-tool');
+    const expect = (tool, label, brushVisible, eraserVisible) => {
       enableRealFabricShapeTool(harness, tool, harness.__toolRevision = (harness.__toolRevision || 0) + 1);
       assert.equal(brushSection.style.display !== 'none', brushVisible, `${tool} 브러시 섹션`);
       assert.equal(eraserSection.style.display !== 'none', eraserVisible, `${tool} 지우개 섹션`);
+      assert.equal(activeToolLabel.textContent, ` · ${label}`, `${tool} 제목 도구 이름`);
     };
 
-    expect('pen', true, false);
-    expect('rect', true, false);
-    expect('eraser', false, true);
-    expect('select', false, false);
-    expect('brush', true, false);
+    expect('pen', '펜', true, false);
+    expect('rect', '사각형', true, false);
+    expect('eraser', '지우개', false, true);
+    expect('select', '선택', false, false);
+    expect('brush', '브러시', true, false);
   } finally {
     await harness.destroy();
   }
@@ -18238,4 +18241,3 @@ test('정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지�
   );
   runtime.destroy();
 });
-

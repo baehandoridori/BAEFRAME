@@ -227,6 +227,7 @@ function normalizeMpvOverlayCollaborationAction(value) {
 
 // Renderer에 노출할 API
 contextBridge.exposeInMainWorld('electronAPI', {
+  openEditor: () => ipcRenderer.invoke('editor:open'),
   // ====== 파일 관련 ======
   openFileDialog: (options) => ipcRenderer.invoke('file:open-dialog', options),
   getFileInfo: (filePath) => ipcRenderer.invoke('file:get-info', filePath),
@@ -313,8 +314,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   writeLog: (logData) => ipcRenderer.send('log:write', logData),
 
   // ====== 앱 종료 관련 ======
-  confirmQuit: () => ipcRenderer.invoke('app:quit-confirmed'),
-  cancelQuit: () => ipcRenderer.invoke('app:quit-cancelled'),
+  confirmQuit: (attemptId) => ipcRenderer.invoke('app:quit-confirmed', attemptId),
+  cancelQuit: (attemptId) => ipcRenderer.invoke('app:quit-cancelled', attemptId),
 
   // ====== FFmpeg 트랜스코딩 관련 ======
   ffmpegIsAvailable: () => ipcRenderer.invoke('ffmpeg:is-available'),
@@ -469,7 +470,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('open-from-protocol', (event, arg, commentId) => callback(arg, commentId));
   },
   onRequestSaveBeforeQuit: (callback) => {
-    ipcRenderer.on('app:request-save-before-quit', () => callback());
+    ipcRenderer.on('app:request-save-before-quit', (_event, attemptId) => callback(attemptId));
+  },
+  onQuitAborted: (callback) => {
+    ipcRenderer.on('app:quit-aborted', (_event, attemptId) => callback(attemptId));
   },
   onTranscodeProgress: (callback) => {
     const listener = (event, data) => callback(data);
