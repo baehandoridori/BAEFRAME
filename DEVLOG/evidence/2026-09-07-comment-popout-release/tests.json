@@ -18,7 +18,7 @@
   {
     "command": "npm.cmd run test:editor",
     "exit": 0,
-    "pass": "# pass 137",
+    "pass": "# pass 147",
     "fail": "# fail 0",
     "cancelled": "# cancelled 0",
     "log": ".cache/release-test-editor.log"

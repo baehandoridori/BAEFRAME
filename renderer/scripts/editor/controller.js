@@ -17,7 +17,10 @@
       revision: 0,
       message: ''
     };
-    let savedRevision = 0;
+    // Serialize only when the document changes, not when playback emits a new frame.
+    // History revisions keep increasing through undo/redo; saved contents can recur.
+    let projectSnapshot = JSON.stringify(state.project);
+    let savedSnapshot = projectSnapshot;
     let tail = Promise.resolve();
     let drawingClipId = null;
     let drawingBaseline = '';
@@ -28,7 +31,6 @@
     let lastDirtyRevision = -1;
 
     function emit() {
-      state.dirty = state.revision !== savedRevision;
       state.canUndo = history.canUndo;
       state.canRedo = history.canRedo;
       if (state.dirty !== lastDirtyState || state.revision !== lastDirtyRevision) {
@@ -42,6 +44,8 @@
       core.validateProject(project);
       if (commit) history.commit(project);
       state.project = history.present;
+      projectSnapshot = JSON.stringify(state.project);
+      state.dirty = projectSnapshot !== savedSnapshot;
       state.revision += 1;
       state.frame = Math.max(0, Math.min(state.frame, core.durationFrames(state.project) - 1));
       if (!state.project.clips.some((c) => c.id === state.selectedId)) {
@@ -201,10 +205,12 @@
           core.validateProject(result.project);
           history = core.createHistory(result.project);
           state.project = history.present;
+          projectSnapshot = JSON.stringify(state.project);
           state.frame = 0;
           state.selectedId = null;
           state.revision += 1;
-          savedRevision = state.revision;
+          savedSnapshot = projectSnapshot;
+          state.dirty = false;
           state.path = result.path;
           drawingClipId = null;
           await presentDrawing(true);
@@ -213,11 +219,14 @@
       save(saveAs = false) {
         return run(async () => {
           await flushDrawing();
-          const revision = state.revision;
+          const snapshot = projectSnapshot;
           const result = await api.saveProject(clone(state.project), saveAs);
           if (!result.cancelled) {
             state.path = result.path;
-            if (state.revision === revision) savedRevision = revision;
+            // Drawing events may arrive while persistence is pending. The baseline
+            // is the snapshot actually written, even if later edits remain dirty.
+            savedSnapshot = snapshot;
+            state.dirty = projectSnapshot !== savedSnapshot;
           }
           return result;
         });
