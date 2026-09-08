@@ -1710,7 +1710,7 @@ async function initApp() {
     if (state.isAudioMode) {
       const audioWaveform = getAudioWaveform();
       audioWaveform.updateTime(currentTime);
-      audioWaveform.setPlaying(videoPlayer.isPlaying);
+      audioWaveform.setPlaying(videoPlayer.isPlaying && !videoPlayer.isBuffering);
     }
 
     const shouldSyncFrameConsumers = !videoPlayer.isPlaying || currentFrame !== lastFrameConsumerSyncFrame;
@@ -1743,7 +1743,7 @@ async function initApp() {
       : videoPlayer.currentTime;
     compositionLayerManager.setPlaybackState({
       currentTime: safeCurrentTime,
-      isPlaying
+      isPlaying: isPlaying && !videoPlayer.isBuffering
     });
 
     if (
@@ -1793,14 +1793,26 @@ async function initApp() {
   const playIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>';
   const pauseIconSVG = '<svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>';
 
+  // 버퍼 대기는 사용자 일시정지와 구분해 재생 의도를 유지하고 실제 시계만 멈춘다.
+  videoPlayer.addEventListener('bufferingchange', () => {
+    const buffering = videoPlayer.isBuffering && videoPlayer.isPlaying;
+    const status = document.getElementById('playbackBufferingStatus');
+    if (status) status.hidden = !buffering;
+    if (elements.frameIndicator) elements.frameIndicator.hidden = buffering;
+    drawingManager.setPlaying(videoPlayer.isPlaying && !buffering);
+    timeline.setPlayingState(videoPlayer.isPlaying && !buffering);
+    getAudioWaveform()?.setPlaying(videoPlayer.isPlaying && !buffering);
+    syncCompositionLayerPlaybackState(videoPlayer.currentTime, videoPlayer.isPlaying);
+  });
+
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
     syncCurrentFabricDrawingDisplayFrame({ force: true });
     elements.btnPlay.innerHTML = pauseIconSVG;
-    drawingManager.setPlaying(true);
-    timeline.setPlayingState(true);
+    drawingManager.setPlaying(!videoPlayer.isBuffering);
+    timeline.setPlayingState(!videoPlayer.isBuffering);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, true);
-    getAudioWaveform()?.setPlaying(true);
+    getAudioWaveform()?.setPlaying(!videoPlayer.isBuffering);
     // 재생 시작 시 플레이헤드가 화면 밖에 있으면 스크롤
     timeline.scrollToPlayhead();
     // 재생 중에는 온디맨드 썸네일 캡처를 중단해 재생 방해를 방지
@@ -9671,7 +9683,7 @@ async function initApp() {
       toastHtml: serializeMpvOverlayToastHtml(),
       compositionLayers: compositionLayerManager.getMpvOverlayLayers({
         currentTime: videoPlayer.currentTime,
-        isPlaying: videoPlayer.isPlaying
+        isPlaying: videoPlayer.isPlaying && !videoPlayer.isBuffering
       }),
       // 32 잔존(f): playhead 위치는 diff 대상이 아닌 별도 필드로 항상 전송(저비용) — 미러 재주입과 분리.
       commentPlayheadLeft: videoCommentPlayhead?.style.left || '',
@@ -11035,7 +11047,7 @@ async function initApp() {
       compositionLayerManager.setVideoInfo({ duration: videoPlayer.duration });
       compositionLayerManager.setPlaybackState({
         currentTime: videoPlayer.currentTime,
-        isPlaying: videoPlayer.isPlaying
+        isPlaying: videoPlayer.isPlaying && !videoPlayer.isBuffering
       });
       compositionLayerManager.render();
       renderCompositionLayerTimeline();
@@ -20221,6 +20233,7 @@ async function initApp() {
         ended: externalEofReached || (duration > 0 && duration - currentTime <= 0.25 && !videoPlayer.isPlaying),
         externalEofReached,
         paused: !videoPlayer.isPlaying,
+        buffering: videoPlayer.isBuffering === true,
         ready: videoPlayer.isLoaded === true
       };
     }
@@ -20286,6 +20299,9 @@ async function initApp() {
     return new Promise(resolve => {
       let settled = false;
       const startedAt = performance.now();
+      let lastTickAt = startedAt;
+      let bufferingElapsedMs = 0;
+      let wasBuffering = snapshot.buffering === true;
 
       const finish = (value) => {
         if (settled) return;
@@ -20308,9 +20324,11 @@ async function initApp() {
       };
 
       const onProgress = () => {
+        if (!isContinuousSessionActive(sessionId)) { finish(false); return; }
         if (hasAdvanced()) finish(true);
       };
       const onEnded = () => {
+        if (!isContinuousSessionActive(sessionId)) { finish(false); return; }
         if (hasContinuousPlaybackReachedMediaEnd()) finish(true);
       };
       const interval = setInterval(() => {
@@ -20319,11 +20337,21 @@ async function initApp() {
           return;
         }
         const currentSnapshot = getContinuousPlaybackSnapshot();
+        const now = performance.now();
+        if (wasBuffering || currentSnapshot.buffering === true) {
+          bufferingElapsedMs += Math.max(0, now - lastTickAt);
+        }
+        lastTickAt = now;
+        wasBuffering = currentSnapshot.buffering === true;
         if (hasAdvanced() || hasContinuousPlaybackReachedMediaEnd(currentSnapshot)) {
           finish(true);
           return;
         }
-        if (performance.now() - startedAt >= timeoutMs) {
+        // 정상 버퍼 대기는 재생 실패 예산에서 제외하되 무한 대기하지 않는다.
+        if (bufferingElapsedMs >= 15000) {
+          options.onBufferTimeout?.();
+          finish(false);
+        } else if (!wasBuffering && now - startedAt - bufferingElapsedMs >= timeoutMs) {
           finish(false);
         }
       }, 120);
@@ -20356,9 +20384,17 @@ async function initApp() {
       }
     }
 
-    const advanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1500 });
+    let bufferWaitExpired = false;
+    const onBufferTimeout = () => { bufferWaitExpired = true; };
+    const advanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1500, onBufferTimeout });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (advanced) return true;
+    if (bufferWaitExpired || videoPlayer.isBuffering) {
+      stopContinuousPlayback();
+      videoPlayer.pause();
+      showToast('영상 불러오기가 지연되어 현재 영상에서 멈췄습니다. 잠시 후 재생해 주세요.', 'warning');
+      return false;
+    }
 
     log.warn('연속 재생이 멈춘 상태라 다시 시도합니다', { fileName: item?.fileName });
     if (videoPlayer.isPlaying === true) {
@@ -20376,8 +20412,15 @@ async function initApp() {
       return false;
     }
 
-    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 3000 });
+    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 3000, onBufferTimeout });
+    if (!isContinuousSessionActive(sessionId)) return false;
     if (retryAdvanced) return true;
+    if (bufferWaitExpired || videoPlayer.isBuffering) {
+      stopContinuousPlayback();
+      videoPlayer.pause();
+      showToast('영상 불러오기가 지연되어 현재 영상에서 멈췄습니다. 잠시 후 재생해 주세요.', 'warning');
+      return false;
+    }
 
     markPlaylistItemStatus(item, CONTINUOUS_STATUS.ERROR, '건너뜀');
     continuousPlaybackState.skippedBatch.push(item);

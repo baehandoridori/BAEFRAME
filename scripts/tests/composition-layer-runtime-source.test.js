@@ -41,7 +41,7 @@ test('app wires composition manager into video, timeline, save, drop, and mpv ov
   assert.match(appSource, /const compositionLayerManager = new CompositionLayerManager\(\{/);
   assert.match(
     appSource,
-    /compositionLayerManager,\s*\n\s*fabricDrawingPersistenceProvider:[\s\S]*?\n\s*autoSave: true/
+    /compositionLayerManager,\s*\n\s*reviewCarryoverManager,\s*\n\s*fabricDrawingPersistenceProvider:[\s\S]*?\n\s*autoSave: true/
   );
   assert.match(appSource, /btnLayerCompositing: document\.getElementById\('btnLayerCompositing'\)/);
   assert.match(appSource, /compositionLayerOverlay: document\.getElementById\('compositionLayerOverlay'\)/);
