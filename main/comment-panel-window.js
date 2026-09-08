@@ -3,14 +3,14 @@ const { pathToFileURL } = require('node:url');
 
 const MAIN_URL = pathToFileURL(path.join(__dirname, '../renderer/index.html')).href;
 const PANEL_URL = pathToFileURL(path.join(__dirname, '../renderer/comment-panel.html')).href;
-const PANEL_NAME = 'baeframe-comments';
+const PANEL_NAMES = new Set(['baeframe-comments', 'baeframe-previous-reviews']);
 
 function configureCommentPanelWindow(mainWindow) {
   const children = new Set();
   const contents = mainWindow.webContents;
   const isAllowed = (details) => !mainWindow.isDestroyed() && !contents.isDestroyed()
     && contents.getURL() === MAIN_URL && contents.mainFrame?.url === MAIN_URL
-    && details?.url === PANEL_URL && details.frameName === PANEL_NAME;
+    && details?.url === PANEL_URL && PANEL_NAMES.has(details.frameName);
 
   contents.setWindowOpenHandler((details) => {
     if (!isAllowed(details)) return { action: 'deny' };

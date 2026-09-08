@@ -40,6 +40,9 @@ import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-pe
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { createCommentPanelPopout } from './modules/comment-panel-popout.js';
+import { ReviewCarryoverManager } from './modules/review-carryover-manager.js';
+import { createPreviousReviewPanel } from './modules/previous-review-panel.js';
+import { createPreviousReviewTimeline } from './modules/previous-review-timeline.js';
 import { getAuthManager } from './modules/auth-manager.js';
 import { getThumbnailGenerator } from './modules/thumbnail-generator.js';
 import { PlexusEffect } from './modules/plexus.js';
@@ -791,6 +794,9 @@ async function initApp() {
   // 사용자 설정
   const userSettings = getUserSettings();
   let commentPanelPopout = null;
+  let previousReviewPanel = null;
+  let previousReviewContextReady = false;
+  let previousReviewTransitionBlockToken = null;
 
   function getCommentEditableTarget(target) {
     if (target?.nodeType !== 1 || typeof target.closest !== 'function') return null;
@@ -1450,11 +1456,13 @@ async function initApp() {
 
   // 리뷰 데이터 매니저 (.bframe 파일 저장/로드)
   const fabricDrawingPersistenceStore = createFabricDrawingPersistenceStore();
+  const reviewCarryoverManager = new ReviewCarryoverManager();
   const reviewDataManager = new ReviewDataManager({
     commentManager,
     drawingManager,
     highlightManager,
     compositionLayerManager,
+    reviewCarryoverManager,
     fabricDrawingPersistenceProvider: fabricDrawingPersistenceStore,
     autoSave: true,
     autoSaveDelay: 500 // 500ms 디바운스
@@ -3682,39 +3690,6 @@ async function initApp() {
     }
   }
   document.addEventListener('click', handleCommentMenusOutsideClick);
-
-  // 피드백 36: 이전 버전 댓글 보기 드롭다운
-  function renderPrevVersionCommentsMenu() {
-    const menu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
-    if (!menu) return;
-    const versions = getVersionManager().getAllVersions()
-      .filter((v) => v?.path && !isSameFilePath(v.path, state.currentFile));
-    const activeLabel = previousVersionComments?.label || null;
-    menu.innerHTML = [
-      `<button class="filter-dropdown-item${activeLabel === null ? ' active' : ''}" data-version-path="">표시 안 함</button>`,
-      ...versions.map((v) => {
-        const label = v.displayLabel || (v.version ? `v${v.version}` : v.fileName);
-        return `<button class="filter-dropdown-item${activeLabel === label ? ' active' : ''}" data-version-path="${escapeHtmlAttribute(v.path)}">${escapeHtml(label)}</button>`;
-      })
-    ].join('');
-    menu.querySelectorAll('[data-version-path]').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        menu.classList.remove('open');
-        const path = btn.dataset.versionPath;
-        if (!path) { void togglePreviousVersionComments(null); return; }
-        const version = versions.find((v) => v.path === path);
-        void togglePreviousVersionComments(version || null);
-      });
-    });
-  }
-
-  elements.commentPanel.querySelector('#prevVersionCommentsBtn')?.addEventListener('click', (e) => {
-    e.stopPropagation();
-    const menu = elements.commentPanel.querySelector('#prevVersionCommentsMenu');
-    if (!menu) return;
-    renderPrevVersionCommentsMenu();
-    menu.classList.toggle('open');
-  });
 
   // 작성자 선택/해제 (체크박스 토글 + 이름 솔로)
   elements.commentPanel.querySelector('#authorFilterMenu')?.addEventListener('click', (e) => {
@@ -10541,6 +10516,11 @@ async function initApp() {
       if (!engineSwap) {
       // 다른 파일을 여는 일반 로드가 시작되면 하이브리드 복귀 대상을 정리한다(경합 방지).
         hybridReviewResumeMpvFile = null;
+        // 최종 저장 이후에는 검수 입력이 새 dirty 상태를 만들지 못하게 먼저 잠근다.
+        // 원본 선택은 유지하므로 저장 실패로 전환을 취소하면 그대로 돌아올 수 있다.
+        if (!canContinueVideoLoad()) return false;
+        previousReviewTransitionBlockToken = loadToken;
+        previousReviewPanel?.refreshContext();
         // ====== 이전 데이터 저장 (clear 전에 수행!) ======
         // 저장되지 않은 변경사항이 있으면 먼저 저장
         if (reviewDataManager.hasUnsavedChanges()) {
@@ -10667,8 +10647,9 @@ async function initApp() {
           suppressReviewFreezeReleaseForMediaChange = false;
         }
         commentManager.clear();
-        // 피드백 36: 버전 전환·파일 로드 시 이전 버전 댓글 고스트 자동 해제
-        previousVersionComments = null;
+        // 이전 파일의 비동기 참조 읽기를 차단한다. 확인 목록은 저장 매니저가 전환한다.
+        previousReviewContextReady = false;
+        previousReviewPanel?.suspend();
         // 댓글 필터 상태 초기화
         resetCommentFilters();
         // Undo/Redo 스택 초기화 (파일 전환 시 크로스파일 오염 방지)
@@ -11085,6 +11066,8 @@ async function initApp() {
 
       trace.end({ filePath, hasExistingData });
       videoLoadCompleted = true;
+      previousReviewContextReady = true;
+      previousReviewPanel?.refreshContext();
       return true;
 
     } catch (error) {
@@ -11098,6 +11081,10 @@ async function initApp() {
       showToast('파일을 로드할 수 없습니다.', 'error');
       return false;
     } finally {
+      if (previousReviewTransitionBlockToken === loadToken) {
+        previousReviewTransitionBlockToken = null;
+        previousReviewPanel?.refreshContext();
+      }
       mpvPilotSeamlessTransitionGate.clear(loadToken);
       try {
         if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
@@ -11130,36 +11117,6 @@ async function initApp() {
       if (ownsPendingUserIntent && pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
     }
     /* eslint-enable indent */
-  }
-
-  // 피드백 36: 이전 버전 댓글 읽기 전용 표시 상태
-  let previousVersionComments = null; // { label, comments: [...평탄화된 마커...] } | null
-
-  async function togglePreviousVersionComments(versionInfo) {
-    if (!versionInfo?.path) {
-      previousVersionComments = null;
-      updateCommentList();
-      return;
-    }
-    try {
-      const sourceData = await window.electronAPI.loadReview(getBframePath(versionInfo.path));
-      const sourceComments = normalizeFeedbackSourceComments(sourceData);
-      const markers = [];
-      (sourceComments?.layers || []).forEach((layer) => {
-        (layer?.markers || []).forEach((marker) => {
-          if (marker) markers.push(marker);
-        });
-      });
-      previousVersionComments = {
-        label: versionInfo.displayLabel || (versionInfo.version ? `v${versionInfo.version}` : versionInfo.fileName || '이전 버전'),
-        comments: markers
-      };
-    } catch (error) {
-      log.warn('이전 버전 댓글 로드 실패', { path: versionInfo.path, error: error?.message });
-      showToast('선택한 버전의 피드백 파일을 열 수 없습니다.', 'warning');
-      previousVersionComments = null;
-    }
-    updateCommentList();
   }
 
   async function handleImportFeedbackFromVersion(versionInfo) {
@@ -13479,38 +13436,6 @@ async function initApp() {
     container.scrollTop = savedScrollTop;
   }
 
-  // 피드백 36: 이전 버전 댓글을 읽기 전용 고스트 섹션으로 목록 하단에 덧붙인다.
-  function appendPreviousVersionCommentSection(container) {
-    if (!previousVersionComments || !container) return;
-    const { label, comments } = previousVersionComments;
-    const currentFps = Number(videoPlayer.fps) > 0 ? Number(videoPlayer.fps) : 24;
-    const itemsHtml = comments.map((marker) => {
-      const sourceFps = Number(marker.fps) > 0 ? Number(marker.fps) : 24;
-      const seconds = Number(marker.startFrame || 0) / sourceFps;
-      const targetFrame = Math.max(0, Math.round(seconds * currentFps));
-      const timecode = formatTimecode(seconds, currentFps);
-      return `
-        <div class="comment-ghost-item" data-ghost-frame="${targetFrame}">
-          <div class="comment-ghost-item-header">
-            <span class="comment-ghost-time">${timecode}</span>
-            <span class="comment-ghost-author">${escapeHtml(marker.author || '')}</span>
-          </div>
-          <div class="comment-ghost-text">${escapeHtml(marker.text || '')}</div>
-        </div>`;
-    }).join('');
-    container.insertAdjacentHTML('beforeend', `
-      <div class="comment-ghost-section">
-        <div class="comment-ghost-section-title">${escapeHtml(label)}의 댓글 (읽기 전용 · ${comments.length}개)</div>
-        ${itemsHtml}
-      </div>`);
-    container.querySelectorAll('.comment-ghost-item').forEach((item) => {
-      item.addEventListener('click', () => {
-        const frame = Number(item.dataset.ghostFrame);
-        if (Number.isFinite(frame)) videoPlayer.seekToFrame(frame);
-      });
-    });
-  }
-
   function getFilteredCurrentCommentMarkers(filter = getActiveCommentFilter()) {
     let markers = commentManager.getAllMarkers();
     if (filter === 'unresolved') markers = markers.filter(marker => !marker.resolved);
@@ -13564,6 +13489,7 @@ async function initApp() {
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     const container = elements.commentsList;
     if (!container) return;
+    previousReviewPanel?.refreshContext();
 
     if (playlistUIState.mode === 'continuous') {
       renderPlaylistContinuousCommentList(filter);
@@ -13615,7 +13541,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
-      appendPreviousVersionCommentSection(container);
+      previousReviewPanel?.decorateList();
       return;
     }
 
@@ -13751,7 +13677,7 @@ async function initApp() {
     `;
     }).join('');
 
-    appendPreviousVersionCommentSection(container);
+    previousReviewPanel?.decorateList();
 
     // 이벤트 바인딩
     container.querySelectorAll('.comment-item').forEach(item => {
@@ -22423,6 +22349,61 @@ async function initApp() {
       }, { offset: Number.NEGATIVE_INFINITY }).element;
     }
   }
+
+  const previousReviewTimeline = createPreviousReviewTimeline({
+    trackAnchor: document.getElementById('commentTrack'),
+    headerAnchor: document.getElementById('commentLayerHeader'),
+    getContext: () => ({ duration: videoPlayer.duration, fps: videoPlayer.fps }),
+    onSelect: key => previousReviewPanel?.seekSource(key),
+    onLayoutChange: () => timeline._syncFrameGridContainerMetrics()
+  });
+  previousReviewPanel = createPreviousReviewPanel({
+    mount: document.getElementById('previousReviewMount'),
+    toggleButton: document.getElementById('prevVersionCommentsBtn'),
+    list: elements.commentsList,
+    manager: reviewCarryoverManager,
+    windowRef: window,
+    onTimelineChange: entries => previousReviewTimeline.render(entries),
+    onSelect: key => previousReviewTimeline.select(key),
+    getContext: () => ({
+      path: state.currentFile,
+      label: getVersionManager().getAllVersions().find(version => isSameFilePath(version.path, state.currentFile))?.displayLabel
+        || state.currentFile?.split(/[\\/]/).pop() || '현재 영상',
+      fps: videoPlayer.fps,
+      duration: videoPlayer.duration,
+      filter: getActiveCommentFilter(),
+      enabled: previousReviewContextReady && previousReviewTransitionBlockToken === null && playlistUIState.mode !== 'continuous' && !cutlistUIState.active
+        && !reviewDataManager.isLoading && isSameFilePath(reviewDataManager.currentVideoPath, state.currentFile)
+    }),
+    getVersions: () => getVersionManager().getAllVersions(),
+    loadReview: path => window.electronAPI.loadReview(path),
+    seek: frame => { videoPlayer.seekToFrame(frame); timeline.scrollToPlayhead(); },
+    getActor: () => userName,
+    matchesReview: source => filterByAuthors([source]).length > 0
+      && markerMatchesCommentSearch(source, normalizeCommentSearch(commentSearchKeyword)),
+    onSummaryChange: summary => {
+      if (playlistUIState.mode === 'continuous' || cutlistUIState.active) return;
+      const current = commentManager.getAllMarkers();
+      const total = current.length + summary.total;
+      const resolved = current.filter(marker => marker.resolved).length + summary.resolved;
+      const unresolved = total - resolved;
+      if (elements.commentCount) {
+        elements.commentCount.textContent = normalizeCommentSearch(commentSearchKeyword)
+          ? `검색 ${getFilteredCurrentCommentMarkers().length + summary.visible} / 전체 ${total}`
+          : total > 0 ? `${unresolved > 0 ? `${unresolved} 미해결 / ` : ''}${total}개` : '0';
+      }
+      updateFeedbackProgress(total, resolved);
+    },
+    notify: message => showToast(message, 'info')
+  });
+  const refreshPreviousReviewAvailability = () => previousReviewPanel?.refreshAvailability({ force: true });
+  const previousReviewVersionEvents = ['scanComplete', 'manualVersionAdded', 'manualVersionRemoved'];
+  for (const event of previousReviewVersionEvents) getVersionManager().addEventListener(event, refreshPreviousReviewAvailability);
+  window.addEventListener('beforeunload', () => {
+    for (const event of previousReviewVersionEvents) getVersionManager().removeEventListener(event, refreshPreviousReviewAvailability);
+    previousReviewPanel?.dispose();
+    previousReviewTimeline.dispose();
+  });
 
   commentPanelPopout = createCommentPanelPopout({
     panel: elements.commentPanel,

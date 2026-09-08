@@ -9,6 +9,7 @@ import {
   isValidCoordinate
 } from './schema.js';
 import { isValidReviewDocumentId } from './bframe-root-envelope.js';
+import { isSupportedReviewCarryover } from './review-carryover.js';
 
 // re-export for backward compatibility
 export { isValidVideoFile, isValidCoordinate };
@@ -45,6 +46,10 @@ export function validateReviewData(data) {
   }
 
   // 비디오 파일 검증
+  if (Object.hasOwn(data, 'reviewCarryoverV1') && !isSupportedReviewCarryover(data.reviewCarryoverV1)) {
+    warnings.push('reviewCarryoverV1 형식이 지원되지 않거나 손상되었습니다. 수정하지 않고 보존합니다.');
+  }
+
   if (!data.videoFile && !data.videoPath) {
     errors.push('videoFile 또는 videoPath 필드가 필요합니다.');
   }

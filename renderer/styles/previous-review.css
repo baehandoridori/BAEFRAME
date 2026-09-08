@@ -1,0 +1,69 @@
+/* Historical reviews share the comment list with compact version badges. */
+.pr-entry-toggle { display:flex; align-items:center; gap:7px; flex-shrink:0; margin:8px 12px; padding:8px 10px; font:inherit; font-size:12px; color:var(--text-secondary); background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:6px; cursor:pointer; text-align:left; }
+.pr-entry-toggle[hidden], .previous-review-controls[hidden], .previous-review-controls [hidden], .comments-list .comment-empty[hidden] { display:none !important; }
+.pr-entry-toggle:hover { border-color:var(--text-muted); }
+.pr-entry-toggle.active { color:var(--accent-primary); border-color:var(--accent-primary); background:color-mix(in srgb, var(--accent-primary) 7%, var(--bg-secondary)); }
+.pr-toggle-state { margin-left:auto; font-size:11px; font-weight:600; }
+#previousReviewMount { flex:0 0 auto; min-height:0; }
+.previous-review-controls { --pr-blue:#aac6f6; color:var(--text-primary); border-bottom:1px solid var(--border-subtle); font-size:12px; }
+.pr-toolbar { --pr-blue:#aac6f6; position:fixed; z-index:12000; width:320px; max-width:calc(100vw - 24px); overflow:auto; padding:14px; color:var(--text-primary); font-size:12px; background:var(--bg-secondary); border:1px solid var(--border-subtle); border-radius:10px; box-shadow:0 12px 36px #0007; }
+.pr-toolbar[hidden] { display:none!important; }
+.pr-heading, .pr-actions, .pr-source-meta, .pr-item-actions { display:flex; align-items:center; gap:8px; }
+.pr-heading, .pr-item-actions { justify-content:space-between; }.pr-heading { margin-bottom:8px; }.pr-heading strong { color:var(--pr-blue); font-size:12px; }.pr-actions { flex-wrap:wrap; }
+.pr-button { font:inherit; border:1px solid var(--border-subtle); color:var(--text-primary); background:var(--bg-tertiary); border-radius:6px; padding:6px 9px; cursor:pointer; line-height:1.4; }
+.pr-button:hover:not(:disabled) { border-color:var(--text-muted); background:var(--bg-hover,#303030); }
+.pr-entry-toggle:focus-visible, .pr-review:focus-visible, .pr-button:focus-visible, .pr-version-option input:focus-visible, .pr-replies summary:focus-visible, .pr-image summary:focus-visible { outline:2px solid var(--accent-primary); outline-offset:2px; }
+.pr-button:disabled { cursor:default; opacity:.52; }.pr-quiet { border-color:transparent; background:transparent; font-size:11px; color:var(--text-secondary); }
+.pr-primary { margin-left:auto; color:var(--accent-primary); border-color:color-mix(in srgb,var(--accent-primary) 28%,transparent); background:color-mix(in srgb,var(--accent-primary) 7%,transparent); font-size:11px; }
+.pr-version-menu { margin-top:8px; max-height:190px; overflow:auto; border:1px solid var(--border-subtle); border-radius:8px; background:var(--bg-primary); padding:6px; }
+.pr-version-option { display:flex; align-items:center; gap:8px; padding:8px 6px; cursor:pointer; border-radius:4px; }.pr-version-option:hover { background:var(--bg-hover); }.pr-version-option input { accent-color:var(--accent-primary); }
+.pr-version-option > span:first-of-type { flex:1; min-width:0; }.pr-version-option strong { display:block; color:var(--pr-blue); }.pr-version-option small { display:block; margin-top:2px; color:var(--text-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }.pr-version-count { flex-shrink:0; color:var(--text-secondary); font-size:10px; }
+.pr-feedback { margin:7px 0 0; font-size:11px; color:var(--text-secondary); overflow-wrap:anywhere; }.pr-feedback:empty { display:none; }
+.pr-review { --pr-blue:#aac6f6; padding:12px; margin:0 0 8px; border:1px solid color-mix(in srgb,var(--pr-blue) 24%,transparent); border-left:3px solid var(--pr-blue); border-radius:7px; background:color-mix(in srgb,var(--pr-blue) 4%,var(--bg-secondary)); font-size:12px; color:var(--text-primary); overflow-wrap:anywhere; cursor:pointer; }
+.pr-review:hover { border-color:var(--pr-blue); }.pr-review[aria-disabled="true"] { cursor:default; }.pr-source-meta { flex-wrap:wrap; font-size:11px; }
+.pr-origin { padding:3px 5px; border-radius:4px; background:color-mix(in srgb,var(--pr-blue) 12%,transparent); color:var(--pr-blue); font-weight:600; }.pr-author { color:var(--text-secondary); }
+.pr-text { margin:9px 0; line-height:1.65; white-space:pre-wrap; }.pr-time { padding:3px 5px; color:var(--pr-blue); font-size:11px; font-variant-numeric:tabular-nums; }
+.pr-resolution, .pr-resolve { margin-left:auto; font-size:11px; white-space:nowrap; color:var(--accent-primary); }.pr-resolution { padding:4px 0; }.pr-resolve { padding:4px 7px; }
+.pr-review.resolved .pr-resolution, .pr-review.resolved .pr-resolve, .pr-review.resolved > .pr-text { color:var(--text-secondary); }
+.pr-item-actions { margin-top:8px; min-height:26px; }.pr-carried-label { color:var(--text-muted); font-size:10px; }
+.pr-replies { margin:8px 0; color:var(--text-secondary); font-size:11px; }.pr-replies summary, .pr-image summary { cursor:pointer; padding:4px 0; }.pr-reply { border-left:1px solid var(--border-subtle); margin:7px 0 0 3px; padding-left:9px; }
+.pr-images { margin-top:6px; }.pr-image summary { color:var(--pr-blue); font-size:11px; }.pr-image img { display:block; max-width:100%; height:auto; border-radius:5px; margin-top:5px; }
+.pr-hint, .pr-empty, .pr-error { font-size:11px; line-height:1.6; color:var(--text-muted); margin:7px 0; }.pr-error { color:#eaa687; }.pr-current-badge { color:var(--accent-primary); font-size:10px; margin-right:5px; }
+.comment-panel .comments-list { min-height:60px; }.light-mode .previous-review-controls, .light-mode .pr-review { --pr-blue:#385f9a; }
+
+/* A single compact bar remains in the comment panel; options do not take list space. */
+.previous-review-controls { border:0; }
+.pr-compact-bar { display:flex; align-items:center; gap:5px; height:40px; margin:6px 12px; padding:0 4px; border:1px solid var(--border-subtle); border-radius:7px; background:var(--bg-secondary); color:var(--text-primary); font-size:12px; }
+.pr-compact-bar[hidden], .pr-history-popout[hidden] { display:none!important; }
+.pr-compact-bar .pr-entry-toggle { flex:0 1 auto; min-width:0; align-self:stretch; margin:0; padding:0 6px; border:0; background:transparent; white-space:nowrap; }
+.pr-compact-bar .pr-entry-toggle svg, .pr-compact-bar .pr-toggle-state { display:none; }
+.pr-compact-bar .pr-entry-toggle::before { content:''; display:block; width:24px; height:14px; flex-shrink:0; border-radius:10px; background:radial-gradient(circle at 7px 7px,#b9bdc5 4px,transparent 4.5px),#4c5057; }
+.pr-compact-bar .pr-entry-toggle.active::before { background:radial-gradient(circle at 17px 7px,#172539 4px,transparent 4.5px),#90baff; }
+.pr-compact-label { padding:0 6px; }
+.pr-brief { flex:1; min-width:0; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; text-align:right; color:var(--text-secondary); font-size:10px; }
+.pr-options-button { min-height:36px; border:0; background:transparent; font-size:11px; }
+.pr-field-label { margin:12px 0 6px; font-size:11px; color:var(--text-secondary); }
+.pr-version-menu { margin:0 0 8px; border:0; padding:0; background:transparent; max-height:210px; }
+.pr-view-modes { display:flex; gap:4px; }
+.pr-view-modes .pr-button { flex:1; min-height:38px; padding:5px; font-size:11px; }
+.pr-view-modes [aria-pressed=true] { color:#90baff; border-color:#607ca5; background:#90baff20; }
+.pr-timeline-option { display:flex; align-items:center; gap:6px; min-height:40px; font-size:11px; cursor:pointer; }
+.pr-timeline-option input { accent-color:#90baff; }
+.pr-section-heading { border-top:1px solid var(--border-subtle); padding:14px 0 8px; margin:4px 0; color:var(--text-secondary); font-size:11px; }
+.pr-review.pr-selected { outline:1px solid var(--pr-blue); border-color:var(--pr-blue); }
+body > .pr-history-popout { display:none; }
+.comment-popout .pr-history-popout { display:flex; flex:1; flex-direction:column; min-height:0; padding:12px; }
+.pr-popup-list { overflow:auto; min-height:0; flex:1; padding:2px; }
+.comment-popout #commentPopoutMount:has(.pr-history-popout) > .comment-popout-loading { display:none; }
+
+/* Source paths have separate lanes even when their display labels are equal. */
+.pr-timeline-row { position:relative; flex-shrink:0; min-height:32px; box-sizing:border-box; border-bottom:1px solid var(--border-subtle); background:color-mix(in srgb,var(--pr-blue) 5%,var(--bg-primary)); }
+.pr-timeline-header { display:flex; flex-shrink:0; flex-direction:column; justify-content:center; gap:2px; box-sizing:border-box; min-height:32px; padding:3px 8px; border-bottom:1px solid var(--border-subtle); color:var(--pr-blue); background:color-mix(in srgb,var(--pr-blue) 5%,var(--bg-primary)); overflow:hidden; }
+.pr-timeline-label { font-size:11px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.pr-timeline-outside { color:var(--text-muted); font-size:9px; white-space:nowrap; }
+.pr-timeline-marker { position:absolute; z-index:5; transform:translateX(-50%); display:grid; place-items:center; width:40px; height:32px; padding:0; border:0; background:transparent; cursor:pointer; color:var(--pr-blue); }
+.pr-timeline-marker:hover { background:color-mix(in srgb,var(--pr-blue) 12%,transparent); }
+.pr-timeline-pin { display:grid; place-items:center; width:16px; height:18px; border:1px solid var(--pr-blue); border-radius:4px 4px 4px 0; background:var(--pr-blue); font-size:11px; font-weight:700; }
+.pr-timeline-marker.resolved .pr-timeline-pin { background:var(--bg-secondary); }
+.pr-timeline-marker.pr-selected .pr-timeline-pin { outline:2px solid var(--text-primary); outline-offset:2px; }
+.pr-timeline-marker:focus-visible { outline:2px solid var(--accent-primary); outline-offset:-2px; }

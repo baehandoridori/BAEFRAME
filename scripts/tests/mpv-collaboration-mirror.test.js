@@ -5,7 +5,7 @@ const path = require('node:path');
 const { JSDOM } = require('jsdom');
 
 const rootDir = path.resolve(__dirname, '../..');
-const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8');
+const appSource = fs.readFileSync(path.join(rootDir, 'renderer/scripts/app.js'), 'utf8').replace(/\r\n/g, '\n');
 const hostSource = fs.readFileSync(path.join(rootDir, 'main/mpv-overlay-host.js'), 'utf8');
 const {
   MPVOverlayHost,

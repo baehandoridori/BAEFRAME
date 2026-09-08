@@ -1318,7 +1318,7 @@ test('mpv to mpv transitions keep the native host visible for seamless playback'
     appSource,
     /mpvPilotSeamlessTransitionGate\.begin\(loadToken, useMpvPilot && !engineSwap && !fileIsAudio &&\s+holdPreviousFrameUntilReady && isMpvPilotPlaybackActive\(\)\);/
   );
-  assert.match(appSource, /\} finally \{\s+mpvPilotSeamlessTransitionGate\.clear\(loadToken\);/);
+  assert.match(appSource, /\} finally \{\s+if \(previousReviewTransitionBlockToken === loadToken\) \{[\s\S]*?\}\s+mpvPilotSeamlessTransitionGate\.clear\(loadToken\);/);
   // 드라이브 로딩 pill은 BLOCK이 아니라 HTML_MIRROR로 분류되어야 한다.
   assert.doesNotMatch(mpvSurfacePolicySource, /'\.app-saving-overlay\.active',\s*'#videoLoadingOverlay\.active'/);
   assert.match(

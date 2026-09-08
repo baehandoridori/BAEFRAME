@@ -8,6 +8,7 @@
   <link href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable-dynamic-subset.min.css" rel="stylesheet">
   <link rel="stylesheet" href="styles/main.css">
   <link rel="stylesheet" href="styles/comment-panel-popout.css">
+  <link rel="stylesheet" href="styles/previous-review.css">
   <link rel="stylesheet" href="styles/playlist-panel.css">
   <link rel="stylesheet" href="styles/cutlist-panel.css">
 </head>
@@ -1153,17 +1154,16 @@
           </svg>
         </button>
 
-        <!-- 이전 버전 댓글 보기 (피드백 36) -->
-        <div class="filter-dropdown-wrapper" id="prevVersionCommentsWrapper">
-          <button class="filter-icon-btn" id="prevVersionCommentsBtn" title="다른 버전 댓글 보기">
-            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2">
-              <polyline points="1 4 1 10 7 10"/>
-              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
-            </svg>
-          </button>
-          <div class="filter-dropdown-menu" id="prevVersionCommentsMenu"></div>
-        </div>
       </div>
+
+      <button type="button" class="pr-entry-toggle" id="prevVersionCommentsBtn" title="이전 리뷰 확인하기" aria-label="이전 리뷰 확인하기" aria-controls="previousReviewMount" aria-expanded="false" aria-pressed="false" hidden>
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+          <polyline points="1 4 1 10 7 10"/>
+          <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
+        </svg>
+        <span>이전 리뷰</span>
+        <span class="pr-toggle-state" data-pr-toggle-state aria-hidden="true">꺼짐</span>
+      </button>
 
       <div class="comment-search-bar" id="commentSearchBar">
         <div class="comment-search-panel" id="commentSearchPanel">
@@ -1191,6 +1191,7 @@
         </div>
       </div>
 
+      <div id="previousReviewMount"></div>
       <div class="comments-list" id="commentsList">
         <!-- 댓글들이 여기에 렌더링됨 -->
         <div class="empty-comments">

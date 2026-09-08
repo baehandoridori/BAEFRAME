@@ -21,7 +21,8 @@ export const TEAM_MEMBERS = [
   { name: '안지상', slackUid: 'U096RV2BLH4', aliases: ['지상'] },
   { name: '류이레', slackUid: 'U0978NUD5L7', aliases: ['이레'] },
   { name: '류성철', slackUid: 'U0A7KTD4Z4G', aliases: ['성철'] },
-  { name: '이승은', slackUid: 'U0A9FPUH3BQ', aliases: ['승은'] }
+  { name: '이승은', slackUid: 'U0A9FPUH3BQ', aliases: ['승은'] },
+  { name: '전혜림', slackUid: 'U07NBHXV2UW', aliases: [] }
 ];
 
 /**
