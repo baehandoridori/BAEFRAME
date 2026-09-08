@@ -82,3 +82,12 @@
 릴리스 검증을 위해 기존 합성 소스 검사 한 줄을 현재 `ReviewDataManager` 구성에 맞췄다. 이전 리뷰 기능에서 추가된 `reviewCarryoverManager`가 두 속성 사이에 존재하는 것을 검사한다. 합성 제품 코드를 추가 변경하지 않는다. 앞서 기록한 수정 전 실패와 구분해 아래에 최종 결과를 남긴다.
 
 - `npm run test:composition` 최종: 60 pass / 0 fail / 0 cancelled, 종료 코드 0.
+- `npm run test:frame-grid`: 38 pass / 0 fail / 0 cancelled, 종료 코드 0.
+
+### PR #220 리뷰 반영
+
+- 원격 Codex P2 `discussion_r3959387599`: 첫 시도에서 쓴 버퍼 대기 시간이 재시도에서 초기화되어 항목별 누적 15초 제한이 지켜지지 않을 수 있었다.
+- `playContinuousItemWithWatchdog`가 항목별 공유 대기 예산을 생성하고 두 번의 진행 확인에 전달한다. 일반 정지 시간 계산은 각 호출에서 쓴 버퍼 시간만 제외해 원래 1.5초/3초 제한을 유지한다.
+- 실제 대기 함수와 watchdog을 연결한 가상 시간 테스트로 첫 버퍼 14,120ms 이후 재시도에서 900ms를 더 기다리면 현재 항목에서 멈추고 건너뛰지 않는지 검증했다. 같은 시점에 세션이 취소되면 다른 세션에 정지·일시정지·토스트가 발생하지 않는지도 검사했다.
+- 새 회귀 검증 RED: 9 pass / 1 fail → GREEN: 10 pass / 0 fail. 최종 `test:playback-buffering` 70 pass / 0 fail / 0 cancelled, `test:playlist` 330 pass / 0 fail / 0 cancelled, 모두 종료 코드 0.
+- 원격 감시 스크립트가 명시 완료 댓글을 놓치며 같은 커밋에 재요청한 것을 확인하여 해당 프로세스를 종료했다. 이후 라운드는 issue comments, line comments, reviews, trigger reactions를 직접 조회하고 커밋 SHA와 대조한다. 재요청에서 발견된 위 P2도 반영한 새 커밋을 다시 검토한다.

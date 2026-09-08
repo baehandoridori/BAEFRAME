@@ -39,6 +39,7 @@ function createAdvanceHarness() {
   });
   return {
     wait, player, snapshot, intervals,
+    isActive: () => active,
     cancel() { active = false; },
     tick(ms) { now += ms; for (const callback of [...intervals]) callback(); }
   };
@@ -134,6 +135,76 @@ test('a cancelled retry cannot mark an item skipped after the session changes', 
   const h = createWatchdogHarness({ buffering: false, cancelOnWait: 2 });
   assert.equal(await h.run({ id: 'old-item' }, 1), false);
   assert.deepEqual(h.effects.skipped, []);
+});
+
+function createTimedWatchdogHarness() {
+  const h = createAdvanceHarness();
+  const effects = { play: 0, pause: 0, stopped: 0, skipped: [], messages: [] };
+  Object.defineProperty(h.player, 'isBuffering', { get: () => h.snapshot.buffering });
+  h.player.play = async () => { effects.play++; h.player.isPlaying = true; return true; };
+  h.player.pause = () => { effects.pause++; h.player.isPlaying = false; };
+  const run = loadFunction('playContinuousItemWithWatchdog', {
+    videoPlayer: h.player,
+    isContinuousSessionActive: h.isActive,
+    waitForContinuousMediaReady: async () => true,
+    waitForContinuousPlaybackAdvance: h.wait,
+    waitForContinuousDelay: async () => {},
+    stopContinuousPlayback: () => { h.cancel(); effects.stopped++; },
+    markPlaylistItemStatus: item => effects.skipped.push(item.id),
+    continuousPlaybackState: { skippedBatch: [] },
+    CONTINUOUS_STATUS: { ERROR: 'error' },
+    showToast: message => effects.messages.push(message),
+    log: { warn() {} }
+  });
+  return { ...h, run, effects };
+}
+
+test('a retry shares the current item buffer budget and stops before spending another 15 seconds', async () => {
+  const h = createTimedWatchdogHarness();
+  h.snapshot.buffering = true;
+  let settled = false;
+  const result = h.run({ id: 'current' }, 1).then(value => { settled = true; return value; });
+  h.tick(14000);
+  h.snapshot.buffering = false;
+  h.tick(120);
+  h.tick(1500);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.effects.play, 1, 'ordinary stalled playback starts one retry');
+  assert.equal(settled, false);
+
+  h.snapshot.buffering = true;
+  h.tick(900);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, true, 'the retry must stop after the remaining buffer budget is spent');
+  assert.equal(await result, false);
+  assert.equal(h.effects.stopped, 1);
+  assert.equal(h.player.isPlaying, false);
+  assert.deepEqual(h.effects.skipped, []);
+  assert.equal(h.effects.messages.length, 1);
+  assert.equal(h.intervals.size, 0);
+});
+
+test('cancellation at a retried buffer deadline leaves the replacement session untouched', async () => {
+  const h = createTimedWatchdogHarness();
+  h.snapshot.buffering = true;
+  const result = h.run({ id: 'old-item' }, 1);
+  h.tick(14000);
+  h.snapshot.buffering = false;
+  h.tick(120);
+  h.tick(1500);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.effects.play, 1);
+  const pausesBeforeCancellation = h.effects.pause;
+
+  h.snapshot.buffering = true;
+  h.cancel();
+  h.tick(900);
+  assert.equal(await result, false);
+  assert.equal(h.effects.stopped, 0);
+  assert.equal(h.effects.pause, pausesBeforeCancellation);
+  assert.deepEqual(h.effects.skipped, []);
+  assert.deepEqual(h.effects.messages, []);
+  assert.equal(h.intervals.size, 0);
 });
 
 test('composition playback follows actual buffer state while preserving user play intent', () => {

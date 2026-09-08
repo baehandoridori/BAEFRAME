@@ -20288,6 +20288,7 @@ async function initApp() {
   function waitForContinuousPlaybackAdvance(sessionId, options = {}) {
     const timeoutMs = options.timeoutMs || 1100;
     const minDelta = options.minDelta || 0.03;
+    const bufferWaitBudget = options.bufferWaitBudget || { elapsedMs: 0 };
     const media = videoPlayer.videoElement;
     if (videoPlayer.engine === 'html5' && !media) return Promise.resolve(false);
 
@@ -20339,7 +20340,9 @@ async function initApp() {
         const currentSnapshot = getContinuousPlaybackSnapshot();
         const now = performance.now();
         if (wasBuffering || currentSnapshot.buffering === true) {
-          bufferingElapsedMs += Math.max(0, now - lastTickAt);
+          const elapsedMs = Math.max(0, now - lastTickAt);
+          bufferingElapsedMs += elapsedMs;
+          bufferWaitBudget.elapsedMs += elapsedMs;
         }
         lastTickAt = now;
         wasBuffering = currentSnapshot.buffering === true;
@@ -20348,7 +20351,7 @@ async function initApp() {
           return;
         }
         // 정상 버퍼 대기는 재생 실패 예산에서 제외하되 무한 대기하지 않는다.
-        if (bufferingElapsedMs >= 15000) {
+        if (bufferWaitBudget.elapsedMs >= 15000) {
           options.onBufferTimeout?.();
           finish(false);
         } else if (!wasBuffering && now - startedAt - bufferingElapsedMs >= timeoutMs) {
@@ -20384,9 +20387,11 @@ async function initApp() {
       }
     }
 
+    // 현재 항목의 누적 버퍼 대기 한도는 재시도에서도 이어간다.
+    const bufferWaitBudget = { elapsedMs: 0 };
     let bufferWaitExpired = false;
     const onBufferTimeout = () => { bufferWaitExpired = true; };
-    const advanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1500, onBufferTimeout });
+    const advanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 1500, onBufferTimeout, bufferWaitBudget });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (advanced) return true;
     if (bufferWaitExpired || videoPlayer.isBuffering) {
@@ -20412,7 +20417,7 @@ async function initApp() {
       return false;
     }
 
-    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 3000, onBufferTimeout });
+    const retryAdvanced = await waitForContinuousPlaybackAdvance(sessionId, { timeoutMs: 3000, onBufferTimeout, bufferWaitBudget });
     if (!isContinuousSessionActive(sessionId)) return false;
     if (retryAdvanced) return true;
     if (bufferWaitExpired || videoPlayer.isBuffering) {
