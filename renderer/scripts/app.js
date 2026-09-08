@@ -3535,7 +3535,7 @@ async function initApp() {
     if (cutlistUIState.active) {
       return cutlistAggregateCommentRanges;
     }
-    return commentManager.getAllMarkers();
+    return [...commentManager.getAllMarkers(), ...(previousReviewPanel?.getAuthorFilterSources() || [])];
   }
 
   function getAuthorFilterAuthorIds() {
@@ -22387,6 +22387,7 @@ async function initApp() {
       && markerMatchesCommentSearch(source, normalizeCommentSearch(commentSearchKeyword)),
     onSummaryChange: summary => {
       if (playlistUIState.mode === 'continuous' || cutlistUIState.active) return;
+      if (elements.commentPanel.querySelector('#authorFilterMenu')?.classList.contains('open')) updateAuthorFilterMenu();
       const current = commentManager.getAllMarkers();
       const total = current.length + summary.total;
       const resolved = current.filter(marker => marker.resolved).length + summary.resolved;

@@ -2,6 +2,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
+const fs = require('node:fs');
+const vm = require('node:vm');
 const { JSDOM } = require('jsdom');
 const moduleUrl = name => pathToFileURL(path.join(__dirname, '../../renderer/scripts/modules/', name)).href;
 const tick = () => new Promise(resolve => setTimeout(resolve, 0));
@@ -13,6 +15,52 @@ const sourceRoot = () => ({ fps: 30, comments: { layers: [{ markers: [
   { id: 'c', author: '김리뷰', text: '길이 밖', startFrame: 900, resolved: false },
   { id: 'd', deleted: true, text: '삭제됨' }
 ] }] } });
+
+test('author menu includes unfiltered historical authors and deduplicates carried reviews', async t => {
+  const x = await setup(t, { matchesReview: source => source.author === '전혜림' });
+  const panel = x.document.createElement('aside');
+  panel.innerHTML = '<div id="authorFilterMenu"></div>';
+  const current = [{ author: '현재 작성자' }];
+  const context = vm.createContext({
+    elements: { commentPanel: panel }, previousReviewPanel: x.panel,
+    playlistUIState: { mode: 'single' }, cutlistUIState: { active: false },
+    playlistAggregateCommentRanges: [{ author: '재생목록 작성자' }],
+    cutlistAggregateCommentRanges: [{ author: '컷리스트 작성자' }],
+    commentManager: { getAllMarkers: () => current }, commentFilterState: { authors: null },
+    getCommentAuthorColor: () => ({ color: '#abc' }), escapeHtml: value => String(value)
+  });
+  const app = fs.readFileSync(path.join(__dirname, '../../renderer/scripts/app.js'), 'utf8');
+  for (const name of ['getAuthorFilterSourceItems', 'getAuthorFilterAuthorIds', 'updateAuthorFilterMenu']) {
+    const source = app.match(new RegExp(`  function ${name}\\([^]*?\\n  \\}`))?.[0];
+    assert.ok(source); vm.runInContext(source, context);
+  }
+  const authors = () => {
+    vm.runInContext('updateAuthorFilterMenu()', context);
+    return [...panel.querySelectorAll('[data-author-id]')].filter(row => row.dataset.authorId !== '__all__')
+      .map(row => [row.dataset.authorId, Number(row.querySelector('.filter-dropdown-badge').textContent)]);
+  };
+  assert.deepEqual(authors(), [['현재 작성자', 1]]);
+  await x.selectVersion(0);
+  const expected = [['현재 작성자', 1], ['전혜림', 1], ['김리뷰', 2]];
+  assert.deepEqual(authors(), expected);
+  assert.ok(vm.runInContext('getAuthorFilterAuthorIds()', context).has('김리뷰'));
+  x.context.filter = 'resolved'; x.panel.refreshContext();
+  context.commentFilterState.authors = ['전혜림'];
+  assert.deepEqual(authors(), expected);
+  x.click('[data-pr-action="carry-all"]');
+  assert.deepEqual(authors(), expected);
+  x.click('[data-pr-action="clear-versions"]');
+  assert.deepEqual(authors(), expected);
+  x.panel.setOpen(false);
+  assert.deepEqual(authors(), [['현재 작성자', 1]]);
+  x.panel.setOpen(true);
+  x.context.enabled = false; x.panel.refreshContext();
+  assert.deepEqual(authors(), [['현재 작성자', 1]]);
+  context.playlistUIState.mode = 'continuous';
+  assert.deepEqual(authors(), [['재생목록 작성자', 1]]);
+  context.playlistUIState.mode = 'single'; context.cutlistUIState.active = true;
+  assert.deepEqual(authors(), [['컷리스트 작성자', 1]]);
+});
 
 test('compact options switch between separated and chronological reviews with plain version badges', async t => {
   const x = await setup(t); await x.selectVersion(0);

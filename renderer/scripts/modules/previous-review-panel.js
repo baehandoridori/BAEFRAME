@@ -529,6 +529,7 @@ export function createPreviousReviewPanel({
   void refreshAvailability();
   return {
     setOpen, isOpen: () => opened, refreshContext, refreshAvailability, decorateList, seekSource,
+    getAuthorFilterSources: () => !disposed && opened && enabled() ? reviewEntries().map(entry => entry.source) : [],
     suspend() {
       availabilityGeneration++; availabilityKey = ''; hasPreviousReviews = false;
       suspended = true; selected.clear(); availableSources.clear(); render();
