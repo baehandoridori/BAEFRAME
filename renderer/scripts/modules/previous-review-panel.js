@@ -136,7 +136,13 @@ export function createPreviousReviewPanel({
     const key = JSON.stringify([contextPath, ...versions.map(info => pathKey(info.path)).sort()]);
     if (!force && key === availabilityKey) return;
     availabilityKey = key;
+    const versionKeys = new Set(versions.map(info => pathKey(info.path)));
+    let pruned = false;
+    for (const selectedKey of selected.keys()) {
+      if (!versionKeys.has(selectedKey)) { selected.delete(selectedKey); pruned = true; }
+    }
     availableSources.clear();
+    if (pruned) render();
     const request = ++availabilityGeneration;
     const owner = contextPath;
     const isCurrent = () => !disposed && request === availabilityGeneration

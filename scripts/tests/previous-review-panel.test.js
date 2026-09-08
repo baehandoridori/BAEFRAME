@@ -42,6 +42,36 @@ test('carry keeps original resolution, replaces the reference once, and offers a
   assert.deepEqual(x.seeks, []);
 });
 
+test('removing a selected version prunes its references but preserves carried snapshots', async t => {
+  const timeline = [];
+  const x = await setup(t, { withToggle: true, autoOpen: false, onTimelineChange: entries => timeline.push(entries) });
+  await tick(); x.toggle.click();
+  x.click('[data-pr-carry]');
+  assert.equal(x.document.querySelectorAll('[data-pr-source]').length, 2);
+  x.versions.splice(0, 1);
+  await x.panel.refreshAvailability({ force: true });
+  assert.equal(x.document.querySelectorAll('[data-pr-source]').length, 0);
+  assert.equal(x.document.querySelectorAll('[data-pr-item]').length, 1);
+  assert.equal(timeline.at(-1).length, 1);
+  assert.equal(x.document.querySelectorAll('[data-pr-version]:checked').length, 0);
+  x.click('[data-pr-action="carry-all"]');
+  assert.equal(x.manager.getItems().length, 1);
+});
+
+test('a pending read cannot restore a version removed from the version list', async t => {
+  let deferred = false, release;
+  const x = await setup(t, { withToggle: true, autoOpen: false,
+    versions: [{ path:'C:/shots/shot_v3.mp4', displayLabel:'v3' }],
+    loadReview: () => deferred ? new Promise(resolve => { release = resolve; }) : Promise.resolve(sourceRoot()) });
+  await tick(); x.toggle.click();
+  deferred = true; x.click('[data-pr-action="versions"]'); x.click('[data-pr-action="refresh"]');
+  x.versions.length = 0;
+  await x.panel.refreshAvailability({ force: true });
+  release(sourceRoot()); await tick();
+  assert.equal(x.document.querySelectorAll('[data-pr-source]').length, 0);
+  assert.equal(x.toggle.hidden, true);
+});
+
 test('reference and carried review body clicks seek by source FPS; controls do not seek', async t => {
   const x = await setup(t); await x.selectVersion(0);
   x.click('[data-pr-source] .pr-text');
