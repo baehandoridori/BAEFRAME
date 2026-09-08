@@ -52,6 +52,170 @@ function createManager(options = {}) {
   });
 }
 
+// Only the mpv process/IPC boundary is replaced: load readiness and status stay real.
+function createLoadRecorder(videoPaths, { platform = 'win32', failPath = null } = {}) {
+  const manager = createManager({ platform, existing: videoPaths });
+  const commands = [];
+  let loadedPath = '';
+  manager.start = async () => { manager.process ||= { killed: false }; };
+  manager.sendCommand = async (command) => {
+    commands.push(command);
+    if (command[0] === 'loadfile') {
+      if (command[1] === failPath) throw new Error('mpv load failed');
+      loadedPath = command[1];
+    }
+    const properties = {
+      'time-pos': 0,
+      duration: 60,
+      pause: true,
+      path: loadedPath,
+      width: 1920,
+      height: 1080,
+      'container-fps': 24,
+      'eof-reached': false,
+      'paused-for-cache': false,
+      'demuxer-cache-duration': 0,
+      'cache-buffering-state': 0
+    };
+    return { error: 'success', data: properties[command[1]] };
+  };
+  return { manager, commands };
+}
+
+test('Drive playback requests bounded RAM read-ahead without waiting for an initial cache fill', async () => {
+  const videoPath = 'G:\\공유 드라이브\\Studio\\shot.mp4';
+  const { manager, commands } = createLoadRecorder([videoPath]);
+
+  const status = await manager.load(videoPath, { pause: true });
+
+  assert.equal(status.path, videoPath);
+  assert.equal(status.time, 0);
+  assert.equal(status.cacheDuration, 0, 'the first decoded frame is ready even with no cache yet');
+  assert.deepEqual(commands.find((command) => command[0] === 'loadfile'), [
+    'loadfile', videoPath, 'replace', -1, {
+      cache: 'yes',
+      'cache-secs': '30',
+      'demuxer-max-bytes': '134217728',
+      'demuxer-max-back-bytes': '33554432',
+      'cache-on-disk': 'no',
+      'cache-pause': 'yes',
+      'cache-pause-wait': '2',
+      'cache-pause-initial': 'no'
+    }
+  ]);
+});
+
+test('Drive read-ahead only recognizes absolute mounted Drive paths after normalization', async () => {
+  const cases = [
+    ['H:\\Shared drives\\Studio\\shot.mp4', true],
+    ['h:/shared drives/Studio/shot.mp4', true],
+    ['I:\\My Drive\\shot.mp4', true],
+    ['J:\\내 드라이브\\shot.mp4', true],
+    ['\\\\?\\G:\\공유 드라이브\\Studio\\shot.mp4', true],
+    ['G:\\local\\shot.mp4', false],
+    ['C:\\video\\Shared drives\\shot.mp4', false],
+    ['G:\\Shared drives backup\\shot.mp4', false],
+    ['G:\\Shared drives\\..\\local\\shot.mp4', false],
+    ['G:Shared drives\\shot.mp4', false],
+    ['Shared drives\\shot.mp4', false],
+    ['\\\\server\\Shared drives\\shot.mp4', false],
+    ['https://example.com/Shared drives/shot.mp4', false]
+  ];
+  for (const [videoPath, shouldCache] of cases) {
+    const { manager, commands } = createLoadRecorder([videoPath]);
+    await manager.load(videoPath);
+    const loadCommand = commands.find((command) => command[0] === 'loadfile');
+    assert.equal(loadCommand[4]?.cache === 'yes', shouldCache, videoPath);
+  }
+});
+
+test('Drive file options never leak into a later local load on the same mpv process', async () => {
+  const drivePath = 'G:\\공유 드라이브\\Studio\\shot.mp4';
+  const localPath = 'C:\\video\\shot.mp4';
+  const { manager, commands } = createLoadRecorder([drivePath, localPath]);
+  await manager.load(drivePath);
+  const processRef = manager.process;
+  await manager.load(localPath, { cache: 'yes', 'cache-secs': 500, cacheOptions: { cache: 'yes' } });
+
+  const loads = commands.filter((command) => command[0] === 'loadfile');
+  assert.equal(loads[0][4]?.cache, 'yes');
+  assert.deepEqual(loads[1], ['loadfile', localPath, 'replace']);
+  assert.equal(manager.process, processRef);
+  assert.deepEqual(commands.filter((command) => command[0] === 'set_property'), [
+    ['set_property', 'pause', true], ['set_property', 'pause', true]
+  ], 'cache changes must remain file-local, never persistent set_property commands');
+});
+
+test('a failed Drive load leaves the next local load free of Drive file options', async () => {
+  const drivePath = 'G:\\공유 드라이브\\Studio\\broken.mp4';
+  const localPath = 'C:\\video\\shot.mp4';
+  const { manager, commands } = createLoadRecorder([drivePath, localPath], { failPath: drivePath });
+  await assert.rejects(manager.load(drivePath), /mpv load failed/);
+  await manager.load(localPath);
+
+  const loads = commands.filter((command) => command[0] === 'loadfile');
+  assert.equal(loads[0][4]?.cache, 'yes');
+  assert.deepEqual(loads[1], ['loadfile', localPath, 'replace']);
+});
+
+test('metadata probes keep lightweight loading even for Drive paths', async () => {
+  const videoPath = 'G:\\공유 드라이브\\Studio\\shot.mp4';
+  const { manager, commands } = createLoadRecorder([videoPath]);
+  await manager.load(videoPath, { headless: true, forceWindow: false });
+  assert.deepEqual(commands.find((command) => command[0] === 'loadfile'), [
+    'loadfile', videoPath, 'replace'
+  ]);
+});
+
+test('mpv status distinguishes cache starvation from explicit pause and bounds cache metrics', async () => {
+  const manager = createManager();
+  manager.process = { killed: false };
+  const properties = {
+    pause: false,
+    'paused-for-cache': true,
+    'demuxer-cache-duration': 1.25,
+    'cache-buffering-state': 62.5
+  };
+  manager.getOptionalProperty = async (name, fallback) => properties[name] ?? fallback;
+
+  const buffering = await manager.getStatus();
+  assert.equal(buffering.paused, false);
+  assert.equal(buffering.buffering, true);
+  assert.equal(buffering.cacheDuration, 1.25);
+  assert.equal(buffering.cacheBufferingState, 62.5);
+
+  properties.pause = true;
+  properties['paused-for-cache'] = false;
+  properties['demuxer-cache-duration'] = -8;
+  properties['cache-buffering-state'] = 150;
+  const paused = await manager.getStatus();
+  assert.equal(paused.paused, true);
+  assert.equal(paused.buffering, false);
+  assert.equal(paused.cacheDuration, 0);
+  assert.equal(paused.cacheBufferingState, 100);
+
+  properties['demuxer-cache-duration'] = Infinity;
+  properties['cache-buffering-state'] = NaN;
+  const invalid = await manager.getStatus();
+  assert.equal(invalid.cacheDuration, 0);
+  assert.equal(invalid.cacheBufferingState, 0);
+});
+
+test('stopped and unavailable cache status use neutral buffering values', async () => {
+  const manager = createManager();
+  const stopped = await manager.getStatus();
+  assert.equal(stopped.buffering, false);
+  assert.equal(stopped.cacheDuration, 0);
+  assert.equal(stopped.cacheBufferingState, 0);
+
+  manager.process = { killed: false };
+  manager.getProperty = async () => { throw new Error('mpv command failed: property unavailable'); };
+  const unavailable = await manager.getStatus();
+  assert.equal(unavailable.buffering, false);
+  assert.equal(unavailable.cacheDuration, 0);
+  assert.equal(unavailable.cacheBufferingState, 0);
+});
+
 test('mpv pilot is disabled unless BAEFRAME_MPV_PILOT is enabled', () => {
   assert.equal(isMpvPilotEnabled({}), false);
   assert.equal(isMpvPilotEnabled({ BAEFRAME_MPV_PILOT: '0' }), false);

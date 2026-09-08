@@ -16,6 +16,16 @@ const { createLogger } = require('./logger');
 const log = createLogger('MPVManager');
 const COMMAND_TIMEOUT_MS = 5000;
 const IPC_READY_TIMEOUT_MS = 4000;
+const DRIVE_CACHE_OPTIONS = Object.freeze({
+  cache: 'yes',
+  'cache-secs': '30',
+  'demuxer-max-bytes': '134217728',
+  'demuxer-max-back-bytes': '33554432',
+  'cache-on-disk': 'no',
+  'cache-pause': 'yes',
+  'cache-pause-wait': '2',
+  'cache-pause-initial': 'no'
+});
 
 function isMpvPilotEnabled(env = process.env) {
   const value = String(env.BAEFRAME_MPV_PILOT || '').trim().toLowerCase();
@@ -78,6 +88,16 @@ function normalizePlaybackPathForCompare(value, platform = process.platform) {
   if (!value) return '';
   const normalized = getPathApiForPlatform(platform).normalize(String(value)).replace(/[\\/]+$/, '');
   return platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+function isMountedGoogleDrivePath(filePath, platform) {
+  if (platform !== 'win32' || typeof filePath !== 'string' || filePath.includes('\0')) return false;
+  // Drive for Desktop can use any drive letter. Only recognize its mounted root
+  // folders, not every G: file or a similarly named folder inside a local path.
+  const withoutDevicePrefix = filePath.replace(/^\\\\\?\\(?=[a-z]:\\)/i, '');
+  if (!/^[a-z]:[\\/]/i.test(withoutDevicePrefix)) return false;
+  const normalized = path.win32.normalize(withoutDevicePrefix);
+  return /^[a-z]:\\(?:공유 드라이브|Shared drives|내 드라이브|My Drive)\\.+/i.test(normalized);
 }
 
 function clampNumber(value, min, max, fallback) {
@@ -213,7 +233,14 @@ class MPVManager {
     }
 
     await this.start({ wid: options.wid, forceWindow: options.forceWindow, headless: options.headless });
-    await this.sendCommand(['loadfile', filePath, 'replace']);
+    const loadCommand = ['loadfile', filePath, 'replace'];
+    if (options.headless !== true && isMountedGoogleDrivePath(filePath, this.platform)) {
+      // mpv 0.38+ file-local options restore automatically when this entry ends,
+      // including failed loads. Reusing mpv for a local file keeps its defaults.
+      // Metadata probes need only the first frame, so they keep lightweight reads.
+      loadCommand.push(-1, DRIVE_CACHE_OPTIONS);
+    }
+    await this.sendCommand(loadCommand);
     await this.waitForPlaybackReady(filePath);
     if (options.videoTransform) {
       await this.setVideoTransform(options.videoTransform);
@@ -283,11 +310,17 @@ class MPVManager {
         width: 0,
         height: 0,
         fps: 24,
-        eofReached: false
+        eofReached: false,
+        buffering: false,
+        cacheDuration: 0,
+        cacheBufferingState: 0
       };
     }
 
-    const [timePos, duration, paused, pathValue, width, height, fps, eofReached] = await Promise.all([
+    const [
+      timePos, duration, paused, pathValue, width, height, fps, eofReached,
+      pausedForCache, cacheDuration, cacheBufferingState
+    ] = await Promise.all([
       this.getOptionalProperty('time-pos', 0),
       this.getOptionalProperty('duration', 0),
       this.getOptionalProperty('pause', true),
@@ -295,7 +328,10 @@ class MPVManager {
       this.getOptionalProperty('width', 0),
       this.getOptionalProperty('height', 0),
       this.getOptionalProperty('container-fps', 24),
-      this.getOptionalProperty('eof-reached', false)
+      this.getOptionalProperty('eof-reached', false),
+      this.getOptionalProperty('paused-for-cache', false),
+      this.getOptionalProperty('demuxer-cache-duration', 0),
+      this.getOptionalProperty('cache-buffering-state', 0)
     ]);
 
     return {
@@ -307,7 +343,10 @@ class MPVManager {
       width: this._toNumber(width, 0),
       height: this._toNumber(height, 0),
       fps: this._toNumber(fps, 24),
-      eofReached: Boolean(eofReached)
+      eofReached: Boolean(eofReached),
+      buffering: pausedForCache === true,
+      cacheDuration: Math.max(0, this._toNumber(cacheDuration, 0)),
+      cacheBufferingState: clampNumber(cacheBufferingState, 0, 100, 0)
     };
   }
 

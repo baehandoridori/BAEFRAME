@@ -1053,12 +1053,12 @@ test('mpv drawing overlay snapshot includes floating selection overlay', () => {
 test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(videoPlayerSource, /_handleLoopRestartIfNeeded\(\) \{[\s\S]+this\.seek\(this\.loop\.inPoint\);[\s\S]+this\._emit\('loopRestart'\);[\s\S]+return true;/);
   assert.match(videoPlayerSource, /video\.addEventListener\('timeupdate', \(\) => \{[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}/);
-  assert.match(videoPlayerSource, /const pollingControls = this\.externalControls;[\s\S]+const pollingEngine = this\.engine;[\s\S]+const status = await pollingControls\.getStatus\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls\) return;/);
+  assert.match(videoPlayerSource, /const pollingControls = this\.externalControls;[\s\S]+const pollingEngine = this\.engine;[\s\S]+const status = await pollingControls\.getStatus\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls \|\| this\._externalStatusEpoch !== pollingEpoch\) return;/);
   assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+const stoppedEngine = this\.engine;[\s\S]+const stoppedFilePath = this\.filePath;[\s\S]+const stoppedTime = this\.currentTime;[\s\S]+const stoppedFrame = this\.currentFrame;[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+this\.useHtml5Engine\(\);[\s\S]+this\.isLoaded = false;[\s\S]+this\._emit\('externalstopped', \{[\s\S]+engine: stoppedEngine,[\s\S]+filePath: stoppedFilePath,[\s\S]+lastTime: stoppedTime,[\s\S]+lastFrame: stoppedFrame,[\s\S]+reason: 'stopped'[\s\S]+\}\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(e\) => \{[\s\S]+elements\.videoWrapper\?\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+document\.body\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+allowMpvPilot: retryMpv[\s\S]+\}\);/);
   assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0 && this\.videoWidth !== nextWidth\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0 && this\.videoHeight !== nextHeight\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /let metadataChanged = false;[\s\S]+metadataChanged = true;[\s\S]+if \(metadataChanged\) \{[\s\S]+this\._emit\('loadedmetadata', \{[\s\S]+duration: this\.duration,[\s\S]+totalFrames: this\.totalFrames,[\s\S]+fps: this\.fps,[\s\S]+width: this\.videoWidth,[\s\S]+height: this\.videoHeight,[\s\S]+engine: this\.engine/);
-  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - candidateTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
+  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - candidateTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(!nextBuffering && this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
@@ -1080,9 +1080,9 @@ test('mpv external playback interpolates frame UI between status polls', () => {
 
   const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
   assert.ok(externalStatusMatch, 'external status polling should exist');
-  assert.match(externalStatusMatch[1], /const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking;/);
+  assert.match(externalStatusMatch[1], /const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking && !nextBuffering;/);
   assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = candidateTime;[\s\S]+\} else \{[\s\S]+this\._stopExternalFrameInterpolation\(\);/);
-  assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = smoothedTime;[\s\S]+this\.currentFrame = smoothedFrame;[\s\S]+this\._startExternalFrameInterpolation\(candidateTime\);/);
+  assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = wasBuffering \? candidateTime : smoothedTime;[\s\S]+this\.currentFrame = wasBuffering \? nextFrame : smoothedFrame;[\s\S]+this\._startExternalFrameInterpolation\(candidateTime\);/);
   assert.match(externalStatusMatch[1], /this\._stopExternalFrameInterpolation\(\);[\s\S]+const clampedNextFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);[\s\S]+this\.currentTime = candidateTime;[\s\S]+this\.currentFrame = clampedNextFrame;/);
 });
 
@@ -1106,7 +1106,7 @@ test('mpv external playback emits ended when keep-open reaches EOF', () => {
 
 test('mpv engine replacement resets playing state before html5 loads', () => {
   assert.match(videoPlayerSource, /useHtml5Engine\(\) \{[\s\S]+const wasExternalPlaying = this\.engine !== 'html5' && this\.isPlaying;[\s\S]+if \(wasExternalPlaying\) \{[\s\S]+this\.isPlaying = false;[\s\S]+this\._emit\('pause'\);[\s\S]+\}/);
-  assert.match(videoPlayerSource, /async load\(filePath\) \{[\s\S]+if \(this\.engine !== 'html5'\) \{[\s\S]+await this\.externalControls\?\.stop\?\.\(\);[\s\S]+\}[\s\S]+this\.useHtml5Engine\(\);/);
+  assert.match(videoPlayerSource, /async load\(filePath\) \{[\s\S]+const previousControls = this\.engine !== 'html5' \? this\.externalControls : null;[\s\S]+this\.useHtml5Engine\(\);[\s\S]+if \(previousControls\) \{[\s\S]+await previousControls\.stop\?\.\(\);/);
 });
 
 test('main process owns mpv shutdown cleanup before forced app quit', () => {
@@ -1238,7 +1238,7 @@ test('intentional html5 fallback stop is consumed instead of triggering mpv auto
   assert.ok(fallbackLoadMatch, 'loadVideoWithHtml5Fallback should exist');
   assert.match(fallbackLoadMatch[1], /const expectedStopToken = beginExpectedMpvHtml5FallbackStop\(owner, filePath\);[\s\S]+scheduleExpectedMpvHtml5FallbackStopCleanup\(expectedStopToken\);/);
   assert.match(appSource, /const overlayOwner = await mpvPilotOwnershipGate\.claim\(loadToken, \{ isStaleVideoLoad \}\);[\s\S]+if \(!overlayOwner\) return false;[\s\S]+clearExpectedMpvHtml5FallbackStop\(\);/);
-  assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls\) return;[\s\S]+this\.useHtml5Engine\(\);/);
+  assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls \|\| this\._externalStatusEpoch !== pollingEpoch\) return;[\s\S]+this\.useHtml5Engine\(\);/);
 });
 
 test('fullscreen controls inset snaps to final size and yields to letterbox gap', () => {

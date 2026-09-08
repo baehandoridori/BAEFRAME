@@ -28,6 +28,8 @@ export class VideoPlayer extends EventTarget {
     this.externalControls = null;
     this._externalStatusTimer = null;
     this._externalStatusPending = false;
+    this._externalStatusEpoch = 0;
+    this._externalPlaybackRequest = null;
     this._externalStatusFailureCount = 0;
     this._externalEndedEmitted = false;
     this._externalFrameRafId = null;
@@ -41,6 +43,9 @@ export class VideoPlayer extends EventTarget {
     // 상태
     this.isLoaded = false;
     this.isPlaying = false;
+    this.isBuffering = false;
+    this.cacheDuration = 0;
+    this.cacheBufferingState = 0;
     this.currentTime = 0;
     this.duration = 0;
     this.currentFrame = 0;
@@ -269,6 +274,7 @@ export class VideoPlayer extends EventTarget {
       this.isPlaying = false;
       this._emit('pause');
     }
+    this._setExternalBuffering(false);
   }
 
   useExternalEngine(config = {}) {
@@ -292,6 +298,7 @@ export class VideoPlayer extends EventTarget {
     this.lastExternalStatusTime = this.currentTime;
     this.isLoaded = true;
     this.isPlaying = config.paused === false;
+    this._setExternalBuffering(false);
 
     if (this.videoElement) {
       this.videoElement.removeAttribute('src');
@@ -415,14 +422,15 @@ export class VideoPlayer extends EventTarget {
     const trace = log.trace('load');
 
     try {
-      if (this.engine !== 'html5') {
+      const previousControls = this.engine !== 'html5' ? this.externalControls : null;
+      this.useHtml5Engine();
+      if (previousControls) {
         try {
-          await this.externalControls?.stop?.();
+          await previousControls.stop?.();
         } catch (error) {
           log.warn('외부 플레이어 종료 실패', { error: error.message });
         }
       }
-      this.useHtml5Engine();
       this.filePath = filePath;
       this.isLoaded = false;
       this.videoWidth = 0;
@@ -473,7 +481,17 @@ export class VideoPlayer extends EventTarget {
       if (this.engine !== 'html5') {
         this._externalEndedEmitted = false;
         this.externalEofReached = false;
-        const result = await this.externalControls?.play?.();
+        this._invalidateExternalStatus();
+        const playEpoch = this._externalStatusEpoch;
+        const playbackRequest = {};
+        this._externalPlaybackRequest = playbackRequest;
+        let result;
+        try {
+          result = await this.externalControls?.play?.();
+        } finally {
+          if (this._externalPlaybackRequest === playbackRequest) this._externalPlaybackRequest = null;
+        }
+        if (playEpoch !== this._externalStatusEpoch) return false;
         if (result?.success === false) {
           throw new Error(result.error || '외부 플레이어 재생 실패');
         }
@@ -509,11 +527,17 @@ export class VideoPlayer extends EventTarget {
    */
   pause() {
     if (this.engine !== 'html5') {
-      this.externalControls?.pause?.().catch?.((error) => {
+      this._invalidateExternalStatus();
+      const playbackRequest = {};
+      this._externalPlaybackRequest = playbackRequest;
+      Promise.resolve(this.externalControls?.pause?.()).catch((error) => {
         log.warn('외부 플레이어 일시정지 실패', { error: error.message });
+      }).finally(() => {
+        if (this._externalPlaybackRequest === playbackRequest) this._externalPlaybackRequest = null;
       });
       this._stopExternalFrameInterpolation();
       this.isPlaying = false;
+      this._setExternalBuffering(false);
       this._emit('pause');
       return;
     }
@@ -560,7 +584,9 @@ export class VideoPlayer extends EventTarget {
     this._pausedSeekHoldFrame = this.currentFrame;
 
     if (this.engine !== 'html5') {
+      this._invalidateExternalStatus();
       this._stopExternalFrameInterpolation();
+      this.lastExternalStatusTime = null;
       this.externalControls.seek(time).catch?.((error) => {
         log.warn('외부 플레이어 시간 이동 실패', { error: error.message });
       });
@@ -614,6 +640,7 @@ export class VideoPlayer extends EventTarget {
     });
 
     if (this.engine !== 'html5') {
+      this._invalidateExternalStatus();
       this._stopExternalFrameInterpolation();
       this._externalEndedEmitted = false;
       this.externalEofReached = false;
@@ -950,7 +977,27 @@ export class VideoPlayer extends EventTarget {
       clearInterval(this._externalStatusTimer);
       this._externalStatusTimer = null;
     }
+    this._invalidateExternalStatus();
+    this._externalPlaybackRequest = null;
+  }
+
+  _invalidateExternalStatus() {
+    this._externalStatusEpoch += 1;
     this._externalStatusPending = false;
+  }
+
+  _setExternalBuffering(buffering, status = {}) {
+    const wasBuffering = this.isBuffering;
+    this.isBuffering = buffering === true;
+    this.cacheDuration = Math.max(0, Number(status.cacheDuration) || 0);
+    this.cacheBufferingState = Math.max(0, Math.min(100, Number(status.cacheBufferingState) || 0));
+    if (wasBuffering !== this.isBuffering) {
+      this._emit('bufferingchange', {
+        buffering: this.isBuffering,
+        cacheDuration: this.cacheDuration,
+        cacheBufferingState: this.cacheBufferingState
+      });
+    }
   }
 
   _getPlaybackClockNow() {
@@ -977,13 +1024,13 @@ export class VideoPlayer extends EventTarget {
   }
 
   _startExternalFrameInterpolation(anchorTime = this.currentTime) {
-    if (this.engine === 'html5' || !this.isLoaded) return;
+    if (this.engine === 'html5' || !this.isLoaded || !this.isPlaying || this.isBuffering) return;
     this._setExternalPlaybackClock(anchorTime);
     if (this._externalFrameRafId) return;
 
     const tick = () => {
       this._externalFrameRafId = null;
-      if (this.engine === 'html5' || !this.isPlaying || this.externalEofReached) {
+      if (this.engine === 'html5' || !this.isPlaying || this.isBuffering || this.externalEofReached) {
         this._externalPlaybackClock = null;
         return;
       }
@@ -1044,14 +1091,15 @@ export class VideoPlayer extends EventTarget {
   }
 
   async _syncExternalStatus() {
-    if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending) return;
+    if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending || this._externalPlaybackRequest) return;
 
     const pollingControls = this.externalControls;
     const pollingEngine = this.engine;
+    const pollingEpoch = this._externalStatusEpoch;
     this._externalStatusPending = true;
     try {
       const status = await pollingControls.getStatus();
-      if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
+      if (this.engine !== pollingEngine || this.externalControls !== pollingControls || this._externalStatusEpoch !== pollingEpoch) return;
       if (!status?.success) {
         await this._registerExternalStatusFailure(pollingControls);
         return;
@@ -1067,7 +1115,7 @@ export class VideoPlayer extends EventTarget {
         } catch (error) {
           log.warn('중지된 외부 플레이어 정리 실패', { error: error.message });
         }
-        if (this.engine !== pollingEngine || this.externalControls !== pollingControls) return;
+        if (this.engine !== pollingEngine || this.externalControls !== pollingControls || this._externalStatusEpoch !== pollingEpoch) return;
         this.useHtml5Engine();
         this.isLoaded = false;
         this._emit('externalstopped', {
@@ -1080,7 +1128,7 @@ export class VideoPlayer extends EventTarget {
         return;
       }
 
-      const nextTime = Number(status.time);
+      const nextTime = status.time == null ? NaN : Number(status.time);
       const nextDuration = Number(status.duration);
       const nextFps = normalizeFpsValue(status.fps);
       const nextWidth = Number(status.width);
@@ -1105,6 +1153,11 @@ export class VideoPlayer extends EventTarget {
       }
       let candidateTime = this.currentTime;
       let acceptedStatusTime = false;
+      // 버퍼가 비었을 때는 벽시계가 앞서 보간한 위치가 아닌 실제 mpv 관측 위치를 유지한다.
+      // 수동 seek 중인 목표는 이전 관측 시각으로 되돌리지 않는다.
+      if (!this._isSeeking && (status.buffering === true || this.isBuffering) && Number.isFinite(this.lastExternalStatusTime)) {
+        candidateTime = this.lastExternalStatusTime;
+      }
       if (Number.isFinite(nextTime)) {
         const statusTime = Math.max(0, Math.min(nextTime, this.duration || nextTime));
         if (this._isSeeking && this._seekTargetFrame !== null) {
@@ -1138,12 +1191,14 @@ export class VideoPlayer extends EventTarget {
       }
       const nextFrame = this._timeToFrame(candidateTime);
       const wasPlaying = this.isPlaying;
+      const wasBuffering = this.isBuffering;
       const externalIsPlaying = status.paused === false;
       const nextIsPlaying = !eofReached && externalIsPlaying;
+      const nextBuffering = nextIsPlaying && status.buffering === true;
       if (nextIsPlaying) {
         this._pausedSeekHoldFrame = null; // 재생이 시작되면 유지 해제
       }
-      const shouldInterpolateExternalPlayback = nextIsPlaying && !this._isSeeking;
+      const shouldInterpolateExternalPlayback = nextIsPlaying && !this._isSeeking && !nextBuffering;
       const smoothedTime = this.currentTime;
       const smoothedFrame = this.currentFrame;
       this.isPlaying = externalIsPlaying;
@@ -1168,7 +1223,8 @@ export class VideoPlayer extends EventTarget {
         this._externalEndedEmitted = false;
       }
 
-      if (this._handleLoopRestartIfNeeded()) {
+      if (!nextBuffering && this._handleLoopRestartIfNeeded()) {
+        this._setExternalBuffering(nextBuffering, status);
         if (wasPlaying !== this.isPlaying) {
           this._emit(this.isPlaying ? 'play' : 'pause');
         }
@@ -1176,19 +1232,23 @@ export class VideoPlayer extends EventTarget {
       }
 
       if (shouldInterpolateExternalPlayback) {
-        this.currentTime = smoothedTime;
-        this.currentFrame = smoothedFrame;
-        this._startExternalFrameInterpolation(candidateTime);
+        this.currentTime = wasBuffering ? candidateTime : smoothedTime;
+        this.currentFrame = wasBuffering ? nextFrame : smoothedFrame;
       }
 
       this.isPlaying = nextIsPlaying;
+      // 소비자가 전환 이벤트에서 읽는 위치와 재생 의도는 이미 새 상태여야 한다.
+      this._setExternalBuffering(nextBuffering, status);
+      if (shouldInterpolateExternalPlayback) {
+        this._startExternalFrameInterpolation(candidateTime);
+      }
 
       this._emit('timeupdate', {
         currentTime: this.currentTime,
         currentFrame: this.currentFrame
       });
 
-      if (!shouldInterpolateExternalPlayback && this.currentFrame !== this._lastEmittedFrame) {
+      if ((!shouldInterpolateExternalPlayback || wasBuffering) && this.currentFrame !== this._lastEmittedFrame) {
         this._lastEmittedFrame = this.currentFrame;
         this._emit('frameUpdate', {
           frame: this.currentFrame,
@@ -1206,11 +1266,11 @@ export class VideoPlayer extends EventTarget {
       }
     } catch (error) {
       log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });
-      if (this.engine === pollingEngine && this.externalControls === pollingControls) {
+      if (this.engine === pollingEngine && this.externalControls === pollingControls && this._externalStatusEpoch === pollingEpoch) {
         await this._registerExternalStatusFailure(pollingControls);
       }
     } finally {
-      this._externalStatusPending = false;
+      if (this._externalStatusEpoch === pollingEpoch) this._externalStatusPending = false;
     }
   }
 

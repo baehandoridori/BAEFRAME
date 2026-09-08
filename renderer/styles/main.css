@@ -2729,6 +2729,16 @@ body.app-fullscreen .video-comment-overlay-controls {
   flex-shrink: 1;
 }
 
+.playback-buffering-status {
+  font-size: 10px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.playback-buffering-status[hidden] {
+  display: none;
+}
+
 .controls-spacer {
   flex: 1;
 }
