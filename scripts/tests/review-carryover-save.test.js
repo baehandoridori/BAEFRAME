@@ -187,3 +187,81 @@ test('no-manager external reload retains opaque queue when an old writer omits t
   assert.deepEqual(JSON.parse(JSON.stringify(getDisk())).reviewCarryoverV1, payload);
   manager.disconnect();
 });
+
+test('connected file refresh merges carryover without touching broadcast-owned comments or local edits', async t => {
+  const { manager, carryover, source, getDisk, setDisk } = await setup();
+  t.after(() => manager.disconnect());
+  const item = carryover.carry(source('peer')); await manager.save();
+  const baseline = getDisk();
+  manager.commentManager = Object.assign(new EventTarget(), { fromJSON: () => assert.fail('Connected refresh must not install disk comments') });
+  let loaded = 0; carryover.addEventListener('loaded', () => loaded++);
+  carryover.carry(source('local-unsaved'));
+  const peer = copy(baseline); peer.reviewCarryoverV1.items[0].status = 'verified';
+  peer.reviewCarryoverV1.items[0].updatedAt = '2099-01-01T00:00:00.000Z';
+  const peerManager = new carryover.constructor(); peerManager.fromJSON(peer.reviewCarryoverV1);
+  peerManager.carry(source('peer-added')); peer.reviewCarryoverV1 = peerManager.toJSON(); setDisk(peer);
+  assert.equal(await manager.reloadReviewCarryoverFromDisk(), true);
+  assert.equal(carryover.getItems().find(value => value.id === item.id).status, 'verified');
+  assert.equal(carryover.getItems().length, 3);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  peer.reviewCarryoverV1.items.find(value => value.id === item.id).deleted = true; setDisk(peer);
+  assert.equal(await manager.reloadReviewCarryoverFromDisk(), true);
+  assert.equal(carryover.hasSource(item.id), false);
+  setDisk(baseline); await manager.reloadReviewCarryoverFromDisk();
+  assert.equal(carryover.hasSource(item.id), false);
+  assert.ok(loaded >= 2, 'Shared panel/timeline must receive loaded notifications');
+  manager.commentManager = null;
+});
+
+test('connected refresh rejects late snapshots after a newer refresh or a video switch', async t => {
+  const { manager, carryover, source, getDisk, setDisk } = await setup();
+  t.after(() => manager.disconnect());
+  carryover.carry(source('peer')); await manager.save();
+  const pending = [];
+  window.electronAPI.loadReviewSnapshot = () => new Promise(resolve => pending.push(resolve));
+  const old = manager.reloadReviewCarryoverFromDisk();
+  const fresh = manager.reloadReviewCarryoverFromDisk();
+  const next = getDisk(); next.reviewCarryoverV1.items[0].status = 'verified';
+  pending[1]({ data: next, versionToken: 'new' }); assert.equal(await fresh, true);
+  pending[0]({ data: getDisk(), versionToken: 'old' }); assert.equal(await old, false);
+  assert.equal(carryover.getItems()[0].status, 'verified');
+  const previousVideo = manager.reloadReviewCarryoverFromDisk();
+  setDisk(null); await manager.setVideoFile('C:/different.mp4', { skipSave: true });
+  pending[2]({ data: next, versionToken: 'late' });
+  assert.equal(await previousVideo, false); assert.deepEqual(carryover.getItems(), []);
+});
+
+test('connected refresh preserves clicks during reads and refuses foreign or future documents', async t => {
+  const { manager, carryover, source, getDisk, setDisk } = await setup();
+  t.after(() => manager.disconnect());
+  const item = carryover.carry(source('peer')); await manager.save();
+  const originalRead = window.electronAPI.loadReviewSnapshot;
+  let release; const snapshot = getDisk();
+  window.electronAPI.loadReviewSnapshot = () => new Promise(resolve => { release = resolve; });
+  const pending = manager.reloadReviewCarryoverFromDisk();
+  carryover.remove(item.id);
+  release({ data: snapshot, versionToken: 'same' }); assert.equal(await pending, true);
+  assert.equal(carryover.hasSource(item.id), false); assert.equal(manager.hasUnsavedChanges(), true);
+  window.electronAPI.loadReviewSnapshot = originalRead;
+  for (const changed of [{ reviewDocumentId: 'foreign-document' }, { bframeVersion: '99.0' }]) {
+    setDisk({ ...snapshot, ...changed });
+    assert.equal(await manager.reloadReviewCarryoverFromDisk(), false);
+    assert.equal(carryover.hasSource(item.id), false);
+  }
+});
+
+test('a save completed during connected refresh fences its older disk snapshot', async t => {
+  const { manager, carryover, source, getDisk } = await setup();
+  t.after(() => manager.disconnect());
+  const item = carryover.carry(source('peer')); await manager.save();
+  const originalRead = window.electronAPI.loadReviewSnapshot;
+  const stale = getDisk(); let release;
+  window.electronAPI.loadReviewSnapshot = () => new Promise(resolve => { release = resolve; });
+  const pending = manager.reloadReviewCarryoverFromDisk();
+  window.electronAPI.loadReviewSnapshot = originalRead;
+  carryover.setResolved(item.id, true); assert.equal(await manager.save(), true);
+  release({ data: stale, versionToken: 'stale' });
+  assert.equal(await pending, false);
+  assert.equal(carryover.getItems()[0].status, 'verified');
+  assert.equal(manager.hasUnsavedChanges(), false);
+});

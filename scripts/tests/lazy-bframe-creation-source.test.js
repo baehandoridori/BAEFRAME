@@ -331,4 +331,5 @@ test('connected drawingsV3 file notifications keep one latest trailing reload', 
     appSource,
     /if \(liveblocksManager\.isConnected\) \{[\s\S]*connectedDrawingsV3ReloadThrottle\.schedule\(filePath\);[\s\S]*return false;/
   );
+  assert.match(appSource, /run: \(\) => Promise\.all\(\[\s*reviewDataManager\.reloadDrawingsV3FromDisk\?\.\(\),\s*reviewDataManager\.reloadReviewCarryoverFromDisk\?\.\(\)/);
 });

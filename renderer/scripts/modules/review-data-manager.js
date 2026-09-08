@@ -896,6 +896,7 @@ export class ReviewDataManager extends EventTarget {
     // Keep accepted current data separately from the remote merge baseline,
     // including callers that do not install the optional feature manager.
     this._reviewCarryoverFallback = undefined;
+    this._reviewCarryoverDiskReloadEpoch = 0;
     this.fabricDrawingPersistenceProvider =
       options.fabricDrawingPersistenceProvider || null;
 
@@ -2619,6 +2620,36 @@ export class ReviewDataManager extends EventTarget {
       return false;
     } finally {
       this._endFabricDrawingAuthorityChange(authorityChangeContextEpoch);
+    }
+  }
+
+  /** Merge only file-synchronized carryover; leave broadcast-owned data untouched. */
+  async reloadReviewCarryoverFromDisk() {
+    if (!this.reviewCarryoverManager || this.isLoading) return false;
+    const request = ++this._reviewCarryoverDiskReloadEpoch;
+    const owner = this._captureReviewContextOwner();
+    const base = this._reviewMergeBase.reviewCarryoverV1;
+    const observation = this._reviewFileObservationEpoch;
+    if (!owner.bframePath) return false;
+    try {
+      const { data } = await this._readReviewSnapshot(owner.bframePath);
+      if (request !== this._reviewCarryoverDiskReloadEpoch || !this._ownsReviewContext(owner) ||
+          this.isLoading || observation !== this._reviewFileObservationEpoch ||
+          base !== this._reviewMergeBase.reviewCarryoverV1) return false;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+      if (getUnsupportedBframeMajor(getDataVersion(data), BFRAME_VERSION, !hasExplicitBframeVersion(data)) !== null) return false;
+      if ((Object.hasOwn(data, 'reviewDocumentId') && !isValidReviewDocumentId(data.reviewDocumentId)) ||
+          (this._reviewDocumentIdPersisted && data.reviewDocumentId !== this._reviewDocumentId)) return false;
+      const merged = mergeReviewCarryover(base, this.reviewCarryoverManager.toJSON(), data.reviewCarryoverV1);
+      // Capture current edits after the awaited read; loaded only refreshes UI.
+      // Keep other fields, dirty state, autosave and CAS observations unchanged.
+      this._reviewCarryoverFallback = cloneJson(merged);
+      this._reviewMergeBase.reviewCarryoverV1 = cloneJson(data.reviewCarryoverV1);
+      this.reviewCarryoverManager.fromJSON(merged);
+      return true;
+    } catch (error) {
+      log.warn('이전 리뷰 파일 동기화 실패', { error: error.message });
+      return false;
     }
   }
 

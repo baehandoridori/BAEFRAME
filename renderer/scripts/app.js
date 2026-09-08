@@ -18994,7 +18994,10 @@ async function initApp() {
     intervalMs: MIN_SYNC_INTERVAL,
     shouldRun: filePath => liveblocksManager.isConnected &&
       isSameFilePath(filePath, reviewDataManager.currentBframePath),
-    run: () => reviewDataManager.reloadDrawingsV3FromDisk?.(),
+    run: () => Promise.all([
+      reviewDataManager.reloadDrawingsV3FromDisk?.(),
+      reviewDataManager.reloadReviewCarryoverFromDisk?.()
+    ]),
     onError: error => log.warn('drawingsV3 파일 동기화 실패', {
       error: error?.message || String(error)
     })
@@ -19014,7 +19017,8 @@ async function initApp() {
     // Liveblocks 연결 중이면 댓글·레거시 드로잉은 Broadcast가 담당하므로
     // 파일 기반 동기화를 건너뛴다 (구버전 파일로 덮어쓰는 것 방지).
     // 단 Fabric 드로잉(drawingsV3)은 Broadcast가 없던 시절 저장분·오프라인 저장분이
-    // 파일로만 도착할 수 있어, 드로잉만 선별 반영한다 (지문 비교로 no-op 보장).
+    // 파일로만 도착할 수 있어 선별 반영한다 (지문 비교로 no-op 보장).
+    // 이전 리뷰 이어받기도 파일로 동기화하며, 현재 댓글과 드로잉은 건드리지 않는다.
     if (liveblocksManager.isConnected) {
       connectedDrawingsV3ReloadThrottle.schedule(filePath);
       return false;
