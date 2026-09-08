@@ -10,6 +10,8 @@ export class ReviewCarryoverManager extends EventTarget {
   }
 
   get isEditable() { return isSupportedReviewCarryover(this._value); }
+  // Cancellation records must be saved even when no visible item remains.
+  hasStoredItems() { return this.isEditable && this._value.items.length > 0; }
   getItems() { return this.isEditable ? cloneReviewCarryover(this._value.items.filter(item => !item.deleted)) : []; }
   hasSource(key) { return this.isEditable && this._value.items.some(item => item.id === key && !item.deleted); }
   toJSON() { return cloneReviewCarryover(this._value); }

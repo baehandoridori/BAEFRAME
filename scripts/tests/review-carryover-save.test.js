@@ -35,6 +35,29 @@ test('first carry creates substantive review file and reloads without source acc
   manager.disconnect(); carryover.carry(source('c2')); assert.equal(manager.isDirty, false);
 });
 
+test('cancelling the only carry before first autosave persists its tombstone and prevents stale resurrection', { timeout: 3000 }, async t => {
+  const { manager, carryover, writes, source, getDisk, setDisk } = await setup();
+  t.after(() => manager.disconnect());
+  manager.autoSaveEnabled = true; manager.autoSaveDelay = 5;
+  const saved = new Promise(resolve => manager.addEventListener('saved', resolve, { once: true }));
+  const item = carryover.carry(source('cancel-before-save'));
+  const stale = carryover.toJSON();
+  carryover.remove(item.id);
+  assert.deepEqual(carryover.getItems(), []);
+  assert.equal(writes.length, 0);
+  assert.equal(manager.hasSubstantiveContent(), true);
+  assert.equal(manager.hasUnsavedChanges(), true);
+  await saved; await manager.save();
+  assert.equal(writes[0].options.failIfExists, true);
+  assert.equal(getDisk().reviewCarryoverV1.items[0].deleted, true);
+  carryover.reset(); await manager.load();
+  assert.deepEqual(carryover.getItems(), []);
+  assert.equal(carryover.toJSON().items[0].deleted, true);
+  setDisk({ ...getDisk(), reviewCarryoverV1: stale });
+  manager.setFps(30); assert.equal(await manager.save(), true);
+  assert.equal(getDisk().reviewCarryoverV1.items[0].deleted, true);
+});
+
 test('save merges remote queue and preserves edits made while write is in flight', async () => {
   const state = await setup(); const { manager, carryover, source, getDisk, setDisk } = state;
   const first = carryover.carry(source('c1')); await manager.save();
