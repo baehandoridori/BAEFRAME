@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>BAEFRAME · 이전 리뷰 구현 확인</title>
+<link rel="stylesheet" href="/renderer/styles/main.css"><link rel="stylesheet" href="/renderer/styles/comment-panel-popout.css"><link rel="stylesheet" href="/renderer/styles/previous-review.css">
+<style>
+body { margin:0; height:100vh; overflow:hidden; font-family:system-ui,sans-serif; }
+.test-header { height:58px; padding:0 22px; display:flex; align-items:center; gap:20px; background:#171717; border-bottom:1px solid #303030; }
+.test-header strong { letter-spacing:2px; color:#ffd000; font-size:14px; }
+.test-header small { color:#aaa; font-size:11px; }.test-header a{margin-left:auto;color:#aabbcc;font-size:11px}
+.test-workspace { display:flex; height:calc(100vh - 58px); min-height:0; }
+.test-video-area { flex:1; min-width:0; display:flex; flex-direction:column; padding:26px; background:#0c0c0c; }
+.test-file { display:flex;align-items:center;gap:10px;color:#ddd;font-size:13px;margin-bottom:30px; }.test-file span{color:#ffd000;border:1px solid #554b23;border-radius:4px;padding:3px 6px;font-size:11px}
+.test-scene { flex:1; min-height:120px; display:flex; align-items:center; justify-content:center; flex-direction:column; background:#151b23; border:1px solid #2a3442; color:#8fa2bb; position:relative; }
+.test-scene svg { width:65%; max-height:65%; }.test-scene p{font-size:11px;position:absolute;bottom:12px;color:#72849a}
+.test-transport { display:flex;justify-content:space-between;margin:22px 0 12px;font-size:12px;color:#adb4be;font-variant-numeric:tabular-nums; }
+.test-track { height:80px;border-top:1px solid #444;background:repeating-linear-gradient(90deg,transparent 0,transparent calc(10% - 1px),#242424 calc(10% - 1px),#242424 10%); }
+.test-note{font-size:11px;color:#777;line-height:1.7;max-width:560px}
+#commentPanel{display:flex;width:390px;max-width:520px;min-width:320px;flex-shrink:0;background:#161616;height:100%;overflow:hidden}.comment-item{cursor:default}
+@media(max-width:750px){.test-video-area{padding:12px}.test-header small{display:none}#commentPanel{width:55%;min-width:300px}.test-video-area .test-note{display:none}}
+</style></head><body>
+<header class="test-header"><strong>BAEFRAME</strong><small>실제 UI 모듈 · 테스트 데이터</small><a href="#" id="resetDemo">이어받은 리뷰 초기화</a></header>
+<main class="test-workspace"><section class="test-video-area"><div class="test-file">EP03_SC042 <span>v4 · 현재 영상</span></div>
+<div class="test-scene"><svg viewBox="0 0 620 360" fill="none" aria-label="장면 확인용 샘플 일러스트"><path d="M0 286H620M85 285V123L195 60L295 125V285M110 146H266M137 186H220V285M391 286V104H545V285M419 133H516V174H419ZM419 207H455V245H419ZM482 207H517V245H482Z" stroke="#51677d" stroke-width="2"/><path d="M233 285L338 183L390 224L430 285" fill="#243343"/><circle cx="335" cy="133" r="34" fill="#c0a67e"/><path d="M307 166L289 251L373 251L362 168" fill="#566d85"/><path d="M310 251L304 296M350 252L369 296M301 182L271 226M367 179L400 201" stroke="#93a4b4" stroke-width="14" stroke-linecap="round"/><path d="M307 126Q337 83 363 129" fill="#222d38"/></svg><p>영상 대신 표시하는 테스트 장면</p></div>
+<div class="test-transport"><span>▶　현재 v4</span><span id="position">00:00.00 / 00:12.00</span><span>24 fps</span></div><div class="test-track"></div>
+<p class="test-note">v2·v3 리뷰가 현재 댓글과 시간순으로 표시됩니다. 리뷰를 누르면 해당 시간으로 이동하고, 이어받은 뒤 미해결·해결 상태를 바꿀 수 있습니다. 이 페이지의 변경은 브라우저 테스트 저장소에만 저장됩니다.</p></section>
+<aside id="commentPanel" class="comment-panel"><div class="panel-header"><div class="panel-title">댓글 <span class="comment-count">2</span></div></div>
+<button id="openPrevious" type="button" class="pr-entry-toggle" aria-controls="previousReviewMount" aria-pressed="false" aria-expanded="false" hidden><span>이전 리뷰 확인하기</span><span class="pr-toggle-state" data-pr-toggle-state aria-hidden="true">꺼짐</span></button>
+<div id="previousReviewMount"></div><div id="commentsList" class="comments-list">
+<article class="comment-item" data-start-frame="96"><div class="comment-header"><strong>배한솔</strong> <small>00:04.00</small></div><p>손 위치와 시선 수정했습니다. 이전 의견 기준으로 확인 부탁드려요.</p></article>
+<article class="comment-item" data-start-frame="216"><div class="comment-header"><strong>전혜림</strong> <small>00:09.00</small></div><p>마지막 표정은 이 버전이 좋네요.</p></article>
+</div><div class="new-comment"><p style="font-size:11px;color:var(--text-muted)">테스트 데이터 · 현재 댓글 작성은 실제 앱에서 확인</p></div></aside></main>
+<script type="module">
+import { createPreviousReviewPanel } from '/renderer/scripts/modules/previous-review-panel.js';
+import { ReviewCarryoverManager } from '/renderer/scripts/modules/review-carryover-manager.js';
+const manager = new ReviewCarryoverManager();
+const key = 'baeframe-previous-review-implementation-fixture';
+try { manager.fromJSON(JSON.parse(localStorage.getItem(key)) || undefined); } catch { manager.reset(); }
+manager.addEventListener('changed', () => localStorage.setItem(key, JSON.stringify(manager.toJSON())));
+const versions = [{path:'C:/preview/EP03_SC042_v3.mp4',displayLabel:'v3',fileName:'EP03_SC042_v3.mp4'},{path:'C:/preview/EP03_SC042_v2.mp4',displayLabel:'v2',fileName:'EP03_SC042_v2.mp4'}];
+const data = {fps:30,comments:{layers:[{markers:[
+  {id:'eye',author:'전혜림',text:'눈 깜빡이는 타이밍이 조금 늦어요. 고개를 들 때 같이 움직이면 자연스러울 것 같아요.',startFrame:90,resolved:false,replies:[{id:'reply',author:'배한솔',text:'v4에서 3프레임 당겼습니다. 확인 부탁드려요.'}]},
+  {id:'hand',author:'김리뷰',text:'오른손이 문 안으로 들어가는 부분을 확인해 주세요.',startFrame:156,resolved:false},
+  {id:'color',author:'배한솔',text:'배경 톤을 한 단계 낮추기',startFrame:225,resolved:true},
+  {id:'end',author:'전혜림',text:'엔딩에서 표정이 너무 빨리 바뀌어요.',startFrame:480,resolved:false}
+] }]}};
+const panel=createPreviousReviewPanel({mount:document.getElementById('previousReviewMount'),list:document.getElementById('commentsList'),manager,
+toggleButton:document.getElementById('openPrevious'),
+getContext:()=>({path:'C:/preview/EP03_SC042_v4.mp4',label:'v4',fps:24,duration:12,enabled:true}),getVersions:()=>versions,
+loadReview:async path=>{const copy=structuredClone(data);if(path.includes('v2')){copy.comments.layers[0].markers=copy.comments.layers[0].markers.slice(1,3);}return copy;},
+seek:frame=>document.getElementById('position').textContent=`${(frame/24).toFixed(2)}초 / 12.00초 · ${frame}f`,getActor:()=>'배한솔',notify:message=>document.querySelector('.test-note').textContent=message});
+document.getElementById('resetDemo').onclick=e=>{e.preventDefault();localStorage.removeItem(key);manager.reset();};
+</script></body></html>

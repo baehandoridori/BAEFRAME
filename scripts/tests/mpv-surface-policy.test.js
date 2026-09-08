@@ -53,6 +53,28 @@ function getComputedStyle(element) {
   return element._style;
 }
 
+test('previous review options block native video only while visible and overlapping', async () => {
+  const { JSDOM } = require('jsdom');
+  const { MPV_SURFACE_MODE, getMpvSurfaceElements, isMpvSurfaceVisiblyOverlappingHost } = await loadPolicy();
+  const dom = new JSDOM('<div class="pr-toolbar" hidden><button>옵션</button></div>');
+  try {
+    const toolbar = dom.window.document.querySelector('.pr-toolbar');
+    const host = rect({ left: 0, top: 0, right: 500, bottom: 400 });
+    toolbar.getBoundingClientRect = () => rect({ left: 450, top: 30, right: 770, bottom: 350 });
+    const candidates = () => getMpvSurfaceElements(dom.window.document, MPV_SURFACE_MODE.BLOCK);
+    assert.equal(candidates().includes(toolbar), false);
+    toolbar.hidden = false;
+    assert.equal(candidates().includes(toolbar), true);
+    assert.equal(isMpvSurfaceVisiblyOverlappingHost(toolbar, host, dom.window.getComputedStyle), true);
+    toolbar.getBoundingClientRect = () => rect({ left: 520, top: 30, right: 840, bottom: 350 });
+    assert.equal(isMpvSurfaceVisiblyOverlappingHost(toolbar, host, dom.window.getComputedStyle), false);
+    toolbar.hidden = true;
+    assert.equal(candidates().includes(toolbar), false);
+  } finally {
+    dom.window.close();
+  }
+});
+
 test('surface registry derives block, observed mirror, and generic HTML mirror selectors', async () => {
   const {
     MPV_SURFACE_MODE,

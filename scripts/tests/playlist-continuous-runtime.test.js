@@ -1084,7 +1084,7 @@ test('playlist loading returns the real loadVideo result', () => {
 
   assert.match(appSource, /showToast\(`코덱 변환 실패: \$\{transcoded\.error \|\| '취소됨'\}`, 'error'\);\s*return false;/);
   assert.match(appSource, /showToast\('파일을 로드할 수 없습니다\.', 'error'\);\s*return false;/);
-  assert.match(appSource, /trace\.end\(\{ filePath, hasExistingData \}\);\s*videoLoadCompleted = true;\s*return true;/);
+  assert.match(appSource, /trace\.end\(\{ filePath, hasExistingData \}\);\s*videoLoadCompleted = true;\s*previousReviewContextReady = true;\s*previousReviewPanel\?\.refreshContext\(\);\s*return true;/);
 });
 
 test('continuous timeline uses aggregate time for playback and seek', () => {
@@ -1483,11 +1483,7 @@ test('playlist test script includes continuous runtime coverage', () => {
 });
 
 test('continuous playback stops with one toast when a global drawing gate cancels the load', () => {
-  const loadVideoMatch = appSource.match(
-    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
-  );
-  assert.ok(loadVideoMatch, 'video loader should exist');
-  const loadVideoSource = loadVideoMatch[1];
+  const loadVideoSource = extractAppFunctionSource('loadVideo');
   const genericToast = 'showToast(\'새 드로잉을 저장할 수 없어 영상 전환을 취소했습니다.\', \'error\');';
   const failureBranchPattern = persistenceVariable => new RegExp(
     `if \\(!${persistenceVariable}\\) \\{\\s+` +
@@ -1881,7 +1877,9 @@ function createActualLoadRaceHarness(dependencies, {
       let hybridReviewResumeMpvFile = null;
       let suppressReviewFreezeReleaseForMediaChange = false;
       let playlistAutoPlayAfterSelection = false;
-      let previousVersionComments = null;
+      const previousReviewPanel = dependencies.previousReviewPanel || null;
+      let previousReviewContextReady = false;
+      let previousReviewTransitionBlockToken = null;
       const undoStack = [];
       const redoStack = [];
       const CONTINUOUS_TRANSITION_DEADLINE_MS = 20000;

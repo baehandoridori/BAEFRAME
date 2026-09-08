@@ -21,7 +21,8 @@ export const KNOWN_BFRAME_ROOT_FIELDS = Object.freeze([
   'comments',
   'drawings',
   'highlights',
-  'compositionLayers'
+  'compositionLayers',
+  'reviewCarryoverV1'
 ]);
 
 const KNOWN_BFRAME_ROOT_FIELD_SET = new Set(KNOWN_BFRAME_ROOT_FIELDS);

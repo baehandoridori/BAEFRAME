@@ -61,6 +61,15 @@ test('메인 문서가 다른 주소로 바뀌거나 창이 종료되면 팝업�
   assert.deepEqual(window.openHandler(allowedDetails()), { action: 'deny' });
 });
 
+test('이전 리뷰 전용 창은 보호된 댓글 문서로만 열고 파일 IPC 권한은 제공하지 않는다', () => {
+  const window = configure();
+  const result = window.openHandler(allowedDetails({ frameName: 'baeframe-previous-reviews' }));
+  assert.equal(result.action, 'allow');
+  assert.equal(result.overrideBrowserWindowOptions.webPreferences.sandbox, true);
+  assert.equal(result.overrideBrowserWindowOptions.webPreferences.nodeIntegration, false);
+  assert.equal(window.openHandler(allowedDetails({ frameName: 'baeframe-previous-reviews', url: mainUrl })).action, 'deny');
+});
+
 test('댓글 창은 독립 이동을 허용하며 부모의 preload 권한을 상속하지 않는다', () => {
   const window = configure();
   const response = window.openHandler(allowedDetails());

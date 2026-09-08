@@ -249,7 +249,7 @@ test('stable release version is consistent across the package and lockfile', () 
   const packageJson = JSON.parse(fs.readFileSync(path.join(rootDir, 'package.json'), 'utf8'));
   const packageLock = JSON.parse(fs.readFileSync(path.join(rootDir, 'package-lock.json'), 'utf8'));
 
-  assert.equal(packageJson.version, '2.10.0-beta');
+  assert.equal(packageJson.version, '2.11.0-beta');
   assert.equal(packageLock.version, packageJson.version);
   assert.equal(packageLock.packages[''].version, packageJson.version);
 });

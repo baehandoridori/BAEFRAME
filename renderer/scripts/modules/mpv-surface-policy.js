@@ -30,6 +30,7 @@ export const MPV_SURFACE_REGISTRY = Object.freeze([
     '.shortcuts-menu.visible',
     '.comment-settings-dropdown.open',
     '.filter-dropdown-menu.open',
+    '.pr-toolbar:not([hidden])',
     '.mention-dropdown',
     '.recent-dropdown-menu.open',
     '.version-dropdown.open .version-dropdown-menu',

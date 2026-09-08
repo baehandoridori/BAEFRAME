@@ -30,6 +30,7 @@ import {
   normalizeDrawingLayers,
   serializeDrawingLayers
 } from '../../../shared/drawing-layers.js';
+import { isSupportedReviewCarryover, mergeReviewCarryover } from '../../../shared/review-carryover.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
 
 // 저장 재시도 백오프(ms). 2s → 5s → 10s, 최대 3회.
@@ -264,6 +265,7 @@ function createEmptyReviewMergeBase() {
     drawings: { layers: [] },
     highlights: { highlights: [] },
     compositionLayers: [],
+    reviewCarryoverV1: undefined,
     manualVersions: [],
     versionInfo: null,
     liveblocksRoomId: null
@@ -281,6 +283,7 @@ function captureReviewMergeBase(data) {
     compositionLayers: cloneJson(
       Array.isArray(source.compositionLayers) ? source.compositionLayers : []
     ),
+    reviewCarryoverV1: cloneJson(source.reviewCarryoverV1),
     manualVersions: cloneJson(
       Array.isArray(source.manualVersions) ? source.manualVersions : []
     ),
@@ -341,6 +344,7 @@ function captureAcceptedReviewMergeBase(sourceData, appliedData) {
   return {
     ...source,
     comments,
+    reviewCarryoverV1: cloneJson(applied.reviewCarryoverV1),
     drawings: {
       ...cloneJson(source.drawings),
       layers: filterAcceptedItems(
@@ -821,6 +825,7 @@ function mergeReviewDataThreeWay(baseData, localData, remoteData) {
   const remote = captureReviewMergeBase(remoteData);
   return {
     ...localData,
+    reviewCarryoverV1: mergeReviewCarryover(base.reviewCarryoverV1, local.reviewCarryoverV1, remote.reviewCarryoverV1),
     comments: mergeCommentDataThreeWay(
       base.comments,
       local.comments,
@@ -887,6 +892,11 @@ export class ReviewDataManager extends EventTarget {
     this.drawingManager = options.drawingManager;
     this.highlightManager = options.highlightManager;
     this.compositionLayerManager = options.compositionLayerManager;
+    this.reviewCarryoverManager = options.reviewCarryoverManager;
+    // Keep accepted current data separately from the remote merge baseline,
+    // including callers that do not install the optional feature manager.
+    this._reviewCarryoverFallback = undefined;
+    this._reviewCarryoverDiskReloadEpoch = 0;
     this.fabricDrawingPersistenceProvider =
       options.fabricDrawingPersistenceProvider || null;
 
@@ -1083,6 +1093,7 @@ export class ReviewDataManager extends EventTarget {
   connect() {
     this._isConnected = true;
     this._connectFabricDrawingPersistenceProvider();
+    this.reviewCarryoverManager?.addEventListener('changed', this._onDataChanged);
 
     if (this.commentManager) {
       this.commentManager.addEventListener('markerAdded', this._onDataChanged);
@@ -1126,6 +1137,7 @@ export class ReviewDataManager extends EventTarget {
   disconnect() {
     this._isConnected = false;
     this._disconnectFabricDrawingPersistenceProvider();
+    this.reviewCarryoverManager?.removeEventListener('changed', this._onDataChanged);
 
     if (this.commentManager) {
       this.commentManager.removeEventListener('markerAdded', this._onDataChanged);
@@ -1201,6 +1213,8 @@ export class ReviewDataManager extends EventTarget {
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
+    this._reviewCarryoverFallback = undefined;
+    this.reviewCarryoverManager?.reset();
     this.currentBframePath = getBframePath(videoPath);
     this._fabricDrawingPersistenceContext = {
       stableVideoIdentity: videoPath,
@@ -1583,8 +1597,18 @@ export class ReviewDataManager extends EventTarget {
       this.isDirty = hasConcurrentChanges;
       this._assertSaveOwner(saveOwner);
       this._recordDrawingsV3DiskState(savedData);
+      // Reflect merged remote items while retaining clicks that arrived during
+      // the async write. Loading a snapshot emits loaded, never another edit.
+      const currentCarryover = this.reviewCarryoverManager?.toJSON();
+      this.reviewCarryoverManager?.fromJSON(mergeReviewCarryover(
+        savedReviewMergeBase?.reviewCarryoverV1,
+        currentCarryover,
+        savedData.reviewCarryoverV1
+      ));
+      this._reviewCarryoverFallback = cloneJson(savedData.reviewCarryoverV1);
       this._reviewMergeBase = savedReviewMergeBase ||
         captureReviewMergeBase(savedData);
+      this._reviewMergeBase.reviewCarryoverV1 = cloneJson(savedData.reviewCarryoverV1);
       this._acknowledgeFabricDrawingSave(savedFabricDrawingRevision);
       // 저장이 끝났으므로 로컬 레이어 변경은 더 이상 없다 — **이 저장이 담아 간
       // 상태가 아직 최신일 때만** 그렇다. IPC 를 기다리는 사이 사용자가 레이어를
@@ -1757,6 +1781,8 @@ export class ReviewDataManager extends EventTarget {
       if (!data) {
         log.info('.bframe 파일 없음 (새 리뷰)', { path: loadOwner.bframePath });
         this.compositionLayerManager?.fromJSON?.([]);
+        this.reviewCarryoverManager?.reset();
+        this._reviewCarryoverFallback = undefined;
         this._hasPersistedFile = false;
         this._resetRootEnvelopeState();
         this._resetFabricDrawingPersistenceProvider();
@@ -1997,6 +2023,8 @@ export class ReviewDataManager extends EventTarget {
         );
 
         this.commentManager?.fromJSON?.(mergedReviewData.comments);
+        this.reviewCarryoverManager?.fromJSON(mergedReviewData.reviewCarryoverV1);
+        this._reviewCarryoverFallback = cloneJson(mergedReviewData.reviewCarryoverV1);
         this.drawingManager?.importData?.(mergedReviewData.drawings);
         this.highlightManager?.fromJSON?.(mergedReviewData.highlights);
         this.compositionLayerManager?.fromJSON?.(
@@ -2047,6 +2075,15 @@ export class ReviewDataManager extends EventTarget {
       this.isLoading = wasLoading;
       this._emit('reloadError', { error });
       return { success: false, added: 0, updated: 0 };
+    } finally {
+      // changed events from carryover are genuine user actions even while the
+      // disk read is pending. Resume the timer cancelled at reload start only
+      // for the context which owns this reload, including failed reads.
+      if (this._ownsReviewContext(reloadOwner) && this.reviewCarryoverManager &&
+          !this.isLoading && !this._savePromise && this.autoSaveEnabled &&
+          this.hasUnsavedChanges()) {
+        this._scheduleAutoSave();
+      }
     }
   }
 
@@ -2586,6 +2623,36 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
+  /** Merge only file-synchronized carryover; leave broadcast-owned data untouched. */
+  async reloadReviewCarryoverFromDisk() {
+    if (!this.reviewCarryoverManager || this.isLoading) return false;
+    const request = ++this._reviewCarryoverDiskReloadEpoch;
+    const owner = this._captureReviewContextOwner();
+    const base = this._reviewMergeBase.reviewCarryoverV1;
+    const observation = this._reviewFileObservationEpoch;
+    if (!owner.bframePath) return false;
+    try {
+      const { data } = await this._readReviewSnapshot(owner.bframePath);
+      if (request !== this._reviewCarryoverDiskReloadEpoch || !this._ownsReviewContext(owner) ||
+          this.isLoading || observation !== this._reviewFileObservationEpoch ||
+          base !== this._reviewMergeBase.reviewCarryoverV1) return false;
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return false;
+      if (getUnsupportedBframeMajor(getDataVersion(data), BFRAME_VERSION, !hasExplicitBframeVersion(data)) !== null) return false;
+      if ((Object.hasOwn(data, 'reviewDocumentId') && !isValidReviewDocumentId(data.reviewDocumentId)) ||
+          (this._reviewDocumentIdPersisted && data.reviewDocumentId !== this._reviewDocumentId)) return false;
+      const merged = mergeReviewCarryover(base, this.reviewCarryoverManager.toJSON(), data.reviewCarryoverV1);
+      // Capture current edits after the awaited read; loaded only refreshes UI.
+      // Keep other fields, dirty state, autosave and CAS observations unchanged.
+      this._reviewCarryoverFallback = cloneJson(merged);
+      this._reviewMergeBase.reviewCarryoverV1 = cloneJson(data.reviewCarryoverV1);
+      this.reviewCarryoverManager.fromJSON(merged);
+      return true;
+    } catch (error) {
+      log.warn('이전 리뷰 파일 동기화 실패', { error: error.message });
+      return false;
+    }
+  }
+
   /**
    * .bframe 파일에서 drawingsV3만 다시 읽어 반영한다.
    * Liveblocks 연결 중에도 파일 채널로 드로잉을 동기화하기 위한 선별 경로다.
@@ -2819,8 +2886,14 @@ export class ReviewDataManager extends EventTarget {
       return value === undefined ? cloneJson(fallback) : value;
     };
     const mergeBase = fallbackReviewData || createEmptyReviewMergeBase();
+    let carryover = collectManagerData(this.reviewCarryoverManager, 'toJSON',
+      this._reviewCarryoverFallback !== undefined ? this._reviewCarryoverFallback : mergeBase.reviewCarryoverV1);
+    // Do not add empty optional data to reviews which never used this feature.
+    if (mergeBase.reviewCarryoverV1 === undefined && isSupportedReviewCarryover(carryover) &&
+        carryover.items.length === 0 && Object.keys(carryover).length === 2) carryover = undefined;
 
     return {
+      reviewCarryoverV1: carryover,
       comments: collectManagerData(
         this.commentManager,
         'toJSON',
@@ -2878,6 +2951,9 @@ export class ReviewDataManager extends EventTarget {
 
     if (this._reviewDocumentId) {
       knownRoot.reviewDocumentId = this._reviewDocumentId;
+    }
+    if (reviewData.reviewCarryoverV1 !== undefined) {
+      knownRoot.reviewCarryoverV1 = reviewData.reviewCarryoverV1;
     }
 
     // 기본 상태면 키 자체를 만들지 않는다. 레이어를 쓰지 않은 파일에 빈 구조를
@@ -2976,6 +3052,8 @@ export class ReviewDataManager extends EventTarget {
     this._manualVersions = data.manualVersions || [];
 
     // 리뷰 데이터
+    this._reviewCarryoverFallback = cloneJson(data.reviewCarryoverV1);
+    this.reviewCarryoverManager?.fromJSON(data.reviewCarryoverV1);
     if (data.comments && this.commentManager) {
       this.commentManager.fromJSON(data.comments);
     }
@@ -3122,8 +3200,9 @@ export class ReviewDataManager extends EventTarget {
    * 데이터 변경 이벤트 핸들러
    */
   _onDataChanged(e) {
-    // 로딩 중이면 무시
-    if (this.isLoading) return;
+    // Carryover load/reset emits loaded, never changed. Do not drop real
+    // clicks during an external reload's awaited disk read.
+    if (this.isLoading && e.target !== this.reviewCarryoverManager) return;
 
     this._markDirty({
       eventType: e.type,
@@ -3211,6 +3290,7 @@ export class ReviewDataManager extends EventTarget {
     const hasHighlights = (this.highlightManager?.highlights?.length || 0) > 0;
     const hasCompositionLayers = (this.compositionLayerManager?.layers?.length || 0) > 0;
     const hasManualVersions = (this._manualVersions?.length || 0) > 0;
+    const hasReviewCarryover = this.reviewCarryoverManager?.hasStoredItems() === true;
     // 레이어만 바꾼 것도 저장할 내용이다. 빼면 .bframe 이 아직 없는 새 영상에서
     // 자동 저장 타이머가 hasUnsavedChanges 로 걸러지고, 영상 전환 전 저장도
     // 건너뛰어져 사용자의 레이어 작업이 조용히 사라진다.
@@ -3218,7 +3298,7 @@ export class ReviewDataManager extends EventTarget {
     const hasDrawingLayers = this._drawingLayersUnsupported !== true &&
       serializeDrawingLayers(this._drawingLayers) !== undefined;
     return hasComments || hasDrawings || hasFabricDrawings ||
-      hasHighlights || hasCompositionLayers || hasManualVersions || hasDrawingLayers;
+      hasHighlights || hasCompositionLayers || hasManualVersions || hasDrawingLayers || hasReviewCarryover;
   }
 
   /**

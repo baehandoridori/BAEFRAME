@@ -321,6 +321,9 @@ export function migrateToV2(data) {
   if (Object.hasOwn(data, 'reviewDocumentId')) {
     migratedKnownRoot.reviewDocumentId = data.reviewDocumentId;
   }
+  if (Object.hasOwn(data, 'reviewCarryoverV1')) {
+    migratedKnownRoot.reviewCarryoverV1 = data.reviewCarryoverV1;
+  }
 
   // versions 필드가 있었다면 manualVersions로 변환 (문서 기반 레거시)
   if (Array.isArray(data.versions)) {

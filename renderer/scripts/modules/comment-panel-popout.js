@@ -4,7 +4,8 @@
  */
 export function createCommentPanelPopout({
   panel, toggleButton, focusButton, windowRef = window,
-  onChange, onReady, onError, loadTimeoutMs = 6000
+  onChange, onReady, onError, loadTimeoutMs = 6000,
+  frameName = 'baeframe-comments', title = 'BAEFRAME 댓글', bodyClass = 'comments-detached'
 }) {
   const document = windowRef.document;
   const originalParent = panel.parentNode;
@@ -30,7 +31,7 @@ export function createCommentPanelPopout({
       toggleButton.disabled = !!session?.pending;
     }
     if (focusButton) focusButton.hidden = !detached;
-    document.body.classList.toggle('comments-detached', detached);
+    if (bodyClass) document.body.classList.toggle(bodyClass, detached);
   };
   const isClosed = (child) => {
     try { return !child || child.closed; } catch { return true; }
@@ -116,7 +117,7 @@ export function createCommentPanelPopout({
       reportError(error);
     };
     try {
-      current.child = windowRef.open(popupUrl, 'baeframe-comments', 'popup=yes,width=420,height=760');
+      current.child = windowRef.open(popupUrl, frameName, 'popup=yes,width=420,height=760');
       if (!current.child) throw new Error('댓글 창을 열지 못했습니다. 다시 시도해 주세요.');
     } catch (error) {
       fail(error);
@@ -149,7 +150,7 @@ export function createCommentPanelPopout({
         mount.appendChild(childDocument.adoptNode(panel));
         detached = true;
         current.child.addEventListener('beforeunload', current.beforeUnload);
-        childDocument.title = 'BAEFRAME 댓글';
+        childDocument.title = title;
         syncTheme();
         current.observer = new windowRef.MutationObserver(syncTheme);
         current.observer.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style'] });
