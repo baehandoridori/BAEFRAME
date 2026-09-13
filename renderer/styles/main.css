@@ -12952,3 +12952,5 @@ body.drawing-mode-active .comment-marker-tooltip * { pointer-events: none !impor
   box-shadow: inset 3px 0 0 var(--accent-primary);
   background-color: var(--bg-tertiary);
 }
+
+#videoPlayer, #drawingCanvas, #videoWrapper canvas { touch-action: none; }

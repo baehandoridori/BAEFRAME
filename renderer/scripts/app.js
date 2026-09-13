@@ -1,3 +1,4 @@
+import { createVideoPanGesture } from './modules/video-pan-gesture.js';
 import { getActiveCommentKeys, applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } from './modules/comment-playback-highlight.js';
 import { createCommentEditSession } from './modules/comment-edit-session.js';
 import { createTransitionMetrics } from './modules/playback-transition-metrics.js';
@@ -976,6 +977,9 @@ async function initApp() {
   const playlistResolutionQueue = createPlaylistResolutionQueue({ keyForPath: normalizeComparableFilePath });
   const playlistResolutionStates = new Map();
   const activeMarkerDragCancels = new Set();
+  let videoPanGesture = null;
+  let videoPanRaf = null;
+  let pendingVideoPan = null;
   let playlistCommentModeGeneration = 0;
   let playlistCommentSegments = [];
   let playlistCommentStructureKey = "";
@@ -6218,6 +6222,7 @@ async function initApp() {
   }
 
   function endVideoPan() {
+    videoPanGesture?.cancel();
     const wasPanning = state.isPanningVideo;
     state.isPanningVideo = false;
     elements.videoWrapper?.classList.remove('panning');
@@ -6400,63 +6405,64 @@ async function initApp() {
     setVideoZoom(state.videoZoom + delta);
   }, { passive: false });
 
-  // 비디오 패닝
-  elements.videoWrapper?.addEventListener('mousedown', (e) => {
-    if (getCommentEditableTarget(e.target)) return;
+  function flushVideoPan() {
+    if (videoPanRaf !== null) cancelAnimationFrame(videoPanRaf);
+    videoPanRaf = null;
+    if (!pendingVideoPan) return;
+    state.videoPanX = pendingVideoPan.panX;
+    state.videoPanY = pendingVideoPan.panY;
+    pendingVideoPan = null;
+    applyVideoZoom();
+  }
 
-    if (canStartFullscreenMiddleScrub(e)) {
-      startFullscreenMiddleScrub(e);
-      return;
-    }
-
-    if (canPanVideo() && e.button === 0) {
-      if (state.isSpaceHeld) state.spacePanUsed = true;
-      state.isPanningVideo = true;
-      state.panStartX = e.clientX;
-      state.panStartY = e.clientY;
-      state.panInitialX = state.videoPanX;
-      state.panInitialY = state.videoPanY;
-      elements.videoWrapper.classList.add('panning');
-      e.preventDefault();
+  videoPanGesture = createVideoPanGesture({
+    canStart: e => !getCommentEditableTarget(e.target) && canPanVideo(),
+    getTransform: () => ({ scale: state.videoZoom / 100, panX: state.videoPanX, panY: state.videoPanY }),
+    onChange: (value, gesture) => {
+      pendingVideoPan = value;
+      if (state.isSpaceHeld && gesture.maxDistance >= 3) state.spacePanUsed = true;
+      if (videoPanRaf === null) videoPanRaf = requestAnimationFrame(flushVideoPan);
+    },
+    onFinish: () => {
+      flushVideoPan();
+      state.isPanningVideo = false;
+      elements.videoWrapper?.classList.remove('panning');
     }
   });
-
+  elements.videoWrapper?.addEventListener('pointerdown', e => {
+    if (videoPanGesture.pointerDown(e)) {
+      state.isPanningVideo = true;
+      elements.videoWrapper.classList.add('panning');
+    }
+  });
+  document.addEventListener('pointermove', e => videoPanGesture.pointerMove(e));
+  document.addEventListener('pointerup', e => videoPanGesture.pointerUp(e));
+  document.addEventListener('pointercancel', () => videoPanGesture.cancel());
+  elements.videoWrapper?.addEventListener('lostpointercapture', () => videoPanGesture.cancel());
+  // Middle-button scrubbing remains a separate mouse path. Compatibility mouse
+  // events have no primary-button pan handler and cannot apply a second move.
+  elements.videoWrapper?.addEventListener('mousedown', (e) => {
+    if (getCommentEditableTarget(e.target)) return;
+    if (canStartFullscreenMiddleScrub(e)) startFullscreenMiddleScrub(e);
+  });
   elements.videoWrapper?.addEventListener('auxclick', (e) => {
     if (e.button === 1) {
       e.preventDefault();
     }
   });
-
-  document.addEventListener('mousemove', (e) => {
-    if (state.isFullscreenScrubbing) {
-      updateFullscreenMiddleScrub(e);
-      return;
-    }
-
-    if (state.isPanningVideo) {
-      const scale = state.videoZoom / 100;
-      const dx = (e.clientX - state.panStartX) / scale;
-      const dy = (e.clientY - state.panStartY) / scale;
-      state.videoPanX = state.panInitialX + dx;
-      state.videoPanY = state.panInitialY + dy;
-      applyVideoZoom();
-    }
+  document.addEventListener('mousemove', e => {
+    if (state.isFullscreenScrubbing) updateFullscreenMiddleScrub(e);
   });
-
   document.addEventListener('mouseup', () => {
-    if (state.isFullscreenScrubbing) {
-      finishFullscreenMiddleScrub();
-    }
-
-    endVideoPan();
+    if (state.isFullscreenScrubbing) finishFullscreenMiddleScrub();
   });
-
   window.addEventListener('blur', () => {
     endVideoPan();
     state.isSpaceHeld = false;
     state.spacePanUsed = false;
     elements.videoWrapper?.classList.remove('space-pan');
   });
+  window.addEventListener('beforeunload', () => endVideoPan());
 
   // ====== 댓글 패널 토글 ======
 
@@ -10596,6 +10602,7 @@ async function initApp() {
       if (!canContinueVideoLoad()) return false;
     }
     finishCommentEdit({ flush: false });
+    endVideoPan();
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
     mpvDrawPlaybackTransitionToken += 1;
@@ -11622,6 +11629,7 @@ async function initApp() {
    * 그리기 모드 토글
    */
   function syncCommentInteractionPolicy() {
+    endVideoPan();
     const blocked = state.isDrawMode || isFabricDrawingPilotControllerEngaged();
     setCommentOverlaysDrawingPassthrough(blocked);
     scheduleMpvOverlayStateSync();

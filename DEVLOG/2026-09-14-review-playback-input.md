@@ -80,3 +80,10 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - T9 scrubbing detail로 미리보기/최종/취소 강조 연결. .selected/aria-label/포커스/스크롤 변경 없음.
 - 500행 DOM 시험에서 innerHTML 쓰기0, 반복 강조의 행 query1회, 초안/선택/스크롤 보존.
 - 관련51 pass / 0 fail / 0 cancelled, exit0 (`T6-final.log`). 실제 앱 화면 검증은 미수행.
+
+## T7
+
+- RED: mouse/pen/touch 이동량과 입력 소유권 신규4개 실패 확인.
+- pointerdown의 CSS 좌표/scale/pan을 고정하고 동일 pointerId만 추적, release 최종 좌표 반영. cancel/lostcapture/blur/영상·모드 변경/종료 정리.
+- rAF로 메인 viewport 갱신 합치기, end flush. 기본 가운데 고정 조건 유지. 중간 버튼 scrub은 별도 mouse 경로를 유지하고 주 버튼 호환 mouse 중복 이동 제거.
+- 관련17 pass / 0 fail / 0 cancelled, exit0 (`T7-final.log`). 실물 태블릿은 아직 미수행.
