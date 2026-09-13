@@ -15195,7 +15195,9 @@ async function initApp() {
 
     // ====== 공통 단축키 (사용자 설정 기반) ======
 
-    if (e.code === 'Space' && state.isDrawMode &&
+    const hasBoundSpaceChord = e.code === 'Space' && (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) &&
+      !isPlayPauseInput && !!userSettings.findActionByEvent?.(e);
+    if (e.code === 'Space' && state.isDrawMode && !hasBoundSpaceChord &&
         !shouldIgnoreGlobalShortcutTarget(shortcutTarget, e) &&
         !shouldIgnoreComposingKeyboardEvent(e)) {
       e.preventDefault(); e.stopPropagation();

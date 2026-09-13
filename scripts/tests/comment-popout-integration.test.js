@@ -185,3 +185,20 @@ for (const transition of ['blur', 'dock', 'disable']) { test(`${transition} clea
   owner.message({ ...fence, gestureId: 'after-reset', sequence: 0, pointerId: 1, phase: 'start', clientX: 0, clientY: 0 });
   assert.equal(commands.at(-1).disposition, 'draw');
 }); }
+
+for (const [modifier, action, pan] of [['ctrlKey','undo',false],['shiftKey','onionSkin',false],['altKey','undo',false],['ctrlKey','playPause',true],['altKey',null,true],['',null,true]]) {
+  test(`draw-mode ${modifier || 'plain'} Space routes ${action || 'unbound'} without losing its configured action`, async t => {
+    const { parent, context } = fixture(t); let routed = 0, held = 0; const noop = () => {};
+    Object.assign(context, { state: { isDrawMode: true, isSpaceHeld: false }, commentManager: {},
+      getEffectiveKeyboardShortcutTarget: () => parent.window.document.body, isTextEntryShortcutTarget: () => false,
+      shouldIgnoreComposingKeyboardEvent: () => false, shouldIgnoreGlobalShortcutTarget: () => false,
+      shouldHandlePlayPauseShortcutFromTarget: () => true, getSplitViewManager: () => ({ isOpen: () => false }),
+      userSettings: { findActionByEvent: () => action, matchShortcut: name => name === action && action === 'playPause' },
+      viewportPanOwner: { keyDown: () => { held++; } }, drawingManager: { drawingCanvas: {} },
+      fabricDrawingPilotController: { routeKeydown: () => { routed++; return true; } } });
+    vm.runInContext(functionSource('handleKeydown'), context);
+    await context.handleKeydown({ code: 'Space', ctrlKey: false, shiftKey: false, altKey: false, ...(modifier ? { [modifier]: true } : {}),
+      target: parent.window.document.body, preventDefault: noop, stopPropagation: noop });
+    assert.equal(held, pan ? 1 : 0); assert.equal(routed, pan ? 0 : 1); assert.equal(context.state.isSpaceHeld, pan);
+  });
+}

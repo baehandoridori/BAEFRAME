@@ -257,3 +257,9 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - child blur/dock 및 applyDrawModeState(false)가 state만 초기화하고 native owner key cycle을 남기는 경로를 재현했다. 두 취소 경로를 resetViewportPanCycle로 연결해 owner/endVideoPan/화면 상태를 함께 초기화한다. 정상 handleKeyup의 flush/tap 판정은 유지한다.
 - 실제 installCommentPopoutDocument 이벤트와 applyDrawModeState를 공통 owner에 연결해 다음 일반 pointerdown이 draw로 판정되는 것을 검증했다.11개:8pass/3fail/0cancelled/exit1 →11pass/0fail/0cancelled/exit0.
 - 관련 팝업55/mpv398/Fabricpilot631/입력41/UX77 pass, fail0/cancelled0/exit0. ESLint 오류0/diff check 통과. 로그 review12-*.log. 실제 OS 창 포커스/실물 태블릿 검증으로 대체해 보고하지 않는다.
+
+
+## 최종 리뷰 13차 사용자 지정 Space 조합
+
+- Ctrl/Shift/Alt+Space의 별도 사용자 지정 기능을 pan 분기가 먼저 삼키는 경로를 재현했다. 수정 키가 있고 재생 외 기능이 실제 등록된 Space 입력은 기존 action 라우팅으로 전달한다. 일반 Space/미지정 Alt+Space는 pan, 재생으로 지정한 Space 조합은 기존 tap 조건을 유지한다. 새 설정 action/중복 단축키는 만들지 않는다.
+- 실제 handleKeydown17개:14pass/3fail/0cancelled/exit1 →17pass/0fail/0cancelled/exit0. 관련 팝업61/mpv398/Fabricpilot631/입력41/UX77 pass, fail0/cancelled0/exit0. ESLint 오류0/diff check 통과. 로그 review13-*.log.
