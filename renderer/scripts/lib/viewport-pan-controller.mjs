@@ -27,7 +27,7 @@ var require_viewport_pan_message = __commonJS({
       return { ...value };
     }
     function normalizeViewportPanCommand(value) {
-      const extra = value?.type === "decision" ? ["disposition", "transform"] : value?.type === "ack" ? ["transform"] : [];
+      const extra = value?.type === "decision" ? ["disposition", "transform"] : ["ack", "cancel"].includes(value?.type) ? ["transform"] : [];
       if (!exact(value, [...FENCE_KEYS, "type", ...extra]) || !fenceValid(value) || !["decision", "ack", "flush", "cancel"].includes(value.type)) return null;
       if (value.type === "decision" && !["pan", "draw", "blocked"].includes(value.disposition)) return null;
       if (extra.includes("transform")) {
@@ -77,9 +77,13 @@ var require_viewport_pan_controller = __commonJS({
         cycle = null;
         if (previous?.released && previous.tapAllowed && !previous.consumed) options.togglePlayback();
       };
-      const cancel = () => {
+      const cancel = (terminalTransform = null) => {
         if (cycle) cycle.consumed = true;
-        send("cancel");
+        if (active?.disposition === "pan") {
+          mirror = { gestureId: active.last.gestureId, sequence: active.last.sequence };
+          options.applyTransform(terminalTransform || options.getTransform());
+        }
+        send("cancel", { transform: { ...options.getTransform() } });
         active = null;
         stopTimer();
         cycle = null;
@@ -123,7 +127,7 @@ var require_viewport_pan_controller = __commonJS({
           if (!active || !samePanGesture(message, active.last) || message.sequence <= active.last.sequence) return false;
           active.last = message;
           if (message.phase === "cancel") {
-            cancel();
+            cancel(active.disposition === "pan" ? translate(active.start, message, active.transform) : null);
             return true;
           }
           if (active.disposition === "pan") {
@@ -185,7 +189,7 @@ var require_viewport_pan_controller = __commonJS({
         active = null;
         clearTimer();
         clearFrame();
-        if (previous?.disposition === "pan") retired = { gestureId: previous.id, sequence: previous.sequence };
+        if (previous?.disposition === "pan") retired = { ...previous.fence, gestureId: previous.id, pointerId: previous.pointerId, sequence: previous.sequence };
         try {
           previous?.target?.releasePointerCapture?.(previous.pointerId);
         } catch {
@@ -288,8 +292,17 @@ var require_viewport_pan_controller = __commonJS({
         },
         command(value) {
           const command = normalizeViewportPanCommand(value);
-          if (!command || !active || !samePanSession(command, options.getFence()) || !samePanGesture(command, { ...active.fence, gestureId: active.id, pointerId: active.pointerId })) return false;
+          if (!command || !samePanSession(command, options.getFence())) return false;
+          if (!active) {
+            if (command.type !== "cancel" || !retired || !samePanGesture(command, retired)) return false;
+            options.applyTransform(command.transform);
+            retired.sequence = command.sequence;
+            return true;
+          }
+          if (!samePanGesture(command, { ...active.fence, gestureId: active.id, pointerId: active.pointerId })) return false;
           if (command.type === "cancel") {
+            if (active.disposition === "pan") options.applyTransform(command.transform);
+            active.sequence = command.sequence;
             release();
             return true;
           }

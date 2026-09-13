@@ -16,9 +16,13 @@ function createViewportPanOwner(options) {
     const previous = cycle; cycle = null;
     if (previous?.released && previous.tapAllowed && !previous.consumed) options.togglePlayback();
   };
-  const cancel = () => {
+  const cancel = (terminalTransform = null) => {
     if (cycle) cycle.consumed = true;
-    send('cancel'); active = null; stopTimer();
+    if (active?.disposition === 'pan') {
+      mirror = { gestureId: active.last.gestureId, sequence: active.last.sequence };
+      options.applyTransform(terminalTransform || options.getTransform());
+    }
+    send('cancel', { transform: { ...options.getTransform() } }); active = null; stopTimer();
     cycle = null;
   };
   const arm = (ms = 10000) => { stopTimer(); timer = schedule(cancel, ms); };
@@ -51,7 +55,10 @@ function createViewportPanOwner(options) {
       }
       if (!active || !samePanGesture(message, active.last) || message.sequence <= active.last.sequence) return false;
       active.last = message;
-      if (message.phase === 'cancel') { cancel(); return true; }
+      if (message.phase === 'cancel') {
+        cancel(active.disposition === 'pan' ? translate(active.start, message, active.transform) : null);
+        return true;
+      }
       if (active.disposition === 'pan') {
         if (Math.hypot(message.clientX - active.start.clientX, message.clientY - active.start.clientY) >= 3 && cycle) cycle.consumed = true;
         const transform = translate(active.start, message, active.transform);
@@ -91,7 +98,7 @@ function createViewportPanInput(options) {
   };
   const release = () => {
     const previous = active; active = null; clearTimer(); clearFrame();
-    if (previous?.disposition === 'pan') retired = { gestureId: previous.id, sequence: previous.sequence };
+    if (previous?.disposition === 'pan') retired = { ...previous.fence, gestureId: previous.id, pointerId: previous.pointerId, sequence: previous.sequence };
     try { previous?.target?.releasePointerCapture?.(previous.pointerId); } catch { /* capture may already be gone */ }
   };
   const cancel = () => { if (!active) return; send('cancel'); release(); };
@@ -155,8 +162,19 @@ function createViewportPanInput(options) {
     },
     command(value) {
       const command = normalizeViewportPanCommand(value);
-      if (!command || !active || !samePanSession(command, options.getFence()) || !samePanGesture(command, { ...active.fence, gestureId: active.id, pointerId: active.pointerId })) return false;
-      if (command.type === 'cancel') { release(); return true; }
+      if (!command || !samePanSession(command, options.getFence())) return false;
+      if (!active) {
+        if (command.type !== 'cancel' || !retired || !samePanGesture(command, retired)) return false;
+        options.applyTransform(command.transform);
+        retired.sequence = command.sequence;
+        return true;
+      }
+      if (!samePanGesture(command, { ...active.fence, gestureId: active.id, pointerId: active.pointerId })) return false;
+      if (command.type === 'cancel') {
+        if (active.disposition === 'pan') options.applyTransform(command.transform);
+        active.sequence = command.sequence;
+        release(); return true;
+      }
       if (command.type === 'decision') {
         if (active.disposition !== 'pending' || command.sequence !== 0) return false;
         clearTimer();

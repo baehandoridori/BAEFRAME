@@ -973,7 +973,17 @@ async function initApp() {
     token: 0
   };
   const playlistCommentCache = createPlaylistCommentCache({
-    read: path => window.electronAPI.loadReview(path), normalizePath: normalizeComparableFilePath
+    read: path => window.electronAPI.loadReview(path), normalizePath: normalizeComparableFilePath,
+    getVersion: async path => {
+      try {
+        const info = await window.electronAPI.getFileInfo(path);
+        const modified = new Date(info.mtime).getTime();
+        return Number.isFinite(info.size) && Number.isFinite(modified) ? `${info.size}:${modified}` : null;
+      } catch (error) {
+        if (/ENOENT/.test(error?.message || '')) return 'missing';
+        throw error;
+      }
+    }
   });
   const playlistResolutionQueue = createPlaylistResolutionQueue({ keyForPath: normalizeComparableFilePath });
   const playlistResolutionStates = new Map();
@@ -988,6 +998,7 @@ async function initApp() {
   let playlistCommentStructureKey = '';
   let playlistCommentRevalidationTimer = null;
   let playlistCommentRevalidationRunning = false;
+  let playlistCommentRevalidationCursor = 0;
   let playlistCommentScanPromise = null;
   const playlistProgressById = new Map();
   let playlistProgressRefreshPromise = null;
@@ -1065,6 +1076,7 @@ async function initApp() {
     playlistCommentSegments = [];
     playlistCommentStructureKey = '';
     playlistCommentScanPromise = null;
+    playlistCommentRevalidationCursor = 0;
     clearInterval(playlistCommentRevalidationTimer);
     playlistCommentRevalidationTimer = null;
     playlistTimelineUpdateToken += 1;
@@ -20303,26 +20315,40 @@ async function initApp() {
         playlistCommentRevalidationTimer = null;
         return;
       }
-      if (playlistCommentRevalidationRunning) return;
+      if (playlistCommentRevalidationRunning || playlistCommentScanPromise) return;
       playlistCommentRevalidationRunning = true;
       const generation = playlistCommentModeGeneration;
       const seen = new Set();
+      let changed = false;
       try {
-        for (const item of getPlaylistManager().getItems()) {
+        const items = getPlaylistManager().getItems();
+        let checked = 0;
+        // One low-priority worker, at most four paths checked per tick.
+        for (let scanned = 0; scanned < items.length && checked < 4; scanned++) {
           if (generation !== playlistCommentModeGeneration || playlistUIState.mode !== 'continuous') break;
+          const item = items[playlistCommentRevalidationCursor % items.length];
+          playlistCommentRevalidationCursor = (playlistCommentRevalidationCursor + 1) % items.length;
           const path = item.bframePath;
           if (!path || isSameFilePath(item.videoPath, reviewDataManager.getVideoPath())) continue;
           const key = normalizeComparableFilePath(path);
           if (seen.has(key) || playlistCommentCache.isFresh(path)) continue;
-          seen.add(key);
-          playlistCommentCache.invalidate(path);
-          await refreshPlaylistCommentsForItem(item.id);
+          seen.add(key); checked++;
+          try {
+            const result = await playlistCommentCache.revalidate(path);
+            if (generation !== playlistCommentModeGeneration || playlistUIState.mode !== 'continuous') break;
+            if (result.changed) changed = (await refreshPlaylistCommentsForItem(item.id, { render: false })) || changed;
+          } catch (error) { log.warn('댓글 변경 확인 실패', { error: error.message }); }
+        }
+        if (changed && generation === playlistCommentModeGeneration && playlistUIState.mode === 'continuous') {
+          const visible = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+          timeline.renderPlaylistCommentRanges(visible.filter(range => range.timingValid !== false), timeline.playlistDuration);
+          renderPlaylistContinuousCommentList(commentFilterState.status);
         }
       } finally { playlistCommentRevalidationRunning = false; }
     }, 5000);
   }
 
-  async function refreshPlaylistCommentsForItem(itemId) {
+  async function refreshPlaylistCommentsForItem(itemId, { render = true } = {}) {
     if (playlistUIState.mode !== 'continuous') return;
     const manager = getPlaylistManager();
     const playlist = manager.currentPlaylist;
@@ -20343,12 +20369,17 @@ async function initApp() {
       ).map(candidate => candidate.id));
       const replacement = playlistCommentSegments.filter(segment => sameItems.has(segment.itemId))
         .flatMap(segment => extractPlaylistCommentRanges({ bframeData: data, segment }));
+      const previous = playlistAggregateCommentRanges.filter(range => sameItems.has(range.itemId));
+      if (JSON.stringify(previous) === JSON.stringify(replacement)) return false;
       playlistAggregateCommentRanges = [
         ...playlistAggregateCommentRanges.filter(range => !sameItems.has(range.itemId)), ...replacement
       ].sort((a, b) => a.itemIndex - b.itemIndex || Number(b.timingValid !== false) - Number(a.timingValid !== false) || a.localStartFrame - b.localStartFrame);
-      const visible = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
-      timeline.renderPlaylistCommentRanges(visible.filter(range => range.timingValid !== false), timeline.playlistDuration);
-      renderPlaylistContinuousCommentList(commentFilterState.status);
+      if (render) {
+        const visible = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+        timeline.renderPlaylistCommentRanges(visible.filter(range => range.timingValid !== false), timeline.playlistDuration);
+        renderPlaylistContinuousCommentList(commentFilterState.status);
+      }
+      return true;
     } catch (error) { log.warn('댓글 부분 갱신 실패', { error: error.message }); }
   }
 

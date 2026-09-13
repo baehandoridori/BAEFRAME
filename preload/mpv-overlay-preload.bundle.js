@@ -27,7 +27,7 @@ var require_viewport_pan_message = __commonJS({
       return { ...value };
     }
     function normalizeViewportPanCommand2(value) {
-      const extra = value?.type === "decision" ? ["disposition", "transform"] : value?.type === "ack" ? ["transform"] : [];
+      const extra = value?.type === "decision" ? ["disposition", "transform"] : ["ack", "cancel"].includes(value?.type) ? ["transform"] : [];
       if (!exact(value, [...FENCE_KEYS, "type", ...extra]) || !fenceValid(value) || !["decision", "ack", "flush", "cancel"].includes(value.type)) return null;
       if (value.type === "decision" && !["pan", "draw", "blocked"].includes(value.disposition)) return null;
       if (extra.includes("transform")) {

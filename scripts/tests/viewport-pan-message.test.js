@@ -16,7 +16,9 @@ test('pan command has strict per-type keys and zoom bounds', () => {
   const transform = { scale: 2, panX: 0, panY: 1 };
   for (const disposition of ['pan', 'draw', 'blocked']) assert.ok(command({ ...fence, type: 'decision', disposition, transform }));
   assert.ok(command({ ...fence, type: 'ack', transform }));
-  for (const type of ['flush', 'cancel']) {
+  assert.ok(command({ ...fence, type: 'cancel', transform }));
+  assert.equal(command({ ...fence, type: 'cancel' }), null);
+  for (const type of ['flush']) {
     assert.ok(command({ ...fence, type }));
     assert.equal(command({ ...fence, type, transform }), null);
   }

@@ -18290,3 +18290,28 @@ test('native draw ownership replays once into original frame confirmation with e
     assert.equal(h.runtime.getDiagnostics().undoDepth, 1);
   } finally { await h.destroy(); }
 });
+
+
+test('native Fabric pointercancel keeps the owner and DOM viewport aligned without drawing', async () => {
+  const { createViewportPanOwner } = require('../../shared/viewport-pan-controller');
+  const sceneStore = createSessionSceneStore();
+  sceneStore.hydrateVideo(makePersistenceHydration({ hostGeneration: 1, videoGeneration: 1, stableVideoIdentity: 'real-fabric-video' }));
+  let command; let mainTransform = { scale: 2, panX: 5, panY: 7 };
+  const h = createRealFabricHarness({ sceneStore, viewportPanBridge: {
+    send(value) { return owner.message(value); }, onCommand(callback) { command = callback; return () => {}; }
+  } });
+  const owner = createViewportPanOwner({ getFence: () => sceneStore.getPersistenceFence(), canPan: () => true,
+    getTransform: () => mainTransform, applyTransform: value => { mainTransform = value; }, togglePlayback: () => assert.fail('cancel played'),
+    send(value) { command(value); return true; } });
+  try {
+    owner.keyDown({ tapAllowed: true });
+    h.dispatchPointer(h.element, 'pointerdown', 10, 20, 77, 1, { pointerType: 'pen' });
+    h.dispatchPointer(h.element, 'pointermove', 50, 40, 77, 1, { pointerType: 'pen' });
+    h.dispatchPointer(h.element, 'pointercancel', 50, 40, 77, 0, { pointerType: 'pen' });
+    assert.deepEqual(mainTransform, { scale: 2, panX: 25, panY: 17 });
+    assert.equal(h.root.querySelector('.mpv-fabric-pilot-viewport').style.transform, 'scale(2) translate(25px, 17px)');
+    const mirrored = h.runtime.updateViewport({ revision: 20, canvasRect: { left: 0, top: 0, width: 200, height: 200 }, ...mainTransform, panGesture: owner.getMirror() });
+    assert.notEqual(mirrored.reason, 'stale-pan-viewport');
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 0); assert.equal(h.runtime.getDiagnostics().undoDepth, 0);
+  } finally { owner.cancel(); await h.destroy(); }
+});

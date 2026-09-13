@@ -4,6 +4,7 @@ const { createViewportPanOwner, createViewportPanInput } = require('../../shared
 const fence = { hostGeneration: 1, videoGeneration: 2, persistenceSessionId: 's', stableVideoIdentity: 'v' };
 function harness({ canPan = true, delayed = false } = {}) {
   let transform = { scale: 2, panX: 5, panY: 7 }, toggles = 0, draws = 0;
+  let overlayTransform = { ...transform };
   const commands = [], messages = [], timers = new Map(); let tid = 0;
   const timing = { setTimeout: cb => { timers.set(++tid, cb); return tid; }, clearTimeout: id => timers.delete(id) };
   const owner = createViewportPanOwner({ ...timing, getFence: () => fence, canPan: () => canPan,
@@ -11,10 +12,10 @@ function harness({ canPan = true, delayed = false } = {}) {
     send: value => { commands.push(value); if (!delayed) input.command(value); return true; } });
   const input = createViewportPanInput({ ...timing, getFence: () => fence, createId: () => 'g',
     send: value => { messages.push(value); owner.message(value); return true; },
-    applyTransform: t => { transform = t; }, replay: events => { draws += events.filter(e => e.type === 'pointerdown').length; },
+    applyTransform: t => { overlayTransform = t; }, replay: events => { draws += events.filter(e => e.type === 'pointerdown').length; },
     requestAnimationFrame: cb => { timers.set(++tid, cb); return tid; }, cancelAnimationFrame: id => timers.delete(id) });
   const event = (type, x = 10, extra = {}) => ({ type, pointerId: 3, pointerType: 'pen', isPrimary: true, button: 0, buttons: 1, clientX: x, clientY: 20, preventDefault() {}, stopImmediatePropagation() {}, stopPropagation() {}, ...extra });
-  return { owner, input, event, commands, messages, timers, get transform() { return transform; }, get toggles() { return toggles; }, get draws() { return draws; } };
+  return { owner, input, event, commands, messages, timers, get transform() { return overlayTransform; }, get mainTransform() { return transform; }, get toggles() { return toggles; }, get draws() { return draws; } };
 }
 test('same-tick Space pen pan owns input, uses initial scale and consumes return to origin', () => {
   const h = harness(); h.owner.keyDown({ tapAllowed: true });
@@ -102,4 +103,34 @@ test('generated sandbox preload loads with electron-only require and validates f
   assert.equal(vm.runInContext('bridge.send(' + JSON.stringify(packet) + ')', context), true);
   assert.equal(sent[0][0], 'mpv-overlay:viewport-pan');
   assert.equal(vm.runInContext('bridge.send(' + JSON.stringify({ ...packet, extra: true }) + ')', context), false);
+});
+
+
+test('native pointer cancel flushes the visible terminal position and accepts its mirror', () => {
+  const h = harness(); h.owner.keyDown({ tapAllowed: true }); h.input.down(h.event('pointerdown'));
+  h.input.event(h.event('pointermove', 50));
+  assert.notDeepEqual(h.mainTransform, h.transform);
+  h.input.cancel(h.event('pointercancel', 50)); h.owner.keyUp();
+  assert.deepEqual(h.mainTransform, h.transform);
+  assert.equal(h.input.acceptsMirror(h.owner.getMirror()), true);
+  assert.equal(h.draws, 0); assert.equal(h.toggles, 0);
+});
+
+test('owner cancellation restores its authoritative transform even with an unsent local move', () => {
+  const h = harness(); h.owner.keyDown({ tapAllowed: true }); h.input.down(h.event('pointerdown'));
+  h.input.event(h.event('pointermove', 50)); h.owner.cancel();
+  assert.deepEqual(h.mainTransform, h.transform);
+  assert.equal(h.input.acceptsMirror(h.owner.getMirror()), true);
+  assert.equal(h.input.isActive(), false); assert.equal(h.toggles, 0);
+});
+
+
+test('a delayed owner cancel reconciles an already released local pan and its sequence', () => {
+  const h = harness({ delayed: true }); h.owner.keyDown({ tapAllowed: true }); h.input.down(h.event('pointerdown'));
+  h.input.command(h.commands[0]); h.input.event(h.event('pointermove', 50));
+  h.owner.cancel(); const cancelled = h.commands.at(-1);
+  h.input.cancel();
+  assert.equal(h.input.command(cancelled), true);
+  assert.deepEqual(h.mainTransform, h.transform);
+  assert.equal(h.input.acceptsMirror(h.owner.getMirror()), true);
 });

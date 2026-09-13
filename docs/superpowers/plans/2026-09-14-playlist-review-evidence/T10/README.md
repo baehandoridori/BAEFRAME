@@ -8,8 +8,10 @@ baseline은 04e2a229, after는 T10 통합 작업 코드다. 같은 PC, Electron2
 |---|---|---:|---:|---:|
 | before | local | 20 | 1291.0 | 1399.7 |
 | before | Drive | 20 | 1337.0 | 1465.8 |
-| after | local | 20 | 893.0 | 980.2 |
-| after | Drive | 20 | 960.0 | 1005.4 |
+| after (T10) | local | 20 | 893.0 | 980.2 |
+| after (T10) | Drive | 20 | 960.0 | 1005.4 |
+| after (리뷰2 수정) | local | 20 | 771.6 | 1101.1 |
+| after (리뷰2 수정) | Drive | 20 | 774.8 | 924.3 |
 | 완료 직후 | local | 20 | 1366.4 | 1450.8 |
 | 완료 직후 | Drive | 20 | 2104.1 | 2267.8 |
 
@@ -22,3 +24,7 @@ baseline은 04e2a229, after는 T10 통합 작업 코드다. 같은 PC, Electron2
 실제 댓글 수정창에서 `확인@배` 후보 표시/선택을 확인했고, 프레임 이동과 목록 갱신 동안 초안/포커스/DOM 연결이 유지됐다. 실물 태블릿, OS 창 사이 Space keyup/focus, 실제 IME 장치, 다른 PC 동시 편집/동기화는 미확인이다. 네트워크 차단 때문에 협업 시작만 테스트 페이지에서 실패 stub으로 바꾸었으며 이 파일들은 원격 협업 검증 결과가 아니다.
 
 최초 `native-save-parity.json`의 otherCommentsUnchanged=false는 수정 전 fromJSON이 다른 댓글의 endFrame0을 기본 길이로 바꾼 재현이다. 이 문제를 고친 제품 커밋b70e441의 실제 checkpoint 저장을 다시 실행한 `native-save-parity-final.json`은 그림/root 필드/다른 댓글 모두 동일하다. 초기 재현 파일은 과거 증거로 보존한다.
+
+리뷰2 수정 후 동일 조건으로 다시 측정한 46회는 `after-review2-timing.json`이다. 이전 측정도 보존한다. background 재검사는 freshness60초와 5초 tick을 분리하고 tick당 최대4경로를 metadata로 확인하며 변경된 파일만 읽는다. 무변경 snapshot은 목록/타임라인을 다시 렌더하지 않는다. 위 소규모 반복 측정은 모든 Drive 지연 제거를 뜻하지 않는다.
+
+`review1-native-rejected-seek.json`은 실제 checkpoint 실패로 다음 컷 이동이 거절됐을 때 원래 A/frame32 댓글 강조와 재시도 상태를 확인한 결과다. `review2-native-cancel.json`은 실제 native overlay→host→main IPC에서 미전송 move 직후 cancel해도 메인/overlay pan 좌표가 같고 mutation/undo가0임을 확인한 결과다. 합성 pointercancel을 포함하므로 실물 펜의 취소 검증과 구분한다.

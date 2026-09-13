@@ -78,13 +78,13 @@ test('one changed cut in 100 refreshes only its snapshot and leaves segment meta
   const items = Array.from({ length: 100 }, (_, index) => ({ id: String(index), videoPath: `${index}.mp4`, bframePath: `${index}.bframe` }));
   const segments = items.map((item, index) => ({ itemId: item.id, index, startTime: index * 3, duration: 3, fps: 24 }));
   const manager = { currentPlaylist: { id: '100' }, getItems: () => items, ensureItemBframePath: async item => item.bframePath };
-  let reads = 0; let probes = 0; let clears = 0;
+  let reads = 0; let probes = 0; let clears = 0; let renders = 0;
   const context = vm.createContext({ ...mod, playlistUIState: { mode: 'continuous' }, playlistCommentModeGeneration: 0,
     playlistTimelineUpdateToken: 0, playlistCommentSegments: segments, playlistCommentScanPromise: null,
     playlistAggregateCommentRanges: [], getPlaylistManager: () => manager, isSameFilePath: (a,b) => a === b,
     readPlaylistCommentSnapshot: async path => { reads++; assert.equal(path, '52.bframe'); return { comments: { layers: [{ id: 'l', markers: [{ id: 'm', startFrame: 32 }] }] } }; },
     commentFilterState: { status: 'all' }, filterPlaylistAggregateCommentRanges: r => r,
-    timeline: { playlistDuration: 300, clearCommentMarkers() { clears++; }, renderPlaylistCommentRanges() {} },
+    timeline: { playlistDuration: 300, clearCommentMarkers() { clears++; }, renderPlaylistCommentRanges() { renders++; } },
     collectPlaylistMetadata() { probes++; }, renderPlaylistContinuousCommentList() {}, log: { warn: e => { throw new Error(e); } }
   });
   vm.runInContext(appFunction('refreshPlaylistCommentsForItem'), context);
@@ -92,6 +92,10 @@ test('one changed cut in 100 refreshes only its snapshot and leaves segment meta
   assert.equal(reads, 1); assert.equal(probes, 0); assert.equal(clears, 0);
   assert.equal(context.playlistCommentSegments, segments);
   assert.equal(context.playlistAggregateCommentRanges[0].globalStartTime, 156 + 32 / 24);
+  const originalRanges = context.playlistAggregateCommentRanges;
+  await context.refreshPlaylistCommentsForItem('52');
+  assert.equal(context.playlistAggregateCommentRanges, originalRanges);
+  assert.equal(renders, 1);
 });
 
 
@@ -105,4 +109,27 @@ test('list filtering keeps unknown timing after valid comments within its cut', 
     { id: 'next', itemIndex: 1, globalStartTime: 3 }
   ]);
   assert.deepEqual(Array.from(rows, r => r.id), ['zero', 'later', 'bad', 'next']);
+});
+
+
+test('background revalidation bounds metadata work and renders changed snapshots once per batch', async () => {
+  const items = Array.from({ length: 100 }, (_, i) => ({ id: String(i), videoPath: `${i}.mp4`, bframePath: `${i}.bframe` }));
+  let callback; let checks = 0; let reads = 0; let lists = 0; let timelineRenders = 0; let changedPath = null;
+  const context = vm.createContext({
+    playlistCommentRevalidationTimer: null, playlistCommentRevalidationRunning: false, playlistCommentRevalidationCursor: 0,
+    playlistCommentModeGeneration: 0, playlistCommentScanPromise: null, playlistUIState: { mode: 'continuous' },
+    setInterval: cb => { callback = cb; return 1; }, clearInterval() {},
+    getPlaylistManager: () => ({ getItems: () => items }), reviewDataManager: { getVideoPath: () => null },
+    normalizeComparableFilePath: p => p, isSameFilePath: (a, b) => a === b,
+    playlistCommentCache: { isFresh: () => false, invalidate() {}, revalidate: async p => { checks++; return { changed: p === changedPath }; } },
+    refreshPlaylistCommentsForItem: async (_id, options = {}) => { reads++; if (options.render !== false) lists++; return true; },
+    playlistAggregateCommentRanges: [], commentFilterState: { status: 'all' }, filterPlaylistAggregateCommentRanges: rows => rows,
+    timeline: { playlistDuration: 300, renderPlaylistCommentRanges: () => timelineRenders++ },
+    renderPlaylistContinuousCommentList: () => lists++, log: { warn() {} }
+  });
+  vm.runInContext(appFunction('startPlaylistCommentRevalidation'), context);
+  context.startPlaylistCommentRevalidation(); await callback();
+  assert.equal(reads, 0); assert.equal(checks, 4); assert.equal(lists, 0);
+  changedPath = '5.bframe'; await callback();
+  assert.equal(reads, 1); assert.equal(checks, 8); assert.equal(lists, 1); assert.equal(timelineRenders, 1);
 });

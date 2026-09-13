@@ -1,0 +1,12 @@
+{
+  "blockedSave": false,
+  "path": "C:/BAEframe/BAEFRAME/.worktrees/review-playback-input/.local/review-playback-input/fixtures/A.mp4",
+  "frame": 32,
+  "highlights": [
+    "test-frame0",
+    "acceptance-A",
+    "test-frame32"
+  ],
+  "targetItemId": "item_1789324420591_jsbyhi",
+  "retry": true
+}

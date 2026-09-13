@@ -124,14 +124,14 @@ T0~T8 및 T9 구현 커밋 완료. T10 통합 검증 진행. 아래 각 task 수
 
 | suite | pass | fail | cancelled | exit |
 |---|---:|---:|---:|---:|
-| test:playlist | 353 | 0 | 0 | 0 |
-| test:mpv | 394 | 0 | 0 | 0 |
+| test:playlist | 355 | 0 | 0 | 0 |
+| test:mpv | 397 | 0 | 0 | 0 |
 | test:frame-grid | 68 | 0 | 0 | 0 |
 | test:comment-input | 36 | 0 | 0 | 0 |
 | test:comment-popout | 52 | 0 | 0 | 0 |
 | test:ux | 77 | 0 | 0 | 0 |
 | test:fabric-drawing-persistence | 166 | 0 | 0 | 0 |
-| test:fabric-drawing-pilot | 630 | 0 | 0 | 0 |
+| test:fabric-drawing-pilot | 631 | 0 | 0 | 0 |
 
 - 번들 생성 exit0, 변경 파일 ESLint 오류0. 로그는 `.local/review-playback-input/T10-*`에 보존했다. suite는 일부 검사가 겹치므로 합계를 고유 테스트 수로 쓰지 않는다.
 - 쓰기 전 잠금/권한 거절이 영구 저장 실패로 남아 이동을 막는 재현6 pass/1 fail → mutation 전 거절과 실제 실패를 구분 후7 pass/0 fail. 실제 저장 실패는 계속 재시도 성공까지 이동을 막는다.
@@ -166,3 +166,15 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 저장 실패 뒤 목록 선택이 새 항목에 남아 있어도 실제 로드된 continuous segment에서 댓글 정체를 구한다. 이동 예외도 같은 복원을 거친다.
 - 새 행동7 pass/0 fail. 관련 suite: comment-input36/frame-grid68/playlist353/ux77 pass, 모두 fail0/cancelled0/exit0. UX 최초76 pass/1 fail은 기존 VM harness가 새 frame reader import를 제거해 생긴 ReferenceError였고, 실제 production reader를 주입해 재검사했다. lint 오류0.
 - 초기 저장 불변식 실패와 수정 후 최종 실제 저장 증거를 함께 명확히 문서화했다. 새 head로 재리뷰 요청한다.
+
+
+## PR #222 Codex 2차 리뷰 반영
+
+- 대상80ee4b9, trigger5655237605, P1 두 건(comment4000511109/4000511112).
+- native cancel: 이전 검사의 main/overlay transform 변수를 분리해 미전송 move 뒤 pointercancel·owner cancel 불일치를 재현했다(9 pass/2 fail). main이 cancel의 마지막 표시 좌표를 반영하고 그 sequence를 viewport mirror에 남긴다. owner 주도 취소에는 authoritative transform을 엄격한 cancel packet으로 보내고, 이미 release된 제스처의 지연 취소도 같은 fence에서 좌표/sequence를 맞춘다. sandbox preload/ESM/runtime 번들을 함께 재생성했다.
+- 실제 Fabric DOM pointercancel과 늦은 cancel까지 검사했다. 별도 Electron 앱의 실제 main↔host↔native IPC에서도 동일 tick move/cancel 뒤 main(80,26.6667)과 overlay 좌표가 일치하고 mutation/undo0, 재생false였다. 취소 후175% 확대 mirror도 수신됐다. 실물 펜/OS pointercancel 검증으로 확대하지 않는다.
+- background revalidation: 100개 무변경 파일을 전부 읽고 render하는 기존 timer 재현(4 pass/1 fail), 실제 app cache의 metadata reader 미연결 재현(3 pass/1 fail)을 먼저 확인했다. 기본 freshness60초/5초 tick/round-robin 최대4경로/worker1로 분리했다. size+mtime으로 변경 여부를 확인하며 변경 시만 본문을 읽는다. 같은 댓글 snapshot은 DOM/timeline 갱신을 생략하고, batch 내 변경은 마지막에 한 번 렌더한다. 쓰기는 계속 캐시를 사용하지 않는다.
+- 관련 검사: cache/panel9 pass, mpv397 pass, playlist355 pass, Fabric pilot631 pass, persistence166 pass. 모두 fail0/cancelled0/exit0. lint 오류0, 생성 번들 검사 포함.
+- Electron 검증 시작 시 mpv 내장 영상 창을 overlay로 잘못 선택한 테스트 harness 오류를 고쳤다. 실제 runtime 존재로 창을 선택한 뒤 위 결과를 확인했다. 제품 코드 오류와 구분한다.
+
+- 리뷰2 수정 후 동일 익명 fixture/격리 앱 전환46회: warm 각20회, local median771.6/p951101.1ms, Drive median774.8/p95924.3ms. 초기3회는 별도 first-touch이며 cold 다운로드 검증은 아니다. raw JSON과 실제 취소/실패 전환 증거를 T10 폴더에 추가했다.
