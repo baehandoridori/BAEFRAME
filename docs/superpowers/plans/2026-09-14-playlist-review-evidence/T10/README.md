@@ -28,3 +28,5 @@ baseline은 04e2a229, after는 T10 통합 작업 코드다. 같은 PC, Electron2
 리뷰2 수정 후 동일 조건으로 다시 측정한 46회는 `after-review2-timing.json`이다. 이전 측정도 보존한다. background 재검사는 freshness60초와 5초 tick을 분리하고 tick당 최대4경로를 metadata로 확인하며 변경된 파일만 읽는다. 무변경 snapshot은 목록/타임라인을 다시 렌더하지 않는다. 위 소규모 반복 측정은 모든 Drive 지연 제거를 뜻하지 않는다.
 
 `review1-native-rejected-seek.json`은 실제 checkpoint 실패로 다음 컷 이동이 거절됐을 때 원래 A/frame32 댓글 강조와 재시도 상태를 확인한 결과다. `review2-native-cancel.json`은 실제 native overlay→host→main IPC에서 미전송 move 직후 cancel해도 메인/overlay pan 좌표가 같고 mutation/undo가0임을 확인한 결과다. 합성 pointercancel을 포함하므로 실물 펜의 취소 검증과 구분한다.
+
+`review4-native-edit-failure.json`은 별도 실제 앱에서 댓글 수정 checkpoint를 실패시키고, 본문 복원 뒤 정상 저장한 결과다. 메모리와 다시 읽은 익명 A.bframe 모두 원래 본문이며 실패한 초안이 저장되지 않았다. 자동 검사는 본문/답글, false/예외, 다른 필드의 동시 변경, 더 최신 원격 본문/영상 교체, 입력칸 handoff와 답글 취소 뒤 보류 갱신을 포함한다.

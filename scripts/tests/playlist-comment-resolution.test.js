@@ -118,7 +118,7 @@ test('reply edits on the same marker retain distinct save intents', async () => 
     normalizeComparableFilePath: p => p,
     reviewDataManager: { captureSaveCheckpoint: () => ({ videoPath: 'A' }), _ownsSave: () => true,
       saveThroughCheckpoint: async () => { if (++saves === 1) await held.promise; return true; } },
-    commentManager: { getMarker: () => ({}) }, liveblocksManager: { checkEditLock: () => null }, showToast() {}
+    commentManager: { getMarker: () => ({ replies: [{ id: 'reply1' }, { id: 'reply2' }] }) }, liveblocksManager: { checkEditLock: () => null }, showToast() {}
   });
   vm.runInContext(appFunction('saveCurrentCommentEdit'), context);
   const first = context.saveCurrentCommentEdit('marker', () => { edits.push('reply1'); return true; }, 'reply1');
@@ -138,4 +138,50 @@ test('rejected permissions before mutation do not trap navigation; actual failed
   await queue.drainPaths(['A']);
   await assert.rejects(queue.enqueue({ key: 'write', videoPath: 'A' }, () => { throw new Error('disk'); }), /disk/);
   await assert.rejects(queue.drainPaths(['A']), /disk/);
+});
+
+
+for (const replyId of ['', 'r']) {
+  for (const failure of ['false', 'throw']) {
+    test(`failed ${replyId ? 'reply' : 'marker'} edit (${failure}) rolls back only its text before later autosave`, async () => {
+      const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+      const marker = { id: 'm', text: 'original', updatedAt: new Date(1), resolved: false,
+        replies: [{ id: 'r', text: 'original reply', updatedAt: new Date(1) }, { id: 'other', text: 'other' }] };
+      const target = replyId ? marker.replies[0] : marker; const original = target.text;
+      const events = []; const queue = createPlaylistResolutionQueue({ keyForPath: p => p });
+      const context = vm.createContext({ playlistResolutionQueue: queue, normalizeComparableFilePath: p => p,
+        reviewDataManager: { captureSaveCheckpoint: () => ({ videoPath: 'A' }), _ownsSave: () => true,
+          saveThroughCheckpoint: async () => { marker.resolved = true; marker.replies[1].text = 'concurrent';
+            if (failure === 'throw') throw new Error('disk'); return false; } },
+        commentManager: { getMarker: () => marker, _emit: (name, detail) => events.push({ name, detail }) },
+        liveblocksManager: { checkEditLock: () => null }, showToast() {} });
+      vm.runInContext(appFunction('saveCurrentCommentEdit'), context);
+      const result = await context.saveCurrentCommentEdit('m', () => {
+        target.text = 'attempted'; target.updatedAt = marker.updatedAt = new Date(2); return true;
+      }, replyId);
+      assert.equal(result, false); assert.equal(target.text, original);
+      assert.equal(marker.resolved, true); assert.equal(marker.replies[1].text, 'concurrent');
+      assert.ok(events.some(e => e.name === 'markersChanged'));
+      assert.ok(target.updatedAt.getTime() > 2, 'rollback has a fresh collaboration revision');
+      // An autosave reading the live model after failure must not commit the failed draft.
+      const laterSave = JSON.parse(JSON.stringify(marker));
+      assert.equal(replyId ? laterSave.replies[0].text : laterSave.text, original);
+      await queue.drainPaths(['A']);
+    });
+  }
+}
+
+test('failed edit does not overwrite a newer remote text or a replaced video owner', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  for (const changedOwner of [false, true]) {
+    const marker = { id: 'm', text: 'original', updatedAt: new Date(1) }; let owns = true;
+    const context = vm.createContext({ playlistResolutionQueue: createPlaylistResolutionQueue({ keyForPath: p => p }),
+      normalizeComparableFilePath: p => p, commentManager: { getMarker: () => marker, _emit() {} },
+      liveblocksManager: { checkEditLock: () => null }, showToast() {},
+      reviewDataManager: { captureSaveCheckpoint: () => ({ videoPath: 'A' }), _ownsSave: () => owns,
+        saveThroughCheckpoint: async () => { marker.text = 'newer'; if (changedOwner) owns = false; return false; } } });
+    vm.runInContext(appFunction('saveCurrentCommentEdit'), context);
+    assert.equal(await context.saveCurrentCommentEdit('m', () => { marker.text = 'attempted'; return true; }), false);
+    assert.equal(marker.text, 'newer');
+  }
 });

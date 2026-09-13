@@ -184,3 +184,11 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - a607b64의 별도 release worktree에서 npm run build exit0. 기본 fabric-v3-stable 프로필로 실행한 packaged 앱에서 version2.12.0-beta/isPackaged/mpv-embedded/native bridge/테스트 영상 screenshot을 확인했다. 개인 userData/실제 업무 파일은 사용하지 않았다.
 - prebuild가 같은 mpv Fabric runtime을 재사용하는 editor-drawing.iife.js도 갱신했다. 이 생성 결과를 소스와 일치하도록 추가하고 test:editor147 pass/fail0/cancelled0/exit0를 확인했다. 최종 리뷰 이후 정확한 merge SHA에서 다시 빌드한다.
 - packaged 검사 스크립트의 asar 경로 구분자를 Windows path.normalize로 고쳤다. 처음 파일 없음 오류는 검사 스크립트 오류였으며 실제 archive에 해당 파일이 있고 비교26개가 모두 일치했다.
+
+## PR #222 최종 후보 리뷰의 댓글 편집 보완
+
+- 최종 후보0ef5a3c, trigger5655383688, review5191831026의 P2 두 건(comment4000563301/4000563303)을 확인했다. 앞선 a607b64 트리거는 편집 화면 생성 번들 추가로 대체했으며 이전 신호를 승인으로 사용하지 않았다.
+- 실제 saveCurrentCommentEdit와 focus listener로 원인 재현10 pass/5 fail 후 수정. 실패한 본문/답글의 text만 소유권·객체·현재 값 확인 후 복원한다. 원격 병합이 실패 본문을 다시 살리지 않도록 복원은 새 revision으로 알린다. 다른 완료 상태/답글/그림과 더 최신 원격 본문은 덮지 않는다. 복원된 수정은 navigation 실패 queue에 남기지 않으며 초안은 편집창에 유지한다.
+- 편집칸 handoff는 보류된 refresh를 다음 session에 넘기고, 다른 문서 등 명시적 context 종료는 기존대로 폐기한다. 답글 취소 경로의 refresh 유실도3 pass/1 fail로 추가 재현하여 폼 정리 뒤 flush한다.
+- 관련 결과: playlist360/comment-input38/comment-popout52/ux77/persistence166 pass. 모두 fail0/cancelled0/exit0. lint 오류0. 테스트 반복은 후속 cleanup 변경 범위에 한정했다.
+- 별도 실제 Electron 앱: 익명 A 댓글 수정 checkpoint 실패→원래 본문 복원→정상 저장→A.bframe 재읽기에서 원래 본문 확인. 사용자 데이터는 사용하지 않았다. T10/review4-native-edit-failure.json에 원본 기록.

@@ -1510,7 +1510,7 @@ async function initApp() {
       row?.dataset.aggregateCommentKey || markerId, replyId, element.className]);
   }
 
-  function finishCommentEdit({ discard = false, flush = true } = {}) {
+  function finishCommentEdit({ discard = false, flush = true, preserveRefresh = false } = {}) {
     const element = commentEditSession.getElement();
     const key = commentEditSession.getKey();
     if (element && key) {
@@ -1520,7 +1520,7 @@ async function initApp() {
           start: element.selectionStart, end: element.selectionEnd });
       }
     }
-    commentEditSession.end({ flush });
+    commentEditSession.end({ flush, preserveRefresh });
   }
 
   function restoreCommentDraft(element) {
@@ -1538,7 +1538,7 @@ async function initApp() {
       const element = e.target.closest('textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
       if (!element || element.readOnly) return;
       if (commentEditSession.getElement() === element) return;
-      finishCommentEdit({ flush: false });
+      finishCommentEdit({ flush: false, preserveRefresh: true });
       restoreCommentDraft(element);
       commentEditSession.begin({ key: getCommentDraftKey(element), element });
     });
@@ -13033,10 +13033,10 @@ async function initApp() {
     editor.addEventListener('input', () => resizeReplyEditorToContent(editor));
 
     const cleanup = () => {
-      finishCommentEdit({ discard: true, flush: false });
       mentionManager.detach(editor);
       form.remove();
       textEl.style.display = '';
+      finishCommentEdit({ discard: true });
     };
 
     saveBtn.addEventListener('click', async (e) => {
@@ -13395,10 +13395,35 @@ async function initApp() {
         if (!reviewDataManager._ownsSave(owner)) throw Object.assign(new Error('영상이 바뀌어 댓글 수정을 중단했습니다.'), { blocksNavigation: false });
         const marker = commentManager.getMarker(markerId);
         if (!marker || marker.deleted || liveblocksManager.checkEditLock(markerId)?.isLocked) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
+        const target = replyId ? marker.replies?.find(reply => reply.id === replyId) : marker;
+        if (!target || target.deleted) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
+        const previousText = target.text;
         const result = mutate();
         if (!result) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
-        if (await reviewDataManager.saveThroughCheckpoint(reviewDataManager.captureSaveCheckpoint()) !== true) {
-          throw new Error('저장 실패 · 다시 시도');
+        const attemptedText = target.text;
+        try {
+          if (await reviewDataManager.saveThroughCheckpoint(reviewDataManager.captureSaveCheckpoint()) !== true) {
+            throw new Error('저장 실패 · 다시 시도');
+          }
+        } catch (error) {
+          const current = commentManager.getMarker(markerId);
+          const currentTarget = replyId ? current?.replies?.find(reply => reply.id === replyId) : current;
+          let rolledBack = false;
+          if (reviewDataManager._ownsSave(owner) && current === marker && currentTarget === target &&
+              !marker.deleted && !target.deleted && target.text === attemptedText) {
+            // Restore only this edit. Concurrent resolution, replies and drawings remain untouched.
+            target.text = previousText;
+            // Rollback is a new revision so collaboration/merge does not revive the failed text.
+            const revision = new Date(Math.max(Date.now(), new Date(target.updatedAt).getTime() || 0,
+              new Date(marker.updatedAt).getTime() || 0) + 1);
+            target.updatedAt = marker.updatedAt = revision;
+            if (replyId) commentManager._emit('replyUpdated', { marker, markerId, replyId, reply: target, updates: { text: previousText } });
+            commentManager._emit('markerUpdated', { marker });
+            commentManager._emit('markersChanged');
+            rolledBack = true;
+          }
+          // The draft stays in the editor. A restored model has no failed edit to drain on navigation.
+          throw Object.assign(new Error(error?.message || '저장 실패 · 다시 시도'), { blocksNavigation: !rolledBack });
         }
         return result;
       });

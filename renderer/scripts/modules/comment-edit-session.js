@@ -11,10 +11,10 @@ export function createCommentEditSession() {
       refresh = fn;
       return true;
     },
-    end({ flush = true } = {}) {
+    end({ flush = true, preserveRefresh = false } = {}) {
       editing = null;
       const pending = refresh;
-      refresh = null;
+      if (flush || !preserveRefresh) refresh = null;
       if (flush) pending?.();
     }
   };
