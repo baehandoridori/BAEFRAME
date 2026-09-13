@@ -11290,8 +11290,8 @@ async function initApp() {
       if (!keepVersionContext) {
         // .bframe에서 manualVersions 복원 → version-manager에 설정
         const savedManualVersions = reviewDataManager.getManualVersions();
+        versionManager.setManualVersions(savedManualVersions);
         if (savedManualVersions && savedManualVersions.length > 0) {
-          versionManager.setManualVersions(savedManualVersions);
           log.info('수동 버전 목록 복원됨', { count: savedManualVersions.length });
         }
       }
@@ -18270,6 +18270,8 @@ async function initApp() {
   const versionDropdown = getVersionDropdown();
   versionDropdown.init();
   versionDropdown.setReviewDataManager(reviewDataManager);
+  versionDropdown.setContextGuard(() => !activeVideoLoadToken &&
+    !pendingUserVideoLoadIntent && isSameFilePath(state.currentFile, reviewDataManager.getVideoPath()));
   versionDropdown.onFeedbackImport(handleImportFeedbackFromVersion);
 
   // 스플릿 뷰 매니저 초기화
@@ -18280,6 +18282,7 @@ async function initApp() {
   const btnCompareVersions = document.getElementById('btnCompareVersions');
   if (btnCompareVersions) {
     btnCompareVersions.addEventListener('click', () => {
+      if (!versionDropdown.isContextReady()) return;
       log.info('버전 비교 버튼 클릭됨');
       versionDropdown.close();
       const versionManager = getVersionManager();
@@ -18287,9 +18290,9 @@ async function initApp() {
       const currentPath = state.currentFile;
       log.info('버전 비교 시작', { versionsCount: versions.length, currentPath });
 
-      if (versions.length >= 2) {
-        const leftVersion = versions.find((v) => v.path === currentPath) || versions[0];
-        const rightVersion = versions.find((v) => v.path !== currentPath) || versions[1];
+      const leftVersion = versions.find((v) => isSameFilePath(v.path, currentPath));
+      const rightVersion = versions.find((v) => !isSameFilePath(v.path, currentPath));
+      if (leftVersion && rightVersion) {
         log.info('스플릿 뷰 열기', { leftVersion, rightVersion });
         splitViewManager.open({ leftVersion, rightVersion });
       } else {

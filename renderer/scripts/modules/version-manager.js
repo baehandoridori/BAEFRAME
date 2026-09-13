@@ -27,6 +27,8 @@ export class VersionManager extends EventTarget {
     // 스캔 상태
     this._isScanning = false;
     this._lastScanTime = null;
+    this._scanGeneration = 0;
+    this._contextGeneration = 0;
 
     log.info('VersionManager 초기화됨');
   }
@@ -42,7 +44,11 @@ export class VersionManager extends EventTarget {
       return null;
     }
 
+    this._contextGeneration += 1;
     this._currentFilePath = filePath;
+    this._versions = [];
+    this._manualVersions = [];
+    this._lastScanTime = null;
 
     // 버전 정보 파싱
     const fileName = this._extractFileName(filePath);
@@ -77,18 +83,16 @@ export class VersionManager extends EventTarget {
       return [];
     }
 
-    if (this._isScanning) {
-      log.info('이미 스캔 중');
-      return this._versions;
-    }
-
+    const generation = ++this._scanGeneration;
+    const filePath = this._currentFilePath;
     this._isScanning = true;
     this._emit('scanStart');
 
     try {
       log.info('버전 스캔 시작', { filePath: this._currentFilePath });
 
-      const result = await window.electronAPI.scanVersions(this._currentFilePath);
+      const result = await window.electronAPI.scanVersions(filePath);
+      if (generation !== this._scanGeneration) return [];
 
       this._baseName = result.baseName;
       this._currentVersion = result.currentVersion;
@@ -109,11 +113,12 @@ export class VersionManager extends EventTarget {
 
       return this._versions;
     } catch (error) {
+      if (generation !== this._scanGeneration) return [];
       log.error('버전 스캔 실패', error);
       this._emit('scanError', { error });
       return [];
     } finally {
-      this._isScanning = false;
+      if (generation === this._scanGeneration) this._isScanning = false;
     }
   }
 
@@ -255,6 +260,7 @@ export class VersionManager extends EventTarget {
   getState() {
     return {
       currentFilePath: this._currentFilePath,
+      contextGeneration: this._contextGeneration,
       baseName: this._baseName,
       currentVersion: this._currentVersion,
       versions: this._versions,
@@ -269,7 +275,7 @@ export class VersionManager extends EventTarget {
    * @param {Array} manualVersions
    */
   setManualVersions(manualVersions) {
-    this._manualVersions = manualVersions || [];
+    this._manualVersions = (manualVersions || []).map(version => ({ ...version }));
     log.info('수동 버전 목록 설정됨', { count: this._manualVersions.length });
   }
 
@@ -285,6 +291,8 @@ export class VersionManager extends EventTarget {
    * 초기화
    */
   reset() {
+    this._scanGeneration += 1;
+    this._contextGeneration += 1;
     this._currentFilePath = null;
     this._baseName = null;
     this._currentVersion = null;

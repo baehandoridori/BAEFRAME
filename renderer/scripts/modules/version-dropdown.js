@@ -122,6 +122,7 @@ export class VersionDropdown {
     // Callbacks
     this._onVersionSelect = null;
     this._onFeedbackImport = null;
+    this._contextGuard = () => true;
 
     // VersionManager 참조
     this._versionManager = getVersionManager();
@@ -534,6 +535,7 @@ export class VersionDropdown {
    * @param {Object} versionInfo
    */
   _handleVersionSelect(versionInfo) {
+    if (!this.isContextReady()) return;
     log.info('버전 선택됨', versionInfo);
     this.close();
 
@@ -546,6 +548,8 @@ export class VersionDropdown {
    * 수동 버전 추가 처리
    */
   async _handleAddManualVersion() {
+    const context = this._captureReviewContext();
+    if (!this._isReviewContextCurrent(context)) return;
     log.info('수동 버전 추가 요청');
     this.close();
 
@@ -559,6 +563,7 @@ export class VersionDropdown {
         ],
         properties: ['openFile']
       });
+      if (!this._isReviewContextCurrent(context)) return;
 
       // 디버깅: 결과 확인
       log.info('파일 다이얼로그 결과', result);
@@ -601,6 +606,7 @@ export class VersionDropdown {
         String(suggestedVersion),
         '버전 번호 입력'
       );
+      if (!this._isReviewContextCurrent(context)) return;
       console.log('[VersionDropdown] 입력 결과:', versionStr);
 
       log.info('버전 번호 입력', { versionStr });
@@ -667,7 +673,10 @@ export class VersionDropdown {
    * @param {string} filePath
    */
   _handleRemoveManualVersion(filePath) {
+    const context = this._captureReviewContext();
+    if (!this._isReviewContextCurrent(context)) return;
     if (confirm('이 수동 버전을 제거하시겠습니까?')) {
+      if (!this._isReviewContextCurrent(context)) return;
       const removed = this._versionManager.removeManualVersion(filePath);
 
       if (removed) {
@@ -687,6 +696,8 @@ export class VersionDropdown {
    * @param {Object} versionInfo
    */
   async _handleEditVersion(versionInfo) {
+    const context = this._captureReviewContext();
+    if (!this._isReviewContextCurrent(context)) return;
     console.log('[VersionDropdown] _handleEditVersion 호출됨', versionInfo);
     log.info('버전 편집 요청', versionInfo);
 
@@ -701,6 +712,7 @@ export class VersionDropdown {
       String(currentVersion || 1),
       '버전 번호 편집'
     );
+    if (!this._isReviewContextCurrent(context)) return;
     console.log('[VersionDropdown] 입력 결과:', newVersionStr);
 
     if (newVersionStr === null) {
@@ -790,6 +802,29 @@ export class VersionDropdown {
   async _handleRescan() {
     log.info('버전 다시 스캔 요청');
     await this._versionManager.scanVersions();
+  }
+
+  setContextGuard(guard) {
+    this._contextGuard = guard;
+  }
+
+  isContextReady() {
+    return this._contextGuard() && !reviewDataManagerRef?.isLoading;
+  }
+
+  _captureReviewContext() {
+    return {
+      generation: this._versionManager.getState().contextGeneration,
+      reviewManager: reviewDataManagerRef,
+      videoPath: reviewDataManagerRef?.getVideoPath?.()
+    };
+  }
+
+  _isReviewContextCurrent(context) {
+    return this.isContextReady() &&
+      context.generation === this._versionManager.getState().contextGeneration &&
+      context.reviewManager === reviewDataManagerRef &&
+      context.videoPath === reviewDataManagerRef?.getVideoPath?.();
   }
 
   /**
