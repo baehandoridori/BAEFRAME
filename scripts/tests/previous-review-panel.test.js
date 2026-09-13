@@ -514,3 +514,15 @@ test('historical conversion preserves real zero, rejects missing time and matche
   row('last').querySelector('.pr-time').click(); assert.equal(x.seeks.at(-1), 29);
   assert.equal(row('last').dataset.playbackStartFrame, '29'); assert.equal(row('last').dataset.playbackEndFrame, '29');
 });
+
+test('carried null endpoint highlights exactly its start frame in current FPS', async t => {
+  const x = await setup(t); x.context.fps = 30; x.root.fps = 24;
+  x.root.comments.layers[0].markers = [{ id: 'nullable', text: 'nullable', startFrame: 24 }];
+  await x.selectVersion(0); x.click('[data-pr-carry]');
+  const saved = x.manager.toJSON(); saved.items[0].source.endFrame = null; x.manager.fromJSON(saved);
+  x.click('[data-pr-mode="popup"]'); await tick();
+  const row = x.children[0].child.document.querySelector('[data-pr-item]');
+  assert.equal(row.dataset.playbackStartFrame, '30'); assert.equal(row.dataset.playbackEndFrame, '30');
+  x.panel.updatePlaybackFrame(30); assert.equal(row.classList.contains('is-current-frame'), true);
+  x.panel.updatePlaybackFrame(31); assert.equal(row.classList.contains('is-current-frame'), false);
+});

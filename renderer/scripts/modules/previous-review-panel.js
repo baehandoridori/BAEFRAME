@@ -247,7 +247,7 @@ export function createPreviousReviewPanel({
       && Number(context.duration) > 0 && secondsOf(source) < Number(context.duration);
     row.dataset.playbackStartFrame = valid ? currentFrameOf(source.startFrame, source, context) ?? '' : '';
     row.dataset.playbackEndFrame = valid
-      ? currentFrameOf(source.endFrame === undefined ? source.startFrame : source.endFrame, source, context) ?? '' : '';
+      ? currentFrameOf((source.endFrame === undefined || (queueItem && source.endFrame === null)) ? source.startFrame : source.endFrame, source, context) ?? '' : '';
     if (row.dataset.playbackEndFrame === '') row.dataset.playbackStartFrame = '';
     time.disabled = !valid;
     time.title = valid ? `현재 ${context.label || '영상'}의 같은 시간으로 이동` : '현재 영상 길이 밖이거나 시간 정보를 확인할 수 없습니다';

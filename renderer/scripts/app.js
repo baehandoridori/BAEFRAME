@@ -1091,7 +1091,13 @@ async function initApp() {
     return playlistReplacementToken;
   }
 
+  function abandonPlaylistResolutionFailures() {
+    playlistResolutionQueue.abandonPlaylistFailures();
+    playlistResolutionStates.clear();
+  }
+
   function commitPlaylistReplacement() {
+    abandonPlaylistResolutionFailures();
     playlistSelectionLoadToken += 1;
     playlistContinuousNavigationToken += 1;
     videoLoadIntentGeneration += 1;
@@ -13356,7 +13362,7 @@ async function initApp() {
       videoPath: item.videoPath, bframePath: item.bframePath, itemId: item.id,
       layerId: range.layerId, markerId: range.markerId,
       desiredResolved: old?.status === 'failed' ? old.intent.desiredResolved : !range.resolved,
-      createdAt: Date.now(), playlistId: playlist?.id };
+      createdAt: Date.now(), playlistId: playlist?.id, scope: 'playlist' };
     if (playlistResolutionQueue.hasPending(intent.key)) return false;
     const operation = { status: 'pending', intent };
     playlistResolutionStates.set(key, operation);
@@ -21939,6 +21945,7 @@ async function initApp() {
 
     // 콜백 설정
     playlistManager.onPlaylistLoaded = async (playlist, loadContext = {}) => {
+      abandonPlaylistResolutionFailures();
       log.info('재생목록 로드됨', { name: playlist.name });
       await refreshModifiedSortIfActive({ shouldContinue: loadContext.shouldContinue });
       if (loadContext.shouldContinue?.() === false) return;
@@ -22032,6 +22039,7 @@ async function initApp() {
     };
 
     playlistManager.onPlaylistClosed = () => {
+      abandonPlaylistResolutionFailures();
       playlistSelectionLoadToken += 1;
       clearPlaylistMediaPreload();
       resetPlaylistContinuousTimelineState();

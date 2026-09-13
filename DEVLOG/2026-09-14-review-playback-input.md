@@ -216,3 +216,13 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 4초 기본값 복원 제안은 사용자 지정 계획 §1.1의 “끝이 없으면 한 프레임짜리 구간”과 충돌하므로 적용하지 않았다. 대신 기존 파일의 missing endFrame이 무관한 저장에서 새로 쓰이는 문제13 pass/1 fail을 재현했다. 메모리에서는 명시 사양대로 한 프레임, 원본에 없는 끝 필드는 범위를 실제로 늘리기 전까지 저장하지 않는다. 새 댓글의 생성 기본4초는 유지한다. 내부 flag는 저장 형식에 추가되지 않는다.
 - 실제 편집 버튼/save/cancel 리스너의 실패·빈 제출 잠금 해제를5 pass/2 fail로 재현했다. 실패/빈 입력은 열린 초안과 activeComment를 유지하고 성공 또는 취소로 닫힐 때만 해제한다. 다음 인수 조건 검사21 pass/0 fail.
 - 관련 결과: playlist364/comment-input41/comment-popout52/previous-review56/persistence166 pass. 모두 fail0/cancelled0/exit0. lint 오류0/diff check 통과. 실제 다른 PC 편집 잠금 실기는 미확인이며 DOM 리스너/Presence 호출 자동 검증이다.
+
+
+## 최종 리뷰 8차 경계 조건
+
+- 23.976/29.97fps 신규 댓글의 기본4초 끝이 소수가 되어 한 프레임으로 축소되는 원인을 재현했다. 생성자와 실제 startMarkerCreation 양쪽에서4초 길이를 정수 프레임으로 반올림한다.
+- 목록 교체/새로 만들기/닫기로 재시도 행이 사라진 뒤 과거 실패가 파일 이동을 영구 차단하는 문제를 재현했다. playlist scope 실패만 폐기하고 진행 중 쓰기는 완료까지 기다린다. 뒤늦은 실패가 다시 이동을 막지 않으며 일반 편집 실패와 새 목록 실패는 유지한다.
+- 유효한 저장 carryover의 null 끝은 현재 FPS의 시작 프레임 한 장으로 강조한다. 미가져온 원본에서 손상된 끝을 null로 정규화한 표시는 계속 강조에서 제외한다.
+- 재현 검사63개: 수정 전58pass/5fail/0cancelled/exit1 → 수정 후63pass/0fail/0cancelled/exit0. 첫 보완 중 테스트 window 환경 누락을 수정했고 실제 persisted manager.fromJSON 경로로 null을 재현했다.
+- 관련 검사: playlist368, previous-review57, comment-input41, comment-popout52, persistence166 pass. 모두 fail0/cancelled0/exit0. 기존 isolated lifecycle harness에 새 정리 의존성을 추가했다.
+- 로그: .local/review-playback-input/review8-*.log. 이 보완은 자동 검사이며 추가 실물 태블릿 검증으로 표시하지 않는다.

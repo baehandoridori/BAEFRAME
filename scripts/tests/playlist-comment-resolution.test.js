@@ -185,3 +185,33 @@ test('failed edit does not overwrite a newer remote text or a replaced video own
     assert.equal(marker.text, 'newer');
   }
 });
+
+test('abandoned playlist failures release navigation without discarding pending writes or other failures', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const queue = createPlaylistResolutionQueue({ keyForPath: p => p });
+  await assert.rejects(queue.enqueue({ key: 'old', videoPath: 'A', scope: 'playlist' }, () => false));
+  await assert.rejects(queue.enqueue({ key: 'edit', videoPath: 'B' }, () => false));
+  const held = deferred();
+  const pending = queue.enqueue({ key: 'late', videoPath: 'A', scope: 'playlist' }, () => held.promise);
+  const rejected = assert.rejects(pending);
+  queue.abandonPlaylistFailures();
+  let drained = false; const drain = queue.drainPaths(['A']).then(() => { drained = true; });
+  await Promise.resolve(); assert.equal(drained, false, 'accepted write must settle first');
+  held.resolve(false); await rejected; await drain;
+  await queue.drainPaths(['A']); await assert.rejects(queue.drainPaths(['B']));
+  await assert.rejects(queue.enqueue({ key: 'new', videoPath: 'A', scope: 'playlist' }, () => false));
+  await assert.rejects(queue.drainPaths(['A']), 'new playlist failures remain actionable');
+});
+
+test('committed replacement, creation/load and close abandon inaccessible playlist failures', () => {
+  const queue = { abandonPlaylistFailures() { calls++; } }; let calls = 0;
+  const states = new Map([['old', {}]]);
+  const context = vm.createContext({ playlistResolutionQueue: queue, playlistResolutionStates: states });
+  vm.runInContext(appFunction('abandonPlaylistResolutionFailures'), context);
+  context.abandonPlaylistResolutionFailures(); assert.equal(calls, 1); assert.equal(states.size, 0);
+  assert.match(appFunction('commitPlaylistReplacement'), /abandonPlaylistResolutionFailures\(\)/);
+  for (const callback of ['onPlaylistLoaded', 'onPlaylistClosed']) {
+    const start = appSource.indexOf(`playlistManager.${callback} =`);
+    assert.match(appSource.slice(start, appSource.indexOf('\n    };', start)), /abandonPlaylistResolutionFailures\(\)/);
+  }
+});

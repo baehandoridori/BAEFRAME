@@ -315,3 +315,17 @@ test('implicit one-frame loaded ranges preserve an absent endpoint on unrelated 
   const created = new CommentMarker({ startFrame: 32, fps: 24 });
   assert.equal(created.toJSON().endFrame, 128, 'new comments keep the four-second creation default');
 });
+
+for (const fps of [23.976, 29.97]) { test(`new four-second comments use integer endpoints at ${fps}fps`, async t => {
+  const { CommentMarker, CommentManager } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const priorWindow = global.window; global.window = {}; t.after(() => { global.window = priorWindow; });
+  const expected = 32 + Math.round(fps * 4);
+  const direct = new CommentMarker({ startFrame: 32, fps });
+  assert.equal(direct.endFrame, expected);
+  const context = { isCommentMode: true, currentFrame: 32, fps, _emit() {} };
+  const marker = CommentManager.prototype.startMarkerCreation.call(context, .5, .5);
+  assert.equal(marker.endFrame, expected);
+  const loaded = CommentMarker.fromJSON(marker.toJSON());
+  assert.equal(loaded.endFrame, expected); assert.equal(loaded.isVisibleAtFrame(expected - 1), true);
+});
+}

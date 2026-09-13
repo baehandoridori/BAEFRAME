@@ -15,7 +15,7 @@ export function createPlaylistResolutionQueue({ keyForPath }) {
         failures.delete(intent.key);
         return result;
       }).catch(error => {
-        if (error?.blocksNavigation !== false) failures.set(intent.key, { path, error });
+        if (!record.abandoned && error?.blocksNavigation !== false) failures.set(intent.key, { path, error, intent });
         throw error;
       }).finally(() => {
         if (pending.get(intent.key) === record) pending.delete(intent.key);
@@ -25,6 +25,11 @@ export function createPlaylistResolutionQueue({ keyForPath }) {
       pending.set(intent.key, record);
       tails.set(path, promise);
       return promise;
+    },
+    // Retire inaccessible retry states only. Accepted writes still run and serialize normally.
+    abandonPlaylistFailures() {
+      for (const [key, failure] of failures) if (failure.intent.scope === 'playlist') failures.delete(key);
+      for (const record of pending.values()) if (record.intent.scope === 'playlist') record.abandoned = true;
     },
     hasPending(key) { return pending.has(key); },
     isLocked(path) { return locks.has(keyForPath(path)); },
@@ -43,7 +48,7 @@ export function createPlaylistResolutionQueue({ keyForPath }) {
     },
     async drainPaths(paths) {
       const keys = new Set(paths.filter(Boolean).map(keyForPath));
-      await Promise.all([...pending.values()].filter(record => keys.has(record.path)).map(record => record.promise));
+      await Promise.all([...pending.values()].filter(record => keys.has(record.path)).map(record => record.promise.catch(error => { if (!record.abandoned) throw error; })));
       for (const failure of failures.values()) if (keys.has(failure.path)) throw failure.error;
     }
   };

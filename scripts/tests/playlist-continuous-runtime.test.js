@@ -2275,7 +2275,7 @@ function createActualLoadRaceScenario({
       const timer = setTimeout(callback, delay); timer.unref?.(); return timer;
     },
     clearTimeout: timer => { if (!timer?.deadline) clearTimeout(timer); },
-    invalidatePlaylistBackgroundWork: () => {}, resetPlaylistContinuousTimelineState: () => {},
+    invalidatePlaylistBackgroundWork: () => {}, resetPlaylistContinuousTimelineState: () => {}, abandonPlaylistResolutionFailures: () => {},
     playlistUIState: { mode: 'continuous' },
     mapGlobalTimeToSegment: (_segments, time) => invalidSeekMap ? null : ({
       segment: {
@@ -2599,7 +2599,7 @@ function createSingleFlightScenario({ itemCount = 2, currentIndex = 0, captureDe
     },
     invalidateActiveVideoLoad: () => { invalidations += 1; },
     invalidatePlaylistBackgroundWork: () => {},
-    resetPlaylistContinuousTimelineState: () => {},
+    resetPlaylistContinuousTimelineState: () => {}, abandonPlaylistResolutionFailures: () => {},
     log: { error: () => {}, warn: () => {} },
     isSameFilePath: (left, right) => left === right,
     hasActiveVideoLoadForDifferentFile: () => false,
