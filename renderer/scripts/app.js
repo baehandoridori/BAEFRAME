@@ -11897,9 +11897,7 @@ async function initApp() {
       }
       drawingManager.commitActiveSelection();
       scheduleMpvOverlayStateSync({ force: true });
-      state.isSpaceHeld = false;
-      state.spacePanUsed = false;
-      elements.videoWrapper?.classList.remove('space-pan');
+      resetViewportPanCycle();
       void exitHybridReviewEngineIfNeeded();
     }
   }
@@ -17901,9 +17899,7 @@ async function initApp() {
 
     const clearChildKeyboardState = () => {
       suppressPlayPauseShortcutKeyup = false;
-      state.isSpaceHeld = false;
-      state.spacePanUsed = false;
-      elements.videoWrapper?.classList.remove('space-pan');
+      resetViewportPanCycle();
     };
     childWindow.addEventListener('blur', clearChildKeyboardState);
     return () => {

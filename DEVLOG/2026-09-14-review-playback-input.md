@@ -250,3 +250,10 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 
 - 일반 댓글 완료 상태를 저장 중 다시 누르면 기존 promise를 새 요청 성공으로 받아들이는 경로를 재현했다. pending 동일 key는 즉시 false로 거절하고 저장 중 안내를 표시한다. 첫 저장 후 재클릭은 정상 반대 상태로 저장된다.
 - 재현19개:18pass/1fail/0cancelled/exit1 →19pass/0fail/0cancelled/exit0. 관련 playlist373/입력41/팝업52 pass, fail0/cancelled0/exit0. ESLint 오류0/diff check 통과. 로그 review11-*.log.
+
+
+## 최종 리뷰 12차 분리 창/모드 해제 Space 초기화
+
+- child blur/dock 및 applyDrawModeState(false)가 state만 초기화하고 native owner key cycle을 남기는 경로를 재현했다. 두 취소 경로를 resetViewportPanCycle로 연결해 owner/endVideoPan/화면 상태를 함께 초기화한다. 정상 handleKeyup의 flush/tap 판정은 유지한다.
+- 실제 installCommentPopoutDocument 이벤트와 applyDrawModeState를 공통 owner에 연결해 다음 일반 pointerdown이 draw로 판정되는 것을 검증했다.11개:8pass/3fail/0cancelled/exit1 →11pass/0fail/0cancelled/exit0.
+- 관련 팝업55/mpv398/Fabricpilot631/입력41/UX77 pass, fail0/cancelled0/exit0. ESLint 오류0/diff check 통과. 로그 review12-*.log. 실제 OS 창 포커스/실물 태블릿 검증으로 대체해 보고하지 않는다.
