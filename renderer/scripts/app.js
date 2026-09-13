@@ -13480,6 +13480,7 @@ async function initApp() {
     const videoPath = reviewDataManager.getVideoPath();
     const intent = { key: `${normalizeComparableFilePath(videoPath)}:current:${layer.id}:${markerId}`,
       videoPath, markerId, scope: 'current-resolution', bframePath: reviewDataManager.getBframePath(), desiredResolved: !marker.resolved };
+    if (playlistResolutionQueue.hasPending(intent.key)) { showToast('댓글 완료 상태를 저장하고 있습니다.', 'info'); return false; }
     try {
       await playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation(
         { markerId, layerId: layer.id, resolved: marker.resolved }, intent));

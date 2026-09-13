@@ -244,3 +244,9 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 집중 재현31개:29pass/2fail/0cancelled/exit1 →31pass/0fail/0cancelled/exit0.
 - prebuild exit0: shared controller ESM, native overlay runtime, editor runtime 생성 번들 갱신 포함.
 - 관련 검사 playlist372/mpv398/Fabricpilot631/persistence166/editor147/입력41/팝업52 pass. 모두 fail0/cancelled0/exit0. 변경 ESLint 오류0/diff check 통과. 로그 review10-*.log.
+
+
+## 최종 리뷰 11차 완료 버튼 중복 입력
+
+- 일반 댓글 완료 상태를 저장 중 다시 누르면 기존 promise를 새 요청 성공으로 받아들이는 경로를 재현했다. pending 동일 key는 즉시 false로 거절하고 저장 중 안내를 표시한다. 첫 저장 후 재클릭은 정상 반대 상태로 저장된다.
+- 재현19개:18pass/1fail/0cancelled/exit1 →19pass/0fail/0cancelled/exit0. 관련 playlist373/입력41/팝업52 pass, fail0/cancelled0/exit0. ESLint 오류0/diff check 통과. 로그 review11-*.log.

@@ -257,3 +257,20 @@ test('persisted deletion retires only matching current resolution failures inclu
   await assert.rejects(queue.drainPaths(['B']));
   assert.match(appSource, /addEventListener\('saved', async \(e\) => \{\s*retireDeletedCommentResolutionFailures\(\)/);
 });
+
+test('repeated current resolution clicks do not borrow a pending opposite intent success', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const held = deferred(), marker = { id: 'm', resolved: false }; let calls = 0; const notices = [];
+  const context = vm.createContext({ playlistResolutionQueue: createPlaylistResolutionQueue({ keyForPath: p => p }), normalizeComparableFilePath: p => p,
+    commentManager: { getMarker: () => marker, layers: [{ id: 'l', markers: new Map([['m', marker]]) }] },
+    reviewDataManager: { getVideoPath: () => 'A', getBframePath: () => 'A.bframe' }, showToast: text => notices.push(text),
+    togglePlaylistAggregateResolvedWithoutNavigation: async (_range, intent) => { calls++; marker.resolved = intent.desiredResolved; await held.promise; return marker; } });
+  vm.runInContext(appFunction('toggleCurrentMarkerResolved'), context);
+  const first = context.toggleCurrentMarkerResolved('m'); await Promise.resolve(); await Promise.resolve();
+  let secondFinished = false; const second = context.toggleCurrentMarkerResolved('m').then(result => { secondFinished = true; return result; });
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(secondFinished, true, 'the second click must be rejected immediately instead of joining the pending write');
+  assert.equal(await second, false); assert.equal(calls, 1); assert.match(notices.at(-1), /저장/);
+  held.resolve(true); assert.equal(await first, true); assert.equal(marker.resolved, true);
+  assert.equal(await context.toggleCurrentMarkerResolved('m'), true); assert.equal(marker.resolved, false); assert.equal(calls, 2);
+});
