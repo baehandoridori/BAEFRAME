@@ -1,3 +1,22 @@
+export function readPlaylistMarkerFrame(value) {
+  if (value === null || value === undefined || (typeof value === 'string' && value.trim() === '')) return null;
+  if (typeof value !== 'number' && typeof value !== 'string') return null;
+  const frame = Number(value);
+  return Number.isSafeInteger(frame) && frame >= 0 ? frame : null;
+}
+
+function localTimecodeForRange(range) {
+  if (range.timingValid === false) return '시간 정보 없음';
+  const frame = readPlaylistMarkerFrame(range.localStartFrame ?? range.startFrame);
+  const fps = Number(range.fps) > 0 ? Number(range.fps) : 24;
+  if (frame !== null) return formatPlaylistTimecode(frame / fps, fps);
+  if (typeof range.localStartTime === 'number' && Number.isFinite(range.localStartTime) && range.localStartTime >= 0) {
+    return formatPlaylistTimecode(range.localStartTime, fps);
+  }
+  return /^\d{2,}:\d{2}:\d{2}:\d{2}$/.test(range.localStartTimecode || '')
+    ? range.localStartTimecode : '시간 정보 없음';
+}
+
 export function formatPlaylistTimecode(seconds, fps = 24) {
   const safeFps = Math.max(1, Math.round(Number(fps) || 24));
   const totalFrames = Math.max(0, Math.round((Number(seconds) || 0) * safeFps));
@@ -34,7 +53,7 @@ export function getPlaylistCutLabel(rangeOrSegment = {}) {
 
 export function formatPlaylistCommentLabel(range = {}) {
   const fps = range.fps || 24;
-  const localTimecode = range.localStartTimecode || formatPlaylistTimecode(range.localStartTime, fps);
+  const localTimecode = localTimecodeForRange(range);
   return `${getPlaylistCutLabel(range)} ${localTimecode}`;
 }
 
@@ -45,7 +64,7 @@ export function formatPlaylistCommentPanelLine(range = {}) {
 
 export function formatPlaylistCommentTitle(range = {}) {
   const fps = range.fps || 24;
-  const localTimecode = range.localStartTimecode || formatPlaylistTimecode(range.localStartTime, fps);
+  const localTimecode = localTimecodeForRange(range);
   const globalTimecode = range.globalStartTimecode || formatPlaylistTimecode(range.globalStartTime, fps);
   return `${getPlaylistCutLabel(range)} 컷 ${localTimecode} / 전체 ${globalTimecode} - ${range.text || '댓글'}`;
 }
@@ -83,15 +102,16 @@ export function extractPlaylistCommentRanges(options) {
       const fps = Number.isFinite(segmentFps) && segmentFps > 0
         ? segmentFps
         : (Number.isFinite(markerFps) && markerFps > 0 ? markerFps : fallbackFps);
-      const startFrame = Number(marker.startFrame) || 0;
-      const endFrame = Number(marker.endFrame) || startFrame;
+      const startFrame = readPlaylistMarkerFrame(marker.startFrame);
+      const timingValid = startFrame !== null;
+      const endFrame = readPlaylistMarkerFrame(marker.endFrame) ?? startFrame;
       const rawStartTime = startFrame / fps;
       const rawEndTime = Math.max(rawStartTime, endFrame / fps);
       const segmentDuration = Number(segment.duration);
       const maxLocalTime = Number.isFinite(segmentDuration) && segmentDuration > 0
         ? segmentDuration
         : Infinity;
-      if (rawStartTime > maxLocalTime) continue;
+      if (timingValid && rawStartTime > maxLocalTime) continue;
       const startTime = Math.max(0, Math.min(rawStartTime, maxLocalTime));
       const endTime = Math.max(startTime, Math.min(rawEndTime, maxLocalTime));
       const globalStartTime = segment.startTime + startTime;
@@ -99,6 +119,7 @@ export function extractPlaylistCommentRanges(options) {
       const localStartFrame = Math.round(startTime * fps);
       const localEndFrame = Math.round(endTime * fps);
       ranges.push({
+        timingValid,
         itemId: segment.itemId,
         itemIndex: segment.index,
         fileName: segment.fileName,
@@ -117,20 +138,20 @@ export function extractPlaylistCommentRanges(options) {
         resolvedAt: marker.resolvedAt || null,
         color: marker.colorInfo?.color || layer.color || '#ffcc00',
         colorKey: marker.colorInfo?.key || marker.colorKey || 'default',
-        localStartTime: startTime,
-        localEndTime: endTime,
-        globalStartTime,
-        globalEndTime,
-        localStartFrame,
-        localEndFrame,
-        startFrame: localStartFrame,
-        endFrame: localEndFrame,
-        startTimecode: formatPlaylistTimecode(startTime, fps),
-        localStartTimecode: formatPlaylistTimecode(startTime, fps),
-        globalStartTimecode: formatPlaylistTimecode(globalStartTime, fps)
+        localStartTime: timingValid ? startTime : null,
+        localEndTime: timingValid ? endTime : null,
+        globalStartTime: timingValid ? globalStartTime : null,
+        globalEndTime: timingValid ? globalEndTime : null,
+        localStartFrame: timingValid ? localStartFrame : null,
+        localEndFrame: timingValid ? localEndFrame : null,
+        startFrame: timingValid ? localStartFrame : null,
+        endFrame: timingValid ? localEndFrame : null,
+        startTimecode: timingValid ? formatPlaylistTimecode(startTime, fps) : null,
+        localStartTimecode: timingValid ? formatPlaylistTimecode(startTime, fps) : null,
+        globalStartTimecode: timingValid ? formatPlaylistTimecode(globalStartTime, fps) : null
       });
     }
   }
 
-  return ranges.sort((a, b) => a.globalStartTime - b.globalStartTime);
+  return ranges.sort((a, b) => Number(b.timingValid) - Number(a.timingValid) || (a.globalStartTime - b.globalStartTime));
 }

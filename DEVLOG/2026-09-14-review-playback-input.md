@@ -21,3 +21,10 @@
 
 T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR/머지/배포 아직 미수행.
 - T0 최종 결과: 271 pass / 0 fail / 0 cancelled, exit 0.
+
+## T1
+
+- RED: 신규 7개 실패(새 API/캐시 미구현 포함). 캐시 구현 후 실제 app 함수에서 메모리32→디스크0, DOM 중복 컷 배지 2개 재현 확인.
+- GREEN: index/cache/panel 16 pass / 0 fail / 0 cancelled. 기존 runtime의 구현 문자열 검사 4개를 새 캐시/가드/표시 계약으로 갱신한 통합 결과 155 pass / 0 fail / 0 cancelled, exit 0 (`T1-final.log`).
+- 원본 frame0 보존, 잘못된 시간은 null/시간 정보 없음 및 seek 제외. 현재 댓글 동기 snapshot 우선. 경로 정규화/in-flight 재사용/오류 재시도/LRU200, 부분 갱신과 1 worker 백그라운드 재검증 구현.
+- 실기 미수행. 캐시는 표시용이고 쓰기에는 사용하지 않는다. T3에서 실제 변경 이벤트의 전체 갱신을 부분 갱신으로 연결한다.

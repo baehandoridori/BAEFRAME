@@ -1,3 +1,4 @@
+import { createPlaylistCommentCache } from './modules/playlist-comment-cache.js';
 /**
  * baeframe - Renderer App Entry Point
  */
@@ -965,6 +966,14 @@ async function initApp() {
     ready: false,
     token: 0
   };
+  const playlistCommentCache = createPlaylistCommentCache({
+    read: path => window.electronAPI.loadReview(path), normalizePath: normalizeComparableFilePath
+  });
+  let playlistCommentModeGeneration = 0;
+  let playlistCommentSegments = [];
+  let playlistCommentRevalidationTimer = null;
+  let playlistCommentRevalidationRunning = false;
+  let playlistCommentScanPromise = null;
   let playlistTimelineUpdateToken = 0;
   let playlistBackgroundWorkToken = 0;
   let playlistSortChangeToken = 0;
@@ -1030,6 +1039,12 @@ async function initApp() {
   }
 
   function resetPlaylistContinuousTimelineState() {
+    playlistCommentModeGeneration++;
+    playlistCommentCache.clear();
+    playlistCommentSegments = [];
+    playlistCommentScanPromise = null;
+    clearInterval(playlistCommentRevalidationTimer);
+    playlistCommentRevalidationTimer = null;
     playlistTimelineUpdateToken += 1;
     playlistAggregateCommentRanges = [];
     timeline.clearPlaylistTimeline();
@@ -2465,6 +2480,7 @@ async function initApp() {
 
   // 자동 저장 완료
   reviewDataManager.addEventListener('saved', (e) => {
+    playlistCommentCache.invalidate(e.detail.path);
     log.info('.bframe 저장됨', { path: e.detail.path });
     // 조용히 저장 (토스트 생략 - 자동 저장이라 너무 자주 뜸)
   });
@@ -2710,6 +2726,7 @@ async function initApp() {
 
   // 원격 동기화로 인한 전체 갱신 (CommentSync의 fromJSON 호출 시)
   commentManager.addEventListener('markersChanged', () => {
+    if (reviewDataManager.getBframePath()) playlistCommentCache.invalidate(reviewDataManager.getBframePath());
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
@@ -12842,7 +12859,7 @@ async function initApp() {
 
   async function openPlaylistAggregateComment(key) {
     const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
-    if (!range) return false;
+    if (!range || range.timingValid === false) return false;
 
     const playlistManager = getPlaylistManager();
     const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
@@ -13143,10 +13160,13 @@ async function initApp() {
       const resolveTitle = getResolveButtonLabel(range.resolved, range.resolvedBy);
       const resolveTooltipHtml = range.resolved ? getResolveTooltipHtml(range.resolvedBy, range.resolvedAt) : '';
       const imageUrl = range.image ? escapeHtmlAttribute(range.image) : '';
+      const localLabel = range.timingValid === false ? '시간 정보 없음' : range.localStartTimecode;
+      const globalLabel = range.timingValid === false ? '' : `전체 ${range.globalStartTimecode}`;
 
       return `
       <div class="comment-item playlist-aggregate-comment ${range.resolved ? 'resolved' : ''} ${replyCount > 0 ? 'has-replies' : ''}"
         data-aggregate-comment-key="${escapeHtmlAttribute(key)}"
+        data-timing-valid="${range.timingValid !== false}"
         data-marker-id="${escapeHtmlAttribute(range.markerId)}"
         data-item-id="${escapeHtmlAttribute(range.itemId)}"
         title="${title}">
@@ -13155,9 +13175,8 @@ async function initApp() {
           ${resolveTooltipHtml}
         </button>
         <div class="playlist-comment-time-row">
-          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
-          <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
-          <span class="playlist-comment-local-time">컷 ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(localLabel, normalizedSearch)}</span>
+          <span class="playlist-comment-global-time">${highlightCommentSearchMatches(globalLabel, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
           <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
@@ -13187,6 +13206,7 @@ async function initApp() {
       const replies = item.querySelector('.playlist-comment-replies');
 
       item.addEventListener('click', async (e) => {
+        if (item.dataset.timingValid === 'false') return;
         if (e.target.closest('.gdrive-link-btn')) return;
         if (e.target.closest('.playlist-comment-reply-form, .playlist-comment-reply-toggle, .playlist-comment-replies, .playlist-comment-resolve-toggle')) return;
         await openPlaylistAggregateComment(item.dataset.aggregateCommentKey);
@@ -19895,58 +19915,128 @@ async function initApp() {
     return metadata;
   }
 
+  function readPlaylistCommentSnapshot(bframePath, item = null) {
+    const currentPath = reviewDataManager.getVideoPath();
+    if (!reviewDataManager.isLoading && (
+      (item?.videoPath && isSameFilePath(item.videoPath, currentPath)) ||
+      (bframePath && isSameFilePath(bframePath, reviewDataManager.getBframePath()))
+    )) {
+      // Capture synchronously before any await, without collecting the drawing document.
+      return Promise.resolve({ comments: commentManager.toJSON(), fps: videoPlayer.fps });
+    }
+    return playlistCommentCache.read(bframePath);
+  }
+
+  function startPlaylistCommentRevalidation() {
+    if (playlistCommentRevalidationTimer) return;
+    playlistCommentRevalidationTimer = setInterval(async () => {
+      if (playlistUIState.mode !== 'continuous') {
+        clearInterval(playlistCommentRevalidationTimer);
+        playlistCommentRevalidationTimer = null;
+        return;
+      }
+      if (playlistCommentRevalidationRunning) return;
+      playlistCommentRevalidationRunning = true;
+      const generation = playlistCommentModeGeneration;
+      const seen = new Set();
+      try {
+        for (const item of getPlaylistManager().getItems()) {
+          if (generation !== playlistCommentModeGeneration || playlistUIState.mode !== 'continuous') break;
+          const path = item.bframePath;
+          if (!path || isSameFilePath(item.videoPath, reviewDataManager.getVideoPath())) continue;
+          const key = normalizeComparableFilePath(path);
+          if (seen.has(key) || playlistCommentCache.isFresh(path)) continue;
+          seen.add(key);
+          playlistCommentCache.invalidate(path);
+          await refreshPlaylistCommentsForItem(item.id);
+        }
+      } finally { playlistCommentRevalidationRunning = false; }
+    }, 5000);
+  }
+
+  async function refreshPlaylistCommentsForItem(itemId) {
+    if (playlistUIState.mode !== 'continuous') return;
+    const manager = getPlaylistManager();
+    const playlist = manager.currentPlaylist;
+    const generation = playlistCommentModeGeneration;
+    const updateToken = playlistTimelineUpdateToken;
+    const item = manager.getItems().find(item => item.id === itemId);
+    if (!item) return;
+    const path = await manager.ensureItemBframePath(item);
+    if (!path) return;
+    try {
+      const data = await readPlaylistCommentSnapshot(path, item);
+      if (playlist !== manager.currentPlaylist || generation !== playlistCommentModeGeneration ||
+          updateToken !== playlistTimelineUpdateToken || playlistUIState.mode !== 'continuous') return;
+      const sameItems = new Set(manager.getItems().filter(candidate =>
+        isSameFilePath(candidate.videoPath, item.videoPath) || (candidate.bframePath && isSameFilePath(candidate.bframePath, path))
+      ).map(candidate => candidate.id));
+      const replacement = playlistCommentSegments.filter(segment => sameItems.has(segment.itemId))
+        .flatMap(segment => extractPlaylistCommentRanges({ bframeData: data, segment }));
+      playlistAggregateCommentRanges = [
+        ...playlistAggregateCommentRanges.filter(range => !sameItems.has(range.itemId)), ...replacement
+      ].sort((a, b) => a.itemIndex - b.itemIndex || Number(b.timingValid !== false) - Number(a.timingValid !== false) || a.localStartFrame - b.localStartFrame);
+      const visible = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+      timeline.renderPlaylistCommentRanges(visible.filter(range => range.timingValid !== false), timeline.playlistDuration);
+      renderPlaylistContinuousCommentList(commentFilterState.status);
+    } catch (error) { log.warn('댓글 부분 갱신 실패', { error: error.message }); }
+  }
+
   async function updatePlaylistContinuousTimeline() {
     if (playlistUIState.mode !== 'continuous') return;
+    if (playlistCommentScanPromise) return playlistCommentScanPromise;
     timeline.clearCommentMarkers();
     timeline.renderPlaylistCommentRanges([], 0);
     const updateToken = ++playlistTimelineUpdateToken;
+    const generation = playlistCommentModeGeneration;
     const playlistManager = getPlaylistManager();
+    const playlist = playlistManager.currentPlaylist;
     const items = playlistManager.getItems();
-
-    setPlaylistContinuousTimelineBusy(true);
-    try {
-      const metadata = await collectPlaylistMetadata(items);
-      if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-
-      const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
-      timeline.setPlaylistTimeline(segments, totalDuration);
-      renderActiveDrawingLayers();
-      timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
-
-      const aggregateRanges = [];
-
-      for (const segment of segments) {
-        const item = items[segment.index];
-        const bframePath = await playlistManager.ensureItemBframePath(item);
-        if (!bframePath) continue;
-        try {
-          const bframeData = await window.electronAPI.loadReview(bframePath);
-          if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-          if (!bframeData) continue;
-          aggregateRanges.push(...extractPlaylistCommentRanges({
-            bframeData,
-            segment,
-            visibleLayerIds: null,
-            allowedAuthorIds: null
-          }));
-        } catch (error) {
-          log.warn('타임라인 이어붙이기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
-        }
-      }
-
-      if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-      playlistAggregateCommentRanges = aggregateRanges;
-      const filteredRanges = filterPlaylistAggregateCommentRanges(
-        aggregateRanges,
-        commentFilterState.status
-      );
-      timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
-      renderPlaylistContinuousCommentList(commentFilterState.status);
-    } finally {
-      if (playlistUIState.mode === 'continuous' && playlistTimelineUpdateToken === updateToken) {
-        setPlaylistContinuousTimelineBusy(false);
-      }
-    }
+    const currentVideoPath = reviewDataManager.getVideoPath();
+    const currentSnapshot = !reviewDataManager.isLoading
+      ? { comments: commentManager.toJSON(), fps: videoPlayer.fps } : null;
+    const isCurrent = () => playlistUIState.mode === 'continuous' &&
+      playlistTimelineUpdateToken === updateToken && generation === playlistCommentModeGeneration &&
+      playlist === playlistManager.currentPlaylist;
+    const work = (async () => {
+      setPlaylistContinuousTimelineBusy(true);
+      try {
+        const metadata = await collectPlaylistMetadata(items);
+        if (!isCurrent()) return;
+        const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
+        playlistCommentSegments = segments;
+        timeline.setPlaylistTimeline(segments, totalDuration);
+        renderActiveDrawingLayers();
+        timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
+        const results = new Array(segments.length);
+        let nextIndex = 0;
+        const worker = async () => {
+          while (nextIndex < segments.length && isCurrent()) {
+            const index = nextIndex++;
+            const segment = segments[index];
+            const item = items[segment.index];
+            try {
+              const bframePath = await playlistManager.ensureItemBframePath(item);
+              if (!isCurrent()) return;
+              const bframeData = currentSnapshot && isSameFilePath(item.videoPath, currentVideoPath)
+                ? currentSnapshot : (bframePath ? await readPlaylistCommentSnapshot(bframePath, item) : null);
+              if (!isCurrent()) return;
+              results[index] = extractPlaylistCommentRanges({ bframeData, segment });
+            } catch (error) { log.warn('타임라인 이어붙이기 댓글 로드 실패', { error: error.message }); }
+          }
+        };
+        await Promise.all([worker(), worker()]);
+        if (!isCurrent()) return;
+        const aggregateRanges = results.flat().filter(Boolean);
+        playlistAggregateCommentRanges = aggregateRanges;
+        const filteredRanges = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+        timeline.renderPlaylistCommentRanges(filteredRanges.filter(range => range.timingValid !== false), totalDuration);
+        renderPlaylistContinuousCommentList(commentFilterState.status);
+        startPlaylistCommentRevalidation();
+      } finally { if (isCurrent()) setPlaylistContinuousTimelineBusy(false); }
+    })();
+    playlistCommentScanPromise = work;
+    try { await work; } finally { if (playlistCommentScanPromise === work) playlistCommentScanPromise = null; }
   }
 
   async function quickCheckPlaylistForContinuous(sessionId, itemsToCheck = null) {

@@ -255,3 +255,26 @@ test('통합 댓글 키는 한 헬퍼에서 만든다', () => {
     'item-1:layer-a:m1'
   );
 });
+
+test('zero and missing frames are different and malformed times remain visible without seeking', async () => {
+  const m = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  assert.equal(m.readPlaylistMarkerFrame(0), 0);
+  assert.equal(m.readPlaylistMarkerFrame('32'), 32);
+  for (const value of [null, undefined, '', ' ', 'bad', -1, 1.2, Infinity, NaN, true, {}]) assert.equal(m.readPlaylistMarkerFrame(value), null);
+  const ranges = m.extractPlaylistCommentRanges({ segment: { itemId: 'a', startTime: 0, duration: 3, fps: 24 }, bframeData: { comments: { layers: [{ markers: [{ id: 'bad' }, { id: 'zero', startFrame: 0 }] }] } } });
+  assert.equal(ranges[0].markerId, 'zero');
+  assert.equal(ranges[1].timingValid, false);
+  assert.equal(ranges[1].localStartFrame, null);
+  assert.equal(ranges[1].globalStartTime, null);
+  assert.match(m.formatPlaylistCommentLabel(ranges[1]), /시간 정보 없음/);
+});
+
+test('numeric frames override stale labels for integer and fractional segment fps', async () => {
+  const m = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  for (const fps of [24, 30, 23.976, 29.97]) {
+    const [range] = m.extractPlaylistCommentRanges({ segment: { itemId: 'a', startTime: 3, duration: 5, fps }, bframeData: { fps: 60, comments: { layers: [{ markers: [{ startFrame: 32, endFrame: 'bad', fps: 60 }] }] } } });
+    assert.equal(range.localStartTime, 32 / fps);
+    assert.equal(range.localEndFrame, 32);
+    assert.equal(m.formatPlaylistCommentLabel({ ...range, localStartTimecode: '00:00:00:00' }), `${m.getPlaylistCutLabel(range)} ${range.localStartTimecode}`);
+  }
+});
