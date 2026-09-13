@@ -18288,6 +18288,15 @@ test('native draw ownership replays once into original frame confirmation with e
     assert.equal(confirmed.accepted, true);
     assert.equal(h.runtime.getDiagnostics().mutationCount, 1);
     assert.equal(h.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(sent.at(-1).phase, 'end', 'early release must retire native draw ownership');
+    h.drawStroke([{ x: 20, y: 20 }, { x: 60, y: 20 }], 9);
+    const nextStart = sent.filter(message => message.phase === 'start').at(-1);
+    assert.notEqual(nextStart.gestureId, fields.gestureId);
+    const { phase: nextPhase, clientX: nextX, clientY: nextY, ...nextFields } = nextStart;
+    command({ ...nextFields, type: 'decision', disposition: 'pan', transform: { scale: 2, panX: 0, panY: 0 } });
+    assert.equal(requests.length, 1, 'next Space pan must not ask for a drawing frame');
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 1);
+    assert.equal(h.runtime.getDiagnostics().undoDepth, 1);
   } finally { await h.destroy(); }
 });
 

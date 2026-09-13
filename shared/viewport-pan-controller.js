@@ -182,7 +182,13 @@ function createViewportPanInput(options) {
         const events = active.events; active.events = [];
         active.disposition = command.disposition; active.transform = command.transform;
         if (command.disposition === 'draw') {
-          options.replay(events, active.target);
+          const replayed = active;
+          options.replay(events, replayed.target);
+          // Replayers may consume pointerup internally instead of routing it back through event().
+          const terminal = events.at(-1);
+          if (active === replayed && terminal?.type === 'pointerup') {
+            active.latest = terminal; send('end'); release();
+          }
         } else {
           for (const event of events.slice(1)) { if (!active) break; api.event(event); }
         }

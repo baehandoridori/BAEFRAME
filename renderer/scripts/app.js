@@ -13464,13 +13464,22 @@ async function initApp() {
     finally { unlockForm(); }
   }
 
+  function retireDeletedCommentResolutionFailures() {
+    const videoPath = reviewDataManager.getVideoPath();
+    if (!videoPath) return;
+    playlistResolutionQueue.retireDeletedMarkers(videoPath, markerId => {
+      const marker = commentManager.getMarker(markerId);
+      return !marker || marker.deleted === true;
+    });
+  }
+
   async function toggleCurrentMarkerResolved(markerId) {
     const marker = commentManager.getMarker(markerId);
     const layer = commentManager.layers.find(layer => layer.markers.has(markerId));
     if (!marker || !layer) return false;
     const videoPath = reviewDataManager.getVideoPath();
     const intent = { key: `${normalizeComparableFilePath(videoPath)}:current:${layer.id}:${markerId}`,
-      videoPath, bframePath: reviewDataManager.getBframePath(), desiredResolved: !marker.resolved };
+      videoPath, markerId, scope: 'current-resolution', bframePath: reviewDataManager.getBframePath(), desiredResolved: !marker.resolved };
     try {
       await playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation(
         { markerId, layerId: layer.id, resolved: marker.resolved }, intent));
@@ -22079,6 +22088,7 @@ async function initApp() {
 
     // 리뷰 데이터 저장 시 재생목록 진행률 업데이트
     reviewDataManager.addEventListener('saved', async (e) => {
+      retireDeletedCommentResolutionFailures();
       if (playlistManager.isActive()) {
         // 현재 아이템의 bframePath 업데이트 (새로 생성된 경우)
         const currentItem = playlistManager.getCurrentItem();

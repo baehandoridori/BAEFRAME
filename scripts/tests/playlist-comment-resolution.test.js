@@ -242,3 +242,18 @@ test('actual main and reply edit submissions pass their owning forms to the save
   assert.match(appSource, /saveCurrentCommentEdit\(markerId, \(\) => commentManager.updateMarker\(markerId, \{ text: newText \}\), '', editFormEl\)/);
   assert.match(appFunction('startReplyEdit'), /saveCurrentCommentEdit\(markerId, \(\) => commentManager.updateReply\(markerId, replyId, \{ text: newText \}\), replyId, form\)/);
 });
+
+test('persisted deletion retires only matching current resolution failures including a late rejection', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const queue = createPlaylistResolutionQueue({ keyForPath: p => p });
+  const intent = (key, videoPath, markerId) => ({ key, videoPath, markerId, scope: 'current-resolution' });
+  for (const i of [intent('gone', 'A', 'gone'), intent('keep', 'A', 'keep'), intent('other-file', 'B', 'gone')]) await assert.rejects(queue.enqueue(i, () => false));
+  const held = deferred(); const pending = queue.enqueue(intent('late', 'A', 'gone'), () => held.promise); const rejected = assert.rejects(pending);
+  const context = vm.createContext({ playlistResolutionQueue: queue, reviewDataManager: { getVideoPath: () => 'A' },
+    commentManager: { getMarker: id => id === 'keep' ? { id } : { id, deleted: true } } });
+  vm.runInContext(appFunction('retireDeletedCommentResolutionFailures'), context); context.retireDeletedCommentResolutionFailures();
+  held.resolve(false); await rejected;
+  await queue.enqueue(intent('keep', 'A', 'keep'), () => true); await queue.drainPaths(['A']);
+  await assert.rejects(queue.drainPaths(['B']));
+  assert.match(appSource, /addEventListener\('saved', async \(e\) => \{\s*retireDeletedCommentResolutionFailures\(\)/);
+});

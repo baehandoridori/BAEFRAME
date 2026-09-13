@@ -31,6 +31,12 @@ export function createPlaylistResolutionQueue({ keyForPath }) {
       for (const [key, failure] of failures) if (failure.intent.scope === 'playlist') failures.delete(key);
       for (const record of pending.values()) if (record.intent.scope === 'playlist') record.abandoned = true;
     },
+    retireDeletedMarkers(videoPath, isDeleted) {
+      const path = keyForPath(videoPath);
+      const matches = record => record.path === path && record.intent.scope === 'current-resolution' && isDeleted(record.intent.markerId);
+      for (const [key, failure] of failures) if (matches(failure)) failures.delete(key);
+      for (const record of pending.values()) if (matches(record)) record.abandoned = true;
+    },
     hasPending(key) { return pending.has(key); },
     isLocked(path) { return locks.has(keyForPath(path)); },
     lockPaths(paths) {

@@ -134,3 +134,16 @@ test('a delayed owner cancel reconciles an already released local pan and its se
   assert.deepEqual(h.mainTransform, h.transform);
   assert.equal(h.input.acceptsMirror(h.owner.getMirror()), true);
 });
+
+test('buffered draw release retires both owners before the next Space gesture', () => {
+  const h = harness({ delayed: true });
+  h.input.down(h.event('pointerdown')); h.input.event(h.event('pointerup', 50));
+  h.input.command(h.commands[0]);
+  assert.equal(h.input.isActive(), false); assert.equal(h.owner.isPending(), false);
+  assert.equal(h.messages.at(-1).phase, 'end'); assert.equal(h.messages.at(-1).clientX, 50);
+  h.owner.keyDown({ tapAllowed: true });
+  assert.equal(h.input.down(h.event('pointerdown')), true);
+  h.input.command(h.commands.at(-1));
+  assert.equal(h.input.isPan(), true); assert.equal(h.draws, 1);
+  h.input.cancel();
+});

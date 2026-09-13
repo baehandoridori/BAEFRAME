@@ -345,7 +345,14 @@
               active.disposition = command.disposition;
               active.transform = command.transform;
               if (command.disposition === "draw") {
-                options.replay(events, active.target);
+                const replayed = active;
+                options.replay(events, replayed.target);
+                const terminal = events.at(-1);
+                if (active === replayed && terminal?.type === "pointerup") {
+                  active.latest = terminal;
+                  send("end");
+                  release();
+                }
               } else {
                 for (const event of events.slice(1)) {
                   if (!active) break;

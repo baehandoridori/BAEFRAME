@@ -234,3 +234,13 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 공통 saveCurrentCommentEdit는 동일 entity의 pending 제출을 false로 거절한다. 실제 일반 댓글·답글/팝업 편집 폼을 전달받아 해당 입력을 readOnly/contentEditable=false, 저장·취소 버튼 disabled, aria-busy=true로 잠그고 finally에서 원상복원한다. 실패 뒤 초안/편집 잠금은 유지되어 재시도할 수 있다.
 - 재현:17개 중14pass/3fail/0cancelled/exit1 →17pass/0fail/0cancelled/exit0. 실제 textarea/contenteditable 폼, 지연 저장, 중복 mutation 거절, 본문 복원, 재시도 입력 해제를 확인했다.
 - 관련 검사 playlist371, comment-input41, comment-popout52, persistence166 pass/fail0/cancelled0/exit0. 변경 ESLint 오류0, git diff --check 통과. 로그 review9-*.log.
+
+
+## 최종 리뷰 10차 입력 종료와 삭제된 댓글 실패 정리
+
+- 소유권 응답 전에 pointerup이 버퍼링되면 draw 재생 뒤 input/owner가 남는 공통 controller 경로를 재현했다. replay가 자체적으로 end를 처리하지 않은 동일 gesture에만 최종 좌표 end를 보내고 release한다. 재진입 replay의 정상 종료를 중복 처리하지 않는다.
+- 실제 Fabric DOM 경로의 기존 테스트는 replay된 up을 다시 전달해 수정 전에도 통과했다. 이 경로에는 빠른 draw 뒤 다음 pan에서 추가 프레임 확정/획/undo가 없는 회귀 단언을 추가했다. 공통 owner/input 분리 테스트에서는 실제 실패를 확인했다.
+- 일반 댓글 완료 저장 실패 후 해당 댓글 삭제가 저장되면, 같은 파일·같은 marker의 current-resolution 실패만 정리한다. 저장 이벤트에서 tombstone/부재를 검사하며, 미완료 쓰기는 여전히 기다리고 다른 파일/다른 댓글 실패는 유지한다.
+- 집중 재현31개:29pass/2fail/0cancelled/exit1 →31pass/0fail/0cancelled/exit0.
+- prebuild exit0: shared controller ESM, native overlay runtime, editor runtime 생성 번들 갱신 포함.
+- 관련 검사 playlist372/mpv398/Fabricpilot631/persistence166/editor147/입력41/팝업52 pass. 모두 fail0/cancelled0/exit0. 변경 ESLint 오류0/diff check 통과. 로그 review10-*.log.
