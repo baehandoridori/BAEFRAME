@@ -2128,6 +2128,7 @@ function createActualLoadRaceScenario({
     elements,
     videoPlayer,
     reviewDataManager,
+    finishCommentEdit() {},
     createTransitionMetrics: () => ({ mark() {}, finish() {} }),
     playlistResolutionQueue: { lockPaths: () => () => {}, drainPaths: async () => {} },
     fabricDrawingPilotInitialization: Promise.resolve(true),

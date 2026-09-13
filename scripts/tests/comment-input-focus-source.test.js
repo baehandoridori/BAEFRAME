@@ -214,7 +214,7 @@ test('playlist aggregate replies can expand and resolved state can be toggled fr
   assert.match(appSource, /playlistExpandedReplyKeys\.has\(key\)/);
   assert.match(appSource, /playlistExpandedReplyKeys\.add\(key\);[\s\S]+playlistExpandedReplyKeys\.delete\(key\);/);
   assert.match(appSource, /async function togglePlaylistAggregateResolved\(key\) \{/);
-  assert.match(appSource, /async function togglePlaylistAggregateResolvedWithoutNavigation\(range\) \{/);
+  assert.match(appSource, /async function togglePlaylistAggregateResolvedWithoutNavigation\(range, intent = \{\}\) \{/);
   assert.match(appSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);/);
   assert.match(appSource, /commentManager\.getMarker\(range\.markerId\)/);
   assert.match(appSource, /window\.electronAPI\.loadReviewSnapshot\(bframePath\)/);
@@ -223,7 +223,7 @@ test('playlist aggregate replies can expand and resolved state can be toggled fr
     appSource,
     /window\.electronAPI\.saveReview\(\s*bframePath,\s*bframeData,\s*\{ expectedVersionToken: expectedVersionToken \}\s*\)/
   );
-  assert.match(appSource, /marker\.resolved = !previous\.resolved;/);
+  assert.match(appSource, /marker\.resolved = desiredResolved;/);
   assert.match(appSource, /restoreMarkerResolution\(marker, previous\);/);
   assert.match(appSource, /marker\.updatedAt = new Date\(\);/);
   assert.match(appSource, /suppressCommentRangeRefreshOnce = true;/);
@@ -269,5 +269,5 @@ test('comment edit textarea participates in mention autocomplete', () => {
   assert.match(appSource, /if \(editTextarea\) mentionManager\.attach\(editTextarea\);/);
   assert.match(appSource, /'\.comment-reply-input, \.comment-reply-edit-textarea, \.comment-edit-textarea'/);
   assert.match(mentionManagerSource, /e\.__mentionHandled = true;/);
-  assert.match(appSource, /editTextarea\?\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.__mentionHandled \|\| mentionManager\.isVisible\) return;[\s\S]*?if \(e\.key === 'Escape'\) \{/);
+  assert.match(appSource, /editTextarea\?\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.defaultPrevented \|\| e\.__mentionHandled[\s\S]*?mentionManager\.isVisibleFor\(e\.target\)\) return;[\s\S]*?if \(e\.key === 'Escape'\) \{/);
 });

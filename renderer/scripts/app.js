@@ -1,3 +1,4 @@
+import { createCommentEditSession } from './modules/comment-edit-session.js';
 import { createTransitionMetrics } from './modules/playback-transition-metrics.js';
 import { createPlaylistResolutionQueue } from './modules/playlist-comment-resolution.js';
 import { createPlaylistCommentCache } from './modules/playlist-comment-cache.js';
@@ -1474,6 +1475,82 @@ async function initApp() {
 
   // 멘션 매니저 (댓글 @멘션 자동완성)
   const mentionManager = getMentionManager();
+  const commentEditSession = createCommentEditSession();
+  const commentDrafts = new Map();
+  installCommentEditProtection(elements.commentsList);
+
+  function getCommentDraftKey(element) {
+    const row = element.closest('[data-aggregate-comment-key], [data-marker-id]');
+    const markerId = row?.dataset.markerId || element.dataset.editMarkerId || '';
+    const replyId = element.closest('[data-reply-id]')?.dataset.replyId || '';
+    return JSON.stringify([normalizeComparableFilePath(reviewDataManager.getVideoPath()),
+      row?.dataset.aggregateCommentKey || markerId, replyId, element.className]);
+  }
+
+  function finishCommentEdit({ discard = false, flush = true } = {}) {
+    const element = commentEditSession.getElement();
+    const key = commentEditSession.getKey();
+    if (element && key) {
+      if (discard) commentDrafts.delete(key);
+      else commentDrafts.set(key, { value: 'value' in element ? element.value : element.innerHTML,
+        start: element.selectionStart, end: element.selectionEnd });
+    }
+    commentEditSession.end({ flush });
+  }
+
+  function restoreCommentDraft(element) {
+    const draft = commentDrafts.get(getCommentDraftKey(element));
+    if (!draft) return;
+    if ('value' in element) {
+      element.value = draft.value;
+      if (Number.isInteger(draft.start)) element.setSelectionRange(draft.start, draft.end);
+    } else element.innerHTML = draft.value;
+  }
+
+  function installCommentEditProtection(container) {
+    if (!container) return;
+    container.addEventListener('focusin', e => {
+      const element = e.target.closest('textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
+      if (!element || element.readOnly) return;
+      if (commentEditSession.getElement() === element) return;
+      finishCommentEdit({ flush: false });
+      restoreCommentDraft(element);
+      commentEditSession.begin({ key: getCommentDraftKey(element), element });
+    });
+    container.addEventListener('focusout', () => {
+      const view = container.ownerDocument.defaultView;
+      view.setTimeout(() => {
+        const active = container.ownerDocument.activeElement;
+        if (container.contains(active) || active?.closest?.('.mention-dropdown')) return;
+        if (commentEditSession.getElement() && container.contains(commentEditSession.getElement())) finishCommentEdit();
+      }, 0);
+    });
+  }
+
+  function deferCommentListRefresh(refresh) {
+    if (!commentEditSession.isEditing()) return false;
+    const element = commentEditSession.getElement();
+    const row = element?.closest('[data-marker-id]');
+    const markerId = row?.dataset.markerId || element?.dataset.editMarkerId;
+    if (markerId && !reviewDataManager.isLoading) {
+      const aggregateKey = row?.dataset.aggregateCommentKey;
+      const marker = aggregateKey
+        ? playlistAggregateCommentRanges.find(range => getPlaylistAggregateCommentKey(range) === aggregateKey)
+        : commentManager.getMarker(markerId);
+      if (!marker || marker.deleted) {
+        // Keep a copyable draft when its remote source disappears.
+        finishCommentEdit({ flush: false });
+        const draft = element.ownerDocument.createElement('textarea');
+        draft.className = 'comment-orphan-draft'; draft.readOnly = true;
+        draft.value = 'value' in element ? element.value : element.textContent;
+        draft.setAttribute('aria-label', '삭제된 댓글의 작성 중 초안');
+        elements.commentsList?.parentElement?.appendChild(draft);
+        showToast('편집 중인 댓글이 삭제되었습니다. 초안을 복사할 수 있습니다.', 'warning');
+        return false;
+      }
+    }
+    return commentEditSession.deferRefresh(refresh);
+  }
 
   // Slack 알림 매니저
   const slackNotifier = getSlackNotifier();
@@ -3226,7 +3303,7 @@ async function initApp() {
 
   function handleSidebarCommentEscape(e) {
     if (e.key !== 'Escape' || (!sidebarCommentSubmissionPending && !state.isCommentMode)) return;
-    if (mentionManager.isVisible) return;
+    if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
     e.preventDefault();
     cancelSidebarCommentDraft();
     commentManager.setCommentMode(false);
@@ -3235,7 +3312,7 @@ async function initApp() {
 
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
-    if (mentionManager.isVisible) return;
+    if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void submitSidebarCommentDraft();
@@ -10464,6 +10541,7 @@ async function initApp() {
       await reviewDataManager.waitForPendingSave();
       if (!canContinueVideoLoad()) return false;
     }
+    finishCommentEdit({ flush: false });
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
     mpvDrawPlaybackTransitionToken += 1;
@@ -12056,7 +12134,7 @@ async function initApp() {
 
     // Enter로 확정, Shift+Enter로 줄바꿈
     textarea?.addEventListener('keydown', (e) => {
-      if (mentionManager.isVisible) return;
+      if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const text = textarea.value.trim();
@@ -12773,29 +12851,30 @@ async function initApp() {
     if (!reply) return;
 
     // 편집 폼 동적 생성
-    const form = document.createElement('div');
+    const form = replyItem.ownerDocument.createElement('div');
     form.className = config.formClass;
 
     let editor;
     if (config.editorType === 'textarea') {
-      editor = document.createElement('textarea');
+      editor = replyItem.ownerDocument.createElement('textarea');
       editor.rows = 2;
       editor.value = reply.text;
     } else {
-      editor = document.createElement('div');
+      editor = replyItem.ownerDocument.createElement('div');
       editor.contentEditable = 'true';
       editor.textContent = reply.text;
     }
     editor.className = config.editorClass;
+    editor.dataset.editMarkerId = markerId;
 
-    const actions = document.createElement('div');
+    const actions = replyItem.ownerDocument.createElement('div');
     actions.className = config.actionsClass;
 
-    const saveBtn = document.createElement('button');
+    const saveBtn = replyItem.ownerDocument.createElement('button');
     saveBtn.className = config.saveClass;
     saveBtn.textContent = '저장';
 
-    const cancelBtn = document.createElement('button');
+    const cancelBtn = replyItem.ownerDocument.createElement('button');
     cancelBtn.className = config.cancelClass;
     cancelBtn.textContent = '취소';
 
@@ -12814,19 +12893,21 @@ async function initApp() {
     editor.addEventListener('input', () => resizeReplyEditorToContent(editor));
 
     const cleanup = () => {
+      finishCommentEdit({ discard: true, flush: false });
       mentionManager.detach(editor);
       form.remove();
       textEl.style.display = '';
     };
 
-    saveBtn.addEventListener('click', (e) => {
+    saveBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const newText = (config.editorType === 'textarea' ? editor.value : editor.innerText).trim();
+      const newText = (config.editorType === 'textarea' ? editor.value : editor.textContent).trim();
       if (!newText) return;
-      const success = commentManager.updateReply(markerId, replyId, { text: newText });
+      const success = await saveCurrentCommentEdit(markerId, () => commentManager.updateReply(markerId, replyId, { text: newText }));
       if (success) {
         cleanup();
         onSaved(newText);
+        updateCommentList();
         showToast('답글이 수정되었습니다.', 'success');
       }
     });
@@ -13097,11 +13178,19 @@ async function initApp() {
 
   function renderPlaylistResolutionState(key) {
     const operation = playlistResolutionStates.get(key);
-    if (!operation) return;
     for (const row of elements.commentsList?.querySelectorAll('.playlist-aggregate-comment') || []) {
       if (row.dataset.aggregateCommentKey !== key) continue;
       const button = row.querySelector('.playlist-comment-resolve-toggle');
       if (!button) continue;
+      if (!operation) {
+        const range = playlistAggregateCommentRanges.find(range => getPlaylistAggregateCommentKey(range) === key);
+        button.disabled = false;
+        button.textContent = range?.resolved ? '✓ 해결됨' : '○ 미해결';
+        row.classList.remove('is-save-pending', 'is-save-failed');
+        row.classList.toggle('resolved', range?.resolved === true);
+        row.setAttribute('aria-busy', 'false');
+        continue;
+      }
       button.disabled = operation.status === 'pending';
       button.textContent = operation.status === 'pending'
         ? `${operation.intent.desiredResolved ? '✓ 해결' : '○ 미해결'} · 저장 중` : '저장 실패 · 다시 시도';
@@ -13140,6 +13229,7 @@ async function initApp() {
       range.resolved = marker.resolved === true;
       range.resolvedBy = marker.resolvedBy || '';
       range.resolvedAt = marker.resolvedAt || null;
+      renderPlaylistResolutionState(key);
       await refreshPlaylistCommentsForItem(item.id);
       if (!isCurrentScreen()) return true;
       void refreshVisiblePlaylistProgress(intent.bframePath);
@@ -13211,6 +13301,7 @@ async function initApp() {
     activeRange.replies = [...(activeRange.replies || []), reply];
     playlistExpandedReplyKeys.add(key);
     textarea.value = '';
+    finishCommentEdit({ discard: true, flush: false });
     resizeReplyEditorToContent(textarea);
     renderPlaylistContinuousCommentList(commentFilterState.status);
     highlightPlaylistAggregateComment(key);
@@ -13219,6 +13310,7 @@ async function initApp() {
   }
 
   function renderPlaylistContinuousCommentList(filter = getActiveCommentFilter()) {
+    if (deferCommentListRefresh(() => renderPlaylistContinuousCommentList(filter))) return;
     const container = elements.commentsList;
     if (!container) return;
 
@@ -13386,7 +13478,7 @@ async function initApp() {
       });
 
       replyInput?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented && !e.__mentionHandled && !e.__mentionComposing && !e.isComposing && e.keyCode !== 229 && !mentionManager.isVisibleFor(e.target)) {
           e.preventDefault();
           e.stopPropagation();
           item.querySelector('.playlist-comment-reply-submit')?.click();
@@ -13636,6 +13728,7 @@ async function initApp() {
   }
 
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
+    if (deferCommentListRefresh(() => updateCommentListImmediate(filter))) return;
     const container = elements.commentsList;
     if (!container) return;
     previousReviewPanel?.refreshContext();
@@ -13975,6 +14068,7 @@ async function initApp() {
             });
 
             // 수정 후 UI 업데이트
+            finishCommentEdit({ discard: true, flush: false });
             updateCommentList();
             renderVideoMarkers();
             updateTimelineMarkers();
@@ -13990,6 +14084,7 @@ async function initApp() {
       // 수정 취소
       item.querySelector('.comment-edit-cancel')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        finishCommentEdit({ discard: true });
         const markerId = item.dataset.markerId;
 
         // 편집 잠금 해제
@@ -14011,7 +14106,7 @@ async function initApp() {
         // 이미 처리 중이면 무시 (중복 호출 방지)
         if (editFormEl.style.display === 'none') return;
         // 멘션 드롭다운 열림 중에는 멘션 매니저가 키를 처리
-        if (e.__mentionHandled || mentionManager.isVisible) return;
+        if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
 
         if (e.key === 'Escape') {
           e.stopPropagation();
@@ -14133,6 +14228,7 @@ async function initApp() {
         commentManager._emit('markersChanged');
 
         replyInput.value = '';
+        finishCommentEdit({ discard: true });
         resizeReplyEditorToContent(replyInput);
         clearReplyImage();
         showToast('답글이 추가되었습니다.', 'success');
@@ -14140,7 +14236,7 @@ async function initApp() {
 
       // Enter로 답글 제출
       replyInput?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented && !e.__mentionHandled && !e.__mentionComposing && !e.isComposing && e.keyCode !== 229 && !mentionManager.isVisibleFor(e.target)) {
           e.preventDefault();
           e.stopPropagation();
           replySubmit?.click();
@@ -17022,10 +17118,16 @@ async function initApp() {
    * 스레드 팝업 열기
    */
   function openThreadPopup(markerId) {
+    if (currentThreadMarkerId === markerId && commentEditSession.getElement() && threadOverlay.contains(commentEditSession.getElement())) {
+      commentEditSession.deferRefresh(() => openThreadPopup(markerId));
+      return;
+    }
+    finishCommentEdit({ flush: false });
     const marker = commentManager.getMarker(markerId);
     if (!marker) return;
 
     currentThreadMarkerId = markerId;
+    threadEditor.dataset.editMarkerId = markerId;
 
     // 헤더에 작성자 표시 (색상 포함)
     const authorColor = userSettings.getColorForName(marker.author);
@@ -17115,6 +17217,7 @@ async function initApp() {
    * 스레드 팝업 닫기
    */
   function closeThreadPopup() {
+    finishCommentEdit({ flush: false });
     threadOverlay.classList.remove('open');
     currentThreadMarkerId = null;
     threadEditor.innerHTML = '';
@@ -17374,6 +17477,7 @@ async function initApp() {
 
     // 에디터 및 이미지 초기화
     threadEditor.innerHTML = '';
+    finishCommentEdit({ discard: true, flush: false });
     resizeReplyEditorToContent(threadEditor);
     clearThreadImage();
     updateSubmitButtonState();
@@ -17402,6 +17506,8 @@ async function initApp() {
     });
   });
 
+  installCommentEditProtection(threadOverlay);
+
   // 에디터 키보드 단축키
   threadEditor?.addEventListener('keydown', (e) => {
     // Ctrl+B: Bold
@@ -17420,7 +17526,7 @@ async function initApp() {
       applyFormat('underline');
     }
     // Enter: Submit (without Shift) — 멘션 드롭다운 열려있으면 무시
-    if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented && !e.__mentionHandled && !e.__mentionComposing && !e.isComposing && e.keyCode !== 229 && !mentionManager.isVisibleFor(e.target)) {
       e.preventDefault();
       submitThreadReply();
     }

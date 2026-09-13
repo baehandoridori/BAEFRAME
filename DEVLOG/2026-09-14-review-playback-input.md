@@ -54,3 +54,12 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - 드로잉 입력 소유권 정책 분리, active/preparing/recovering 차단 및 passive/failed/off 해제 검증. 진행 중 marker drag 취소 및 리스너 정리, tooltip 닫기, click/hover 방어.
 - 메인/실제 native overlay의 marker/tooltip 자손 pointer-events 차단. commentInteractionBlocked의 생략/명시 false 구분.
 - 관련 179 pass / 0 fail / 0 cancelled, exit0 (`T4-green.log`). 실물 펜/네이티브 hit-test는 T10 별도 검증 대상.
+
+## T5
+
+- RED: 신규 멘션/편집 세션 9개 실패 및 실제 목록 renderer가 편집 DOM을 파괴하는 테스트 실패 확인.
+- 한국어 바로 뒤/괄호 @ 허용, ASCII 이메일 접두 거절. entry별 IME 상태/keyCode229, 실제 소비 키 표시, 해당 editor 한정 드롭다운 확인, pointerdown 및 미지원 문서 mousedown fallback.
+- plaintext-only/ownerDocument/분리창 이벤트 생성자 보존. 기존 attached 멘션 재사용.
+- 목록/스레드 편집 세션으로 전체 렌더 지연, 대상별 메모리 초안 보존. 원격 삭제 시 복사 가능한 초안 보존. 완료 버튼은 편집 중에도 행만 업데이트.
+- 답글 수정 및 본문 수정은 T2 checkpoint로 저장 확인. 일반 댓글/답글의 기존 권한 검사는 유지.
+- 최종 관련 179 pass / 0 fail / 0 cancelled, exit0 (`T5-final.log`). 실제 태블릿 후보 선택/실제 앱 입력 검증은 아직 미수행.

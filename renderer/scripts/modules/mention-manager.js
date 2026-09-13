@@ -35,13 +35,17 @@ export class MentionManager {
     document.body.appendChild(this._dropdown);
 
     // 클릭 이벤트 위임
-    this._dropdown.addEventListener('mousedown', (e) => {
+    const selectPointer = (e) => {
       e.preventDefault(); // blur 방지
       const item = e.target.closest('.mention-item');
       if (item) {
         const index = parseInt(item.dataset.index, 10);
         this._selectMember(index);
       }
+    };
+    this._dropdown.addEventListener('pointerdown', selectPointer);
+    this._dropdown.addEventListener('mousedown', e => {
+      if (!this._dropdown.ownerDocument.defaultView.PointerEvent) selectPointer(e);
     });
   }
 
@@ -52,7 +56,7 @@ export class MentionManager {
   attach(element) {
     if (this._attachedElements.has(element)) return;
 
-    const isContentEditable = element.getAttribute('contenteditable') === 'true';
+    const isContentEditable = element.isContentEditable || ['true', 'plaintext-only'].includes(element.getAttribute('contenteditable'));
     const type = isContentEditable ? 'contenteditable' : 'textarea';
 
     const onInput = () => this._handleInput(element, type);
@@ -66,11 +70,17 @@ export class MentionManager {
       }, 150);
     };
 
+    const entry = { handlers: {}, type, composing: false };
+    const onCompositionStart = () => { entry.composing = true; };
+    const onCompositionEnd = () => { entry.composing = false; this._handleInput(element, type); };
+    element.addEventListener('compositionstart', onCompositionStart);
+    element.addEventListener('compositionend', onCompositionEnd);
     element.addEventListener('input', onInput);
     element.addEventListener('keydown', onKeyDown);
     element.addEventListener('blur', onBlur);
 
-    this._attachedElements.set(element, { handlers: { onInput, onKeyDown, onBlur }, type });
+    entry.handlers = { onInput, onKeyDown, onBlur, onCompositionStart, onCompositionEnd };
+    this._attachedElements.set(element, entry);
   }
 
   /**
@@ -85,6 +95,8 @@ export class MentionManager {
     element.removeEventListener('input', handlers.onInput);
     element.removeEventListener('keydown', handlers.onKeyDown);
     element.removeEventListener('blur', handlers.onBlur);
+    element.removeEventListener('compositionstart', handlers.onCompositionStart);
+    element.removeEventListener('compositionend', handlers.onCompositionEnd);
 
     this._attachedElements.delete(element);
 
@@ -113,7 +125,7 @@ export class MentionManager {
     }
 
     // @ 앞이 공백이거나 텍스트 시작이어야 유효한 멘션
-    if (atIndex > 0 && !/\s/.test(beforeCursor[atIndex - 1])) {
+    if (atIndex > 0 && /[A-Za-z0-9_.+\-]/.test(beforeCursor[atIndex - 1])) {
       this.hide();
       return;
     }
@@ -148,22 +160,31 @@ export class MentionManager {
   /**
    * 키보드 이벤트 처리
    */
+  isVisibleFor(element) {
+    return this._activeElement === element && this.isVisible;
+  }
+
   _handleKeyDown(e, element, type) {
+    if (e.isComposing || e.keyCode === 229 || this._attachedElements.get(element)?.composing) {
+      e.__mentionComposing = true;
+      return;
+    }
     if (this._dropdown.style.display === 'none') return;
     if (this._activeElement !== element) return;
+    if (!['ArrowDown', 'ArrowUp', 'Enter', 'Escape', 'Tab'].includes(e.key)) return;
     e.__mentionHandled = true;
 
     switch (e.key) {
     case 'ArrowDown':
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       this._activeIndex = (this._activeIndex + 1) % this._filteredMembers.length;
       this._renderDropdown();
       break;
 
     case 'ArrowUp':
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       this._activeIndex = (this._activeIndex - 1 + this._filteredMembers.length) % this._filteredMembers.length;
       this._renderDropdown();
       break;
@@ -178,14 +199,14 @@ export class MentionManager {
 
     case 'Escape':
       e.preventDefault();
-      e.stopPropagation();
+      e.stopImmediatePropagation();
       this.hide();
       break;
 
     case 'Tab':
       if (this._filteredMembers.length > 0) {
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();
         this._selectMember(this._activeIndex);
       }
       break;

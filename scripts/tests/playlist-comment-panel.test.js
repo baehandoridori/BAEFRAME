@@ -50,7 +50,7 @@ test('panel contains a single local label and global badge; invalid timing canno
   const noop = () => {};
   const escape = value => String(value ?? '');
   const context = vm.createContext({ ...mod, elements: { commentsList: dom.window.document.querySelector('#list') },
-    playlistAggregateCommentRanges: ranges, playlistResolutionStates: new Map(), renderPlaylistResolutionState() {}, playlistExpandedReplyKeys: new Set(), commentSearchKeyword: '',
+    deferCommentListRefresh: () => false, playlistAggregateCommentRanges: ranges, playlistResolutionStates: new Map(), renderPlaylistResolutionState() {}, playlistExpandedReplyKeys: new Set(), commentSearchKeyword: '',
     getActiveCommentFilter: () => 'all', normalizeCommentSearch: escape, filterByAuthors: r => r,
     filterPlaylistAggregateCommentRanges: r => r, updateFeedbackProgress: noop,
     mentionManager: { attach: noop, detach: noop }, escapeHtmlAttribute: escape, escapeHtml: escape,
