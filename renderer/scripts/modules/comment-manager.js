@@ -163,7 +163,8 @@ export class CommentMarker {
    * 시작 타임코드
    */
   get startTimecode() {
-    return frameToTimecode(this.startFrame, this.fps);
+    const frame = readPlaylistMarkerFrame(this.startFrame);
+    return frame === null ? '시간 정보 없음' : frameToTimecode(frame, this.fps);
   }
 
   /**
@@ -872,7 +873,7 @@ export class CommentManager extends EventTarget {
     for (const layer of this.layers) {
       markers.push(...layer.getAllMarkers());
     }
-    return markers.sort((a, b) => a.startFrame - b.startFrame);
+    return markers.sort((a, b) => (readPlaylistMarkerFrame(a.startFrame) ?? Infinity) - (readPlaylistMarkerFrame(b.startFrame) ?? Infinity));
   }
 
   /**
@@ -881,16 +882,12 @@ export class CommentManager extends EventTarget {
    * @returns {number|null} 이전 마커의 시작 프레임 또는 null
    */
   getPrevMarkerFrame(currentFrame, markers = this.getAllMarkers()) {
-    // 현재 프레임보다 시작 프레임이 작은 마커들 중 가장 큰 것
-    let prevMarker = null;
+    let previous = null;
     for (const marker of markers) {
-      if (marker.startFrame < currentFrame) {
-        if (!prevMarker || marker.startFrame > prevMarker.startFrame) {
-          prevMarker = marker;
-        }
-      }
+      const frame = readPlaylistMarkerFrame(marker.startFrame);
+      if (frame !== null && frame < currentFrame && (previous === null || frame > previous)) previous = frame;
     }
-    return prevMarker ? prevMarker.startFrame : null;
+    return previous;
   }
 
   /**
@@ -899,16 +896,12 @@ export class CommentManager extends EventTarget {
    * @returns {number|null} 다음 마커의 시작 프레임 또는 null
    */
   getNextMarkerFrame(currentFrame, markers = this.getAllMarkers()) {
-    // 현재 프레임보다 시작 프레임이 큰 마커들 중 가장 작은 것
-    let nextMarker = null;
+    let next = null;
     for (const marker of markers) {
-      if (marker.startFrame > currentFrame) {
-        if (!nextMarker || marker.startFrame < nextMarker.startFrame) {
-          nextMarker = marker;
-        }
-      }
+      const frame = readPlaylistMarkerFrame(marker.startFrame);
+      if (frame !== null && frame > currentFrame && (next === null || frame < next)) next = frame;
     }
-    return nextMarker ? nextMarker.startFrame : null;
+    return next;
   }
 
   /**
@@ -988,13 +981,15 @@ export class CommentManager extends EventTarget {
     for (const layer of layersToCheck) {
       if (!layer) continue;
       for (const marker of layer.getAllMarkers()) {
+        const startFrame = readPlaylistMarkerFrame(marker.startFrame);
+        if (startFrame === null) continue;
         // 마커 개별 색상 사용 (없으면 레이어 색상)
         const markerColor = marker.colorInfo?.color || layer.color;
         ranges.push({
           layerId: layer.id,
           markerId: marker.id,
-          startFrame: marker.startFrame,
-          endFrame: marker.endFrame,
+          startFrame,
+          endFrame: readPlaylistMarkerFrame(marker.endFrame) ?? startFrame,
           color: markerColor,
           colorKey: marker.colorKey || 'default',
           text: marker.text,

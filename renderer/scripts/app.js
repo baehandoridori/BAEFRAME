@@ -76,6 +76,7 @@ import {
   mapLocalTimeToGlobal
 } from './modules/playlist-continuous-core.js';
 import {
+  readPlaylistMarkerFrame,
   extractPlaylistCommentRanges,
   formatPlaylistCommentPanelLine,
   formatPlaylistTimecode,
@@ -2955,7 +2956,7 @@ async function initApp() {
   // 타임라인 댓글 마커 클릭
   timeline.addEventListener('commentMarkerClick', (e) => {
     const { frame, markerInfos } = e.detail;
-    videoPlayer.seekToFrame(frame);
+    seekToCommentFrame(frame);
 
     // 프리뷰 마커 클릭과 동일한 효과 (패널 열기 + 스크롤 + 글로우)
     if (markerInfos && markerInfos.length > 0) {
@@ -5477,7 +5478,7 @@ async function initApp() {
       bar.addEventListener('click', () => {
         const marker = commentManager.getMarker(comment.markerId);
         if (marker) {
-          videoPlayer.seekToFrame(marker.startFrame);
+          seekToCommentFrame(marker.startFrame);
           scrollToCommentWithGlow(comment.markerId);
         }
       });
@@ -5851,7 +5852,7 @@ async function initApp() {
         const markerId = item.dataset.markerId;
         const marker = commentManager.getMarker(markerId);
         if (marker) {
-          videoPlayer.seekToFrame(marker.startFrame);
+          seekToCommentFrame(marker.startFrame);
           videoPlayer.pause();
           scrollToCommentWithGlow(markerId);
         }
@@ -13897,6 +13898,13 @@ async function initApp() {
     timeline.scrollToPlayhead();
   }
 
+  function seekToCommentFrame(value) {
+    const frame = readPlaylistMarkerFrame(value);
+    if (frame === null) return false;
+    videoPlayer.seekToFrame(frame);
+    return true;
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
     if (deferCommentListRefresh(() => updateCommentListImmediate(filter))) return;
     const container = elements.commentsList;
@@ -13987,7 +13995,8 @@ async function initApp() {
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
-      const commentTimeLabel = cutlistCommentLabel || marker.startTimecode;
+      const markerFrame = readPlaylistMarkerFrame(marker.startFrame);
+      const commentTimeLabel = markerFrame === null ? '시간 정보 없음' : cutlistCommentLabel || marker.startTimecode;
       const commentPanelLine = getCutlistCommentPanelLineForMarker(marker);
       const resolveTitle = getResolveButtonLabel(marker.resolved, marker.resolvedBy);
       const resolveTooltipHtml = marker.resolved ? getResolveTooltipHtml(marker.resolvedBy, marker.resolvedAt) : '';
@@ -14012,9 +14021,9 @@ async function initApp() {
       }).join('');
 
       // 썸네일 URL 가져오기 — 정확 프레임 우선, 없으면 근사치 + 온디맨드 캡처 요청
-      const markerTime = marker.startFrame / videoPlayer.fps;
+      const markerTime = markerFrame === null ? null : markerFrame / videoPlayer.fps;
       let thumbnailUrl = null;
-      if (showThumbnails && thumbnailGenerator?.isReady) {
+      if (markerFrame !== null && showThumbnails && thumbnailGenerator?.isReady) {
         thumbnailUrl = thumbnailGenerator.getThumbnailUrlAtExact(markerTime);
         if (!thumbnailUrl) {
           thumbnailGenerator.requestExactCapture(markerTime);
@@ -14035,7 +14044,7 @@ async function initApp() {
       ` : '';
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${markerFrame ?? ''}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <button class="comment-resolve-toggle resolve-btn" title="${escapeHtmlAttribute(resolveTitle)}" aria-label="${escapeHtmlAttribute(resolveTitle)}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
@@ -14097,8 +14106,7 @@ async function initApp() {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.comment-action-btn')) return;
         if (e.target.closest('.gdrive-link-btn')) return;
-        const frame = parseInt(item.dataset.startFrame);
-        videoPlayer.seekToFrame(frame);
+        seekToCommentFrame(item.dataset.startFrame);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
       });
@@ -14546,7 +14554,7 @@ async function initApp() {
     }
 
     // 해당 프레임으로 이동
-    videoPlayer.seekToFrame(marker.startFrame);
+    seekToCommentFrame(marker.startFrame);
 
     // 기존 글로우 함수 재사용 (패널 열기 + 스크롤 + 선택 + 글로우)
     scrollToCommentWithGlow(markerId);

@@ -67,6 +67,9 @@ export function isValidReviewSource(source) {
     source.key === reviewSourceKey(source.sourcePath, source.commentId) &&
     ['sourceLabel', 'sourceDocumentId', 'author', 'text'].every(key => typeof source[key] === 'string') &&
     (source.startFrame === null || (typeof source.startFrame === 'number' && Number.isFinite(source.startFrame) && source.startFrame >= 0)) &&
+    (source.endFrame === undefined || source.endFrame === null ||
+      (typeof source.endFrame === 'number' && Number.isFinite(source.endFrame) && source.endFrame >= 0 &&
+        (source.startFrame === null || source.endFrame >= source.startFrame))) &&
     positive(source.fps) && typeof source.resolved === 'boolean' &&
     Array.isArray(source.images) && source.images.every(isSafeReviewImage) &&
     Array.isArray(source.replies) && source.replies.every(reply => reply &&

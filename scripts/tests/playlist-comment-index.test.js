@@ -292,3 +292,15 @@ test('loaded comments retain genuine zero, missing time, and single-frame endpoi
   assert.equal(single.isVisibleAtFrame(32), true);
   assert.equal(single.isVisibleAtFrame(33), false);
 });
+
+
+test('untimed loaded markers stay out of marker navigation and timeline ranges while real zero stays usable', async () => {
+  const { CommentMarker, CommentManager } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const markers = [undefined, null, -1, 'bad', true, 0, 24].map((startFrame, i) => CommentMarker.fromJSON({ id: String(i), startFrame, createdAt: '2026-09-14T00:00:00Z' }));
+  for (const marker of markers.slice(0, 5)) assert.equal(marker.startTimecode, '시간 정보 없음');
+  assert.equal(markers[5].startTimecode, '00:00:00:00');
+  const context = { layers: [{ id: 'l', getAllMarkers: () => markers }], getAllMarkers: () => markers };
+  assert.equal(CommentManager.prototype.getPrevMarkerFrame.call(context, 12), 0);
+  assert.equal(CommentManager.prototype.getNextMarkerFrame.call(context, 0), 24);
+  assert.deepEqual(CommentManager.prototype.getMarkerRanges.call(context).map(r => r.startFrame), [0, 24]);
+});

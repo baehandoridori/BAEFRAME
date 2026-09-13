@@ -199,3 +199,13 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 실제 previous-review panel과 팝업에서24→30/30→24/23.976→29.97 FPS, 이어받기, 구간 끝, frame0/누락/마지막 frame 검사28 pass/4 fail을 먼저 확인했다.
 - source frame/FPS를 현재 FPS로 환산하고 seek와 같은 마지막 frame clamp 함수를 공유한다. 원본 source의 끝 frame도 선택적으로 보존하여 구간을 잃지 않으며, 이전 snapshot의 누락 끝은 시작 frame으로 처리한다. 잘못된 범위와 길이 밖은 강조하지 않는다. 저장되는 source의 frame/FPS를 현재 값으로 덮지 않는다. schema 문서에 선택 필드와 호환 동작을 기록했다.
 - 자동 결과: previous-review55/comment-input38/playlist360/persistence166 pass, fail0/cancelled0/exit0. lint 오류0/diff check 통과. 이번 혼합 FPS 보완은 DOM 자동 검증이며 새 실물 태블릿/협업 실기로 보고하지 않는다.
+
+## PR #222 일반 목록의 시간 없음·선택 필드 검증 보완
+
+- 대상ac47657, trigger5655515430, review5191916353의 P2 두 건(comment4000625981/4000625985).
+- 실제 일반 목록 renderer, CommentMarker/CommentManager, carryover manager로24 pass/3 fail을 먼저 재현했다. missing/null/음수/문자열/boolean은 시간 없음으로 표시하고 일반 목록 클릭·직접 포커스·댓글 마커 seek에서 제외한다. 썸네일 요청/타임라인 범위/이전·다음 댓글 이동도 유효 frame만 사용한다. 실제 frame0은 그대로 표시/선택/이동한다.
+- optional endFrame은 undefined/null 또는 시작과 일관된 유한 비음수 수만 지원한다. 잘못된 persisted payload는 기존 opaque roundtrip과 편집 차단 경로를 따른다. 기존 필드 없는 snapshot도 지원한다.
+- 실제 앱에서 시간 검증 함수 import 누락을 발견했고, 테스트가 임의 helper 주입 대신 실제 app import 목록을 쓰도록 바꿔5 pass/2 fail 재현 후 import를 연결했다. 제품 연결 누락이며 최종 앱에서 수정 확인했다.
+- 확장 검사: playlist363/mpv397/frame-grid68/comment-input38/comment-popout52/ux77/persistence166/Fabric pilot631/previous-review56/cutlist82 pass. 모두 fail0/cancelled0/exit0. prebuild와 lint 오류0/diff check 통과. 생성 번들은 이미 source와 일치하여 추가 diff 없음.
+- cutlist 최초80 pass/2 fail은 T9에서 바뀐 detail 전달/정수 frame 검사 대신 옛 함수 문자열을 고정한 source test였다. 시간 이동보다 cutlist 분기 우선, load 전 target frame 결정 검사를 새 계약으로 유지했다.
+- 실제 익명 D 일반 목록: untimed 클릭 뒤 frame32 유지/seekCalls[], zero 클릭은 frame0/seekCalls[0]/00:00:00:00. 이전 리뷰 혼합 FPS의 실제 30~60 강조·61 해제·frame0 결과도 T10 폴더에 추가했다. 사용자 업무 파일에는 쓰지 않았다.

@@ -30,3 +30,5 @@ baseline은 04e2a229, after는 T10 통합 작업 코드다. 같은 PC, Electron2
 `review1-native-rejected-seek.json`은 실제 checkpoint 실패로 다음 컷 이동이 거절됐을 때 원래 A/frame32 댓글 강조와 재시도 상태를 확인한 결과다. `review2-native-cancel.json`은 실제 native overlay→host→main IPC에서 미전송 move 직후 cancel해도 메인/overlay pan 좌표가 같고 mutation/undo가0임을 확인한 결과다. 합성 pointercancel을 포함하므로 실물 펜의 취소 검증과 구분한다.
 
 `review4-native-edit-failure.json`은 별도 실제 앱에서 댓글 수정 checkpoint를 실패시키고, 본문 복원 뒤 정상 저장한 결과다. 메모리와 다시 읽은 익명 A.bframe 모두 원래 본문이며 실패한 초안이 저장되지 않았다. 자동 검사는 본문/답글, false/예외, 다른 필드의 동시 변경, 더 최신 원격 본문/영상 교체, 입력칸 handoff와 답글 취소 뒤 보류 갱신을 포함한다.
+
+추가 실제 앱: `review6-native-previous-fps.json`은 익명24fps v1의24~48 구간을30fps v2에서30~60으로 강조하고61에서 해제하며0프레임도 별도 확인했다. 검증용 v1의 첫 댓글은 endFrame0으로 명시했다. `review7-native-untimed.json`은 일반 댓글 목록의 시간 누락 행을 클릭해도 frame32를 유지하고 seek 호출0, 실제 첫 프레임 행은 seek0/frame0/정상 타임코드를 확인한 결과다.

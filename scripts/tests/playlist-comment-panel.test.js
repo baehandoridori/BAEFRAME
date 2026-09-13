@@ -133,3 +133,49 @@ test('background revalidation bounds metadata work and renders changed snapshots
   changedPath = '5.bframe'; await callback();
   assert.equal(reads, 1); assert.equal(checks, 8); assert.equal(lists, 1); assert.equal(timelineRenders, 1);
 });
+
+
+test('ordinary rows show untimed text and never seek or request thumbnails for missing frames', async () => {
+  const { CommentMarker } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const indexModule = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  const importedNames = source.match(/import \{([^}]+)\} from '\.\/modules\/playlist-comment-index\.js';/)[1].split(',').map(name => name.trim()).filter(Boolean);
+  const indexBindings = Object.fromEntries(importedNames.map(name => [name, indexModule[name]]));
+  const dom = new JSDOM('<div id="list"></div>'); const seeks = [], captures = []; const noop = () => {};
+  const markers = [0, undefined, null, -1, 'bad', true].map((startFrame, i) => CommentMarker.fromJSON({
+    id: 'm' + i, text: 'comment', author: 'tester', startFrame, createdAt: '2026-09-14T00:00:00Z', replies: [] }));
+  const settings = { getShowCommentThumbnails: () => true, getCommentThumbnailScale: () => 100, getAvatarForName: () => null };
+  const context = vm.createContext({ ...indexBindings, elements: { commentsList: dom.window.document.querySelector('#list') },
+    getActiveCommentFilter: () => 'all', deferCommentListRefresh: () => false, playlistUIState: { mode: 'normal' }, cutlistUIState: { active: false },
+    getFilteredCurrentCommentMarkers: () => markers, normalizeCommentSearch: () => '', commentSearchKeyword: '',
+    commentManager: { getAllMarkers: () => markers, getMarker: id => markers.find(m => m.id === id), canEdit: () => true },
+    updateFeedbackProgress: noop, virtualScrollState: {}, getUserSettings: () => settings, getThumbnailGenerator: () => ({ isReady: true,
+      getThumbnailUrlAtExact: frame => { captures.push(frame); return null; }, requestExactCapture: noop, getThumbnailUrlAt: () => null }),
+    mentionManager: { attach: noop, detach: noop }, getAuthorColorClass: () => '', getAuthorColorStyle: () => '', getCommentAuthorColor: () => ({ color: '#fff' }),
+    getCutlistCommentLabelForMarker: () => '', getCutlistCommentPanelLineForMarker: () => '', getResolveButtonLabel: () => '',
+    getResolveTooltipHtml: () => '', highlightCommentSearchMatches: v => v || '', highlightMentions: v => v, renderGDriveLinks: v => v,
+    escapeHtml: v => v || '', escapeHtmlAttribute: v => v || '', formatRelativeTime: () => '', previousReviewPanel: null,
+    resizeReplyEditorToContent: noop, setupAttachedImagePreview: noop, setupGDriveLinkButtons: noop, refreshCommentPlaybackIndex: noop,
+    videoPlayer: { fps: 24, seekToFrame: f => seeks.push(f) }, log: { warn: noop } });
+  if (source.includes('function seekToCommentFrame(')) vm.runInContext(appFunction('seekToCommentFrame'), context);
+  vm.runInContext(appFunction('updateCommentListImmediate'), context); context.updateCommentListImmediate();
+  const rows = [...context.elements.commentsList.querySelectorAll('.comment-item')];
+  for (const row of rows.slice(1)) { row.click(); assert.match(row.querySelector('.comment-timecode').textContent, /시간 정보 없음/); }
+  assert.deepEqual(seeks, []); assert.deepEqual(captures, [0]);
+  rows[0].click(); assert.deepEqual(seeks, [0]); assert.match(rows[0].querySelector('.comment-timecode').textContent, /00:00:00:00/);
+  dom.window.close();
+});
+
+
+test('direct comment focus keeps untimed comments selectable without sending invalid frame seeks', async () => {
+  const indexModule = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  const importedNames = source.match(/import \{([^}]+)\} from '\.\/modules\/playlist-comment-index\.js';/)[1].split(',').map(name => name.trim()).filter(Boolean);
+  const indexBindings = Object.fromEntries(importedNames.map(name => [name, indexModule[name]]));
+  const seeks = [], focus = []; let marker = { startFrame: undefined };
+  const context = vm.createContext({ ...indexBindings, videoPlayer: { seekToFrame: frame => seeks.push(frame) },
+    commentManager: { getMarker: () => marker }, log: { info() {}, warn() {} }, showToast() {},
+    scrollToCommentWithGlow: id => focus.push(id) });
+  vm.runInContext(appFunction('seekToCommentFrame') + '\n' + appFunction('focusComment'), context);
+  for (const startFrame of [undefined, null, -1, true, 'bad']) { marker = { startFrame }; context.focusComment('untimed'); }
+  assert.deepEqual(seeks, []); assert.equal(focus.length, 5);
+  marker = { startFrame: 0 }; context.focusComment('zero'); assert.deepEqual(seeks, [0]);
+});
