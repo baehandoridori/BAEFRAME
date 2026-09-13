@@ -178,3 +178,9 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - Electron 검증 시작 시 mpv 내장 영상 창을 overlay로 잘못 선택한 테스트 harness 오류를 고쳤다. 실제 runtime 존재로 창을 선택한 뒤 위 결과를 확인했다. 제품 코드 오류와 구분한다.
 
 - 리뷰2 수정 후 동일 익명 fixture/격리 앱 전환46회: warm 각20회, local median771.6/p951101.1ms, Drive median774.8/p95924.3ms. 초기3회는 별도 first-touch이며 cold 다운로드 검증은 아니다. raw JSON과 실제 취소/실패 전환 증거를 T10 폴더에 추가했다.
+
+## 배포 후보 빌드 사전 확인
+
+- a607b64의 별도 release worktree에서 npm run build exit0. 기본 fabric-v3-stable 프로필로 실행한 packaged 앱에서 version2.12.0-beta/isPackaged/mpv-embedded/native bridge/테스트 영상 screenshot을 확인했다. 개인 userData/실제 업무 파일은 사용하지 않았다.
+- prebuild가 같은 mpv Fabric runtime을 재사용하는 editor-drawing.iife.js도 갱신했다. 이 생성 결과를 소스와 일치하도록 추가하고 test:editor147 pass/fail0/cancelled0/exit0를 확인했다. 최종 리뷰 이후 정확한 merge SHA에서 다시 빌드한다.
+- packaged 검사 스크립트의 asar 경로 구분자를 Windows path.normalize로 고쳤다. 처음 파일 없음 오류는 검사 스크립트 오류였으며 실제 archive에 해당 파일이 있고 비교26개가 모두 일치했다.
