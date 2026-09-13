@@ -1,3 +1,4 @@
+import { getActiveCommentKeys, applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } from './modules/comment-playback-highlight.js';
 import { createCommentEditSession } from './modules/comment-edit-session.js';
 import { createTransitionMetrics } from './modules/playback-transition-metrics.js';
 import { createPlaylistResolutionQueue } from './modules/playlist-comment-resolution.js';
@@ -1478,6 +1479,8 @@ async function initApp() {
   const mentionManager = getMentionManager();
   const commentEditSession = createCommentEditSession();
   const commentDrafts = new Map();
+  let commentPlaybackRanges = [];
+  let commentPlaybackLastPosition = null;
   installCommentEditProtection(elements.commentsList);
 
   function getCommentDraftKey(element) {
@@ -1799,6 +1802,52 @@ async function initApp() {
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
+  function refreshCommentPlaybackIndex() {
+    const container = elements.commentsList;
+    if (!container) return;
+    const playlistByKey = new Map(playlistAggregateCommentRanges.map(range => [getPlaylistAggregateCommentKey(range), range]));
+    const cutlistByKey = new Map(cutlistAggregateCommentRanges.map(range => [getCutlistAggregateCommentKey(range), range]));
+    commentPlaybackRanges = [];
+    for (const row of container.querySelectorAll('.comment-item, [data-pr-source], [data-pr-item]')) {
+      let range;
+      let key;
+      if (row.dataset.cutlistAggregateCommentKey) {
+        key = `cutlist:${row.dataset.cutlistAggregateCommentKey}`;
+        range = cutlistByKey.get(row.dataset.cutlistAggregateCommentKey);
+      } else if (row.dataset.aggregateCommentKey) {
+        key = `playlist:${row.dataset.aggregateCommentKey}`;
+        range = playlistByKey.get(row.dataset.aggregateCommentKey);
+      } else if (row.dataset.prSource || row.dataset.prItem) {
+        key = `previous:${row.dataset.prItem || row.dataset.prSource}`;
+        range = { mode: 'single', startFrame: row.dataset.playbackStartFrame === '' ? null : Number(row.dataset.playbackStartFrame),
+          endFrame: row.dataset.playbackEndFrame === '' ? null : Number(row.dataset.playbackEndFrame) };
+      } else {
+        range = commentManager.getMarker(row.dataset.markerId);
+        key = `current:${normalizeComparableFilePath(reviewDataManager.getVideoPath())}:${range?.layerId || ''}:${row.dataset.markerId}`;
+      }
+      if (!range) continue;
+      row.dataset.playbackCommentKey = key;
+      commentPlaybackRanges.push({ ...range, key });
+    }
+    invalidateCommentPlaybackHighlight(container);
+    commentPlaybackLastPosition = null;
+    updateCommentPlaybackHighlight();
+  }
+
+  function updateCommentPlaybackHighlight(preview = null) {
+    const mode = playlistUIState.mode === 'continuous' ? 'continuous' : cutlistUIState.active ? 'cutlist' : 'single';
+    const item = getPlaylistManager().getCurrentItem?.();
+    const currentItemId = preview?.itemId || (item && isSameFilePath(item.videoPath, state.currentFile) ? item.id : null);
+    const currentFrame = preview?.localFrame ?? videoPlayer.currentFrame;
+    const globalTime = preview?.time ?? getActiveTimelinePlaybackTime(videoPlayer.currentTime, currentFrame);
+    const position = `${mode}:${currentItemId}:${currentFrame}:${globalTime}`;
+    if (position === commentPlaybackLastPosition) return;
+    commentPlaybackLastPosition = position;
+    const keys = getActiveCommentKeys(commentPlaybackRanges, { mode, currentFrame, globalTime, currentItemId });
+    applyCommentPlaybackHighlight(elements.commentsList, keys);
+    previousReviewPanel?.updatePlaybackFrame?.(currentFrame);
+  }
+
   function syncPlaybackPositionUI(currentTime, currentFrame, options = {}) {
     const {
       updatePresence = false,
@@ -1822,6 +1871,7 @@ async function initApp() {
     if (shouldSyncFrameConsumers) {
       lastFrameConsumerSyncFrame = currentFrame;
       commentManager.setCurrentFrame(currentFrame);
+      if (!timeline.isDraggingPlayhead) updateCommentPlaybackHighlight();
       void handleCutlistPlaybackFrame(currentFrame);
       refreshCurrentCutFromPlayback(currentFrame);
       void fabricDrawingPilotController.syncDisplayFrame(currentFrame);
@@ -2116,11 +2166,13 @@ async function initApp() {
 
   // 스크러빙 중 (드래그 중 프리뷰)
   timeline.addEventListener('scrubbing', (e) => {
+    updateCommentPlaybackHighlight(e.detail);
     showScrubPreview(e.detail.time);
   });
 
   // 스크러빙 종료
   timeline.addEventListener('scrubbingEnd', (e) => {
+    updateCommentPlaybackHighlight(e.detail);
     hideScrubPreview();
   });
 
@@ -13356,6 +13408,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
+      refreshCommentPlaybackIndex();
       return;
     }
 
@@ -13490,6 +13543,7 @@ async function initApp() {
 
     for (const key of playlistResolutionStates.keys()) renderPlaylistResolutionState(key);
     container.scrollTop = savedScrollTop;
+    refreshCommentPlaybackIndex();
   }
 
   function getCutlistAggregateCommentKey(range) {
@@ -13633,6 +13687,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
+      refreshCommentPlaybackIndex();
       return;
     }
 
@@ -13677,6 +13732,7 @@ async function initApp() {
     });
 
     container.scrollTop = savedScrollTop;
+    refreshCommentPlaybackIndex();
   }
 
   function getFilteredCurrentCommentMarkers(filter = getActiveCommentFilter()) {
@@ -14280,6 +14336,7 @@ async function initApp() {
 
     // 스크롤 위치 복원
     container.scrollTop = savedScrollTop;
+    refreshCommentPlaybackIndex();
   }
 
   /**
@@ -22779,6 +22836,7 @@ async function initApp() {
     manager: reviewCarryoverManager,
     windowRef: window,
     onTimelineChange: entries => previousReviewTimeline.render(entries),
+    onRowsChanged: refreshCommentPlaybackIndex,
     onSelect: key => previousReviewTimeline.select(key),
     getContext: () => ({
       path: state.currentFile,

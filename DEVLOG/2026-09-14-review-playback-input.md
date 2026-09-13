@@ -72,3 +72,11 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - 기존 목표 frame hold/video-player 코드는 변경하지 않음. 글로벌 +1/round 보정 없음.
 - 실제 production seek 함수가 다른 fps 상태에서도 요청58을 seekToFrame(58)으로 보내는 행동 검사 포함. 관련175 pass / 0 fail / 0 cancelled, exit0 (`T9-final.log`).
 - 프레임 번호가 새겨진 영상의 native 재생/드로잉 저장 프레임 대조는 T10에서 별도 수행 예정.
+
+## T6 (T9 다음)
+
+- RED: 구간/DOM 강조 신규3개 실패. 양끝 포함, 끝 없음=1프레임, 실제0/invalid, playlist item 정체 및 cutlist global interval 구현.
+- 실제 목록/필터 갱신 때만 key→DOM index 재구축, 재생 tick은 차이 class/data-current-frame만 변경. previous review와 이전 리뷰 분리창도 연결.
+- T9 scrubbing detail로 미리보기/최종/취소 강조 연결. .selected/aria-label/포커스/스크롤 변경 없음.
+- 500행 DOM 시험에서 innerHTML 쓰기0, 반복 강조의 행 query1회, 초안/선택/스크롤 보존.
+- 관련51 pass / 0 fail / 0 cancelled, exit0 (`T6-final.log`). 실제 앱 화면 검증은 미수행.

@@ -12947,3 +12947,8 @@ body.audio-mode .frame-indicator {
 .drawing-active .comment-marker-input-wrapper,
 body.drawing-mode-active .comment-marker-tooltip,
 body.drawing-mode-active .comment-marker-tooltip * { pointer-events: none !important; }
+
+.comment-item.is-current-frame, .pr-review.is-current-frame {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+  background-color: var(--bg-tertiary);
+}

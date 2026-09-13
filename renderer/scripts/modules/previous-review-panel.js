@@ -1,3 +1,4 @@
+import { getActiveCommentKeys, applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } from './comment-playback-highlight.js';
 import { createPreviousReviewSources, isSafeReviewImage } from '../../../shared/review-carryover.js';
 import { createCommentPanelPopout } from './comment-panel-popout.js';
 import { previousReviewColor } from './previous-review-timeline.js';
@@ -21,7 +22,7 @@ const readableTime = seconds => {
 export function createPreviousReviewPanel({
   mount, list, manager, getContext, getVersions, loadReview, seek, toggleButton = null,
   notify = () => {}, getActor = () => '', onOpenChange = () => {}, windowRef = window,
-  matchesReview = () => true, onSummaryChange = () => {}, onTimelineChange = () => {}, onSelect = () => {}
+  matchesReview = () => true, onSummaryChange = () => {}, onTimelineChange = () => {}, onSelect = () => {}, onRowsChanged = () => {}
 }) {
   const document = windowRef.document;
   let contextPath = pathKey(getContext().path);
@@ -37,6 +38,7 @@ export function createPreviousReviewPanel({
   let mode = 'split';
   let timelineVisible = true;
   let activeKey = null;
+  let playbackRows = null;
   let optionsDocument = null;
   const availableSources = new Map();
   const selected = new Map();
@@ -227,6 +229,9 @@ export function createPreviousReviewPanel({
     const row = el('article', queueItem ? 'pr-review pr-carried' : 'pr-review pr-source');
     if (queueItem) row.dataset.prItem = queueItem.id;
     else row.dataset.prSource = source.key;
+    row.dataset.playbackCommentKey = `previous:${queueItem?.id || source.key}`;
+    row.dataset.playbackStartFrame = source.startFrame ?? '';
+    row.dataset.playbackEndFrame = source.endFrame ?? source.startFrame ?? '';
     row.style.setProperty('--pr-blue', previousReviewColor(source.sourceLabel));
     row.classList.toggle('pr-selected', source.key === activeKey);
     const meta = el('div', 'pr-source-meta');
@@ -299,10 +304,12 @@ export function createPreviousReviewPanel({
     if (empty) empty.hidden = visibleEntries.length > 0 && mode !== 'popup';
     onSummaryChange({ total: entries.length, resolved: entries.filter(entry => entry.resolved).length, visible: visibleEntries.length });
     onTimelineChange(show && timelineVisible ? visibleEntries : []);
+    playbackRows = null;
+    invalidateCommentPlaybackHighlight(popupList);
     const popupScroll = popupList.scrollTop;
     popupList.replaceChildren();
     popupPanel.hidden = !show || mode !== 'popup';
-    if (!show) { popout.dock(); return; }
+    if (!show) { popout.dock(); onRowsChanged(); return; }
     const currentFps = Number(getContext().fps) > 0 ? Number(getContext().fps) : 24;
     const native = [...list.querySelectorAll(':scope > .comment-item')];
     for (const item of native) item.querySelector('.comment-header, .comment-item-header')?.prepend(el('span', 'pr-current-badge', getContext().label || '현재'));
@@ -323,7 +330,7 @@ export function createPreviousReviewPanel({
     }
     if (!entries.length) notice.append(el('p', 'pr-empty', '버전을 선택해 리뷰를 가져오세요.'));
     if (notice.childElementCount) destination.append(notice);
-    popupList.scrollTop = popupScroll;
+    popupList.scrollTop = popupScroll;    onRowsChanged();
   }
 
   function positionOptions() {
@@ -373,6 +380,8 @@ export function createPreviousReviewPanel({
   }
 
   function render() {
+    playbackRows = null;
+    invalidateCommentPlaybackHighlight(popupList);
     if (disposed || batching) return;
     const visible = enabled() && (!toggleButton || hasReviewContent());
     if (toggleButton) {
@@ -529,6 +538,14 @@ export function createPreviousReviewPanel({
   void refreshAvailability();
   return {
     setOpen, isOpen: () => opened, refreshContext, refreshAvailability, decorateList, seekSource,
+    updatePlaybackFrame(currentFrame) {
+      if (!playbackRows) playbackRows = [...popupList.querySelectorAll('[data-playback-comment-key]')].map(row => ({
+        key: row.dataset.playbackCommentKey,
+        startFrame: row.dataset.playbackStartFrame === '' ? null : Number(row.dataset.playbackStartFrame),
+        endFrame: row.dataset.playbackEndFrame === '' ? null : Number(row.dataset.playbackEndFrame)
+      }));
+      applyCommentPlaybackHighlight(popupList, getActiveCommentKeys(playbackRows, { mode: 'single', currentFrame }));
+    },
     getAuthorFilterSources: () => !disposed && opened && enabled() ? reviewEntries().map(entry => entry.source) : [],
     suspend() {
       availabilityGeneration++; availabilityKey = ''; hasPreviousReviews = false;
