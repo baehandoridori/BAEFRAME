@@ -1,4 +1,5 @@
 'use strict';
+const { createViewportPanInput } = require('../../../shared/viewport-pan-controller');
 
 const {
   createFabricDrawingPilotMetrics
@@ -250,6 +251,7 @@ const POINTERDOWN_FRAME_CANCELLATION_KEYS = Object.freeze([
   'cancelled'
 ]);
 const REPLAYED_POINTERDOWN = Symbol('baeframe-replayed-pointerdown');
+const OWNERSHIP_REPLAY = Symbol('baeframe-ownership-replay');
 const POINTER_EVENT_SNAPSHOT_FIELDS = Object.freeze([
   'pointerId',
   'pointerType',
@@ -3833,6 +3835,25 @@ function createFabricOverlayRuntime(options = {}) {
     lastPointerdown: null
   };
   let pendingPointerdownFrame = null;
+  const viewportPanBridge = options.viewportPanBridge || windowRef?.mpvOverlayViewportPan;
+  const viewportPanInput = viewportPanBridge ? createViewportPanInput({
+    getFence: () => sceneStore.getPersistenceFence?.(),
+    getTarget: () => fabricCanvas?.upperCanvasEl || canvasElement,
+    createId: () => createId('viewport-pan'),
+    send: value => viewportPanBridge.send(value),
+    setTimeout: setTimeoutRef, clearTimeout: clearTimeoutRef,
+    requestAnimationFrame: windowRef?.requestAnimationFrame?.bind(windowRef),
+    cancelAnimationFrame: windowRef?.cancelAnimationFrame?.bind(windowRef),
+    applyTransform: transform => {
+      if (!inputEnabled || !currentSession) return;
+      currentSession.viewportTransform = transform;
+      applyViewport(currentSession);
+    },
+    replay: (events, target) => {
+      for (const event of events) dispatchReplayedPointerEvent(target, event, OWNERSHIP_REPLAY);
+    }
+  }) : null;
+  const unsubscribeViewportPan = viewportPanBridge?.onCommand?.(value => viewportPanInput?.command(value));
   let lastSelectionGesture = null;
   let pendingLassoSelection = null;
   let preservingPendingLassoSelectionEvent = false;
@@ -7421,6 +7442,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onOverlayWindowBlur(event) {
+    viewportPanInput?.reset();
     resetOverlayModifierState();
     endSizeAdjustGesture(event);
     cancelStrokeEraseGesture(event);
@@ -8401,7 +8423,7 @@ function createFabricOverlayRuntime(options = {}) {
     return true;
   }
 
-  function dispatchReplayedPointerEvent(target, snapshot) {
+  function dispatchReplayedPointerEvent(target, snapshot, replayFlag = REPLAYED_POINTERDOWN) {
     if (typeof target?.dispatchEvent === 'function' && windowRef?.Event) {
       const EventConstructor = typeof windowRef.PointerEvent === 'function'
         ? windowRef.PointerEvent
@@ -8426,12 +8448,12 @@ function createFabricOverlayRuntime(options = {}) {
       if (typeof snapshot.timeStamp === 'number' && event.timeStamp !== snapshot.timeStamp) {
         Object.defineProperty(event, 'timeStamp', { value: snapshot.timeStamp });
       }
-      Object.defineProperty(event, REPLAYED_POINTERDOWN, { value: true });
+      Object.defineProperty(event, replayFlag, { value: true });
       target.dispatchEvent(event);
       return true;
     }
     if (typeof target?.dispatch === 'function') {
-      target.dispatch(snapshot.type, { ...snapshot, [REPLAYED_POINTERDOWN]: true });
+      target.dispatch(snapshot.type, { ...snapshot, [replayFlag]: true });
       return true;
     }
     return false;
@@ -8446,6 +8468,9 @@ function createFabricOverlayRuntime(options = {}) {
       beginPointerDown(event, false);
       return;
     }
+    if (!event?.[OWNERSHIP_REPLAY] && inputEnabled && event.button === 0 &&
+        !sizeAdjustGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso &&
+        !selectGesture && !strokeEraseGesture && !shapeGesture && viewportPanInput?.down(event)) return;
     // Alt 드래그는 씬을 바꾸지 않으므로 pointerdown 프레임 확정 왕복 이전에 가로챈다.
     // 레거시와 같이 좌/우 버튼 모두 허용한다.
     if (inputEnabled && isAltActive(event) &&
@@ -8578,6 +8603,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerMove(event) {
+    if (!event?.[REPLAYED_POINTERDOWN] && viewportPanInput?.event(event)) return;
     if (sizeAdjustGesture) {
       if (event.pointerId !== sizeAdjustGesture.pointerId) return;
       updateSizeAdjustGesture(event);
@@ -8622,6 +8648,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerUp(event) {
+    if (!event?.[REPLAYED_POINTERDOWN] && viewportPanInput?.event(event)) return;
     if (sizeAdjustGesture) {
       if (event.pointerId !== sizeAdjustGesture.pointerId) return;
       endSizeAdjustGesture(event);
@@ -8680,6 +8707,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerCancel(event) {
+    if (viewportPanInput?.cancel(event)) return;
     if (sizeAdjustGesture) {
       if (event.pointerId !== undefined && event.pointerId !== sizeAdjustGesture.pointerId) return;
       endSizeAdjustGesture(event);
@@ -8732,6 +8760,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onDocumentPointerUp(event) {
+    if (!event?.[REPLAYED_POINTERDOWN] && viewportPanInput?.event(event)) return;
     // 포인터 캡처가 실패한 환경에서도 제스처가 끝나도록 문서 경로에서 회수한다.
     if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
       onPointerUp(event);
@@ -8758,6 +8787,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onDocumentPointerCancel(event) {
+    if (viewportPanInput?.cancel(event)) return;
     if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
       onPointerCancel(event);
       return;
@@ -9169,6 +9199,7 @@ function createFabricOverlayRuntime(options = {}) {
         ? disabledFrameState.sourceFrame
         : disabledSession?.sourceFrame ?? null;
     const discardedProvisional = sceneStore.getDiagnostics().provisional === true;
+    viewportPanInput?.reset();
     cancelPendingPointerdownFrame();
     abortPendingLassoSelection();
     cancelActiveLasso();
@@ -9497,6 +9528,7 @@ function createFabricOverlayRuntime(options = {}) {
     cancelStrokeEraseGesture();
     cancelShapeGesture();
     resetOverlayModifierState();
+    viewportPanInput?.reset();
     cancelPendingPointerdownFrame();
     abortPendingLassoSelection();
     if (activeStroke) cancelActiveStroke();
@@ -9776,6 +9808,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function updateViewport(command = {}) {
+    if (viewportPanInput && !viewportPanInput.acceptsMirror(command.panGesture)) return { accepted: false, reason: 'stale-pan-viewport' };
     const viewportSession = inputEnabled ? currentSession : passiveDisplaySession;
     if (!viewportSession) return { accepted: false, reason: 'input-disabled' };
     const revision = Number(command.revision);
@@ -10260,6 +10293,8 @@ function createFabricOverlayRuntime(options = {}) {
     releaseSurfaceResources();
     strokeFillGeometryCache.clear();
     strokeFillGeometryCacheWeight = 0;
+    viewportPanInput?.reset();
+    unsubscribeViewportPan?.();
     sceneStore.destroy();
     try {
       drawingV3Adapter?.destroy();

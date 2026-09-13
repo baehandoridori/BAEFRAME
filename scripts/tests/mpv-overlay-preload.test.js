@@ -296,6 +296,7 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
   assert.deepEqual(
     [...harness.exposed.keys()],
     [
+      'mpvOverlayViewportPan',
       'mpvOverlayPersistence',
       'mpvOverlayCollaborationActions',
       'mpvOverlayDrawingFrame'

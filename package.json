@@ -52,7 +52,7 @@
     "bundle:review-drawing-freeze": "esbuild renderer/scripts/modules/review-drawing-freeze.js --bundle --platform=browser --format=iife --target=chrome120 --outfile=renderer/scripts/lib/review-drawing-freeze.iife.js --legal-comments=eof --preserve-symlinks",
     "bundle:liveblocks": "esbuild ./node_modules/@liveblocks/client/dist/index.js --bundle --format=esm --outfile=renderer/scripts/lib/liveblocks-client.js",
     "bundle:perfect-freehand": "esbuild ./node_modules/perfect-freehand/dist/esm/index.mjs --bundle --format=esm --outfile=renderer/scripts/lib/perfect-freehand.js",
-    "bundle:mpv-fabric-overlay": "esbuild renderer/scripts/modules/mpv-fabric-overlay-runtime.js --bundle --platform=browser --format=iife --target=chrome120 --outfile=renderer/scripts/lib/mpv-fabric-overlay.iife.js --legal-comments=eof --preserve-symlinks",
+    "bundle:mpv-fabric-overlay": "esbuild renderer/scripts/modules/mpv-fabric-overlay-runtime.js --bundle --platform=browser --format=iife --target=chrome120 --outfile=renderer/scripts/lib/mpv-fabric-overlay.iife.js --legal-comments=eof --preserve-symlinks && esbuild preload/mpv-overlay-preload.js --bundle --platform=node --format=cjs --target=chrome120 --external:electron --outfile=preload/mpv-overlay-preload.bundle.js && esbuild shared/viewport-pan-controller.js --bundle --platform=browser --format=esm --target=chrome120 --outfile=renderer/scripts/lib/viewport-pan-controller.mjs",
     "build:review-file-cas-helper": "node scripts/build-review-file-cas-helper.js",
     "postinstall": "npm run bundle:liveblocks && npm run bundle:perfect-freehand && npm run bundle:mpv-fabric-overlay && npm run build:review-file-cas-helper"
   },

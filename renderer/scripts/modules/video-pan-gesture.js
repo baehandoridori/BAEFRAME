@@ -35,6 +35,9 @@ export function createVideoPanGesture({ canStart, getTransform, onChange, onFini
       if (!active || e.pointerId !== active.pointerId) return;
       move(e); finish(false);
     },
-    cancel() { finish(true); }
+    cancel(event) {
+      if (event?.pointerId !== undefined && event.pointerId !== active?.pointerId) return;
+      finish(true);
+    }
   };
 }

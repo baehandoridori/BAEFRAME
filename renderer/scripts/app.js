@@ -1,3 +1,4 @@
+import viewportPanControllers from './lib/viewport-pan-controller.mjs';
 import { createVideoPanGesture } from './modules/video-pan-gesture.js';
 import { getActiveCommentKeys, applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } from './modules/comment-playback-highlight.js';
 import { createCommentEditSession } from './modules/comment-edit-session.js';
@@ -978,6 +979,8 @@ async function initApp() {
   const playlistResolutionStates = new Map();
   const activeMarkerDragCancels = new Set();
   let videoPanGesture = null;
+  let viewportPanOwner = null;
+  let viewportFocusEpoch = 0;
   let videoPanRaf = null;
   let pendingVideoPan = null;
   let playlistCommentModeGeneration = 0;
@@ -6222,8 +6225,8 @@ async function initApp() {
   }
 
   function endVideoPan() {
-    videoPanGesture?.cancel();
     const wasPanning = state.isPanningVideo;
+    videoPanGesture?.cancel();
     state.isPanningVideo = false;
     elements.videoWrapper?.classList.remove('panning');
     return wasPanning;
@@ -6423,7 +6426,8 @@ async function initApp() {
       if (state.isSpaceHeld && gesture.maxDistance >= 3) state.spacePanUsed = true;
       if (videoPanRaf === null) videoPanRaf = requestAnimationFrame(flushVideoPan);
     },
-    onFinish: () => {
+    onFinish: ({ cancelled }) => {
+      if (cancelled) viewportPanOwner?.consume();
       flushVideoPan();
       state.isPanningVideo = false;
       elements.videoWrapper?.classList.remove('panning');
@@ -6437,8 +6441,8 @@ async function initApp() {
   });
   document.addEventListener('pointermove', e => videoPanGesture.pointerMove(e));
   document.addEventListener('pointerup', e => videoPanGesture.pointerUp(e));
-  document.addEventListener('pointercancel', () => videoPanGesture.cancel());
-  elements.videoWrapper?.addEventListener('lostpointercapture', () => videoPanGesture.cancel());
+  document.addEventListener('pointercancel', e => videoPanGesture.cancel(e));
+  elements.videoWrapper?.addEventListener('lostpointercapture', e => videoPanGesture.cancel(e));
   // Middle-button scrubbing remains a separate mouse path. Compatibility mouse
   // events have no primary-button pan handler and cannot apply a second move.
   elements.videoWrapper?.addEventListener('mousedown', (e) => {
@@ -6456,13 +6460,27 @@ async function initApp() {
   document.addEventListener('mouseup', () => {
     if (state.isFullscreenScrubbing) finishFullscreenMiddleScrub();
   });
-  window.addEventListener('blur', () => {
+  function resetViewportPanCycle() {
+    viewportFocusEpoch++;
+    viewportPanOwner?.cancel();
     endVideoPan();
     state.isSpaceHeld = false;
     state.spacePanUsed = false;
     elements.videoWrapper?.classList.remove('space-pan');
+  }
+  window.addEventListener('blur', () => {
+    endVideoPan();
+    const epoch = ++viewportFocusEpoch;
+    const fence = fabricDrawingPilotController.getViewportPanFence();
+    if (!fence || !state.isSpaceHeld) { resetViewportPanCycle(); return; }
+    // The native host must confirm the actual focused overlay and the same persistence session.
+    Promise.resolve(window.electronAPI.getMpvOverlayInputFocus?.()).then(focused => {
+      if (epoch !== viewportFocusEpoch) return;
+      if (!focused || !Object.keys(fence).every(key => fence[key] === focused[key])) resetViewportPanCycle();
+    }, () => { if (epoch === viewportFocusEpoch) resetViewportPanCycle(); });
   });
-  window.addEventListener('beforeunload', () => endVideoPan());
+  window.electronAPI.onMpvOverlayInputBlur?.(resetViewportPanCycle);
+  window.addEventListener('beforeunload', resetViewportPanCycle);
 
   // ====== 댓글 패널 토글 ======
 
@@ -6649,6 +6667,21 @@ async function initApp() {
     event.stopImmediatePropagation();
   }
 
+  viewportPanOwner = viewportPanControllers.createViewportPanOwner({
+    getFence: () => fabricDrawingPilotController.getViewportPanFence(),
+    canPan: () => state.isDrawMode && canPanVideo(),
+    getTransform: () => ({ scale: state.videoZoom / 100, panX: state.videoPanX, panY: state.videoPanY }),
+    applyTransform: transform => {
+      state.videoPanX = transform.panX;
+      state.videoPanY = transform.panY;
+      applyVideoZoom();
+      scheduleMpvOverlayStateSync();
+    },
+    send: value => window.electronAPI.sendMpvOverlayViewportPanCommand?.(value) === true,
+    togglePlayback: () => handleUserPlayPauseToggle()
+  });
+  window.electronAPI.onMpvOverlayViewportPan?.(value => viewportPanOwner.message(value));
+
   // 키보드 단축키
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
@@ -6747,7 +6780,7 @@ async function initApp() {
       fabricDrawingViewportSignature = signature;
       fabricDrawingViewportRevision += 1;
     }
-    return { ...viewport, revision: fabricDrawingViewportRevision };
+    return { ...viewport, revision: fabricDrawingViewportRevision, panGesture: viewportPanOwner?.getMirror() || undefined };
   }
 
   function getFabricDrawingPilotContext() {
@@ -10602,7 +10635,7 @@ async function initApp() {
       if (!canContinueVideoLoad()) return false;
     }
     finishCommentEdit({ flush: false });
-    endVideoPan();
+    resetViewportPanCycle();
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
     mpvDrawPlaybackTransitionToken += 1;
@@ -11629,7 +11662,7 @@ async function initApp() {
    * 그리기 모드 토글
    */
   function syncCommentInteractionPolicy() {
-    endVideoPan();
+    resetViewportPanCycle();
     const blocked = state.isDrawMode || isFabricDrawingPilotControllerEngaged();
     setCommentOverlaysDrawingPassthrough(blocked);
     scheduleMpvOverlayStateSync();
@@ -15045,18 +15078,20 @@ async function initApp() {
 
     // ====== 공통 단축키 (사용자 설정 기반) ======
 
+    if (e.code === 'Space' && state.isDrawMode &&
+        !shouldIgnoreGlobalShortcutTarget(shortcutTarget, e) &&
+        !shouldIgnoreComposingKeyboardEvent(e)) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.repeat || state.isSpaceHeld) return;
+      state.isSpaceHeld = true;
+      state.spacePanUsed = false;
+      viewportPanOwner.keyDown({ tapAllowed: isPlayPauseInput, drawing: drawingManager.drawingCanvas.isDrawing === true });
+      elements.videoWrapper?.classList.add('space-pan');
+      return;
+    }
+
     // 재생/일시정지
     if (isPlayPauseInput) {
-      if (e.code === 'Space' && state.isDrawMode && !isFabricDrawingPilotEngaged()) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.repeat) return;
-        if (drawingManager.drawingCanvas.isDrawing) return;
-        state.isSpaceHeld = true;
-        state.spacePanUsed = false;
-        elements.videoWrapper?.classList.add('space-pan');
-        return;
-      }
       if (e.code === 'Space') {
         suppressPlayPauseShortcutKeyup = true;
       }
@@ -15745,11 +15780,12 @@ async function initApp() {
     if (state.isSpaceHeld) {
       e.preventDefault();
       e.stopPropagation();
-      const shouldTogglePlayback = !state.spacePanUsed && !state.isPanningVideo;
+      if (state.spacePanUsed) viewportPanOwner?.consume();
+      endVideoPan();
       state.isSpaceHeld = false;
       state.spacePanUsed = false;
       elements.videoWrapper?.classList.remove('space-pan');
-      if (shouldTogglePlayback) handleUserPlayPauseToggle();
+      viewportPanOwner?.keyUp();
       return;
     }
     if (!suppressPlayPauseShortcutKeyup) return;

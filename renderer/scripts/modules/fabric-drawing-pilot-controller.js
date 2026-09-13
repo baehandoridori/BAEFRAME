@@ -3038,6 +3038,9 @@ export function createFabricDrawingPilotController(options = {}) {
     isActiveOrPreparing,
     getState,
     getStatusSnapshot,
+    getViewportPanFence: () => state === 'active' && persistenceSessionId
+      ? { hostGeneration, videoGeneration, persistenceSessionId, stableVideoIdentity: confirmedVideoIdentity }
+      : null,
     diagnostics
   };
 }

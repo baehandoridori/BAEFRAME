@@ -87,3 +87,13 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - pointerdown의 CSS 좌표/scale/pan을 고정하고 동일 pointerId만 추적, release 최종 좌표 반영. cancel/lostcapture/blur/영상·모드 변경/종료 정리.
 - rAF로 메인 viewport 갱신 합치기, end flush. 기본 가운데 고정 조건 유지. 중간 버튼 scrub은 별도 mouse 경로를 유지하고 주 버튼 호환 mouse 중복 이동 제거.
 - 관련17 pass / 0 fail / 0 cancelled, exit0 (`T7-final.log`). 실물 태블릿은 아직 미수행.
+
+
+## T8 — native Fabric Space 입력 소유권
+
+- primary down을 프레임 확정/레이어 잠금/Alt 처리보다 먼저 보류하고 전용 IPC로 main의 Space 상태를 확인한다. draw만 기존 프레임 확정으로 한 번 재생하고 pan은 뷰포트만 변경한다.
+- 공유 strict validator, 양방향 sender와 host/video/persistence/identity fence, 단조 sequence, 응답 timeout/취소, 늦은 mirror 차단, keyup flush를 구현했다. Space 재지정과 반복 입력을 구분한다.
+- sandbox=true를 보존하기 위해 overlay preload와 공유 controller를 번들로 생성했다. 실제 Fabric DOM 경로에서 잠긴 레이어 위 pen/Alt pan의 mutation/undo=0, 조기 pointerup 후 draw 프레임 확정 1회를 검사했다.
+- T7 취소에서 다른 pointerId 무시와 종료 여부 반환을 보완했다.
+- RED: validator 미구현 1 fail, ownership 미구현 1 fail. 초기 전체 검사 225 fail 중 223은 npm ci --ignore-scripts로 생긴 canvas native 모듈 미설치였다. npm rebuild canvas 성공 후 실제 Fabric 검사가 실행됐다. 나머지 2개는 새 bridge/번들 경로의 기존 계약 갱신이었다.
+- bundle exit0, T8 관련 node tests exit0 / pass579 / fail0 / cancelled0 (`.local/review-playback-input/T8-final.log`). 실제 앱/실물 태블릿은 아직 미수행.

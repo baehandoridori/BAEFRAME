@@ -7,6 +7,7 @@
  */
 
 const fs = require('fs');
+const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand, samePanSession, samePanGesture } = require('../shared/viewport-pan-message');
 const path = require('path');
 const { createLogger } = require('./logger');
 const { normalizeEmbedBounds } = require('./mpv-embed-host');
@@ -1986,7 +1987,10 @@ function normalizeFabricViewport(value) {
     scale: scale > 0 ? scale : 1,
     panX: normalizeFloat(value.panX, 0),
     panY: normalizeFloat(value.panY, 0),
-    devicePixelRatio: devicePixelRatio > 0 ? devicePixelRatio : 1
+    devicePixelRatio: devicePixelRatio > 0 ? devicePixelRatio : 1,
+    ...(typeof value.panGesture?.gestureId === 'string' && value.panGesture.gestureId.length > 0 &&
+      value.panGesture.gestureId.length <= 256 && Number.isSafeInteger(value.panGesture.sequence) && value.panGesture.sequence >= 0
+      ? { panGesture: { gestureId: value.panGesture.gestureId, sequence: value.panGesture.sequence } } : {})
   };
 }
 
@@ -3048,6 +3052,7 @@ class MPVOverlayHost {
     this.activeCollaborationDragPointerId = null;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
+    this.viewportPanGesture = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
     this.currentLayerViewRevision = -1;
@@ -3172,6 +3177,45 @@ class MPVOverlayHost {
     return result;
   }
 
+  _viewportPanFenceMatches(value) {
+    return this._collaborationActionRelayIsReady() &&
+      value.hostGeneration === this.hostGeneration && value.videoGeneration === this.currentVideoGeneration &&
+      value.persistenceSessionId === this.currentPanPersistenceSessionId &&
+      value.stableVideoIdentity === this.currentStableVideoIdentity;
+  }
+
+  forwardViewportPan(event, value) {
+    const message = normalizeViewportPanMessage(value);
+    if (!this.isCurrentOverlaySender(event) || !message || !this._viewportPanFenceMatches(message)) return false;
+    const active = this.viewportPanGesture;
+    if (message.phase === 'start') {
+      if (active && !['end', 'cancel'].includes(active.phase) && samePanSession(active, message)) return false;
+    } else if (!active || !samePanGesture(active, message) || message.sequence <= active.sequence) return false;
+    this.viewportPanGesture = message;
+    try { this.getMainWindow().webContents.send(PAN_CHANNEL, message); } catch { this.viewportPanGesture = null; return false; }
+    if (message.phase === 'cancel') this.viewportPanGesture = null;
+    return true;
+  }
+
+  forwardViewportPanCommand(event, value) {
+    const command = normalizeViewportPanCommand(value);
+    const mainWindow = this.getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.() || mainWindow.webContents?.isDestroyed?.() ||
+        event?.sender !== mainWindow.webContents || !command || !this._viewportPanFenceMatches(command) ||
+        !samePanGesture(command, this.viewportPanGesture) || command.sequence > this.viewportPanGesture.sequence) return false;
+    try { this.window.webContents.send(PAN_COMMAND_CHANNEL, command); } catch { return false; }
+    if (command.type === 'cancel' || (command.type === 'decision' && command.disposition === 'blocked')) this.viewportPanGesture = null;
+    return true;
+  }
+
+  getInputFocus(event) {
+    const mainWindow = this.getMainWindow();
+    if (event?.sender !== mainWindow?.webContents || !this._collaborationActionRelayIsReady() ||
+        this.window?.isFocused?.() !== true) return null;
+    return { hostGeneration: this.hostGeneration, videoGeneration: this.currentVideoGeneration,
+      persistenceSessionId: this.currentPanPersistenceSessionId, stableVideoIdentity: this.currentStableVideoIdentity };
+  }
+
   forwardDrawingPointerdownFrameRequest(event, value) {
     if (!this.isCurrentOverlaySender(event)) {
       return {
@@ -3275,6 +3319,7 @@ class MPVOverlayHost {
     }
     this.desiredInputEnabled = request.enabled;
     this.activeSessionId = null;
+    this.viewportPanGesture = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
     this.currentLayerViewRevision = -1;
@@ -4139,6 +4184,8 @@ class MPVOverlayHost {
         };
       }
       this.currentStableVideoIdentity = normalizedRequest.stableVideoIdentity;
+      this.currentPanPersistenceSessionId = normalizedRequest.persistenceSessionId;
+      this.viewportPanGesture = null;
       return {
         success: true,
         accepted: true,
@@ -4772,6 +4819,7 @@ class MPVOverlayHost {
     this.activeCollaborationDragPointerId = null;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
+    this.viewportPanGesture = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
     this.currentLayerViewRevision = -1;
@@ -4819,7 +4867,7 @@ class MPVOverlayHost {
         contextIsolation: true,
         nodeIntegration: false,
         sandbox: true,
-        preload: path.join(__dirname, '..', 'preload', 'mpv-overlay-preload.js'),
+        preload: path.join(__dirname, '..', 'preload', 'mpv-overlay-preload.bundle.js'),
         webSecurity: false
       }
     });
@@ -4842,6 +4890,7 @@ class MPVOverlayHost {
     this.activeCollaborationDragPointerId = null;
     this.desiredInputEnabled = false;
     this.activeSessionId = null;
+    this.viewportPanGesture = null;
     this.currentToolRevision = -1;
     this.currentBrushRevision = -1;
     this.currentLayerViewRevision = -1;
@@ -4880,6 +4929,11 @@ class MPVOverlayHost {
     });
 
     const hostGeneration = this.hostGeneration;
+    hostWindow.on?.('blur', () => {
+      if (this.window !== hostWindow || this.hostGeneration !== hostGeneration) return;
+      this.viewportPanGesture = null;
+      try { this.getMainWindow()?.webContents?.send('mpv-overlay:input-blur'); } catch { /* window closing */ }
+    });
     hostWindow.webContents?.on?.('before-input-event', (event, input) => {
       if (this.window !== hostWindow ||
           this.hostGeneration !== hostGeneration ||
@@ -4971,6 +5025,7 @@ class MPVOverlayHost {
       this.activeCollaborationDragPointerId = null;
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
+    this.viewportPanGesture = null;
       this.currentToolRevision = -1;
       this.currentBrushRevision = -1;
       this.currentLayerViewRevision = -1;
