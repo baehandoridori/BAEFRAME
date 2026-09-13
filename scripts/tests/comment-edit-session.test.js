@@ -70,3 +70,29 @@ test('canceling the next reply editor flushes a refresh carried from the previou
   container.querySelector('.cancel').click(); assert.equal(refreshed, 1); assert.equal(session.isEditing(), false);
   dom.window.close();
 });
+
+
+for (const saveResult of [false, true, 'empty']) {
+  test(`actual edit handlers keep the presence lock until the form closes (${saveResult})`, async () => {
+    const dom = new JSDOM('<div class="comment-item" data-marker-id="m"><button class="edit-btn"></button><div class="comment-content"></div><div class="comment-actions"></div><div class="comment-edit-form" style="display:none"><textarea class="comment-edit-textarea">original</textarea><button class="comment-edit-save"></button><button class="comment-edit-cancel"></button></div></div>');
+    const item = dom.window.document.querySelector('.comment-item'), form = item.querySelector('.comment-edit-form');
+    const presence = []; const marker = { text: 'original' }; const noop = () => {};
+    const context = vm.createContext({ item, commentManager: { getMarker: () => marker, canEdit: () => true },
+      mentionManager: { attach: noop }, liveblocksManager: { checkEditLock: () => ({ isLocked: false }), updatePresence: p => presence.push(p.activeComment) },
+      saveCurrentCommentEdit: async () => saveResult, finishCommentEdit: noop, pushUndo: noop,
+      updateCommentList: () => { form.style.display = 'none'; }, renderVideoMarkers: noop, updateTimelineMarkers: noop, showToast: noop });
+    const start = appSource.indexOf('      // 수정 버튼\n      const editBtn');
+    const end = appSource.indexOf('      // Textarea에서 Escape로 취소', start); assert.ok(start >= 0 && end > start);
+    vm.runInContext(appSource.slice(start, end), context);
+    item.querySelector('.edit-btn').click(); assert.deepEqual(presence, ['m']);
+    item.querySelector('textarea').value = saveResult === 'empty' ? '   ' : 'retry draft';
+    item.querySelector('.comment-edit-save').click(); await new Promise(resolve => setImmediate(resolve));
+    if (saveResult === true) {
+      assert.equal(form.style.display, 'none'); assert.deepEqual(presence, ['m', null]);
+    } else {
+      assert.equal(form.style.display, 'block'); assert.deepEqual(presence, ['m']);
+      item.querySelector('.comment-edit-cancel').click(); assert.equal(form.style.display, 'none'); assert.deepEqual(presence, ['m', null]);
+    }
+    dom.window.close();
+  });
+}

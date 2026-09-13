@@ -209,3 +209,10 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 확장 검사: playlist363/mpv397/frame-grid68/comment-input38/comment-popout52/ux77/persistence166/Fabric pilot631/previous-review56/cutlist82 pass. 모두 fail0/cancelled0/exit0. prebuild와 lint 오류0/diff check 통과. 생성 번들은 이미 source와 일치하여 추가 diff 없음.
 - cutlist 최초80 pass/2 fail은 T9에서 바뀐 detail 전달/정수 frame 검사 대신 옛 함수 문자열을 고정한 source test였다. 시간 이동보다 cutlist 분기 우선, load 전 target frame 결정 검사를 새 계약으로 유지했다.
 - 실제 익명 D 일반 목록: untimed 클릭 뒤 frame32 유지/seekCalls[], zero 클릭은 frame0/seekCalls[0]/00:00:00:00. 이전 리뷰 혼합 FPS의 실제 30~60 강조·61 해제·frame0 결과도 T10 폴더에 추가했다. 사용자 업무 파일에는 쓰지 않았다.
+
+## PR #222 저장 재시도 중 편집 잠금·누락 끝 필드 보존
+
+- 대상ee5073c, trigger5655612960, review5192005372, P2 comment4000671992/4000671994.
+- 4초 기본값 복원 제안은 사용자 지정 계획 §1.1의 “끝이 없으면 한 프레임짜리 구간”과 충돌하므로 적용하지 않았다. 대신 기존 파일의 missing endFrame이 무관한 저장에서 새로 쓰이는 문제13 pass/1 fail을 재현했다. 메모리에서는 명시 사양대로 한 프레임, 원본에 없는 끝 필드는 범위를 실제로 늘리기 전까지 저장하지 않는다. 새 댓글의 생성 기본4초는 유지한다. 내부 flag는 저장 형식에 추가되지 않는다.
+- 실제 편집 버튼/save/cancel 리스너의 실패·빈 제출 잠금 해제를5 pass/2 fail로 재현했다. 실패/빈 입력은 열린 초안과 activeComment를 유지하고 성공 또는 취소로 닫힐 때만 해제한다. 다음 인수 조건 검사21 pass/0 fail.
+- 관련 결과: playlist364/comment-input41/comment-popout52/previous-review56/persistence166 pass. 모두 fail0/cancelled0/exit0. lint 오류0/diff check 통과. 실제 다른 PC 편집 잠금 실기는 미확인이며 DOM 리스너/Presence 호출 자동 검증이다.

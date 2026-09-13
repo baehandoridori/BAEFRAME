@@ -304,3 +304,14 @@ test('untimed loaded markers stay out of marker navigation and timeline ranges w
   assert.equal(CommentManager.prototype.getNextMarkerFrame.call(context, 0), 24);
   assert.deepEqual(CommentManager.prototype.getMarkerRanges.call(context).map(r => r.startFrame), [0, 24]);
 });
+
+
+test('implicit one-frame loaded ranges preserve an absent endpoint on unrelated saves', async () => {
+  const { CommentMarker } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const loaded = CommentMarker.fromJSON({ id: 'legacy', startFrame: 32, createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(loaded.isVisibleAtFrame(32), true); assert.equal(loaded.isVisibleAtFrame(33), false);
+  loaded.text = 'edited'; assert.equal(Object.hasOwn(loaded.toJSON(), 'endFrame'), false);
+  loaded.setDuration(12); assert.equal(loaded.toJSON().endFrame, 44);
+  const created = new CommentMarker({ startFrame: 32, fps: 24 });
+  assert.equal(created.toJSON().endFrame, 128, 'new comments keep the four-second creation default');
+});

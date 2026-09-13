@@ -14225,9 +14225,7 @@ async function initApp() {
 
             // 권한 없음 시 중단
             if (!updated) {
-              // 저장/권한 실패 사유는 saveCurrentCommentEdit에서 표시한다.
-              // 편집 잠금 해제
-              liveblocksManager.updatePresence({ activeComment: null });
+              // Keep the presence lock while the retryable draft remains open.
               return;
             }
 
@@ -14252,11 +14250,10 @@ async function initApp() {
             updateTimelineMarkers();
 
             showToast('댓글이 수정되었습니다.', 'success');
+            liveblocksManager.updatePresence({ activeComment: null });
           }
         }
 
-        // 편집 잠금 해제
-        liveblocksManager.updatePresence({ activeComment: null });
       });
 
       // 수정 취소

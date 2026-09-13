@@ -255,6 +255,9 @@ export class CommentMarker {
       json.imageHeight = this.imageHeight;
     }
 
+    // An implicit loaded interval is one frame (plan section 1.1), without rewriting a missing file field.
+    if (this._loadedWithoutEndFrame && this.endFrame === this.startFrame) delete json.endFrame;
+
     return json;
   }
 
@@ -274,7 +277,8 @@ export class CommentMarker {
         updatedAt: r.updatedAt ? new Date(r.updatedAt) : (r.createdAt ? new Date(r.createdAt) : new Date())
       }))
     });
-    // New markers keep the creation default; loaded records retain their saved timing.
+    // Plan section 1.1: missing loaded endpoints are one-frame intervals; new markers keep the creation default.
+    marker._loadedWithoutEndFrame = json.endFrame === undefined;
     const start = readPlaylistMarkerFrame(json.startFrame);
     marker.startFrame = start ?? json.startFrame;
     marker.endFrame = readPlaylistMarkerFrame(json.endFrame) ?? marker.startFrame;
