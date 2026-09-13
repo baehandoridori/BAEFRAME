@@ -192,3 +192,10 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 편집칸 handoff는 보류된 refresh를 다음 session에 넘기고, 다른 문서 등 명시적 context 종료는 기존대로 폐기한다. 답글 취소 경로의 refresh 유실도3 pass/1 fail로 추가 재현하여 폼 정리 뒤 flush한다.
 - 관련 결과: playlist360/comment-input38/comment-popout52/ux77/persistence166 pass. 모두 fail0/cancelled0/exit0. lint 오류0. 테스트 반복은 후속 cleanup 변경 범위에 한정했다.
 - 별도 실제 Electron 앱: 익명 A 댓글 수정 checkpoint 실패→원래 본문 복원→정상 저장→A.bframe 재읽기에서 원래 본문 확인. 사용자 데이터는 사용하지 않았다. T10/review4-native-edit-failure.json에 원본 기록.
+
+## PR #222 이전 리뷰 FPS 정합성 보완
+
+- 대상100db00, trigger5655446875, review5191859630/comment4000593902(P2): source FPS의 raw frame을 현재 영상 frame과 비교하던 재현.
+- 실제 previous-review panel과 팝업에서24→30/30→24/23.976→29.97 FPS, 이어받기, 구간 끝, frame0/누락/마지막 frame 검사28 pass/4 fail을 먼저 확인했다.
+- source frame/FPS를 현재 FPS로 환산하고 seek와 같은 마지막 frame clamp 함수를 공유한다. 원본 source의 끝 frame도 선택적으로 보존하여 구간을 잃지 않으며, 이전 snapshot의 누락 끝은 시작 frame으로 처리한다. 잘못된 범위와 길이 밖은 강조하지 않는다. 저장되는 source의 frame/FPS를 현재 값으로 덮지 않는다. schema 문서에 선택 필드와 호환 동작을 기록했다.
+- 자동 결과: previous-review55/comment-input38/playlist360/persistence166 pass, fail0/cancelled0/exit0. lint 오류0/diff check 통과. 이번 혼합 FPS 보완은 DOM 자동 검증이며 새 실물 태블릿/협업 실기로 보고하지 않는다.
