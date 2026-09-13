@@ -13050,7 +13050,7 @@ async function initApp() {
       e.stopPropagation();
       const newText = (config.editorType === 'textarea' ? editor.value : editor.textContent).trim();
       if (!newText) return;
-      const success = await saveCurrentCommentEdit(markerId, () => commentManager.updateReply(markerId, replyId, { text: newText }), replyId);
+      const success = await saveCurrentCommentEdit(markerId, () => commentManager.updateReply(markerId, replyId, { text: newText }), replyId, form);
       if (success) {
         cleanup();
         onSaved(newText);
@@ -13393,10 +13393,36 @@ async function initApp() {
     }
   }
 
-  async function saveCurrentCommentEdit(markerId, mutate, replyId = '') {
+  function lockCommentEditForm(form) {
+    const busy = form.getAttribute('aria-busy');
+    form.setAttribute('aria-busy', 'true');
+    const restore = [];
+    for (const button of form.querySelectorAll('button')) {
+      const disabled = button.disabled; button.disabled = true;
+      restore.push(() => { button.disabled = disabled; });
+    }
+    for (const editor of form.querySelectorAll('textarea,input,[contenteditable],[data-edit-marker-id]')) {
+      if ('readOnly' in editor) {
+        const readOnly = editor.readOnly; editor.readOnly = true;
+        restore.push(() => { editor.readOnly = readOnly; });
+      } else {
+        const editable = editor.contentEditable;
+        editor.contentEditable = 'false';
+        restore.push(() => { editor.contentEditable = editable; });
+      }
+    }
+    return () => {
+      restore.forEach(run => run());
+      if (busy === null) form.removeAttribute('aria-busy'); else form.setAttribute('aria-busy', busy);
+    };
+  }
+
+  async function saveCurrentCommentEdit(markerId, mutate, replyId = '', form = null) {
     const owner = reviewDataManager.captureSaveCheckpoint();
     const intent = { key: `${normalizeComparableFilePath(owner.videoPath)}:edit:${markerId}:${replyId}`,
       videoPath: owner.videoPath };
+    if (playlistResolutionQueue.hasPending(intent.key)) { showToast('댓글을 저장하고 있습니다.', 'info'); return false; }
+    const unlockForm = form ? lockCommentEditForm(form) : () => {};
     try {
       return await playlistResolutionQueue.enqueue(intent, async () => {
         if (!reviewDataManager._ownsSave(owner)) throw Object.assign(new Error('영상이 바뀌어 댓글 수정을 중단했습니다.'), { blocksNavigation: false });
@@ -13435,6 +13461,7 @@ async function initApp() {
         return result;
       });
     } catch (error) { showToast(error.message, 'warning'); return false; }
+    finally { unlockForm(); }
   }
 
   async function toggleCurrentMarkerResolved(markerId) {
@@ -14227,7 +14254,7 @@ async function initApp() {
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const oldText = marker.text;
-            const updated = await saveCurrentCommentEdit(markerId, () => commentManager.updateMarker(markerId, { text: newText }));
+            const updated = await saveCurrentCommentEdit(markerId, () => commentManager.updateMarker(markerId, { text: newText }), '', editFormEl);
 
             // 권한 없음 시 중단
             if (!updated) {

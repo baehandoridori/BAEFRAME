@@ -226,3 +226,11 @@ PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 
 - 재현 검사63개: 수정 전58pass/5fail/0cancelled/exit1 → 수정 후63pass/0fail/0cancelled/exit0. 첫 보완 중 테스트 window 환경 누락을 수정했고 실제 persisted manager.fromJSON 경로로 null을 재현했다.
 - 관련 검사: playlist368, previous-review57, comment-input41, comment-popout52, persistence166 pass. 모두 fail0/cancelled0/exit0. 기존 isolated lifecycle harness에 새 정리 의존성을 추가했다.
 - 로그: .local/review-playback-input/review8-*.log. 이 보완은 자동 검사이며 추가 실물 태블릿 검증으로 표시하지 않는다.
+
+
+## 최종 리뷰 9차 중복 편집 제출
+
+- 느린 저장 중 같은 본문/답글에 다시 제출하면 entity key로 첫 promise를 공유해 새 내용의 성공으로 오인하는 경로를 재현했다.
+- 공통 saveCurrentCommentEdit는 동일 entity의 pending 제출을 false로 거절한다. 실제 일반 댓글·답글/팝업 편집 폼을 전달받아 해당 입력을 readOnly/contentEditable=false, 저장·취소 버튼 disabled, aria-busy=true로 잠그고 finally에서 원상복원한다. 실패 뒤 초안/편집 잠금은 유지되어 재시도할 수 있다.
+- 재현:17개 중14pass/3fail/0cancelled/exit1 →17pass/0fail/0cancelled/exit0. 실제 textarea/contenteditable 폼, 지연 저장, 중복 mutation 거절, 본문 복원, 재시도 입력 해제를 확인했다.
+- 관련 검사 playlist371, comment-input41, comment-popout52, persistence166 pass/fail0/cancelled0/exit0. 변경 ESLint 오류0, git diff --check 통과. 로그 review9-*.log.

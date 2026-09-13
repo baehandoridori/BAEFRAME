@@ -215,3 +215,30 @@ test('committed replacement, creation/load and close abandon inaccessible playli
     assert.match(appSource.slice(start, appSource.indexOf('\n    };', start)), /abandonPlaylistResolutionFailures\(\)/);
   }
 });
+
+for (const editorType of ['textarea', 'contenteditable']) { test(`pending ${editorType} edit freezes its form, rejects duplicate mutation and restores retry on failure`, async () => {
+  const { JSDOM } = require('jsdom');
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const dom = new JSDOM(`<div id="form">${editorType === 'textarea' ? '<textarea>draft</textarea>' : '<div contenteditable="true">draft</div>'}<button>Save</button><button>Cancel</button></div>`);
+  const form = dom.window.document.querySelector('#form'), editor = form.firstChild, held = deferred();
+  const marker = { id: 'm', text: 'original', updatedAt: new Date(0) }; let mutations = 0;
+  const context = vm.createContext({ playlistResolutionQueue: createPlaylistResolutionQueue({ keyForPath: p => p }), normalizeComparableFilePath: p => p,
+    reviewDataManager: { captureSaveCheckpoint: () => ({ videoPath: 'A' }), _ownsSave: () => true, saveThroughCheckpoint: () => held.promise },
+    commentManager: { getMarker: () => marker, _emit() {} }, liveblocksManager: { checkEditLock: () => null }, showToast() {} });
+  vm.runInContext(appFunction('lockCommentEditForm') + '\n' + appFunction('saveCurrentCommentEdit'), context);
+  const first = context.saveCurrentCommentEdit('m', () => { mutations++; marker.text = 'first'; return true; }, '', form);
+  assert.equal(form.getAttribute('aria-busy'), 'true');
+  assert.equal(editorType === 'textarea' ? editor.readOnly : editor.contentEditable === 'false', true);
+  assert.ok([...form.querySelectorAll('button')].every(button => button.disabled));
+  const second = context.saveCurrentCommentEdit('m', () => { mutations++; marker.text = 'second'; return true; }, '', form);
+  assert.equal(await second, false, 'a second submission must not borrow the first result');
+  held.resolve(false); assert.equal(await first, false); assert.equal(mutations, 1); assert.equal(marker.text, 'original');
+  assert.equal(form.hasAttribute('aria-busy'), false); assert.ok([...form.querySelectorAll('button')].every(button => !button.disabled));
+  assert.equal(editorType === 'textarea' ? editor.readOnly : editor.getAttribute('contenteditable') === 'false', false);
+  dom.window.close();
+}); }
+
+test('actual main and reply edit submissions pass their owning forms to the save guard', () => {
+  assert.match(appSource, /saveCurrentCommentEdit\(markerId, \(\) => commentManager.updateMarker\(markerId, \{ text: newText \}\), '', editFormEl\)/);
+  assert.match(appFunction('startReplyEdit'), /saveCurrentCommentEdit\(markerId, \(\) => commentManager.updateReply\(markerId, replyId, \{ text: newText \}\), replyId, form\)/);
+});
