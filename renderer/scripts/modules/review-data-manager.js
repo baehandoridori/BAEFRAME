@@ -932,6 +932,7 @@ export class ReviewDataManager extends EventTarget {
     this._reviewFileObservationEpoch = 0;
     this._reviewFileVersionToken = null;
     this._changeRevision = 0;
+    this._lastPersistedChangeRevision = -1;
     this._hasPersistedFile = false;
     this._beforeSaveHandler = null;
     this._finalFabricSnapshotHandler = null;
@@ -1228,6 +1229,7 @@ export class ReviewDataManager extends EventTarget {
     this._hasPersistedFile = false;
     this.isDirty = false;
     this._changeRevision = 0;
+    this._lastPersistedChangeRevision = -1;
     this._fabricDrawingProviderLoadedForCurrentReview = false;
     this._fabricDrawingHasLocalChanges = false;
     this._fabricDrawingCollectedRevision = null;
@@ -1312,6 +1314,20 @@ export class ReviewDataManager extends EventTarget {
     } finally {
       this._savePromise = null;
     }
+  }
+
+  captureSaveCheckpoint() {
+    return Object.freeze({ ...this._captureSaveOwner(), revision: this._changeRevision });
+  }
+
+  async saveThroughCheckpoint(checkpoint) {
+    if (!Number.isSafeInteger(checkpoint?.revision) || checkpoint.revision < 0) return false;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      if (!this._ownsSave(checkpoint)) return false;
+      if (this._lastPersistedChangeRevision >= checkpoint.revision) return true;
+      if (await this.save() !== true || !this._ownsSave(checkpoint)) return false;
+    }
+    return this._ownsSave(checkpoint) && this._lastPersistedChangeRevision >= checkpoint.revision;
   }
 
   async waitForPendingSave() {
@@ -1596,6 +1612,7 @@ export class ReviewDataManager extends EventTarget {
       const hasConcurrentChanges = this._changeRevision !== savedChangeRevision;
       this.isDirty = hasConcurrentChanges;
       this._assertSaveOwner(saveOwner);
+      this._lastPersistedChangeRevision = Math.max(this._lastPersistedChangeRevision, savedChangeRevision);
       this._recordDrawingsV3DiskState(savedData);
       // Reflect merged remote items while retaining clicks that arrived during
       // the async write. Loading a snapshot emits loaded, never another edit.

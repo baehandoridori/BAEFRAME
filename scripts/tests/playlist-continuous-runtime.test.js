@@ -2080,6 +2080,7 @@ function createActualLoadRaceScenario({
     addEventListener: () => {}, removeEventListener: () => {}
   };
   const reviewDataManager = {
+    getVideoPath: () => state.currentFile,
     currentBframePath: null,
     isModified: false,
     waitForPendingSave: async () => {},
@@ -2127,6 +2128,7 @@ function createActualLoadRaceScenario({
     elements,
     videoPlayer,
     reviewDataManager,
+    playlistResolutionQueue: { lockPaths: () => () => {}, drainPaths: async () => {} },
     fabricDrawingPilotInitialization: Promise.resolve(true),
     fabricDrawingPilotController,
     confirm: () => false,

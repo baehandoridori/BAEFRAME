@@ -1,3 +1,4 @@
+import { createPlaylistResolutionQueue } from './modules/playlist-comment-resolution.js';
 import { createPlaylistCommentCache } from './modules/playlist-comment-cache.js';
 /**
  * baeframe - Renderer App Entry Point
@@ -969,6 +970,8 @@ async function initApp() {
   const playlistCommentCache = createPlaylistCommentCache({
     read: path => window.electronAPI.loadReview(path), normalizePath: normalizeComparableFilePath
   });
+  const playlistResolutionQueue = createPlaylistResolutionQueue({ keyForPath: normalizeComparableFilePath });
+  const playlistResolutionStates = new Map();
   let playlistCommentModeGeneration = 0;
   let playlistCommentSegments = [];
   let playlistCommentRevalidationTimer = null;
@@ -2510,6 +2513,7 @@ async function initApp() {
 
   // 로드 완료
   reviewDataManager.addEventListener('loaded', (e) => {
+    if (reviewDataManager.getBframePath()) playlistCommentCache.invalidate(reviewDataManager.getBframePath());
     log.info('.bframe 로드됨', { path: e.detail.path });
 
     // pendingCommentFocus는 updateCommentListImmediate에서 처리
@@ -10401,6 +10405,8 @@ async function initApp() {
       hardAbandonContinuousTransitionFlight();
       if (continuousPlaybackState.active) stopContinuousPlayback();
     }
+    const resolutionPaths = [reviewDataManager.getVideoPath(), filePath];
+    const releaseResolutionPaths = playlistResolutionQueue.lockPaths(resolutionPaths);
     /* eslint-disable indent */
     try {
     const shouldContinueVideoLoad = typeof shouldContinue === 'function'
@@ -10414,6 +10420,9 @@ async function initApp() {
       loadIntent === videoLoadIntentGeneration &&
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
+    if (!canContinueVideoLoad()) return false;
+    try { await playlistResolutionQueue.drainPaths(resolutionPaths); }
+    catch (error) { showToast(`저장을 완료하지 못해 영상 이동을 중단했습니다: ${error.message}`, 'warning'); return false; }
     if (!canContinueVideoLoad()) return false;
     let fabricPersistenceAbandonedForThisLoad = false;
     lastVideoLoadFabricCancelReason = null;
@@ -11143,6 +11152,7 @@ async function initApp() {
       }
     }
     } finally {
+      releaseResolutionPaths();
       if (ownsPendingUserIntent && pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
     }
     /* eslint-enable indent */
@@ -12319,7 +12329,7 @@ async function initApp() {
     // 해결 버튼
     tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
       e.stopPropagation();
-      commentManager.toggleMarkerResolved(marker.id, userName);
+      void toggleCurrentMarkerResolved(marker.id);
     });
 
     // 삭제 버튼
@@ -12927,10 +12937,10 @@ async function initApp() {
     };
   }
 
-  function applyMarkerResolutionToggle(marker) {
+  function applyMarkerResolutionToggle(marker, desiredResolved = !marker?.resolved) {
     if (!marker) return null;
     const previous = snapshotMarkerResolution(marker);
-    marker.resolved = !previous.resolved;
+    marker.resolved = desiredResolved;
     marker.resolvedAt = marker.resolved ? new Date() : null;
     marker.resolvedBy = marker.resolved ? userName : null;
     marker.updatedAt = new Date();
@@ -12945,84 +12955,59 @@ async function initApp() {
     marker.updatedAt = previous.updatedAt;
   }
 
-  async function togglePlaylistAggregateResolvedWithoutNavigation(range) {
+  async function togglePlaylistAggregateResolvedWithoutNavigation(range, intent = {}) {
     const playlistManager = getPlaylistManager();
-    const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
-    if (!item) {
-      throw new Error('재생목록 항목을 찾을 수 없습니다.');
-    }
-
+    const item = intent.videoPath
+      ? { id: range.itemId, videoPath: intent.videoPath, bframePath: intent.bframePath }
+      : playlistManager.getItems().find(candidate => candidate.id === range.itemId);
+    if (!item) throw new Error('재생목록 항목을 찾을 수 없습니다.');
+    const desiredResolved = intent.desiredResolved ?? !range.resolved;
     const bframePath = await playlistManager.ensureItemBframePath(item);
-    if (!bframePath) {
-      throw new Error('댓글 파일을 찾을 수 없습니다.');
-    }
-
+    if (!bframePath) throw new Error('댓글 파일을 찾을 수 없습니다.');
+    intent.bframePath = bframePath;
     const currentBframePath = reviewDataManager.getBframePath();
     if (currentBframePath && isSameFilePath(currentBframePath, bframePath)) {
       const marker = commentManager.getMarker(range.markerId);
-      if (!marker || marker.deleted) {
-        throw new Error('원본 댓글을 찾을 수 없습니다.');
-      }
-      const previous = applyMarkerResolutionToggle(marker);
+      const layer = commentManager.layers.find(layer => layer.id === range.layerId);
+      if (!marker || marker.deleted || !layer?.markers?.has(marker.id)) throw new Error('원본 댓글을 찾을 수 없습니다.');
+      if (layer.locked || liveblocksManager.checkEditLock(marker.id)?.isLocked) throw new Error('다른 편집이 진행 중인 댓글입니다.');
+      const previous = applyMarkerResolutionToggle(marker, desiredResolved);
       suppressCommentRangeRefreshOnce = true;
       commentManager._emit('markerUpdated', { marker });
       commentManager._emit('markersChanged');
-      const saved = await reviewDataManager.save();
-      if (!saved) {
-        restoreMarkerResolution(marker, previous);
-        suppressCommentRangeRefreshOnce = true;
-        commentManager._emit('markerUpdated', { marker });
-        commentManager._emit('markersChanged');
+      const checkpoint = reviewDataManager.captureSaveCheckpoint();
+      if (await reviewDataManager.saveThroughCheckpoint(checkpoint) !== true) {
+        if (reviewDataManager._ownsSave(checkpoint) && commentManager.getMarker(marker.id) === marker &&
+            marker.resolved === desiredResolved) {
+          restoreMarkerResolution(marker, previous);
+          suppressCommentRangeRefreshOnce = true;
+          commentManager._emit('markerUpdated', { marker });
+          commentManager._emit('markersChanged');
+        }
         throw new Error('해결 상태 저장에 실패했습니다.');
       }
       return marker;
     }
-
-    const bframeSnapshot = await window.electronAPI.loadReviewSnapshot(bframePath);
-    const bframeData = bframeSnapshot?.data;
-    const expectedVersionToken = bframeSnapshot?.versionToken;
-    if (!bframeData || typeof expectedVersionToken !== 'string') {
-      throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const bframeSnapshot = await window.electronAPI.loadReviewSnapshot(bframePath);
+      const bframeData = bframeSnapshot?.data;
+      const expectedVersionToken = bframeSnapshot?.versionToken;
+      if (!bframeData || typeof expectedVersionToken !== 'string') throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
+      const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
+      const layer = bframeData.comments?.layers?.find(layer => layer.id === range.layerId);
+      if (!marker) throw new Error('원본 댓글을 찾을 수 없습니다.');
+      if (layer?.locked) throw new Error('잠긴 댓글 레이어입니다.');
+      const dataVersion = getDataVersion(bframeData);
+      const unsupportedMajor = getUnsupportedBframeMajor(dataVersion, BFRAME_VERSION, !hasExplicitBframeVersion(bframeData));
+      if (unsupportedMajor !== null) throw new Error(`지원하지 않는 .bframe ${dataVersion} 파일은 이 버전에서 저장할 수 없습니다.`);
+      ensureReviewDocumentId(bframeData);
+      if (!isValidReviewDocumentId(bframeData.reviewDocumentId)) throw new Error('유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.');
+      applyMarkerResolutionToggle(marker, desiredResolved);
+      const saved = await window.electronAPI.saveReview(bframePath, bframeData, { expectedVersionToken: expectedVersionToken });
+      if (saved?.success === true) return marker;
+      if (saved?.conflict === true && attempt === 0) continue;
+      throw new Error(saved?.conflict ? '다른 변경이 먼저 저장되어 해결 상태를 덮어쓰지 않았습니다.' : '해결 상태 저장에 실패했습니다.');
     }
-    const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
-    if (!marker) {
-      throw new Error('원본 댓글을 찾을 수 없습니다.');
-    }
-
-    const dataVersion = getDataVersion(bframeData);
-    const unsupportedMajor = getUnsupportedBframeMajor(
-      dataVersion,
-      BFRAME_VERSION,
-      !hasExplicitBframeVersion(bframeData)
-    );
-    if (unsupportedMajor !== null) {
-      throw new Error(`지원하지 않는 .bframe ${dataVersion} 파일은 이 버전에서 저장할 수 없습니다.`);
-    }
-
-    ensureReviewDocumentId(bframeData);
-    if (!isValidReviewDocumentId(bframeData.reviewDocumentId)) {
-      throw new Error('유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.');
-    }
-
-    const previous = applyMarkerResolutionToggle(marker);
-    try {
-      const saved = await window.electronAPI.saveReview(
-        bframePath,
-        bframeData,
-        { expectedVersionToken: expectedVersionToken }
-      );
-      if (saved?.success !== true) {
-        restoreMarkerResolution(marker, previous);
-        const reason = saved?.conflict === true
-          ? '다른 변경이 먼저 저장되어 해결 상태를 덮어쓰지 않았습니다.'
-          : '해결 상태 저장에 실패했습니다.';
-        throw new Error(reason);
-      }
-    } catch (error) {
-      restoreMarkerResolution(marker, previous);
-      throw error;
-    }
-    return marker;
   }
 
   function renderPlaylistAggregateReplies(range, normalizedSearch) {
@@ -13045,31 +13030,97 @@ async function initApp() {
     }).join('');
   }
 
+  function renderPlaylistResolutionState(key) {
+    const operation = playlistResolutionStates.get(key);
+    if (!operation) return;
+    for (const row of elements.commentsList?.querySelectorAll('.playlist-aggregate-comment') || []) {
+      if (row.dataset.aggregateCommentKey !== key) continue;
+      const button = row.querySelector('.playlist-comment-resolve-toggle');
+      if (!button) continue;
+      button.disabled = operation.status === 'pending';
+      button.textContent = operation.status === 'pending'
+        ? `${operation.intent.desiredResolved ? '✓ 해결' : '○ 미해결'} · 저장 중` : '저장 실패 · 다시 시도';
+      row.classList.toggle('is-save-pending', operation.status === 'pending');
+      row.classList.toggle('is-save-failed', operation.status === 'failed');
+      // Pending state is intentionally separate from persisted resolved styling.
+      row.setAttribute('aria-busy', operation.status === 'pending' ? 'true' : 'false');
+    }
+  }
+
   async function togglePlaylistAggregateResolved(key) {
     const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
-    if (!range) {
-      showToast('해결 상태를 바꿀 댓글을 찾을 수 없습니다.', 'warning');
-      return false;
-    }
-
-    let marker;
+    const manager = getPlaylistManager();
+    const item = manager.getItems().find(item => item.id === range?.itemId);
+    if (!range || !item) { showToast('해결 상태를 바꿀 댓글을 찾을 수 없습니다.', 'warning'); return false; }
+    const playlist = manager.currentPlaylist;
+    const generation = playlistCommentModeGeneration;
+    const isCurrentScreen = () => playlistUIState.mode === 'continuous' && playlist === manager.currentPlaylist && generation === playlistCommentModeGeneration;
+    const old = playlistResolutionStates.get(key);
+    const intent = { key: `${normalizeComparableFilePath(item.videoPath)}:${playlist?.id || ''}:${key}`,
+      videoPath: item.videoPath, bframePath: item.bframePath, itemId: item.id,
+      layerId: range.layerId, markerId: range.markerId,
+      desiredResolved: old?.status === 'failed' ? old.intent.desiredResolved : !range.resolved,
+      createdAt: Date.now(), playlistId: playlist?.id };
+    if (playlistResolutionQueue.hasPending(intent.key)) return false;
+    const operation = { status: 'pending', intent };
+    playlistResolutionStates.set(key, operation);
+    // enqueue before any await, including path resolution.
+    const pending = playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation({ ...range }, intent));
+    renderPlaylistResolutionState(key);
     try {
-      marker = await togglePlaylistAggregateResolvedWithoutNavigation(range);
+      const marker = await pending;
+      playlistCommentCache.invalidate(intent.bframePath);
+      if (playlistResolutionStates.get(key) === operation) playlistResolutionStates.delete(key);
+      if (!isCurrentScreen()) return true;
+      range.resolved = marker.resolved === true;
+      range.resolvedBy = marker.resolvedBy || '';
+      range.resolvedAt = marker.resolvedAt || null;
+      await refreshPlaylistCommentsForItem(item.id);
+      if (!isCurrentScreen()) return true;
+      void refreshVisiblePlaylistProgress(intent.bframePath);
+      showToast(marker.resolved ? '해결됨으로 표시했습니다.' : '미해결로 다시 표시했습니다.', 'success');
+      return true;
     } catch (error) {
-      showToast(error.message || '해결 상태 저장에 실패했습니다.', 'warning');
+      operation.status = 'failed';
+      if (isCurrentScreen()) {
+        renderPlaylistResolutionState(key);
+        showToast(error.message || '해결 상태 저장에 실패했습니다.', 'warning');
+      }
       return false;
     }
+  }
 
-    range.resolved = marker.resolved === true;
-    range.resolvedBy = marker.resolvedBy || '';
-    range.resolvedAt = marker.resolvedAt || null;
+  async function saveCurrentCommentEdit(markerId, mutate) {
+    const owner = reviewDataManager.captureSaveCheckpoint();
+    const intent = { key: `${normalizeComparableFilePath(owner.videoPath)}:edit:${markerId}`,
+      videoPath: owner.videoPath };
+    try {
+      return await playlistResolutionQueue.enqueue(intent, async () => {
+        if (!reviewDataManager._ownsSave(owner)) throw new Error('영상이 바뀌어 댓글 수정을 중단했습니다.');
+        const marker = commentManager.getMarker(markerId);
+        if (!marker || marker.deleted || liveblocksManager.checkEditLock(markerId)?.isLocked) throw new Error('댓글을 수정할 수 없습니다.');
+        const result = mutate();
+        if (!result) throw new Error('댓글을 수정할 수 없습니다.');
+        if (await reviewDataManager.saveThroughCheckpoint(reviewDataManager.captureSaveCheckpoint()) !== true) {
+          throw new Error('저장 실패 · 다시 시도');
+        }
+        return result;
+      });
+    } catch (error) { showToast(error.message, 'warning'); return false; }
+  }
 
-    await refreshCommentRangesForCurrentMode();
-    void updatePlaylistUI();
-    renderPlaylistContinuousCommentList(commentFilterState.status);
-    highlightPlaylistAggregateComment(key);
-    showToast(marker.resolved ? '해결됨으로 표시했습니다.' : '미해결로 다시 표시했습니다.', 'success');
-    return true;
+  async function toggleCurrentMarkerResolved(markerId) {
+    const marker = commentManager.getMarker(markerId);
+    const layer = commentManager.layers.find(layer => layer.markers.has(markerId));
+    if (!marker || !layer) return false;
+    const videoPath = reviewDataManager.getVideoPath();
+    const intent = { key: `${normalizeComparableFilePath(videoPath)}:current:${layer.id}:${markerId}`,
+      videoPath, bframePath: reviewDataManager.getBframePath(), desiredResolved: !marker.resolved };
+    try {
+      await playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation(
+        { markerId, layerId: layer.id, resolved: marker.resolved }, intent));
+      return true;
+    } catch (error) { showToast(error.message || '저장 실패 · 다시 시도', 'warning'); return false; }
   }
 
   async function submitPlaylistAggregateReply(key, textarea) {
@@ -13278,6 +13329,7 @@ async function initApp() {
       });
     });
 
+    for (const key of playlistResolutionStates.keys()) renderPlaylistResolutionState(key);
     container.scrollTop = savedScrollTop;
   }
 
@@ -13734,7 +13786,7 @@ async function initApp() {
       // 해결 버튼
       item.querySelector('.resolve-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        commentManager.toggleMarkerResolved(item.dataset.markerId, userName);
+        void toggleCurrentMarkerResolved(item.dataset.markerId);
       });
 
       // 삭제 버튼
@@ -13833,7 +13885,7 @@ async function initApp() {
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const oldText = marker.text;
-            const updated = commentManager.updateMarker(markerId, { text: newText });
+            const updated = await saveCurrentCommentEdit(markerId, () => commentManager.updateMarker(markerId, { text: newText }));
 
             // 권한 없음 시 중단
             if (!updated) {
