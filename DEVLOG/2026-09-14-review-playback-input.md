@@ -63,3 +63,12 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - 목록/스레드 편집 세션으로 전체 렌더 지연, 대상별 메모리 초안 보존. 원격 삭제 시 복사 가능한 초안 보존. 완료 버튼은 편집 중에도 행만 업데이트.
 - 답글 수정 및 본문 수정은 T2 checkpoint로 저장 확인. 일반 댓글/답글의 기존 권한 검사는 유지.
 - 최종 관련 179 pass / 0 fail / 0 cancelled, exit0 (`T5-final.log`). 실제 태블릿 후보 선택/실제 앱 입력 검증은 아직 미수행.
+
+## T9 (T5 다음)
+
+- RED: 58셀→57프레임, release 좌표 무시, 혼합 FPS identity와 cancel 소유권 등 신규23개 실패 확인.
+- 8*EPSILON 상대 오차만 보정하고 floor 유지. release 당시 rect/CSS 좌표로 정수 frame 확정, pointerId/capture/cancel 복귀/blur/dispose 정리.
+- seek detail에 displayFrame/localFrame/itemId/cutId/frameExact 전달. playlist는 load/intent 확인 뒤 seekToFrame, cutlist는 sourceStartFrame 오프셋과 최신 선택 generation 유지.
+- 기존 목표 frame hold/video-player 코드는 변경하지 않음. 글로벌 +1/round 보정 없음.
+- 실제 production seek 함수가 다른 fps 상태에서도 요청58을 seekToFrame(58)으로 보내는 행동 검사 포함. 관련175 pass / 0 fail / 0 cancelled, exit0 (`T9-final.log`).
+- 프레임 번호가 새겨진 영상의 native 재생/드로잉 저장 프레임 대조는 T10에서 별도 수행 예정.

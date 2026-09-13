@@ -251,7 +251,7 @@ export class Timeline extends EventTarget {
     this.playheadHandle?.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      this.isDraggingPlayhead = true;
+      this._beginScrubbing(e);
       document.body.style.cursor = 'ew-resize';
     });
 
@@ -264,8 +264,8 @@ export class Timeline extends EventTarget {
     this.timelineRuler?.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      this.isDraggingPlayhead = true;
-      this._seekFromClick(e);
+      this._beginScrubbing(e);
+      this._scrubFromClick(e);
       document.body.style.cursor = 'ew-resize';
     });
 
@@ -322,6 +322,7 @@ export class Timeline extends EventTarget {
 
     const handleTimelinePointerUp = (e) => {
       if (this.isDraggingPlayhead) {
+        if (e.pointerId !== this._scrubPointerId) return;
         // 드래그 종료 시 실제 seek 수행
         this._finishScrubbing(e);
         this.isDraggingPlayhead = false;
@@ -347,6 +348,19 @@ export class Timeline extends EventTarget {
     document.addEventListener('pointermove', handleTimelinePointerMove);
     document.addEventListener('pointerup', handleTimelinePointerUp);
     document.addEventListener('pointercancel', handleTimelinePointerUp);
+    const cancelScrubbing = e => { if (this.isDraggingPlayhead) this._finishScrubbing(e); };
+    this.playheadHandle?.addEventListener('lostpointercapture', cancelScrubbing);
+    this.timelineRuler?.addEventListener('lostpointercapture', cancelScrubbing);
+    window.addEventListener('blur', cancelScrubbing);
+    this._disposeScrubbing = () => {
+      cancelScrubbing({ type: 'dispose' });
+      document.removeEventListener('pointermove', handleTimelinePointerMove);
+      document.removeEventListener('pointerup', handleTimelinePointerUp);
+      document.removeEventListener('pointercancel', handleTimelinePointerUp);
+      window.removeEventListener('blur', cancelScrubbing);
+      this.playheadHandle?.removeEventListener('lostpointercapture', cancelScrubbing);
+      this.timelineRuler?.removeEventListener('lostpointercapture', cancelScrubbing);
+    };
   }
 
   /**
@@ -511,7 +525,9 @@ export class Timeline extends EventTarget {
     const totalFrames = this._getDisplayTotalFrames();
     if (duration === 0 || totalFrames === 0) return 0;
 
-    const frame = Math.max(0, Math.min(totalFrames - 1, Math.floor(percent * totalFrames)));
+    const raw = percent * totalFrames;
+    const tolerance = 8 * Number.EPSILON * Math.max(1, Math.abs(raw));
+    const frame = Math.max(0, Math.min(totalFrames - 1, Math.floor(raw + tolerance)));
     const mappedTime = this._getSegmentTimeFromDisplayFrame(frame);
     if (mappedTime !== null) {
       return Math.max(0, Math.min(mappedTime, duration));
@@ -532,49 +548,63 @@ export class Timeline extends EventTarget {
   /**
    * 클릭 위치에서 시간 계산하여 이동
    */
-  _seekFromClick(e) {
+  _getSeekDetailFromPointer(e) {
     const duration = this._getTimelineDuration();
-    if (duration === 0) return;
-
+    const totalFrames = this._getDisplayTotalFrames();
     const rect = this.tracksContainer?.getBoundingClientRect();
-    if (!rect) return;
+    const width = this.tracksContainer?.offsetWidth || rect?.width;
+    if (!duration || !totalFrames || !width || !Number.isFinite(e?.clientX)) return null;
+    const percent = Math.max(0, Math.min((e.clientX - rect.left) / width, 1));
+    const raw = percent * totalFrames;
+    const tolerance = 8 * Number.EPSILON * Math.max(1, Math.abs(raw));
+    const displayFrame = Math.max(0, Math.min(totalFrames - 1, Math.floor(raw + tolerance)));
+    return { ...this._getSeekDetailFromDisplayFrame(displayFrame), percent };
+  }
 
-    // getBoundingClientRect()는 이미 스크롤 위치를 반영하므로
-    // 클릭 위치에서 rect.left를 빼면 컨테이너 내 상대 위치가 됨
-    const x = e.clientX - rect.left;
+  _getSeekDetailFromDisplayFrame(displayFrame) {
+    let cursor = 0;
+    for (const segment of this._getFrameMappedSegments()) {
+      const count = this._getSegmentFrameCount(segment);
+      if (displayFrame < cursor + count) {
+        const offset = displayFrame - cursor;
+        return { displayFrame, localFrame: offset + (segment.cutId ? (segment.sourceStartFrame || 0) : 0),
+          time: this._getSegmentStartTime(segment) + offset / this._getSegmentFps(segment),
+          ...(segment.itemId ? { itemId: segment.itemId } : {}),
+          ...(segment.cutId ? { cutId: segment.cutId } : {}), frameExact: true };
+      }
+      cursor += count;
+    }
+    return { time: displayFrame / this.fps, displayFrame, localFrame: displayFrame, frameExact: true };
+  }
 
-    // tracksContainer의 실제 너비 (줌이 적용된 상태)
-    const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
-    const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._getTimelineTimeFromCellPercent(percent);
+  _beginScrubbing(e) {
+    if (this.isDraggingPlayhead || e.isPrimary === false) return;
+    this._scrubPointerId = e.pointerId;
+    this._scrubCaptureTarget = e.currentTarget;
+    const mapped = this._getDisplayFrameFromSegmentTime(this.currentTime);
+    const raw = this.currentTime * this.fps;
+    const frame = mapped ?? Math.floor(raw + 8 * Number.EPSILON * Math.max(1, Math.abs(raw)));
+    this._scrubStartDetail = this._getSeekDetailFromDisplayFrame(frame);
+    this.isDraggingPlayhead = true;
+    try { e.currentTarget?.setPointerCapture?.(e.pointerId); } catch { /* capture may be unavailable */ }
+  }
 
-    this._emit('seek', { time });
+  _seekFromClick(e) {
+    const detail = this._getSeekDetailFromPointer(e);
+    if (detail) this._emit('seek', detail);
   }
 
   /**
    * 스크러빙 중 (드래그 중 프리뷰만 표시, 실제 seek 없음)
    */
   _scrubFromClick(e) {
-    const duration = this._getTimelineDuration();
-    if (duration === 0) return;
-
-    const rect = this.tracksContainer?.getBoundingClientRect();
-    if (!rect) return;
-
-    const x = e.clientX - rect.left;
-    const containerWidth = this.tracksContainer?.offsetWidth || rect.width;
-    const percent = Math.max(0, Math.min(x / containerWidth, 1));
-    const time = this._getTimelineTimeFromCellPercent(percent);
-
-    // 플레이헤드 위치 업데이트 (시각적으로만)
-    this.scrubTime = time;
-    this._updatePlayheadPositionDirect(time);
-
-    // 플레이헤드가 뷰포트 경계에 가까우면 자동 스크롤
+    if (this._scrubPointerId !== undefined && this._scrubPointerId !== null && e.pointerId !== this._scrubPointerId) return;
+    const detail = this._getSeekDetailFromPointer(e);
+    if (!detail) return;
+    this.scrubTime = detail.time;
+    this._updatePlayheadPositionDirect(detail.time);
     this._autoScrollWhileDragging(e.clientX);
-
-    // 스크러빙 프리뷰 이벤트 (썸네일 표시용)
-    this._emit('scrubbing', { time, percent });
+    this._emit('scrubbing', detail);
   }
 
   /**
@@ -610,10 +640,23 @@ export class Timeline extends EventTarget {
    * 스크러빙 완료 (실제 seek 수행)
    */
   _finishScrubbing(e) {
-    if (this.scrubTime !== undefined) {
-      this._emit('seek', { time: this.scrubTime });
-      this._emit('scrubbingEnd', { time: this.scrubTime });
-      this.scrubTime = undefined;
+    if (this._scrubPointerId !== undefined && this._scrubPointerId !== null &&
+        e?.pointerId !== undefined && e.pointerId !== this._scrubPointerId) return;
+    const cancelled = ['pointercancel', 'lostpointercapture', 'blur', 'dispose'].includes(e?.type);
+    const detail = cancelled ? this._scrubStartDetail : this._getSeekDetailFromPointer(e);
+    const pointerId = this._scrubPointerId;
+    const target = this._scrubCaptureTarget;
+    this.isDraggingPlayhead = false;
+    this._scrubPointerId = null;
+    this._scrubCaptureTarget = null;
+    this._scrubStartDetail = null;
+    this.scrubTime = undefined;
+    if (this.tracksContainer?.ownerDocument?.body) this.tracksContainer.ownerDocument.body.style.cursor = '';
+    // Clear ownership before release: its lostcapture event cannot commit twice.
+    try { target?.releasePointerCapture?.(pointerId); } catch { /* already released */ }
+    if (detail) {
+      this._emit('seek', detail);
+      this._emit('scrubbingEnd', { ...detail, cancelled });
     }
   }
 
@@ -3476,6 +3519,7 @@ export class Timeline extends EventTarget {
    * 정리
    */
   destroy() {
+    this._disposeScrubbing?.();
     this.clearMarkers();
     if (this.thumbnailTooltip) {
       this.thumbnailTooltip.remove();
