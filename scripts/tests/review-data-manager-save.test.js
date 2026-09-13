@@ -94,6 +94,24 @@ function createReviewRoot(overrides = {}) {
   };
 }
 
+test('saved event carries the captured video owner as well as its review path', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const commentManager = createCommentManager();
+  window.electronAPI = {
+    loadReview: async () => createReviewRoot(),
+    saveReview: async () => ({ success: true })
+  };
+  const manager = new ReviewDataManager({ autoSave: false, commentManager });
+  await manager.setVideoFile('C:/reviews/existing.mp4');
+  addSubstantiveComment(manager, commentManager, 'ownership-comment');
+  let saved;
+  manager.addEventListener('saved', event => { saved = event.detail; });
+  assert.equal(await manager.save(), true);
+  assert.equal(saved.path, 'C:/reviews/existing.bframe');
+  assert.equal(saved.videoPath, 'C:/reviews/existing.mp4');
+  manager.disconnect();
+});
+
 function addSubstantiveComment(manager, commentManager, id = 'marker-phase2a') {
   commentManager.layers[0].markers.set(id, {
     id,

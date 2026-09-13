@@ -1645,7 +1645,7 @@ export class ReviewDataManager extends EventTarget {
         liveblocksConnected: !!this._liveblocksManager?.isConnected
       });
 
-      this._emit('saved', { path: saveOwner.bframePath });
+      this._emit('saved', { path: saveOwner.bframePath, videoPath: saveOwner.videoPath });
 
       if (hasConcurrentChanges && this.autoSaveEnabled) {
         this._scheduleAutoSave();

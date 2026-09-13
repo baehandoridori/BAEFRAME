@@ -22089,16 +22089,24 @@ async function initApp() {
     reviewDataManager.addEventListener('saved', async (e) => {
       retireDeletedCommentResolutionFailures();
       if (playlistManager.isActive()) {
-        // 현재 아이템의 bframePath 업데이트 (새로 생성된 경우)
-        const currentItem = playlistManager.getCurrentItem();
-        if (currentItem && (!currentItem.bframePath || currentItem.bframePath === '')) {
-          currentItem.bframePath = e.detail.path;
-          playlistManager.isModified = true;
+        // 선택은 저장 완료보다 먼저 바뀔 수 있으므로 저장 당시 영상으로 귀속한다.
+        const playlist = playlistManager.currentPlaylist;
+        const savedItems = playlistManager.getItems().filter(item => e.detail.videoPath
+          ? isSameFilePath(item.videoPath, e.detail.videoPath)
+          : isSameFilePath(item.bframePath, e.detail.path));
+        for (const item of savedItems) {
+          if (!item.bframePath && e.detail.path) {
+            item.bframePath = e.detail.path;
+            playlistManager.isModified = true;
+          }
         }
 
-        // 현재 아이템의 진행률 업데이트
+        // 실제 저장된 항목만 갱신하고 도중에 다른 재생목록이 열리면 중단한다.
         await refreshVisiblePlaylistProgress(e.detail.path);
-        if (currentItem) await refreshPlaylistCommentsForItem(currentItem.id);
+        for (const item of savedItems) {
+          if (playlist !== playlistManager.currentPlaylist) return;
+          await refreshPlaylistCommentsForItem(item.id);
+        }
       }
     });
 
