@@ -973,6 +973,7 @@ async function initApp() {
   });
   const playlistResolutionQueue = createPlaylistResolutionQueue({ keyForPath: normalizeComparableFilePath });
   const playlistResolutionStates = new Map();
+  const activeMarkerDragCancels = new Set();
   let playlistCommentModeGeneration = 0;
   let playlistCommentSegments = [];
   let playlistCommentStructureKey = "";
@@ -9692,6 +9693,7 @@ async function initApp() {
       remoteStrokeOverlayForMpv.style.display !== 'none';
 
     return {
+      commentInteractionBlocked: state.isDrawMode || isFabricDrawingPilotControllerEngaged(),
       drawingDataUrl: suppressLegacyDrawing ? '' : getCompositedDrawingOverlayDataUrl(),
       remoteStrokeDataUrl: remoteStrokeIsVisible
         ? getCanvasOverlayDataUrl(remoteStrokeOverlayForMpv)
@@ -11487,10 +11489,18 @@ async function initApp() {
   /**
    * 그리기 모드 토글
    */
+  function syncCommentInteractionPolicy() {
+    const blocked = state.isDrawMode || isFabricDrawingPilotControllerEngaged();
+    setCommentOverlaysDrawingPassthrough(blocked);
+    scheduleMpvOverlayStateSync();
+  }
+
   function setCommentOverlaysDrawingPassthrough(enabled) {
     markerContainer.classList.toggle('drawing-active', enabled);
     document.body.classList.toggle('drawing-mode-active', enabled);
     if (!enabled) return;
+    for (const cancel of activeMarkerDragCancels) cancel();
+    activeMarkerDragCancels.clear();
 
     document.querySelectorAll('.comment-marker-tooltip').forEach(tooltip => {
       tooltip.classList.remove('visible', 'pinned');
@@ -11502,7 +11512,7 @@ async function initApp() {
     elements.drawingTools?.classList.toggle('visible', ready);
     elements.drawingCanvas?.classList.toggle('active', ready);
     elements.videoWrapper?.classList.toggle('drawing-mode', ready);
-    setCommentOverlaysDrawingPassthrough(ready);
+    syncCommentInteractionPolicy();
   }
 
   function setDrawModePreparingState(preparing) {
@@ -11579,6 +11589,7 @@ async function initApp() {
     scheduleMpvOverlayStateSync({ force: true });
     renderActiveDrawingLayers();
     if (!engaged && !wasEngaged) {
+      syncCommentInteractionPolicy();
       if (nextState === 'failed') notifyFabricDrawingPilotFailure();
       else fabricDrawingPilotFailureToastShown = false;
       return;
@@ -12184,6 +12195,7 @@ async function initApp() {
       replyBadge.textContent = `💬 ${replyCount}`;
       replyBadge.title = `답글 ${replyCount}개 보기`;
       replyBadge.addEventListener('click', (e) => {
+      if (commentInputBlocked()) return;
         e.stopPropagation();
         window.scrollToCommentAndExpandThread(marker.id);
       });
@@ -12197,8 +12209,21 @@ async function initApp() {
     let markerStartX = marker.x;
     let markerStartY = marker.y;
 
+    const cancelMarkerDrag = () => {
+      isDragging = false;
+      markerEl.classList.remove('dragging');
+      markerEl.style.left = `${marker.x * 100}%`;
+      markerEl.style.top = `${marker.y * 100}%`;
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      activeMarkerDragCancels.delete(cancelMarkerDrag);
+    };
+    const commentInputBlocked = () => state.isDrawMode || isFabricDrawingPilotControllerEngaged();
+
     // 드래그 중 (마우스 이동)
     const onMouseMove = (e) => {
+      if (commentInputBlocked()) { cancelMarkerDrag(); return; }
       if (!isDragging) return;
 
       const rect = markerContainer.getBoundingClientRect();
@@ -12217,6 +12242,7 @@ async function initApp() {
 
     // 드래그 종료 (마우스 업)
     const onMouseUp = (e) => {
+      if (commentInputBlocked()) { cancelMarkerDrag(); return; }
       if (!isDragging) return;
 
       isDragging = false;
@@ -12247,10 +12273,12 @@ async function initApp() {
       // 이벤트 리스너 제거
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      activeMarkerDragCancels.delete(cancelMarkerDrag);
     };
 
     // 드래그 시작 (마우스 다운)
     markerEl.addEventListener('mousedown', (e) => {
+      if (commentInputBlocked()) return;
       // 툴팁 버튼 클릭은 무시
       if (e.target.closest('.tooltip-btn') || e.target.closest('.marker-replies-badge')) return;
 
@@ -12262,6 +12290,7 @@ async function initApp() {
       e.stopPropagation();
 
       isDragging = true;
+      activeMarkerDragCancels.add(cancelMarkerDrag);
       dragStartX = e.clientX;
       dragStartY = e.clientY;
       markerStartX = marker.x;
@@ -12303,6 +12332,7 @@ async function initApp() {
     let hideTimeout = null;
 
     const showTooltipHover = () => {
+      if (commentInputBlocked()) return;
       if (hideTimeout) {
         clearTimeout(hideTimeout);
         hideTimeout = null;
@@ -12336,6 +12366,7 @@ async function initApp() {
 
     // 클릭 - 우측 댓글로 스크롤 및 고정 토글
     markerEl.addEventListener('click', (e) => {
+      if (commentInputBlocked()) return;
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
 
@@ -12360,12 +12391,14 @@ async function initApp() {
 
     // 해결 버튼
     tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
+      if (commentInputBlocked()) return;
       e.stopPropagation();
       void toggleCurrentMarkerResolved(marker.id);
     });
 
     // 삭제 버튼
     tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', async (e) => {
+      if (commentInputBlocked()) return;
       e.stopPropagation();
 
       // 권한 체크 (본인 코멘트만 삭제 가능)

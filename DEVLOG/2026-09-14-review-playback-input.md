@@ -47,3 +47,10 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - 100컷 fixture 부분 갱신: 해당 read1/무관99개 read0/probe0/clear0. 실사용자 파일 읽기나 쓰기 없음.
 - 최종 관련 162 pass / 0 fail / 0 cancelled, exit0 (`T3-final.log`).
 - 실제 20회 local/Drive warm/cold 전환 측정은 T10 격리 앱 검증에서 수행할 항목. 현재 실측 근거가 없으므로 조건부 versionScan 지연 로드는 적용하지 않음. Drive 지연 제거를 주장하지 않음.
+
+## T4
+
+- RED: Fabric active가 레거시 ready=false 처리로 댓글 입력 차단을 해제하는 행동과 boolean overlay 계약 2개 실패 확인.
+- 드로잉 입력 소유권 정책 분리, active/preparing/recovering 차단 및 passive/failed/off 해제 검증. 진행 중 marker drag 취소 및 리스너 정리, tooltip 닫기, click/hover 방어.
+- 메인/실제 native overlay의 marker/tooltip 자손 pointer-events 차단. commentInteractionBlocked의 생략/명시 false 구분.
+- 관련 179 pass / 0 fail / 0 cancelled, exit0 (`T4-green.log`). 실물 펜/네이티브 hit-test는 T10 별도 검증 대상.

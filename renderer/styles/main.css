@@ -12940,3 +12940,10 @@ body.audio-mode .frame-indicator {
 /* Saving is a transient state; persisted completion retains its own styling. */
 .playlist-aggregate-comment.is-save-pending .playlist-comment-resolve-toggle { opacity: .75; }
 .playlist-aggregate-comment.is-save-failed .playlist-comment-resolve-toggle { color: var(--color-danger, #e47777); }
+
+.drawing-active .comment-marker,
+.drawing-active .comment-marker *,
+.drawing-active .marker-replies-badge,
+.drawing-active .comment-marker-input-wrapper,
+body.drawing-mode-active .comment-marker-tooltip,
+body.drawing-mode-active .comment-marker-tooltip * { pointer-events: none !important; }

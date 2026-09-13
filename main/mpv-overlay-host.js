@@ -1058,6 +1058,11 @@ const OVERLAY_HTML = String.raw`
     }
     .mpv-playback-sync-status-dot.active { background: var(--success); }
     .mpv-playback-sync-status-dot.leading { background: var(--accent-primary); }
+    body.comment-interaction-blocked #markerMirror,
+    body.comment-interaction-blocked #markerMirror *,
+    body.comment-interaction-blocked #tooltipMirror,
+    body.comment-interaction-blocked #tooltipMirror * { pointer-events: none !important; }
+
     #markerMirror *,
     #tooltipMirror *,
     #toastMirror *,
@@ -1665,6 +1670,9 @@ const OVERLAY_HTML = String.raw`
 
     window.__applyMpvOverlayState = function applyMpvOverlayState(state) {
       const nextState = state || {};
+      if (typeof nextState.commentInteractionBlocked === 'boolean') {
+        document.body.classList.toggle('comment-interaction-blocked', nextState.commentInteractionBlocked);
+      }
       const htmlOverlay = document.getElementById('htmlOverlay');
       const markerMirror = document.getElementById('markerMirror');
       const tooltipMirror = document.getElementById('tooltipMirror');
@@ -1985,6 +1993,7 @@ function normalizeFabricViewport(value) {
 function normalizeOverlayState(state = {}) {
   const canvas = state.canvas || {};
   return {
+    commentInteractionBlocked: typeof state.commentInteractionBlocked === 'boolean' ? state.commentInteractionBlocked : undefined,
     drawingDataUrl: state.drawingDataUrl === undefined ? undefined : normalizeImageDataUrl(state.drawingDataUrl),
     remoteStrokeDataUrl: state.remoteStrokeDataUrl === undefined ? undefined : normalizeImageDataUrl(state.remoteStrokeDataUrl),
     remoteStrokeOpacity: state.remoteStrokeOpacity === undefined
