@@ -38,6 +38,8 @@ function manager() {
     .replace(/^import .*;\r?\n/gm, '').replace(/^export default .*;\r?\n?/gm, '').replace(/^export /gm, '');
   const context = vm.createContext({ EventTarget, Event, CustomEvent, Date, Map, Math,
     createLogger: () => log, getAuthManager: () => ({ isAuthAvailable: () => false, getCurrentUser: () => null }) });
+  const timingSource = fs.readFileSync(path.join(root, 'renderer/scripts/modules/playlist-comment-index.js'), 'utf8').replace(/^export /gm, '');
+  vm.runInContext(timingSource, context);
   vm.runInContext(`${source}\nglobalThis.manager = new CommentManager();`, context);
   return context.manager;
 }

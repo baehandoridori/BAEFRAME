@@ -31,3 +31,64 @@ test('500 rows keep selection, focus, drafts and scroll with no HTML writes or r
   assert.equal(list.children[2].dataset.currentFrame,'true'); assert.equal(list.scrollTop,88);
   assert.equal(dom.window.document.activeElement,editor); assert.equal(editor.selectionStart,1); assert.equal(editor.value,'draft'); dom.window.close();
 });
+
+
+function seekHarness(mode) {
+  const fs = require('node:fs'); const path = require('node:path'); const vm = require('node:vm');
+  const source = fs.readFileSync(path.join(__dirname, '../../renderer/scripts/app.js'), 'utf8');
+  const start = source.indexOf('  // 타임라인에서 시간 이동 요청');
+  const end = source.indexOf('  // 타임라인 마커 클릭', start);
+  const handlers = new Map(); const highlights = []; const requests = [];
+  const seek = () => new Promise((resolve, reject) => requests.push({ resolve, reject }));
+  const context = vm.createContext({
+    timeline: { playlistDuration: 3, cutlistDuration: 3, addEventListener: (event, fn) => handlers.set(event, fn) },
+    playlistUIState: { mode: mode === 'continuous' ? mode : 'normal' }, cutlistUIState: { active: mode === 'cutlist' },
+    getCutlistManager: () => ({ isActive: () => true }), getCurrentContinuousSegment: () => ({ itemId: 'old' }),
+    getActiveTimelinePlaybackTime: () => 4, state: { currentFile: 'old.mp4' },
+    videoPlayer: { currentFrame: 24, currentTime: 1, fps: 24 },
+    seekContinuousTimeline: seek, seekCutlistTimeline: seek,
+    isSameFilePath: (a, b) => a === b,
+    updateCommentPlaybackHighlight: position => highlights.push(position || { time: context.getActiveTimelinePlaybackTime(), localFrame: context.videoPlayer.currentFrame, itemId: 'old' }),
+    hideScrubPreview() {}, showScrubPreview() {}, log: { warn() {} }, showToast() {}
+  });
+  vm.runInContext(source.slice(start, end), context);
+  return { handlers, highlights, requests, context };
+}
+for (const mode of ['continuous', 'cutlist']) {
+  test(`${mode}: rejected async release restores actual frame and ignores stale failure during a new drag`, async () => {
+    const h = seekHarness(mode);
+    const destination = { detail: { time: 9, localFrame: 60, itemId: 'next' } };
+    h.handlers.get('scrubbing')(destination);
+    const pending = h.handlers.get('seek')(destination);
+    h.handlers.get('scrubbingEnd')(destination);
+    h.requests[0].resolve(false); await pending;
+    assert.equal(h.highlights.at(-1).localFrame, 24);
+    assert.equal(h.highlights.at(-1).time, 4);
+    const oldPending = h.handlers.get('seek')(destination);
+    const newer = { detail: { time: 12, localFrame: 72, itemId: 'newest' } };
+    h.handlers.get('scrubbing')(newer);
+    const count = h.highlights.length;
+    h.requests[1].resolve(false); await oldPending;
+    assert.equal(h.highlights.length, count);
+    assert.equal(h.highlights.at(-1).localFrame, 72);
+  });
+}
+
+for (const mode of ['continuous', 'cutlist']) {
+  test(`${mode}: success uses confirmed frame and thrown load restores the advancing source frame`, async () => {
+    const h = seekHarness(mode);
+    const destination = { detail: { time: 9, localFrame: 60, itemId: 'next' } };
+    const pending = h.handlers.get('seek')(destination);
+    h.handlers.get('scrubbingEnd')(destination);
+    h.context.videoPlayer.currentFrame = 60;
+    h.context.getActiveTimelinePlaybackTime = () => 9;
+    h.requests[0].resolve(true); await pending;
+    assert.equal(h.highlights.at(-1).localFrame, 60);
+    assert.equal(h.highlights.at(-1).time, 9);
+    const failing = h.handlers.get('seek')(destination);
+    h.context.videoPlayer.currentFrame = 66;
+    h.requests[1].reject(new Error('load failed')); await failing;
+    assert.equal(h.highlights.at(-1).localFrame, 66);
+    assert.equal(h.highlights.at(-1).time, 9.25);
+  });
+}

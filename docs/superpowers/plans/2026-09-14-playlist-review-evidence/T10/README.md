@@ -20,3 +20,5 @@ baseline은 04e2a229, after는 T10 통합 작업 코드다. 같은 PC, Electron2
 실제 native 마우스 pan은150%에서120/40 CSS px 이동→80/26.6667 pan, mutation/undo 증가0. `native-frame58.png`는 mpv가 캡처한 burned-in A58이며 UI도58, 새 그림의 저장 keyframe도58이었다. `native-save-parity.json`은 실제 제품 checkpoint 저장 전후 그림/수동 버전/root key 집합 보존 결과다.
 
 실제 댓글 수정창에서 `확인@배` 후보 표시/선택을 확인했고, 프레임 이동과 목록 갱신 동안 초안/포커스/DOM 연결이 유지됐다. 실물 태블릿, OS 창 사이 Space keyup/focus, 실제 IME 장치, 다른 PC 동시 편집/동기화는 미확인이다. 네트워크 차단 때문에 협업 시작만 테스트 페이지에서 실패 stub으로 바꾸었으며 이 파일들은 원격 협업 검증 결과가 아니다.
+
+최초 `native-save-parity.json`의 otherCommentsUnchanged=false는 수정 전 fromJSON이 다른 댓글의 endFrame0을 기본 길이로 바꾼 재현이다. 이 문제를 고친 제품 커밋b70e441의 실제 checkpoint 저장을 다시 실행한 `native-save-parity-final.json`은 그림/root 필드/다른 댓글 모두 동일하다. 초기 재현 파일은 과거 증거로 보존한다.

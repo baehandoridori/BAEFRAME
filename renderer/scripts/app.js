@@ -1846,7 +1846,8 @@ async function initApp() {
   function updateCommentPlaybackHighlight(preview = null) {
     const mode = playlistUIState.mode === 'continuous' ? 'continuous' : cutlistUIState.active ? 'cutlist' : 'single';
     const item = getPlaylistManager().getCurrentItem?.();
-    const currentItemId = preview?.itemId || (item && isSameFilePath(item.videoPath, state.currentFile) ? item.id : null);
+    const currentItemId = preview?.itemId || getCurrentContinuousSegment()?.itemId ||
+      (item && isSameFilePath(item.videoPath, state.currentFile) ? item.id : null);
     const currentFrame = preview?.localFrame ?? videoPlayer.currentFrame;
     const globalTime = preview?.time ?? getActiveTimelinePlaybackTime(videoPlayer.currentTime, currentFrame);
     const position = `${mode}:${currentItemId}:${currentFrame}:${globalTime}`;
@@ -2150,23 +2151,49 @@ async function initApp() {
   });
 
   // 타임라인에서 시간 이동 요청
+  let pendingTimelineHighlightSeek = null;
   timeline.addEventListener('seek', async (e) => {
-    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
-      await seekContinuousTimeline(e.detail.time, e.detail);
-      hideScrubPreview();
-      return;
-    }
+    const request = {
+      filePath: state.currentFile,
+      mode: `${playlistUIState.mode}:${cutlistUIState.active}`,
+      position: { time: getActiveTimelinePlaybackTime(), localFrame: videoPlayer.currentFrame,
+        itemId: getCurrentContinuousSegment()?.itemId },
+      fps: videoPlayer.fps || 24
+    };
+    pendingTimelineHighlightSeek = request;
+    let succeeded = false;
+    try {
+      if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+        succeeded = await seekContinuousTimeline(e.detail.time, e.detail);
+        return;
+      }
 
-    if (cutlistUIState.active && getCutlistManager().isActive() && timeline.cutlistDuration > 0) {
-      await seekCutlistTimeline(e.detail.time, e.detail);
-      hideScrubPreview();
-      return;
-    }
+      if (cutlistUIState.active && getCutlistManager().isActive() && timeline.cutlistDuration > 0) {
+        succeeded = await seekCutlistTimeline(e.detail.time, e.detail);
+        return;
+      }
 
-    if (e.detail.frameExact === true && Number.isSafeInteger(e.detail.localFrame) && e.detail.localFrame >= 0) videoPlayer.seekToFrame(e.detail.localFrame);
-    else videoPlayer.seek(e.detail.time);
-    playbackSync.broadcastSeek(e.detail.time);
-    hideScrubPreview();
+      if (e.detail.frameExact === true && Number.isSafeInteger(e.detail.localFrame) && e.detail.localFrame >= 0) videoPlayer.seekToFrame(e.detail.localFrame);
+      else videoPlayer.seek(e.detail.time);
+      playbackSync.broadcastSeek(e.detail.time);
+      succeeded = true;
+    } catch (error) {
+      log.warn('타임라인 위치 이동 실패', { error: error?.message });
+      if (pendingTimelineHighlightSeek === request) showToast('해당 위치로 이동하지 못했습니다.', 'warning');
+    } finally {
+      // A newer drag/seek owns its preview; an older completion must not replace it.
+      if (pendingTimelineHighlightSeek === request) {
+        pendingTimelineHighlightSeek = null;
+        const restore = !succeeded && isSameFilePath(request.filePath, state.currentFile) &&
+          request.mode === `${playlistUIState.mode}:${cutlistUIState.active}`;
+        updateCommentPlaybackHighlight(restore ? {
+          ...request.position,
+          localFrame: videoPlayer.currentFrame,
+          time: request.position.time + (videoPlayer.currentFrame - request.position.localFrame) / request.fps
+        } : null);
+        hideScrubPreview();
+      }
+    }
   });
 
   timeline.addEventListener('cutlist-seek', (e) => {
@@ -2175,13 +2202,14 @@ async function initApp() {
 
   // 스크러빙 중 (드래그 중 프리뷰)
   timeline.addEventListener('scrubbing', (e) => {
+    pendingTimelineHighlightSeek = null;
     updateCommentPlaybackHighlight(e.detail);
     showScrubPreview(e.detail.time);
   });
 
   // 스크러빙 종료
-  timeline.addEventListener('scrubbingEnd', (e) => {
-    updateCommentPlaybackHighlight(e.detail);
+  timeline.addEventListener('scrubbingEnd', () => {
+    if (!pendingTimelineHighlightSeek) updateCommentPlaybackHighlight();
     hideScrubPreview();
   });
 

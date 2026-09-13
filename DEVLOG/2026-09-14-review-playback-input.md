@@ -127,9 +127,9 @@ T0~T8 및 T9 구현 커밋 완료. T10 통합 검증 진행. 아래 각 task 수
 | test:playlist | 353 | 0 | 0 | 0 |
 | test:mpv | 394 | 0 | 0 | 0 |
 | test:frame-grid | 68 | 0 | 0 | 0 |
-| test:comment-input | 32 | 0 | 0 | 0 |
+| test:comment-input | 36 | 0 | 0 | 0 |
 | test:comment-popout | 52 | 0 | 0 | 0 |
-| test:ux | 73 | 0 | 0 | 0 |
+| test:ux | 77 | 0 | 0 | 0 |
 | test:fabric-drawing-persistence | 166 | 0 | 0 | 0 |
 | test:fabric-drawing-pilot | 630 | 0 | 0 | 0 |
 
@@ -155,3 +155,14 @@ T0~T8 및 T9 구현 커밋 완료. T10 통합 검증 진행. 아래 각 task 수
 PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 기록한다. 태블릿 등 미확인은 자동 검사나 빌드 성공으로 대체하지 않는다.
 
 - 추가 실제 익명 D 재열기: start/end0 보존, 시간 누락 행의 `시간 정보 없음` 표시 확인. 필터가 null 시간을0으로 다시 정렬하던 문제3 pass/1 fail 재현 후 컷 안의 유효 시간 뒤에 배치하도록 수정했다.
+
+- b70e441 제품 소스의 별도 격리 실행으로 저장 불변식을 다시 확인했다. 최초 endFrame0 치환 재현의 otherCommentsUnchanged=false를 보존하고, 수정 후 native-save-parity-final.json에서 그림/루트 필드/다른 댓글 모두 true를 확인했다. 최종 실제 목록 순서는 0→24→32→시간 정보 없음이었다.
+
+
+## PR #222 Codex 1차 리뷰 반영
+
+- 대상b70e441, trigger5655175868, line comment4000476506(P2): 비동기 영상 이동이 실패해도 scrubbingEnd가 목적지 댓글을 계속 강조하는 문제.
+- 실제 app의 seek/scrubbing/scrubbingEnd 리스너를 실행해 playlist/cutlist 각각 실패를 재현했다(3 pass/2 fail). 최신 요청 객체만 완료 처리를 소유하고, 성공 시 실제 프레임·실패 시 원본 영상의 현재 프레임으로 강조를 갱신한다. 이후 시작한 드래그는 오래된 실패로 덮지 않는다.
+- 저장 실패 뒤 목록 선택이 새 항목에 남아 있어도 실제 로드된 continuous segment에서 댓글 정체를 구한다. 이동 예외도 같은 복원을 거친다.
+- 새 행동7 pass/0 fail. 관련 suite: comment-input36/frame-grid68/playlist353/ux77 pass, 모두 fail0/cancelled0/exit0. UX 최초76 pass/1 fail은 기존 VM harness가 새 frame reader import를 제거해 생긴 ReferenceError였고, 실제 production reader를 주입해 재검사했다. lint 오류0.
+- 초기 저장 불변식 실패와 수정 후 최종 실제 저장 증거를 함께 명확히 문서화했다. 새 head로 재리뷰 요청한다.

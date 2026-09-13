@@ -1,0 +1,20 @@
+{
+  "testedHead": "b70e44185805f8dedd97d2c469b28677d7f836ef",
+  "drawingsUnchanged": true,
+  "unchangedRootFields": {
+    "drawingsV3": true,
+    "bframeVersion": true,
+    "videoFile": true,
+    "videoPath": true,
+    "fps": true,
+    "createdAt": true,
+    "liveblocksRoomId": true,
+    "versionInfo": true,
+    "manualVersions": true,
+    "drawings": true,
+    "highlights": true,
+    "compositionLayers": true,
+    "reviewDocumentId": true
+  },
+  "otherCommentsUnchanged": true
+}
