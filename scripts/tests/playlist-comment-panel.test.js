@@ -20,7 +20,7 @@ test('current editor frame 32 wins over disk frame zero without collecting drawi
   const manager = { getItems: () => [item], getPlaylist: () => manager, ensureItemBframePath: async () => 'a.bframe' };
   const context = vm.createContext({ ...mod, ...cacheMod, Map, Set, Promise,
     playlistUIState: { mode: 'continuous' }, playlistTimelineUpdateToken: 0, playlistCommentModeGeneration: 0,
-    playlistAggregateCommentRanges: [], playlistCommentSegments: [], playlistCommentScanPromise: null,
+    playlistAggregateCommentRanges: [], playlistCommentStructureKey: "", playlistCommentSegments: [], playlistCommentScanPromise: null,
     commentFilterState: { status: 'all' }, videoPlayer: { fps: 24 },
     timeline: { clearCommentMarkers() {}, renderPlaylistCommentRanges(r) { context.timelineRanges = r; }, setPlaylistTimeline() {}, setCurrentTime() {} },
     getPlaylistManager: () => manager, collectPlaylistMetadata: async () => new Map(),
@@ -71,4 +71,25 @@ test('panel contains a single local label and global badge; invalid timing canno
   invalid.click();
   assert.equal(seeks, 0);
   dom.window.close();
+});
+
+test('one changed cut in 100 refreshes only its snapshot and leaves segment metadata intact', async () => {
+  const mod = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  const items = Array.from({ length: 100 }, (_, index) => ({ id: String(index), videoPath: `${index}.mp4`, bframePath: `${index}.bframe` }));
+  const segments = items.map((item, index) => ({ itemId: item.id, index, startTime: index * 3, duration: 3, fps: 24 }));
+  const manager = { currentPlaylist: { id: '100' }, getItems: () => items, ensureItemBframePath: async item => item.bframePath };
+  let reads = 0; let probes = 0; let clears = 0;
+  const context = vm.createContext({ ...mod, playlistUIState: { mode: 'continuous' }, playlistCommentModeGeneration: 0,
+    playlistTimelineUpdateToken: 0, playlistCommentSegments: segments, playlistCommentScanPromise: null,
+    playlistAggregateCommentRanges: [], getPlaylistManager: () => manager, isSameFilePath: (a,b) => a===b,
+    readPlaylistCommentSnapshot: async path => { reads++; assert.equal(path, '52.bframe'); return { comments: { layers: [{ id: 'l', markers: [{ id: 'm', startFrame: 32 }] }] } }; },
+    commentFilterState: { status: 'all' }, filterPlaylistAggregateCommentRanges: r => r,
+    timeline: { playlistDuration: 300, clearCommentMarkers() { clears++; }, renderPlaylistCommentRanges() {} },
+    collectPlaylistMetadata() { probes++; }, renderPlaylistContinuousCommentList() {}, log: { warn: e => { throw new Error(e); } }
+  });
+  vm.runInContext(appFunction('refreshPlaylistCommentsForItem'), context);
+  await context.refreshPlaylistCommentsForItem('52');
+  assert.equal(reads, 1); assert.equal(probes, 0); assert.equal(clears, 0);
+  assert.equal(context.playlistCommentSegments, segments);
+  assert.equal(context.playlistAggregateCommentRanges[0].globalStartTime, 156 + 32/24);
 });

@@ -38,3 +38,12 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - 늦은 완료의 전체 목록/focus/scroll 변경 제거, 행의 저장 중/실패 상태 유지.
 - 최종 관련 검사 232 pass / 0 fail / 0 cancelled, exit 0 (`T2-final.log`). app 구문 검사 exit 0. 전환 harness에 새 queue 의존성 추가 후 기존 행동 검사 통과.
 - 실제 앱/동시 PC 검증은 아직 미수행.
+
+## T3
+
+- RED: 계측 API/주입 reader 검사가 3개 실패. 구현 후 결과/예외 보존 및 로그 실패 격리 확인.
+- 저장/flush/fileInfo/미디어 load/versionScan/reviewLoad/Fabric 준비/firstPlay/commentRefresh/total 구간 기록. firstPlay start/end는 재생 호출 시점이며 실제 최초 표시 프레임과 다름.
+- 진행률은 같은 댓글 reader와 항목 Map을 사용. 초기 worker 최대2, marker/저장/전환 갱신은 변경 컷만 읽고 목록 구조가 같으면 segment 재구성 생략.
+- 100컷 fixture 부분 갱신: 해당 read1/무관99개 read0/probe0/clear0. 실사용자 파일 읽기나 쓰기 없음.
+- 최종 관련 162 pass / 0 fail / 0 cancelled, exit0 (`T3-final.log`).
+- 실제 20회 local/Drive warm/cold 전환 측정은 T10 격리 앱 검증에서 수행할 항목. 현재 실측 근거가 없으므로 조건부 versionScan 지연 로드는 적용하지 않음. Drive 지연 제거를 주장하지 않음.

@@ -1,3 +1,4 @@
+import { createTransitionMetrics } from './modules/playback-transition-metrics.js';
 import { createPlaylistResolutionQueue } from './modules/playlist-comment-resolution.js';
 import { createPlaylistCommentCache } from './modules/playlist-comment-cache.js';
 /**
@@ -974,9 +975,13 @@ async function initApp() {
   const playlistResolutionStates = new Map();
   let playlistCommentModeGeneration = 0;
   let playlistCommentSegments = [];
+  let playlistCommentStructureKey = "";
   let playlistCommentRevalidationTimer = null;
   let playlistCommentRevalidationRunning = false;
   let playlistCommentScanPromise = null;
+  const playlistProgressById = new Map();
+  let playlistProgressRefreshPromise = null;
+  const playlistProgressRefreshPaths = new Set();
   let playlistTimelineUpdateToken = 0;
   let playlistBackgroundWorkToken = 0;
   let playlistSortChangeToken = 0;
@@ -1044,7 +1049,10 @@ async function initApp() {
   function resetPlaylistContinuousTimelineState() {
     playlistCommentModeGeneration++;
     playlistCommentCache.clear();
+    playlistProgressById.clear();
+    playlistProgressRefreshPaths.clear();
     playlistCommentSegments = [];
+    playlistCommentStructureKey = "";
     playlistCommentScanPromise = null;
     clearInterval(playlistCommentRevalidationTimer);
     playlistCommentRevalidationTimer = null;
@@ -5355,25 +5363,23 @@ async function initApp() {
   }
 
   async function refreshCommentRangesForCurrentMode(options = {}) {
-    const { skipContinuousTimelineRefresh = false } = options;
     if (playlistUIState.mode === 'continuous') {
       setupCommentRangeInteractions();
       renderVideoCommentRanges();
-      if (skipContinuousTimelineRefresh && timeline.playlistDuration > 0) {
-        renderPlaylistContinuousCommentList(commentFilterState.status);
+      if (playlistCommentSegments.length > 0 && !options.rebuild) {
+        const item = getPlaylistManager().getItems().find(item => isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()));
+        if (item) await refreshPlaylistCommentsForItem(item.id);
         return;
       }
       await updatePlaylistContinuousTimeline();
       return;
     }
-
     if (cutlistUIState.active) {
       setupCommentRangeInteractions();
       renderVideoCommentRanges();
       await updateCutlistAggregateComments();
       return;
     }
-
     renderCommentRanges();
   }
 
@@ -10405,6 +10411,7 @@ async function initApp() {
       hardAbandonContinuousTransitionFlight();
       if (continuousPlaybackState.active) stopContinuousPlayback();
     }
+    const transitionMetrics = createTransitionMetrics({ id: loadIntent, emit: report => log.info('playback-transition', report) });
     const resolutionPaths = [reviewDataManager.getVideoPath(), filePath];
     const releaseResolutionPaths = playlistResolutionQueue.lockPaths(resolutionPaths);
     /* eslint-disable indent */
@@ -10429,8 +10436,10 @@ async function initApp() {
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
       if (!canContinueVideoLoad()) return false;
+      transitionMetrics.mark('fabricFlush:start');
       let fabricPersistenceReadyToLeave =
         await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+      transitionMetrics.mark('fabricFlush:end');
       if (!canContinueVideoLoad()) return false;
       if (!fabricPersistenceReadyToLeave && !preserveContinuousSession) {
         // 드로잉 저장 실패가 영상 전환을 영구히 막지 않도록 사용자에게 탈출구를 준다.
@@ -10482,7 +10491,9 @@ async function initApp() {
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
+      transitionMetrics.mark('fileInfo:start');
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
+      transitionMetrics.mark('fileInfo:end');
       if (!canContinueVideoLoad()) return false;
 
       // ====== 오디오 파일 감지 ======
@@ -10563,7 +10574,9 @@ async function initApp() {
         // 저장되지 않은 변경사항이 있으면 먼저 저장
         if (reviewDataManager.hasUnsavedChanges()) {
           log.info('파일 전환 전 변경사항 저장 시도');
+          transitionMetrics.mark('outgoingSave:start');
           const saved = await reviewDataManager.save();
+          transitionMetrics.mark('outgoingSave:end');
           if (!canContinueVideoLoad()) return false;
           if (!saved) {
           // 저장 실패 시 사용자에게 확인
@@ -10585,8 +10598,10 @@ async function initApp() {
 
         let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;
         if (!finalFabricPersistenceReadyToLeave) {
+          transitionMetrics.mark('fabricFlush:start');
           finalFabricPersistenceReadyToLeave =
             await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+          transitionMetrics.mark('fabricFlush:end');
           if (!finalFabricPersistenceReadyToLeave) {
             preserveAuthoritativeFabricOverlayOnCancel = true;
           }
@@ -10614,7 +10629,9 @@ async function initApp() {
 
         if (reviewDataManager.hasUnsavedChanges()) {
           log.info('Fabric 입력 차단 후 최종 변경사항 저장 시도');
+          transitionMetrics.mark('outgoingSave:start');
           const finalSavedBeforeVideoChange = await reviewDataManager.save();
+          transitionMetrics.mark('outgoingSave:end');
           if (!canContinueVideoLoad()) return false;
           if (!finalSavedBeforeVideoChange) {
             const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
@@ -10724,7 +10741,9 @@ async function initApp() {
 
         // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
         try {
+          transitionMetrics.mark('mpvLoad:start');
           await videoPlayer.load(actualVideoPath);
+          transitionMetrics.mark('mpvLoad:end');
           if (!canContinueVideoLoad()) return false;
         } catch (loadErr) {
           log.warn('videoPlayer.load 실패, 직접 src 설정으로 폴백', { error: loadErr.message });
@@ -10885,7 +10904,9 @@ async function initApp() {
             const html5Fps = html5ProbedFps ?? (fileIsAudio ? 24 : await resolveHtml5PlaybackFps(filePath));
             if (!canContinueVideoLoad()) return false;
             videoPlayer.setFps(html5Fps);
+            transitionMetrics.mark('mpvLoad:start');
             await videoPlayer.load(actualVideoPath);
+            transitionMetrics.mark('mpvLoad:end');
             if (!canContinueVideoLoad()) return false;
 
             // 피드백 36: reveal 지연이 없는 경로에서도 초 단위 위치를 복원한다.
@@ -10935,7 +10956,9 @@ async function initApp() {
       // keepVersionContext가 true면 폴더 스캔 건너뛰기 (버전 목록 유지)
       if (!keepVersionContext) {
         // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
+        transitionMetrics.mark('versionScan:start');
         await versionManager.setCurrentFile(filePath);
+        transitionMetrics.mark('versionScan:end');
         if (!canContinueVideoLoad()) return false;
       } else {
         log.info('버전 컨텍스트 유지 모드 - 폴더 스캔 건너뜀');
@@ -11002,6 +11025,7 @@ async function initApp() {
       let hasExistingData = false;
       let currentBframePath = reviewDataManager.currentBframePath;
       if (!engineSwap) {
+        transitionMetrics.mark('reviewLoad:start');
         hasExistingData = await reviewDataManager.setVideoFile(filePath, {
           skipSave: true,
           fabricDrawingPersistenceContext: {
@@ -11010,6 +11034,7 @@ async function initApp() {
             stableVideoIdentity: filePath
           }
         });
+        transitionMetrics.mark('reviewLoad:end');
         if (!canContinueVideoLoad()) return false;
         currentBframePath = reviewDataManager.currentBframePath;
       }
@@ -11018,16 +11043,20 @@ async function initApp() {
       if (!engineSwap && canContinueVideoLoad()) {
         const fabricDrawingPilotApplies = useMpvPilot && !fileIsAudio &&
           fabricDrawingPilotController.shouldOwnDrawingShortcut();
+        transitionMetrics.mark('fabricReady:start');
         const fabricDrawingReady = await fabricDrawingPilotController.afterVideoReady({
           ...getFabricDrawingPilotContext(),
           loadToken
         });
+        transitionMetrics.mark('fabricReady:end');
         if (!canContinueVideoLoad()) return false;
         if (fabricDrawingPilotApplies && fabricDrawingReady !== true) return false;
       }
 
       if (playWhenMediaReady && shouldContinueVideoLoad()) {
+        transitionMetrics.mark('firstPlay:start');
         await playVideoAfterMediaLoad({ silent: true });
+        transitionMetrics.mark('firstPlay:end');
       }
 
       // keepVersionContext가 false일 때만 manualVersions 복원
@@ -11083,9 +11112,11 @@ async function initApp() {
       renderHighlights();
 
       // 댓글 범위 렌더링
+      transitionMetrics.mark('commentRefresh:start');
       await refreshCommentRangesForCurrentMode({
         skipContinuousTimelineRefresh: preserveContinuousSession
       });
+      transitionMetrics.mark('commentRefresh:end');
       if (!canContinueVideoLoad()) return false;
 
       // ====== 최근 파일 목록에 추가 ======
@@ -11152,6 +11183,7 @@ async function initApp() {
       }
     }
     } finally {
+      transitionMetrics.finish();
       releaseResolutionPaths();
       if (ownsPendingUserIntent && pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
     }
@@ -20014,6 +20046,8 @@ async function initApp() {
     const updateToken = playlistTimelineUpdateToken;
     const item = manager.getItems().find(item => item.id === itemId);
     if (!item) return;
+    if (playlistCommentScanPromise) await playlistCommentScanPromise;
+    if (generation !== playlistCommentModeGeneration || playlist !== manager.currentPlaylist) return;
     const path = await manager.ensureItemBframePath(item);
     if (!path) return;
     try {
@@ -20036,14 +20070,24 @@ async function initApp() {
 
   async function updatePlaylistContinuousTimeline() {
     if (playlistUIState.mode !== 'continuous') return;
+    const playlistManager = getPlaylistManager();
+    const playlist = playlistManager.currentPlaylist;
+    const items = playlistManager.getItems();
+    const structureKey = JSON.stringify([playlist?.id, items.map(item => [item.id, item.videoPath, item.bframePath, item.duration, item.fps])]);
+    if (structureKey !== playlistCommentStructureKey) {
+      playlistCommentStructureKey = structureKey;
+      playlistTimelineUpdateToken++;
+      playlistCommentScanPromise = null;
+    } else if (playlistCommentSegments.length && !playlistCommentScanPromise) {
+      const current = items.find(item => isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()));
+      if (current) await refreshPlaylistCommentsForItem(current.id);
+      return;
+    }
     if (playlistCommentScanPromise) return playlistCommentScanPromise;
     timeline.clearCommentMarkers();
     timeline.renderPlaylistCommentRanges([], 0);
     const updateToken = ++playlistTimelineUpdateToken;
     const generation = playlistCommentModeGeneration;
-    const playlistManager = getPlaylistManager();
-    const playlist = playlistManager.currentPlaylist;
-    const items = playlistManager.getItems();
     const currentVideoPath = reviewDataManager.getVideoPath();
     const currentSnapshot = !reviewDataManager.isLoading
       ? { comments: commentManager.toJSON(), fps: videoPlayer.fps } : null;
@@ -21620,7 +21664,7 @@ async function initApp() {
       }
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
-      updatePlaylistContinuousTimeline();
+      await refreshPlaylistCommentsForItem(item.id);
 
       if (loaded && shouldAutoPlaySelectedItem) {
         await playPlaylistSelectedItemImmediately(item);
@@ -21654,7 +21698,7 @@ async function initApp() {
 
         // 현재 아이템의 진행률 업데이트
         await refreshVisiblePlaylistProgress(e.detail.path);
-        updatePlaylistContinuousTimeline();
+        if (currentItem) await refreshPlaylistCommentsForItem(currentItem.id);
       }
     });
 
@@ -22068,9 +22112,8 @@ async function initApp() {
     const container = elements.playlistItems;
     if (!container) return;
 
-    container.innerHTML = '';
-
     if (playlistManager.isEmpty()) {
+      container.innerHTML = '';
       elements.playlistSidebar?.classList.add('empty');
       return;
     }
@@ -22078,10 +22121,20 @@ async function initApp() {
     elements.playlistSidebar?.classList.remove('empty');
 
     const items = playlistManager.getItems();
-    const progressById = new Map(await Promise.all(items.map(async item => [
-      item.id,
-      await playlistManager.getItemProgress(item)
-    ])));
+    const playlist = playlistManager.currentPlaylist;
+    const progressById = new Map();
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex++];
+        progressById.set(item.id, await playlistManager.getItemProgress(item, { readReview: readPlaylistCommentSnapshot }));
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    if (playlist !== playlistManager.currentPlaylist) return;
+    playlistProgressById.clear();
+    for (const [id, progress] of progressById) playlistProgressById.set(id, progress);
+    container.innerHTML = '';
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -22176,24 +22229,25 @@ async function initApp() {
   async function updatePlaylistItemProgress(bframePath = null) {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive()) return;
+    const playlist = playlistManager.currentPlaylist;
+    const path = bframePath || reviewDataManager.getBframePath();
+    const items = playlistManager.getItems().filter(item => path
+      ? (item.bframePath && isSameFilePath(item.bframePath, path)) || isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()) && isSameFilePath(path, reviewDataManager.getBframePath())
+      : isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()));
+    for (const item of items) {
+      const progress = await playlistManager.getItemProgress(item, { readReview: readPlaylistCommentSnapshot });
+      if (playlist !== playlistManager.currentPlaylist) return;
+      playlistProgressById.set(item.id, progress);
+      const el = [...(elements.playlistItems?.querySelectorAll('.playlist-item') || [])].find(el => el.dataset.id === item.id);
+      if (el) applyPlaylistItemProgress(el, progress);
+    }
+  }
 
-    const currentIndex = playlistManager.currentIndex;
-    const items = playlistManager.getItems();
-    if (currentIndex < 0 || currentIndex >= items.length) return;
-
-    const item = items[currentIndex];
-    // bframePath가 전달되면 사용, 아니면 아이템에서 영상 옆 .bframe까지 복구
-    const pathToUse = bframePath || item;
-    const progress = await playlistManager.getItemProgress(pathToUse);
-
-    // 현재 아이템의 DOM 요소 찾기
-    const el = document.querySelector(`.playlist-item[data-index="${currentIndex}"]`);
-    if (!el) return;
-
+  function applyPlaylistItemProgress(el, progress) {
     // 댓글 수 업데이트
     const commentsEl = el.querySelector('.playlist-item-comments');
     if (commentsEl) {
-      const svg = commentsEl.querySelector('svg').outerHTML;
+      const svg = commentsEl.querySelector('svg')?.outerHTML || '';
       commentsEl.innerHTML = `${svg}\n              ${progress.total > 0 ? progress.total : '-'}`;
     }
 
@@ -22235,27 +22289,34 @@ async function initApp() {
 
   // 전체 진행률 업데이트
   async function updatePlaylistProgress() {
-    const playlistManager = getPlaylistManager();
-    const progress = await playlistManager.getTotalProgress();
-
-    if (elements.playlistProgressFill) {
-      elements.playlistProgressFill.style.width = `${progress.percent}%`;
+    const items = getPlaylistManager().getItems();
+    const values = items.map(item => playlistProgressById.get(item.id));
+    if (values.some(value => !value)) {
+      if (elements.playlistProgressText) elements.playlistProgressText.textContent = '피드백 확인 중';
+      return;
     }
-    if (elements.playlistProgressText) {
-      if (progress.total > 0) {
-        elements.playlistProgressText.textContent = `${progress.resolved}/${progress.total} 완료 (${progress.percent}%)`;
-      } else {
-        elements.playlistProgressText.textContent = '피드백 없음';
-      }
-    }
+    const total = values.reduce((sum, value) => sum + value.total, 0);
+    const resolved = values.reduce((sum, value) => sum + value.resolved, 0);
+    const percent = total ? Math.round(resolved / total * 100) : 0;
+    if (elements.playlistProgressFill) elements.playlistProgressFill.style.width = `${percent}%`;
+    if (elements.playlistProgressText) elements.playlistProgressText.textContent = total ? `${resolved}/${total} 완료 (${percent}%)` : '피드백 없음';
   }
 
-  async function refreshVisiblePlaylistProgress(bframePath = null) {
-    const playlistManager = getPlaylistManager();
-    if (!playlistManager.isActive?.()) return;
-
-    await updatePlaylistItemProgress(bframePath);
-    await updatePlaylistProgress();
+  function refreshVisiblePlaylistProgress(bframePath = null) {
+    if (!getPlaylistManager().isActive?.()) return Promise.resolve();
+    playlistProgressRefreshPaths.add(bframePath || reviewDataManager.getBframePath());
+    if (playlistProgressRefreshPromise) return playlistProgressRefreshPromise;
+    const playlist = getPlaylistManager().currentPlaylist;
+    const work = Promise.resolve().then(async () => {
+      while (playlistProgressRefreshPaths.size && playlist === getPlaylistManager().currentPlaylist) {
+        const paths = [...playlistProgressRefreshPaths];
+        playlistProgressRefreshPaths.clear();
+        for (const path of paths) await updatePlaylistItemProgress(path);
+      }
+      if (playlist === getPlaylistManager().currentPlaylist) await updatePlaylistProgress();
+    });
+    playlistProgressRefreshPromise = work;
+    return work.finally(() => { if (playlistProgressRefreshPromise === work) playlistProgressRefreshPromise = null; });
   }
 
   // 파일 누락 표시

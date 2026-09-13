@@ -770,8 +770,8 @@ test('continuous cut loads reuse the existing aggregate timeline instead of rebu
   assert.ok(helperMatch, 'current-mode comment range refresher should accept options');
 
   const helperSource = helperMatch[1];
-  assert.match(helperSource, /skipContinuousTimelineRefresh = false/);
-  assert.match(helperSource, /if \(skipContinuousTimelineRefresh && timeline\.playlistDuration > 0\) \{[\s\S]+renderPlaylistContinuousCommentList\(commentFilterState\.status\);[\s\S]+return;/);
+  assert.match(helperSource, /playlistCommentSegments\.length > 0 && !options\.rebuild/);
+  assert.match(helperSource, /await refreshPlaylistCommentsForItem\(item\.id\);[\s\S]+return;/);
   assert.match(helperSource, /await updatePlaylistContinuousTimeline\(\);/);
 
   const loadVideoCommentRefreshMatch = appSource.match(/renderHighlights\(\);\s*\n\s*\/\/ 댓글 범위 렌더링([\s\S]*?)\/\/ ====== 최근 파일 목록에 추가/);
@@ -2128,6 +2128,7 @@ function createActualLoadRaceScenario({
     elements,
     videoPlayer,
     reviewDataManager,
+    createTransitionMetrics: () => ({ mark() {}, finish() {} }),
     playlistResolutionQueue: { lockPaths: () => () => {}, drainPaths: async () => {} },
     fabricDrawingPilotInitialization: Promise.resolve(true),
     fabricDrawingPilotController,
