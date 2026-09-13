@@ -14,6 +14,7 @@ import {
 } from './playlist-ordering.js';
 
 const log = createLogger('PlaylistManager');
+const defaultReadReview = path => window.electronAPI.loadReview(path);
 
 // 스키마 함수들을 동적으로 가져올 수 없으므로 여기서 필요한 것들을 재정의
 const PLAYLIST_VERSION = '1.0';
@@ -676,7 +677,7 @@ export class PlaylistManager {
   /**
    * 개별 아이템의 피드백 완료율 계산
    */
-  async getItemProgress(itemOrBframePath) {
+  async getItemProgress(itemOrBframePath, { readReview = defaultReadReview } = {}) {
     const bframePath = typeof itemOrBframePath === 'object' && itemOrBframePath !== null
       ? await this.ensureItemBframePath(itemOrBframePath)
       : itemOrBframePath;
@@ -686,7 +687,7 @@ export class PlaylistManager {
     }
 
     try {
-      const bframeData = await window.electronAPI.loadReview(bframePath);
+      const bframeData = await readReview(bframePath);
 
       if (!bframeData) {
         return { total: 0, resolved: 0, percent: 0, hasData: false };
@@ -720,7 +721,7 @@ export class PlaylistManager {
   /**
    * 전체 재생목록 피드백 완료율 계산
    */
-  async getTotalProgress() {
+  async getTotalProgress({ readReview = defaultReadReview } = {}) {
     if (!this.currentPlaylist) {
       return { total: 0, resolved: 0, percent: 0 };
     }
@@ -729,7 +730,7 @@ export class PlaylistManager {
     let resolvedMarkers = 0;
 
     for (const item of this.currentPlaylist.items) {
-      const progress = await this.getItemProgress(item);
+      const progress = await this.getItemProgress(item, { readReview });
       totalMarkers += progress.total;
       resolvedMarkers += progress.resolved;
     }

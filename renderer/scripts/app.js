@@ -1,3 +1,10 @@
+import viewportPanControllers from './lib/viewport-pan-controller.mjs';
+import { createVideoPanGesture } from './modules/video-pan-gesture.js';
+import { getActiveCommentKeys, applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } from './modules/comment-playback-highlight.js';
+import { createCommentEditSession } from './modules/comment-edit-session.js';
+import { createTransitionMetrics } from './modules/playback-transition-metrics.js';
+import { createPlaylistResolutionQueue } from './modules/playlist-comment-resolution.js';
+import { createPlaylistCommentCache } from './modules/playlist-comment-cache.js';
 /**
  * baeframe - Renderer App Entry Point
  */
@@ -69,6 +76,7 @@ import {
   mapLocalTimeToGlobal
 } from './modules/playlist-continuous-core.js';
 import {
+  readPlaylistMarkerFrame,
   extractPlaylistCommentRanges,
   formatPlaylistCommentPanelLine,
   formatPlaylistTimecode,
@@ -965,6 +973,37 @@ async function initApp() {
     ready: false,
     token: 0
   };
+  const playlistCommentCache = createPlaylistCommentCache({
+    read: path => window.electronAPI.loadReview(path), normalizePath: normalizeComparableFilePath,
+    getVersion: async path => {
+      try {
+        const info = await window.electronAPI.getFileInfo(path);
+        const modified = new Date(info.mtime).getTime();
+        return Number.isFinite(info.size) && Number.isFinite(modified) ? `${info.size}:${modified}` : null;
+      } catch (error) {
+        if (/ENOENT/.test(error?.message || '')) return 'missing';
+        throw error;
+      }
+    }
+  });
+  const playlistResolutionQueue = createPlaylistResolutionQueue({ keyForPath: normalizeComparableFilePath });
+  const playlistResolutionStates = new Map();
+  const activeMarkerDragCancels = new Set();
+  let videoPanGesture = null;
+  let viewportPanOwner = null;
+  let viewportFocusEpoch = 0;
+  let videoPanRaf = null;
+  let pendingVideoPan = null;
+  let playlistCommentModeGeneration = 0;
+  let playlistCommentSegments = [];
+  let playlistCommentStructureKey = '';
+  let playlistCommentRevalidationTimer = null;
+  let playlistCommentRevalidationRunning = false;
+  let playlistCommentRevalidationCursor = 0;
+  let playlistCommentScanPromise = null;
+  const playlistProgressById = new Map();
+  let playlistProgressRefreshPromise = null;
+  const playlistProgressRefreshPaths = new Set();
   let playlistTimelineUpdateToken = 0;
   let playlistBackgroundWorkToken = 0;
   let playlistSortChangeToken = 0;
@@ -972,6 +1011,7 @@ async function initApp() {
   let cutlistAggregateCommentRanges = [];
   let cutlistCommentTimelineUpdateToken = 0;
   let cutlistPlaybackTransitioning = false;
+  let cutlistSeekGeneration = 0;
   let videoTransitionFreezeCanvas = null;
 
   /**
@@ -1030,6 +1070,16 @@ async function initApp() {
   }
 
   function resetPlaylistContinuousTimelineState() {
+    playlistCommentModeGeneration++;
+    playlistCommentCache.clear();
+    playlistProgressById.clear();
+    playlistProgressRefreshPaths.clear();
+    playlistCommentSegments = [];
+    playlistCommentStructureKey = '';
+    playlistCommentScanPromise = null;
+    playlistCommentRevalidationCursor = 0;
+    clearInterval(playlistCommentRevalidationTimer);
+    playlistCommentRevalidationTimer = null;
     playlistTimelineUpdateToken += 1;
     playlistAggregateCommentRanges = [];
     timeline.clearPlaylistTimeline();
@@ -1041,7 +1091,13 @@ async function initApp() {
     return playlistReplacementToken;
   }
 
+  function abandonPlaylistResolutionFailures() {
+    playlistResolutionQueue.abandonPlaylistFailures();
+    playlistResolutionStates.clear();
+  }
+
   function commitPlaylistReplacement() {
+    abandonPlaylistResolutionFailures();
     playlistSelectionLoadToken += 1;
     playlistContinuousNavigationToken += 1;
     videoLoadIntentGeneration += 1;
@@ -1447,6 +1503,86 @@ async function initApp() {
 
   // 멘션 매니저 (댓글 @멘션 자동완성)
   const mentionManager = getMentionManager();
+  const commentEditSession = createCommentEditSession();
+  const commentDrafts = new Map();
+  let commentPlaybackRanges = [];
+  let commentPlaybackLastPosition = null;
+  installCommentEditProtection(elements.commentsList);
+
+  function getCommentDraftKey(element) {
+    const row = element.closest('[data-aggregate-comment-key], [data-marker-id]');
+    const markerId = row?.dataset.markerId || element.dataset.editMarkerId || '';
+    const replyId = element.closest('[data-reply-id]')?.dataset.replyId || '';
+    return JSON.stringify([normalizeComparableFilePath(reviewDataManager.getVideoPath()),
+      row?.dataset.aggregateCommentKey || markerId, replyId, element.className]);
+  }
+
+  function finishCommentEdit({ discard = false, flush = true, preserveRefresh = false } = {}) {
+    const element = commentEditSession.getElement();
+    const key = commentEditSession.getKey();
+    if (element && key) {
+      if (discard) commentDrafts.delete(key);
+      else {
+        commentDrafts.set(key, { value: 'value' in element ? element.value : element.innerHTML,
+          start: element.selectionStart, end: element.selectionEnd });
+      }
+    }
+    commentEditSession.end({ flush, preserveRefresh });
+  }
+
+  function restoreCommentDraft(element) {
+    const draft = commentDrafts.get(getCommentDraftKey(element));
+    if (!draft) return;
+    if ('value' in element) {
+      element.value = draft.value;
+      if (Number.isInteger(draft.start)) element.setSelectionRange(draft.start, draft.end);
+    } else element.innerHTML = draft.value;
+  }
+
+  function installCommentEditProtection(container) {
+    if (!container) return;
+    container.addEventListener('focusin', e => {
+      const element = e.target.closest('textarea, [contenteditable="true"], [contenteditable="plaintext-only"]');
+      if (!element || element.readOnly) return;
+      if (commentEditSession.getElement() === element) return;
+      finishCommentEdit({ flush: false, preserveRefresh: true });
+      restoreCommentDraft(element);
+      commentEditSession.begin({ key: getCommentDraftKey(element), element });
+    });
+    container.addEventListener('focusout', () => {
+      const view = container.ownerDocument.defaultView;
+      view.setTimeout(() => {
+        const active = container.ownerDocument.activeElement;
+        if (container.contains(active) || active?.closest?.('.mention-dropdown')) return;
+        if (commentEditSession.getElement() && container.contains(commentEditSession.getElement())) finishCommentEdit();
+      }, 0);
+    });
+  }
+
+  function deferCommentListRefresh(refresh) {
+    if (!commentEditSession.isEditing()) return false;
+    const element = commentEditSession.getElement();
+    const row = element?.closest('[data-marker-id]');
+    const markerId = row?.dataset.markerId || element?.dataset.editMarkerId;
+    if (markerId && !reviewDataManager.isLoading) {
+      const aggregateKey = row?.dataset.aggregateCommentKey;
+      const marker = aggregateKey
+        ? playlistAggregateCommentRanges.find(range => getPlaylistAggregateCommentKey(range) === aggregateKey)
+        : commentManager.getMarker(markerId);
+      if (!marker || marker.deleted) {
+        // Keep a copyable draft when its remote source disappears.
+        finishCommentEdit({ flush: false });
+        const draft = element.ownerDocument.createElement('textarea');
+        draft.className = 'comment-orphan-draft'; draft.readOnly = true;
+        draft.value = 'value' in element ? element.value : element.textContent;
+        draft.setAttribute('aria-label', '삭제된 댓글의 작성 중 초안');
+        elements.commentsList?.parentElement?.appendChild(draft);
+        showToast('편집 중인 댓글이 삭제되었습니다. 초안을 복사할 수 있습니다.', 'warning');
+        return false;
+      }
+    }
+    return commentEditSession.deferRefresh(refresh);
+  }
 
   // Slack 알림 매니저
   const slackNotifier = getSlackNotifier();
@@ -1694,6 +1830,53 @@ async function initApp() {
     log.info('비디오 정보', { duration, totalFrames, fps });
   });
 
+  function refreshCommentPlaybackIndex() {
+    const container = elements.commentsList;
+    if (!container) return;
+    const playlistByKey = new Map(playlistAggregateCommentRanges.map(range => [getPlaylistAggregateCommentKey(range), range]));
+    const cutlistByKey = new Map(cutlistAggregateCommentRanges.map(range => [getCutlistAggregateCommentKey(range), range]));
+    commentPlaybackRanges = [];
+    for (const row of container.querySelectorAll('.comment-item, [data-pr-source], [data-pr-item]')) {
+      let range;
+      let key;
+      if (row.dataset.cutlistAggregateCommentKey) {
+        key = `cutlist:${row.dataset.cutlistAggregateCommentKey}`;
+        range = cutlistByKey.get(row.dataset.cutlistAggregateCommentKey);
+      } else if (row.dataset.aggregateCommentKey) {
+        key = `playlist:${row.dataset.aggregateCommentKey}`;
+        range = playlistByKey.get(row.dataset.aggregateCommentKey);
+      } else if (row.dataset.prSource || row.dataset.prItem) {
+        key = `previous:${row.dataset.prItem || row.dataset.prSource}`;
+        range = { mode: 'single', startFrame: row.dataset.playbackStartFrame === '' ? null : Number(row.dataset.playbackStartFrame),
+          endFrame: row.dataset.playbackEndFrame === '' ? null : Number(row.dataset.playbackEndFrame) };
+      } else {
+        range = commentManager.getMarker(row.dataset.markerId);
+        key = `current:${normalizeComparableFilePath(reviewDataManager.getVideoPath())}:${range?.layerId || ''}:${row.dataset.markerId}`;
+      }
+      if (!range) continue;
+      row.dataset.playbackCommentKey = key;
+      commentPlaybackRanges.push({ ...range, key });
+    }
+    invalidateCommentPlaybackHighlight(container);
+    commentPlaybackLastPosition = null;
+    updateCommentPlaybackHighlight();
+  }
+
+  function updateCommentPlaybackHighlight(preview = null) {
+    const mode = playlistUIState.mode === 'continuous' ? 'continuous' : cutlistUIState.active ? 'cutlist' : 'single';
+    const item = getPlaylistManager().getCurrentItem?.();
+    const currentItemId = preview?.itemId || getCurrentContinuousSegment()?.itemId ||
+      (item && isSameFilePath(item.videoPath, state.currentFile) ? item.id : null);
+    const currentFrame = preview?.localFrame ?? videoPlayer.currentFrame;
+    const globalTime = preview?.time ?? getActiveTimelinePlaybackTime(videoPlayer.currentTime, currentFrame);
+    const position = `${mode}:${currentItemId}:${currentFrame}:${globalTime}`;
+    if (position === commentPlaybackLastPosition) return;
+    commentPlaybackLastPosition = position;
+    const keys = getActiveCommentKeys(commentPlaybackRanges, { mode, currentFrame, globalTime, currentItemId });
+    applyCommentPlaybackHighlight(elements.commentsList, keys);
+    previousReviewPanel?.updatePlaybackFrame?.(currentFrame);
+  }
+
   function syncPlaybackPositionUI(currentTime, currentFrame, options = {}) {
     const {
       updatePresence = false,
@@ -1717,6 +1900,7 @@ async function initApp() {
     if (shouldSyncFrameConsumers) {
       lastFrameConsumerSyncFrame = currentFrame;
       commentManager.setCurrentFrame(currentFrame);
+      if (!timeline.isDraggingPlayhead) updateCommentPlaybackHighlight();
       void handleCutlistPlaybackFrame(currentFrame);
       refreshCurrentCutFromPlayback(currentFrame);
       void fabricDrawingPilotController.syncDisplayFrame(currentFrame);
@@ -1986,22 +2170,49 @@ async function initApp() {
   });
 
   // 타임라인에서 시간 이동 요청
+  let pendingTimelineHighlightSeek = null;
   timeline.addEventListener('seek', async (e) => {
-    if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
-      await seekContinuousTimeline(e.detail.time);
-      hideScrubPreview();
-      return;
-    }
+    const request = {
+      filePath: state.currentFile,
+      mode: `${playlistUIState.mode}:${cutlistUIState.active}`,
+      position: { time: getActiveTimelinePlaybackTime(), localFrame: videoPlayer.currentFrame,
+        itemId: getCurrentContinuousSegment()?.itemId },
+      fps: videoPlayer.fps || 24
+    };
+    pendingTimelineHighlightSeek = request;
+    let succeeded = false;
+    try {
+      if (playlistUIState.mode === 'continuous' && timeline.playlistDuration > 0) {
+        succeeded = await seekContinuousTimeline(e.detail.time, e.detail);
+        return;
+      }
 
-    if (cutlistUIState.active && getCutlistManager().isActive() && timeline.cutlistDuration > 0) {
-      await seekCutlistTimeline(e.detail.time);
-      hideScrubPreview();
-      return;
-    }
+      if (cutlistUIState.active && getCutlistManager().isActive() && timeline.cutlistDuration > 0) {
+        succeeded = await seekCutlistTimeline(e.detail.time, e.detail);
+        return;
+      }
 
-    videoPlayer.seek(e.detail.time);
-    playbackSync.broadcastSeek(e.detail.time);
-    hideScrubPreview();
+      if (e.detail.frameExact === true && Number.isSafeInteger(e.detail.localFrame) && e.detail.localFrame >= 0) videoPlayer.seekToFrame(e.detail.localFrame);
+      else videoPlayer.seek(e.detail.time);
+      playbackSync.broadcastSeek(e.detail.time);
+      succeeded = true;
+    } catch (error) {
+      log.warn('타임라인 위치 이동 실패', { error: error?.message });
+      if (pendingTimelineHighlightSeek === request) showToast('해당 위치로 이동하지 못했습니다.', 'warning');
+    } finally {
+      // A newer drag/seek owns its preview; an older completion must not replace it.
+      if (pendingTimelineHighlightSeek === request) {
+        pendingTimelineHighlightSeek = null;
+        const restore = !succeeded && isSameFilePath(request.filePath, state.currentFile) &&
+          request.mode === `${playlistUIState.mode}:${cutlistUIState.active}`;
+        updateCommentPlaybackHighlight(restore ? {
+          ...request.position,
+          localFrame: videoPlayer.currentFrame,
+          time: request.position.time + (videoPlayer.currentFrame - request.position.localFrame) / request.fps
+        } : null);
+        hideScrubPreview();
+      }
+    }
   });
 
   timeline.addEventListener('cutlist-seek', (e) => {
@@ -2010,11 +2221,14 @@ async function initApp() {
 
   // 스크러빙 중 (드래그 중 프리뷰)
   timeline.addEventListener('scrubbing', (e) => {
+    pendingTimelineHighlightSeek = null;
+    updateCommentPlaybackHighlight(e.detail);
     showScrubPreview(e.detail.time);
   });
 
   // 스크러빙 종료
-  timeline.addEventListener('scrubbingEnd', (e) => {
+  timeline.addEventListener('scrubbingEnd', () => {
+    if (!pendingTimelineHighlightSeek) updateCommentPlaybackHighlight();
     hideScrubPreview();
   });
 
@@ -2465,6 +2679,7 @@ async function initApp() {
 
   // 자동 저장 완료
   reviewDataManager.addEventListener('saved', (e) => {
+    playlistCommentCache.invalidate(e.detail.path);
     log.info('.bframe 저장됨', { path: e.detail.path });
     // 조용히 저장 (토스트 생략 - 자동 저장이라 너무 자주 뜸)
   });
@@ -2494,6 +2709,7 @@ async function initApp() {
 
   // 로드 완료
   reviewDataManager.addEventListener('loaded', (e) => {
+    if (reviewDataManager.getBframePath()) playlistCommentCache.invalidate(reviewDataManager.getBframePath());
     log.info('.bframe 로드됨', { path: e.detail.path });
 
     // pendingCommentFocus는 updateCommentListImmediate에서 처리
@@ -2710,6 +2926,7 @@ async function initApp() {
 
   // 원격 동기화로 인한 전체 갱신 (CommentSync의 fromJSON 호출 시)
   commentManager.addEventListener('markersChanged', () => {
+    if (reviewDataManager.getBframePath()) playlistCommentCache.invalidate(reviewDataManager.getBframePath());
     renderVideoMarkers();
     updateTimelineMarkers();
     updateCommentList();
@@ -2745,7 +2962,7 @@ async function initApp() {
   // 타임라인 댓글 마커 클릭
   timeline.addEventListener('commentMarkerClick', (e) => {
     const { frame, markerInfos } = e.detail;
-    videoPlayer.seekToFrame(frame);
+    seekToCommentFrame(frame);
 
     // 프리뷰 마커 클릭과 동일한 효과 (패널 열기 + 스크롤 + 글로우)
     if (markerInfos && markerInfos.length > 0) {
@@ -3196,7 +3413,7 @@ async function initApp() {
 
   function handleSidebarCommentEscape(e) {
     if (e.key !== 'Escape' || (!sidebarCommentSubmissionPending && !state.isCommentMode)) return;
-    if (mentionManager.isVisible) return;
+    if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
     e.preventDefault();
     cancelSidebarCommentDraft();
     commentManager.setCommentMode(false);
@@ -3205,7 +3422,7 @@ async function initApp() {
 
   elements.commentInput.addEventListener('keydown', (e) => {
     // 멘션 드롭다운 열려있으면 Enter를 멘션 선택으로 처리 (댓글 제출 방지)
-    if (mentionManager.isVisible) return;
+    if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       void submitSidebarCommentDraft();
@@ -5267,7 +5484,7 @@ async function initApp() {
       bar.addEventListener('click', () => {
         const marker = commentManager.getMarker(comment.markerId);
         if (marker) {
-          videoPlayer.seekToFrame(marker.startFrame);
+          seekToCommentFrame(marker.startFrame);
           scrollToCommentWithGlow(comment.markerId);
         }
       });
@@ -5334,25 +5551,23 @@ async function initApp() {
   }
 
   async function refreshCommentRangesForCurrentMode(options = {}) {
-    const { skipContinuousTimelineRefresh = false } = options;
     if (playlistUIState.mode === 'continuous') {
       setupCommentRangeInteractions();
       renderVideoCommentRanges();
-      if (skipContinuousTimelineRefresh && timeline.playlistDuration > 0) {
-        renderPlaylistContinuousCommentList(commentFilterState.status);
+      if (playlistCommentSegments.length > 0 && !options.rebuild) {
+        const item = getPlaylistManager().getItems().find(item => isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()));
+        if (item) await refreshPlaylistCommentsForItem(item.id);
         return;
       }
       await updatePlaylistContinuousTimeline();
       return;
     }
-
     if (cutlistUIState.active) {
       setupCommentRangeInteractions();
       renderVideoCommentRanges();
       await updateCutlistAggregateComments();
       return;
     }
-
     renderCommentRanges();
   }
 
@@ -5643,7 +5858,7 @@ async function initApp() {
         const markerId = item.dataset.markerId;
         const marker = commentManager.getMarker(markerId);
         if (marker) {
-          videoPlayer.seekToFrame(marker.startFrame);
+          seekToCommentFrame(marker.startFrame);
           videoPlayer.pause();
           scrollToCommentWithGlow(markerId);
         }
@@ -6060,6 +6275,7 @@ async function initApp() {
 
   function endVideoPan() {
     const wasPanning = state.isPanningVideo;
+    videoPanGesture?.cancel();
     state.isPanningVideo = false;
     elements.videoWrapper?.classList.remove('panning');
     return wasPanning;
@@ -6241,63 +6457,80 @@ async function initApp() {
     setVideoZoom(state.videoZoom + delta);
   }, { passive: false });
 
-  // 비디오 패닝
-  elements.videoWrapper?.addEventListener('mousedown', (e) => {
-    if (getCommentEditableTarget(e.target)) return;
+  function flushVideoPan() {
+    if (videoPanRaf !== null) cancelAnimationFrame(videoPanRaf);
+    videoPanRaf = null;
+    if (!pendingVideoPan) return;
+    state.videoPanX = pendingVideoPan.panX;
+    state.videoPanY = pendingVideoPan.panY;
+    pendingVideoPan = null;
+    applyVideoZoom();
+  }
 
-    if (canStartFullscreenMiddleScrub(e)) {
-      startFullscreenMiddleScrub(e);
-      return;
-    }
-
-    if (canPanVideo() && e.button === 0) {
-      if (state.isSpaceHeld) state.spacePanUsed = true;
-      state.isPanningVideo = true;
-      state.panStartX = e.clientX;
-      state.panStartY = e.clientY;
-      state.panInitialX = state.videoPanX;
-      state.panInitialY = state.videoPanY;
-      elements.videoWrapper.classList.add('panning');
-      e.preventDefault();
+  videoPanGesture = createVideoPanGesture({
+    canStart: e => !getCommentEditableTarget(e.target) && canPanVideo(),
+    getTransform: () => ({ scale: state.videoZoom / 100, panX: state.videoPanX, panY: state.videoPanY }),
+    onChange: (value, gesture) => {
+      pendingVideoPan = value;
+      if (state.isSpaceHeld && gesture.maxDistance >= 3) state.spacePanUsed = true;
+      if (videoPanRaf === null) videoPanRaf = requestAnimationFrame(flushVideoPan);
+    },
+    onFinish: ({ cancelled }) => {
+      if (cancelled) viewportPanOwner?.consume();
+      flushVideoPan();
+      state.isPanningVideo = false;
+      elements.videoWrapper?.classList.remove('panning');
     }
   });
-
+  elements.videoWrapper?.addEventListener('pointerdown', e => {
+    if (videoPanGesture.pointerDown(e)) {
+      state.isPanningVideo = true;
+      elements.videoWrapper.classList.add('panning');
+    }
+  });
+  document.addEventListener('pointermove', e => videoPanGesture.pointerMove(e));
+  document.addEventListener('pointerup', e => videoPanGesture.pointerUp(e));
+  document.addEventListener('pointercancel', e => videoPanGesture.cancel(e));
+  elements.videoWrapper?.addEventListener('lostpointercapture', e => videoPanGesture.cancel(e));
+  // Middle-button scrubbing remains a separate mouse path. Compatibility mouse
+  // events have no primary-button pan handler and cannot apply a second move.
+  elements.videoWrapper?.addEventListener('mousedown', (e) => {
+    if (getCommentEditableTarget(e.target)) return;
+    if (canStartFullscreenMiddleScrub(e)) startFullscreenMiddleScrub(e);
+  });
   elements.videoWrapper?.addEventListener('auxclick', (e) => {
     if (e.button === 1) {
       e.preventDefault();
     }
   });
-
-  document.addEventListener('mousemove', (e) => {
-    if (state.isFullscreenScrubbing) {
-      updateFullscreenMiddleScrub(e);
-      return;
-    }
-
-    if (state.isPanningVideo) {
-      const scale = state.videoZoom / 100;
-      const dx = (e.clientX - state.panStartX) / scale;
-      const dy = (e.clientY - state.panStartY) / scale;
-      state.videoPanX = state.panInitialX + dx;
-      state.videoPanY = state.panInitialY + dy;
-      applyVideoZoom();
-    }
+  document.addEventListener('mousemove', e => {
+    if (state.isFullscreenScrubbing) updateFullscreenMiddleScrub(e);
   });
-
   document.addEventListener('mouseup', () => {
-    if (state.isFullscreenScrubbing) {
-      finishFullscreenMiddleScrub();
-    }
-
-    endVideoPan();
+    if (state.isFullscreenScrubbing) finishFullscreenMiddleScrub();
   });
-
-  window.addEventListener('blur', () => {
+  function resetViewportPanCycle() {
+    viewportFocusEpoch++;
+    viewportPanOwner?.cancel();
     endVideoPan();
     state.isSpaceHeld = false;
     state.spacePanUsed = false;
     elements.videoWrapper?.classList.remove('space-pan');
+  }
+  window.addEventListener('blur', () => {
+    endVideoPan();
+    const epoch = ++viewportFocusEpoch;
+    if (!state.isSpaceHeld) { resetViewportPanCycle(); return; }
+    const fence = fabricDrawingPilotController.getViewportPanFence();
+    if (!fence) { resetViewportPanCycle(); return; }
+    // The native host must confirm the actual focused overlay and the same persistence session.
+    Promise.resolve(window.electronAPI.getMpvOverlayInputFocus?.()).then(focused => {
+      if (epoch !== viewportFocusEpoch) return;
+      if (!focused || !Object.keys(fence).every(key => fence[key] === focused[key])) resetViewportPanCycle();
+    }, () => { if (epoch === viewportFocusEpoch) resetViewportPanCycle(); });
   });
+  window.electronAPI.onMpvOverlayInputBlur?.(resetViewportPanCycle);
+  window.addEventListener('beforeunload', resetViewportPanCycle);
 
   // ====== 댓글 패널 토글 ======
 
@@ -6484,6 +6717,21 @@ async function initApp() {
     event.stopImmediatePropagation();
   }
 
+  viewportPanOwner = viewportPanControllers.createViewportPanOwner({
+    getFence: () => fabricDrawingPilotController.getViewportPanFence(),
+    canPan: () => state.isDrawMode && canPanVideo(),
+    getTransform: () => ({ scale: state.videoZoom / 100, panX: state.videoPanX, panY: state.videoPanY }),
+    applyTransform: transform => {
+      state.videoPanX = transform.panX;
+      state.videoPanY = transform.panY;
+      applyVideoZoom();
+      scheduleMpvOverlayStateSync();
+    },
+    send: value => window.electronAPI.sendMpvOverlayViewportPanCommand?.(value) === true,
+    togglePlayback: () => handleUserPlayPauseToggle()
+  });
+  window.electronAPI.onMpvOverlayViewportPan?.(value => viewportPanOwner.message(value));
+
   // 키보드 단축키
   document.addEventListener('keydown', handleKeydown, true);
   document.addEventListener('keyup', handleKeyup, true);
@@ -6582,7 +6830,7 @@ async function initApp() {
       fabricDrawingViewportSignature = signature;
       fabricDrawingViewportRevision += 1;
     }
-    return { ...viewport, revision: fabricDrawingViewportRevision };
+    return { ...viewport, revision: fabricDrawingViewportRevision, panGesture: viewportPanOwner?.getMirror() || undefined };
   }
 
   function getFabricDrawingPilotContext() {
@@ -9665,6 +9913,7 @@ async function initApp() {
       remoteStrokeOverlayForMpv.style.display !== 'none';
 
     return {
+      commentInteractionBlocked: state.isDrawMode || isFabricDrawingPilotControllerEngaged(),
       drawingDataUrl: suppressLegacyDrawing ? '' : getCompositedDrawingOverlayDataUrl(),
       remoteStrokeDataUrl: remoteStrokeIsVisible
         ? getCanvasOverlayDataUrl(remoteStrokeOverlayForMpv)
@@ -10384,6 +10633,9 @@ async function initApp() {
       hardAbandonContinuousTransitionFlight();
       if (continuousPlaybackState.active) stopContinuousPlayback();
     }
+    const transitionMetrics = createTransitionMetrics({ id: loadIntent, emit: report => log.info('playback-transition', report) });
+    const resolutionPaths = [reviewDataManager.getVideoPath(), filePath];
+    const releaseResolutionPaths = playlistResolutionQueue.lockPaths(resolutionPaths);
     /* eslint-disable indent */
     try {
     const shouldContinueVideoLoad = typeof shouldContinue === 'function'
@@ -10398,13 +10650,18 @@ async function initApp() {
       (!allowNavigationGuardAbort || shouldContinueVideoLoad())
     );
     if (!canContinueVideoLoad()) return false;
+    try { await playlistResolutionQueue.drainPaths(resolutionPaths); }
+    catch (error) { showToast(`저장을 완료하지 못해 영상 이동을 중단했습니다: ${error.message}`, 'warning'); return false; }
+    if (!canContinueVideoLoad()) return false;
     let fabricPersistenceAbandonedForThisLoad = false;
     lastVideoLoadFabricCancelReason = null;
     if (!engineSwap) {
       await fabricDrawingPilotInitialization;
       if (!canContinueVideoLoad()) return false;
+      transitionMetrics.mark('fabricFlush:start');
       let fabricPersistenceReadyToLeave =
         await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+      transitionMetrics.mark('fabricFlush:end');
       if (!canContinueVideoLoad()) return false;
       if (!fabricPersistenceReadyToLeave && !preserveContinuousSession) {
         // 드로잉 저장 실패가 영상 전환을 영구히 막지 않도록 사용자에게 탈출구를 준다.
@@ -10427,6 +10684,8 @@ async function initApp() {
       await reviewDataManager.waitForPendingSave();
       if (!canContinueVideoLoad()) return false;
     }
+    finishCommentEdit({ flush: false });
+    resetViewportPanCycle();
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
     mpvDrawPlaybackTransitionToken += 1;
@@ -10456,7 +10715,9 @@ async function initApp() {
     const trace = log.trace('loadVideo');
     try {
       // 파일 정보 가져오기
+      transitionMetrics.mark('fileInfo:start');
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
+      transitionMetrics.mark('fileInfo:end');
       if (!canContinueVideoLoad()) return false;
 
       // ====== 오디오 파일 감지 ======
@@ -10537,7 +10798,9 @@ async function initApp() {
         // 저장되지 않은 변경사항이 있으면 먼저 저장
         if (reviewDataManager.hasUnsavedChanges()) {
           log.info('파일 전환 전 변경사항 저장 시도');
+          transitionMetrics.mark('outgoingSave:start');
           const saved = await reviewDataManager.save();
+          transitionMetrics.mark('outgoingSave:end');
           if (!canContinueVideoLoad()) return false;
           if (!saved) {
           // 저장 실패 시 사용자에게 확인
@@ -10559,8 +10822,10 @@ async function initApp() {
 
         let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;
         if (!finalFabricPersistenceReadyToLeave) {
+          transitionMetrics.mark('fabricFlush:start');
           finalFabricPersistenceReadyToLeave =
             await fabricDrawingPilotController.flushPersistenceBeforeLeave();
+          transitionMetrics.mark('fabricFlush:end');
           if (!finalFabricPersistenceReadyToLeave) {
             preserveAuthoritativeFabricOverlayOnCancel = true;
           }
@@ -10588,7 +10853,9 @@ async function initApp() {
 
         if (reviewDataManager.hasUnsavedChanges()) {
           log.info('Fabric 입력 차단 후 최종 변경사항 저장 시도');
+          transitionMetrics.mark('outgoingSave:start');
           const finalSavedBeforeVideoChange = await reviewDataManager.save();
+          transitionMetrics.mark('outgoingSave:end');
           if (!canContinueVideoLoad()) return false;
           if (!finalSavedBeforeVideoChange) {
             const proceed = confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?');
@@ -10698,7 +10965,9 @@ async function initApp() {
 
         // 오디오를 <video> 엘리먼트로 재생 (HTML5 video는 audio도 재생 가능)
         try {
+          transitionMetrics.mark('mpvLoad:start');
           await videoPlayer.load(actualVideoPath);
+          transitionMetrics.mark('mpvLoad:end');
           if (!canContinueVideoLoad()) return false;
         } catch (loadErr) {
           log.warn('videoPlayer.load 실패, 직접 src 설정으로 폴백', { error: loadErr.message });
@@ -10807,12 +11076,14 @@ async function initApp() {
 
         if (useMpvPilot) {
           try {
+            transitionMetrics.mark('mpvLoad:start');
             const mpvLoaded = await loadVideoWithMpvPilot(filePath, {
               initialFrame,
               initialTime,
               loadToken,
               isStaleVideoLoad
             });
+            transitionMetrics.mark('mpvLoad:end');
             if (!canContinueVideoLoad()) return false;
             if (!mpvLoaded) {
               log.warn('mpv 파일럿 준비가 중단되어 기존 재생 방식으로 재시도');
@@ -10859,7 +11130,9 @@ async function initApp() {
             const html5Fps = html5ProbedFps ?? (fileIsAudio ? 24 : await resolveHtml5PlaybackFps(filePath));
             if (!canContinueVideoLoad()) return false;
             videoPlayer.setFps(html5Fps);
+            transitionMetrics.mark('mpvLoad:start');
             await videoPlayer.load(actualVideoPath);
+            transitionMetrics.mark('mpvLoad:end');
             if (!canContinueVideoLoad()) return false;
 
             // 피드백 36: reveal 지연이 없는 경로에서도 초 단위 위치를 복원한다.
@@ -10909,7 +11182,9 @@ async function initApp() {
       // keepVersionContext가 true면 폴더 스캔 건너뛰기 (버전 목록 유지)
       if (!keepVersionContext) {
         // VersionManager에 현재 파일 설정 (폴더 스캔 포함)
+        transitionMetrics.mark('versionScan:start');
         await versionManager.setCurrentFile(filePath);
+        transitionMetrics.mark('versionScan:end');
         if (!canContinueVideoLoad()) return false;
       } else {
         log.info('버전 컨텍스트 유지 모드 - 폴더 스캔 건너뜀');
@@ -10976,6 +11251,7 @@ async function initApp() {
       let hasExistingData = false;
       let currentBframePath = reviewDataManager.currentBframePath;
       if (!engineSwap) {
+        transitionMetrics.mark('reviewLoad:start');
         hasExistingData = await reviewDataManager.setVideoFile(filePath, {
           skipSave: true,
           fabricDrawingPersistenceContext: {
@@ -10984,6 +11260,7 @@ async function initApp() {
             stableVideoIdentity: filePath
           }
         });
+        transitionMetrics.mark('reviewLoad:end');
         if (!canContinueVideoLoad()) return false;
         currentBframePath = reviewDataManager.currentBframePath;
       }
@@ -10992,16 +11269,20 @@ async function initApp() {
       if (!engineSwap && canContinueVideoLoad()) {
         const fabricDrawingPilotApplies = useMpvPilot && !fileIsAudio &&
           fabricDrawingPilotController.shouldOwnDrawingShortcut();
+        transitionMetrics.mark('fabricReady:start');
         const fabricDrawingReady = await fabricDrawingPilotController.afterVideoReady({
           ...getFabricDrawingPilotContext(),
           loadToken
         });
+        transitionMetrics.mark('fabricReady:end');
         if (!canContinueVideoLoad()) return false;
         if (fabricDrawingPilotApplies && fabricDrawingReady !== true) return false;
       }
 
       if (playWhenMediaReady && shouldContinueVideoLoad()) {
+        transitionMetrics.mark('firstPlay:start');
         await playVideoAfterMediaLoad({ silent: true });
+        transitionMetrics.mark('firstPlay:end');
       }
 
       // keepVersionContext가 false일 때만 manualVersions 복원
@@ -11057,9 +11338,11 @@ async function initApp() {
       renderHighlights();
 
       // 댓글 범위 렌더링
+      transitionMetrics.mark('commentRefresh:start');
       await refreshCommentRangesForCurrentMode({
         skipContinuousTimelineRefresh: preserveContinuousSession
       });
+      transitionMetrics.mark('commentRefresh:end');
       if (!canContinueVideoLoad()) return false;
 
       // ====== 최근 파일 목록에 추가 ======
@@ -11126,6 +11409,8 @@ async function initApp() {
       }
     }
     } finally {
+      transitionMetrics.finish();
+      releaseResolutionPaths();
       if (ownsPendingUserIntent && pendingUserVideoLoadIntent === loadIntent) pendingUserVideoLoadIntent = null;
     }
     /* eslint-enable indent */
@@ -11428,10 +11713,19 @@ async function initApp() {
   /**
    * 그리기 모드 토글
    */
+  function syncCommentInteractionPolicy() {
+    resetViewportPanCycle();
+    const blocked = state.isDrawMode || isFabricDrawingPilotControllerEngaged();
+    setCommentOverlaysDrawingPassthrough(blocked);
+    scheduleMpvOverlayStateSync();
+  }
+
   function setCommentOverlaysDrawingPassthrough(enabled) {
     markerContainer.classList.toggle('drawing-active', enabled);
     document.body.classList.toggle('drawing-mode-active', enabled);
     if (!enabled) return;
+    for (const cancel of activeMarkerDragCancels) cancel();
+    activeMarkerDragCancels.clear();
 
     document.querySelectorAll('.comment-marker-tooltip').forEach(tooltip => {
       tooltip.classList.remove('visible', 'pinned');
@@ -11443,7 +11737,7 @@ async function initApp() {
     elements.drawingTools?.classList.toggle('visible', ready);
     elements.drawingCanvas?.classList.toggle('active', ready);
     elements.videoWrapper?.classList.toggle('drawing-mode', ready);
-    setCommentOverlaysDrawingPassthrough(ready);
+    syncCommentInteractionPolicy();
   }
 
   function setDrawModePreparingState(preparing) {
@@ -11520,6 +11814,7 @@ async function initApp() {
     scheduleMpvOverlayStateSync({ force: true });
     renderActiveDrawingLayers();
     if (!engaged && !wasEngaged) {
+      syncCommentInteractionPolicy();
       if (nextState === 'failed') notifyFabricDrawingPilotFailure();
       else fabricDrawingPilotFailureToastShown = false;
       return;
@@ -11602,9 +11897,7 @@ async function initApp() {
       }
       drawingManager.commitActiveSelection();
       scheduleMpvOverlayStateSync({ force: true });
-      state.isSpaceHeld = false;
-      state.spacePanUsed = false;
-      elements.videoWrapper?.classList.remove('space-pan');
+      resetViewportPanCycle();
       void exitHybridReviewEngineIfNeeded();
     }
   }
@@ -11986,7 +12279,7 @@ async function initApp() {
 
     // Enter로 확정, Shift+Enter로 줄바꿈
     textarea?.addEventListener('keydown', (e) => {
-      if (mentionManager.isVisible) return;
+      if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         const text = textarea.value.trim();
@@ -12125,6 +12418,7 @@ async function initApp() {
       replyBadge.textContent = `💬 ${replyCount}`;
       replyBadge.title = `답글 ${replyCount}개 보기`;
       replyBadge.addEventListener('click', (e) => {
+        if (commentInputBlocked()) return;
         e.stopPropagation();
         window.scrollToCommentAndExpandThread(marker.id);
       });
@@ -12138,8 +12432,21 @@ async function initApp() {
     let markerStartX = marker.x;
     let markerStartY = marker.y;
 
+    const cancelMarkerDrag = () => {
+      isDragging = false;
+      markerEl.classList.remove('dragging');
+      markerEl.style.left = `${marker.x * 100}%`;
+      markerEl.style.top = `${marker.y * 100}%`;
+      document.body.style.cursor = '';
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('mouseup', onMouseUp);
+      activeMarkerDragCancels.delete(cancelMarkerDrag);
+    };
+    const commentInputBlocked = () => state.isDrawMode || isFabricDrawingPilotControllerEngaged();
+
     // 드래그 중 (마우스 이동)
     const onMouseMove = (e) => {
+      if (commentInputBlocked()) { cancelMarkerDrag(); return; }
       if (!isDragging) return;
 
       const rect = markerContainer.getBoundingClientRect();
@@ -12158,6 +12465,7 @@ async function initApp() {
 
     // 드래그 종료 (마우스 업)
     const onMouseUp = (e) => {
+      if (commentInputBlocked()) { cancelMarkerDrag(); return; }
       if (!isDragging) return;
 
       isDragging = false;
@@ -12188,10 +12496,12 @@ async function initApp() {
       // 이벤트 리스너 제거
       document.removeEventListener('mousemove', onMouseMove);
       document.removeEventListener('mouseup', onMouseUp);
+      activeMarkerDragCancels.delete(cancelMarkerDrag);
     };
 
     // 드래그 시작 (마우스 다운)
     markerEl.addEventListener('mousedown', (e) => {
+      if (commentInputBlocked()) return;
       // 툴팁 버튼 클릭은 무시
       if (e.target.closest('.tooltip-btn') || e.target.closest('.marker-replies-badge')) return;
 
@@ -12203,6 +12513,7 @@ async function initApp() {
       e.stopPropagation();
 
       isDragging = true;
+      activeMarkerDragCancels.add(cancelMarkerDrag);
       dragStartX = e.clientX;
       dragStartY = e.clientY;
       markerStartX = marker.x;
@@ -12244,6 +12555,7 @@ async function initApp() {
     let hideTimeout = null;
 
     const showTooltipHover = () => {
+      if (commentInputBlocked()) return;
       if (hideTimeout) {
         clearTimeout(hideTimeout);
         hideTimeout = null;
@@ -12277,6 +12589,7 @@ async function initApp() {
 
     // 클릭 - 우측 댓글로 스크롤 및 고정 토글
     markerEl.addEventListener('click', (e) => {
+      if (commentInputBlocked()) return;
       e.stopPropagation();
       if (e.target.closest('.tooltip-btn')) return;
 
@@ -12301,12 +12614,14 @@ async function initApp() {
 
     // 해결 버튼
     tooltip.querySelector('.tooltip-btn.resolve')?.addEventListener('click', (e) => {
+      if (commentInputBlocked()) return;
       e.stopPropagation();
-      commentManager.toggleMarkerResolved(marker.id, userName);
+      void toggleCurrentMarkerResolved(marker.id);
     });
 
     // 삭제 버튼
     tooltip.querySelector('.tooltip-btn.delete')?.addEventListener('click', async (e) => {
+      if (commentInputBlocked()) return;
       e.stopPropagation();
 
       // 권한 체크 (본인 코멘트만 삭제 가능)
@@ -12681,29 +12996,30 @@ async function initApp() {
     if (!reply) return;
 
     // 편집 폼 동적 생성
-    const form = document.createElement('div');
+    const form = replyItem.ownerDocument.createElement('div');
     form.className = config.formClass;
 
     let editor;
     if (config.editorType === 'textarea') {
-      editor = document.createElement('textarea');
+      editor = replyItem.ownerDocument.createElement('textarea');
       editor.rows = 2;
       editor.value = reply.text;
     } else {
-      editor = document.createElement('div');
+      editor = replyItem.ownerDocument.createElement('div');
       editor.contentEditable = 'true';
       editor.textContent = reply.text;
     }
     editor.className = config.editorClass;
+    editor.dataset.editMarkerId = markerId;
 
-    const actions = document.createElement('div');
+    const actions = replyItem.ownerDocument.createElement('div');
     actions.className = config.actionsClass;
 
-    const saveBtn = document.createElement('button');
+    const saveBtn = replyItem.ownerDocument.createElement('button');
     saveBtn.className = config.saveClass;
     saveBtn.textContent = '저장';
 
-    const cancelBtn = document.createElement('button');
+    const cancelBtn = replyItem.ownerDocument.createElement('button');
     cancelBtn.className = config.cancelClass;
     cancelBtn.textContent = '취소';
 
@@ -12725,16 +13041,18 @@ async function initApp() {
       mentionManager.detach(editor);
       form.remove();
       textEl.style.display = '';
+      finishCommentEdit({ discard: true });
     };
 
-    saveBtn.addEventListener('click', (e) => {
+    saveBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      const newText = (config.editorType === 'textarea' ? editor.value : editor.innerText).trim();
+      const newText = (config.editorType === 'textarea' ? editor.value : editor.textContent).trim();
       if (!newText) return;
-      const success = commentManager.updateReply(markerId, replyId, { text: newText });
+      const success = await saveCurrentCommentEdit(markerId, () => commentManager.updateReply(markerId, replyId, { text: newText }), replyId, form);
       if (success) {
         cleanup();
         onSaved(newText);
+        updateCommentList();
         showToast('답글이 수정되었습니다.', 'success');
       }
     });
@@ -12822,7 +13140,8 @@ async function initApp() {
       filtered = filtered.filter(range => playlistRangeMatchesCommentSearch(range, normalizedSearch));
     }
 
-    return filtered.sort((a, b) => a.globalStartTime - b.globalStartTime);
+    return filtered.sort((a, b) => (a.itemIndex ?? 0) - (b.itemIndex ?? 0) ||
+      Number(a.timingValid === false) - Number(b.timingValid === false) || a.globalStartTime - b.globalStartTime);
   }
 
   function highlightPlaylistAggregateComment(key) {
@@ -12842,7 +13161,7 @@ async function initApp() {
 
   async function openPlaylistAggregateComment(key) {
     const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
-    if (!range) return false;
+    if (!range || range.timingValid === false) return false;
 
     const playlistManager = getPlaylistManager();
     const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
@@ -12910,10 +13229,10 @@ async function initApp() {
     };
   }
 
-  function applyMarkerResolutionToggle(marker) {
+  function applyMarkerResolutionToggle(marker, desiredResolved = !marker?.resolved) {
     if (!marker) return null;
     const previous = snapshotMarkerResolution(marker);
-    marker.resolved = !previous.resolved;
+    marker.resolved = desiredResolved;
     marker.resolvedAt = marker.resolved ? new Date() : null;
     marker.resolvedBy = marker.resolved ? userName : null;
     marker.updatedAt = new Date();
@@ -12928,84 +13247,59 @@ async function initApp() {
     marker.updatedAt = previous.updatedAt;
   }
 
-  async function togglePlaylistAggregateResolvedWithoutNavigation(range) {
+  async function togglePlaylistAggregateResolvedWithoutNavigation(range, intent = {}) {
     const playlistManager = getPlaylistManager();
-    const item = playlistManager.getItems().find(candidate => candidate.id === range.itemId);
-    if (!item) {
-      throw new Error('재생목록 항목을 찾을 수 없습니다.');
-    }
-
+    const item = intent.videoPath
+      ? { id: range.itemId, videoPath: intent.videoPath, bframePath: intent.bframePath }
+      : playlistManager.getItems().find(candidate => candidate.id === range.itemId);
+    if (!item) throw Object.assign(new Error('재생목록 항목을 찾을 수 없습니다.'), { blocksNavigation: false });
+    const desiredResolved = intent.desiredResolved ?? !range.resolved;
     const bframePath = await playlistManager.ensureItemBframePath(item);
-    if (!bframePath) {
-      throw new Error('댓글 파일을 찾을 수 없습니다.');
-    }
-
+    if (!bframePath) throw new Error('댓글 파일을 찾을 수 없습니다.');
+    intent.bframePath = bframePath;
     const currentBframePath = reviewDataManager.getBframePath();
     if (currentBframePath && isSameFilePath(currentBframePath, bframePath)) {
       const marker = commentManager.getMarker(range.markerId);
-      if (!marker || marker.deleted) {
-        throw new Error('원본 댓글을 찾을 수 없습니다.');
-      }
-      const previous = applyMarkerResolutionToggle(marker);
+      const layer = commentManager.layers.find(layer => layer.id === range.layerId);
+      if (!marker || marker.deleted || !layer?.markers?.has(marker.id)) throw Object.assign(new Error('원본 댓글을 찾을 수 없습니다.'), { blocksNavigation: false });
+      if (layer.locked || liveblocksManager.checkEditLock(marker.id)?.isLocked) throw Object.assign(new Error('다른 편집이 진행 중인 댓글입니다.'), { blocksNavigation: false });
+      const previous = applyMarkerResolutionToggle(marker, desiredResolved);
       suppressCommentRangeRefreshOnce = true;
       commentManager._emit('markerUpdated', { marker });
       commentManager._emit('markersChanged');
-      const saved = await reviewDataManager.save();
-      if (!saved) {
-        restoreMarkerResolution(marker, previous);
-        suppressCommentRangeRefreshOnce = true;
-        commentManager._emit('markerUpdated', { marker });
-        commentManager._emit('markersChanged');
+      const checkpoint = reviewDataManager.captureSaveCheckpoint();
+      if (await reviewDataManager.saveThroughCheckpoint(checkpoint) !== true) {
+        if (reviewDataManager._ownsSave(checkpoint) && commentManager.getMarker(marker.id) === marker &&
+            marker.resolved === desiredResolved) {
+          restoreMarkerResolution(marker, previous);
+          suppressCommentRangeRefreshOnce = true;
+          commentManager._emit('markerUpdated', { marker });
+          commentManager._emit('markersChanged');
+        }
         throw new Error('해결 상태 저장에 실패했습니다.');
       }
       return marker;
     }
-
-    const bframeSnapshot = await window.electronAPI.loadReviewSnapshot(bframePath);
-    const bframeData = bframeSnapshot?.data;
-    const expectedVersionToken = bframeSnapshot?.versionToken;
-    if (!bframeData || typeof expectedVersionToken !== 'string') {
-      throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const bframeSnapshot = await window.electronAPI.loadReviewSnapshot(bframePath);
+      const bframeData = bframeSnapshot?.data;
+      const expectedVersionToken = bframeSnapshot?.versionToken;
+      if (!bframeData || typeof expectedVersionToken !== 'string') throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
+      const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
+      const layer = bframeData.comments?.layers?.find(layer => layer.id === range.layerId);
+      if (!marker) throw Object.assign(new Error('원본 댓글을 찾을 수 없습니다.'), { blocksNavigation: false });
+      if (layer?.locked) throw Object.assign(new Error('잠긴 댓글 레이어입니다.'), { blocksNavigation: false });
+      const dataVersion = getDataVersion(bframeData);
+      const unsupportedMajor = getUnsupportedBframeMajor(dataVersion, BFRAME_VERSION, !hasExplicitBframeVersion(bframeData));
+      if (unsupportedMajor !== null) throw new Error(`지원하지 않는 .bframe ${dataVersion} 파일은 이 버전에서 저장할 수 없습니다.`);
+      ensureReviewDocumentId(bframeData);
+      if (!isValidReviewDocumentId(bframeData.reviewDocumentId)) throw new Error('유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.');
+      applyMarkerResolutionToggle(marker, desiredResolved);
+      const saved = await window.electronAPI.saveReview(bframePath, bframeData, { expectedVersionToken: expectedVersionToken });
+      if (saved?.success === true) return marker;
+      if (saved?.conflict === true && attempt === 0) continue;
+      throw new Error(saved?.conflict ? '다른 변경이 먼저 저장되어 해결 상태를 덮어쓰지 않았습니다.' : '해결 상태 저장에 실패했습니다.');
     }
-    const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
-    if (!marker) {
-      throw new Error('원본 댓글을 찾을 수 없습니다.');
-    }
-
-    const dataVersion = getDataVersion(bframeData);
-    const unsupportedMajor = getUnsupportedBframeMajor(
-      dataVersion,
-      BFRAME_VERSION,
-      !hasExplicitBframeVersion(bframeData)
-    );
-    if (unsupportedMajor !== null) {
-      throw new Error(`지원하지 않는 .bframe ${dataVersion} 파일은 이 버전에서 저장할 수 없습니다.`);
-    }
-
-    ensureReviewDocumentId(bframeData);
-    if (!isValidReviewDocumentId(bframeData.reviewDocumentId)) {
-      throw new Error('유효하지 않은 reviewDocumentId가 있어 원본 보호를 위해 저장을 중단했습니다.');
-    }
-
-    const previous = applyMarkerResolutionToggle(marker);
-    try {
-      const saved = await window.electronAPI.saveReview(
-        bframePath,
-        bframeData,
-        { expectedVersionToken: expectedVersionToken }
-      );
-      if (saved?.success !== true) {
-        restoreMarkerResolution(marker, previous);
-        const reason = saved?.conflict === true
-          ? '다른 변경이 먼저 저장되어 해결 상태를 덮어쓰지 않았습니다.'
-          : '해결 상태 저장에 실패했습니다.';
-        throw new Error(reason);
-      }
-    } catch (error) {
-      restoreMarkerResolution(marker, previous);
-      throw error;
-    }
-    return marker;
   }
 
   function renderPlaylistAggregateReplies(range, normalizedSearch) {
@@ -13028,31 +13322,168 @@ async function initApp() {
     }).join('');
   }
 
+  function renderPlaylistResolutionState(key) {
+    const operation = playlistResolutionStates.get(key);
+    for (const row of elements.commentsList?.querySelectorAll('.playlist-aggregate-comment') || []) {
+      if (row.dataset.aggregateCommentKey !== key) continue;
+      const button = row.querySelector('.playlist-comment-resolve-toggle');
+      if (!button) continue;
+      if (!operation) {
+        const range = playlistAggregateCommentRanges.find(range => getPlaylistAggregateCommentKey(range) === key);
+        button.disabled = false;
+        button.textContent = range?.resolved ? '✓ 해결됨' : '○ 미해결';
+        row.classList.remove('is-save-pending', 'is-save-failed');
+        row.classList.toggle('resolved', range?.resolved === true);
+        row.setAttribute('aria-busy', 'false');
+        continue;
+      }
+      button.disabled = operation.status === 'pending';
+      button.textContent = operation.status === 'pending'
+        ? `${operation.intent.desiredResolved ? '✓ 해결' : '○ 미해결'} · 저장 중` : '저장 실패 · 다시 시도';
+      row.classList.toggle('is-save-pending', operation.status === 'pending');
+      row.classList.toggle('is-save-failed', operation.status === 'failed');
+      // Pending state is intentionally separate from persisted resolved styling.
+      row.setAttribute('aria-busy', operation.status === 'pending' ? 'true' : 'false');
+    }
+  }
+
   async function togglePlaylistAggregateResolved(key) {
     const range = playlistAggregateCommentRanges.find(item => getPlaylistAggregateCommentKey(item) === key);
-    if (!range) {
-      showToast('해결 상태를 바꿀 댓글을 찾을 수 없습니다.', 'warning');
-      return false;
-    }
-
-    let marker;
+    const manager = getPlaylistManager();
+    const item = manager.getItems().find(item => item.id === range?.itemId);
+    if (!range || !item) { showToast('해결 상태를 바꿀 댓글을 찾을 수 없습니다.', 'warning'); return false; }
+    const playlist = manager.currentPlaylist;
+    const generation = playlistCommentModeGeneration;
+    const isCurrentScreen = () => playlistUIState.mode === 'continuous' && playlist === manager.currentPlaylist && generation === playlistCommentModeGeneration;
+    const old = playlistResolutionStates.get(key);
+    const intent = { key: `${normalizeComparableFilePath(item.videoPath)}:${playlist?.id || ''}:${key}`,
+      videoPath: item.videoPath, bframePath: item.bframePath, itemId: item.id,
+      layerId: range.layerId, markerId: range.markerId,
+      desiredResolved: old?.status === 'failed' ? old.intent.desiredResolved : !range.resolved,
+      createdAt: Date.now(), playlistId: playlist?.id, scope: 'playlist' };
+    if (playlistResolutionQueue.hasPending(intent.key)) return false;
+    const operation = { status: 'pending', intent };
+    playlistResolutionStates.set(key, operation);
+    // enqueue before any await, including path resolution.
+    const pending = playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation({ ...range }, intent));
+    renderPlaylistResolutionState(key);
     try {
-      marker = await togglePlaylistAggregateResolvedWithoutNavigation(range);
+      const marker = await pending;
+      playlistCommentCache.invalidate(intent.bframePath);
+      if (playlistResolutionStates.get(key) === operation) playlistResolutionStates.delete(key);
+      if (!isCurrentScreen()) return true;
+      range.resolved = marker.resolved === true;
+      range.resolvedBy = marker.resolvedBy || '';
+      range.resolvedAt = marker.resolvedAt || null;
+      renderPlaylistResolutionState(key);
+      await refreshPlaylistCommentsForItem(item.id);
+      if (!isCurrentScreen()) return true;
+      void refreshVisiblePlaylistProgress(intent.bframePath);
+      showToast(marker.resolved ? '해결됨으로 표시했습니다.' : '미해결로 다시 표시했습니다.', 'success');
+      return true;
     } catch (error) {
-      showToast(error.message || '해결 상태 저장에 실패했습니다.', 'warning');
+      operation.status = 'failed';
+      if (isCurrentScreen()) {
+        renderPlaylistResolutionState(key);
+        showToast(error.message || '해결 상태 저장에 실패했습니다.', 'warning');
+      }
       return false;
     }
+  }
 
-    range.resolved = marker.resolved === true;
-    range.resolvedBy = marker.resolvedBy || '';
-    range.resolvedAt = marker.resolvedAt || null;
+  function lockCommentEditForm(form) {
+    const busy = form.getAttribute('aria-busy');
+    form.setAttribute('aria-busy', 'true');
+    const restore = [];
+    for (const button of form.querySelectorAll('button')) {
+      const disabled = button.disabled; button.disabled = true;
+      restore.push(() => { button.disabled = disabled; });
+    }
+    for (const editor of form.querySelectorAll('textarea,input,[contenteditable],[data-edit-marker-id]')) {
+      if ('readOnly' in editor) {
+        const readOnly = editor.readOnly; editor.readOnly = true;
+        restore.push(() => { editor.readOnly = readOnly; });
+      } else {
+        const editable = editor.contentEditable;
+        editor.contentEditable = 'false';
+        restore.push(() => { editor.contentEditable = editable; });
+      }
+    }
+    return () => {
+      restore.forEach(run => run());
+      if (busy === null) form.removeAttribute('aria-busy'); else form.setAttribute('aria-busy', busy);
+    };
+  }
 
-    await refreshCommentRangesForCurrentMode();
-    void updatePlaylistUI();
-    renderPlaylistContinuousCommentList(commentFilterState.status);
-    highlightPlaylistAggregateComment(key);
-    showToast(marker.resolved ? '해결됨으로 표시했습니다.' : '미해결로 다시 표시했습니다.', 'success');
-    return true;
+  async function saveCurrentCommentEdit(markerId, mutate, replyId = '', form = null) {
+    const owner = reviewDataManager.captureSaveCheckpoint();
+    const intent = { key: `${normalizeComparableFilePath(owner.videoPath)}:edit:${markerId}:${replyId}`,
+      videoPath: owner.videoPath };
+    if (playlistResolutionQueue.hasPending(intent.key)) { showToast('댓글을 저장하고 있습니다.', 'info'); return false; }
+    const unlockForm = form ? lockCommentEditForm(form) : () => {};
+    try {
+      return await playlistResolutionQueue.enqueue(intent, async () => {
+        if (!reviewDataManager._ownsSave(owner)) throw Object.assign(new Error('영상이 바뀌어 댓글 수정을 중단했습니다.'), { blocksNavigation: false });
+        const marker = commentManager.getMarker(markerId);
+        if (!marker || marker.deleted || liveblocksManager.checkEditLock(markerId)?.isLocked) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
+        const target = replyId ? marker.replies?.find(reply => reply.id === replyId) : marker;
+        if (!target || target.deleted) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
+        const previousText = target.text;
+        const result = mutate();
+        if (!result) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
+        const attemptedText = target.text;
+        try {
+          if (await reviewDataManager.saveThroughCheckpoint(reviewDataManager.captureSaveCheckpoint()) !== true) {
+            throw new Error('저장 실패 · 다시 시도');
+          }
+        } catch (error) {
+          const current = commentManager.getMarker(markerId);
+          const currentTarget = replyId ? current?.replies?.find(reply => reply.id === replyId) : current;
+          let rolledBack = false;
+          if (reviewDataManager._ownsSave(owner) && current === marker && currentTarget === target &&
+              !marker.deleted && !target.deleted && target.text === attemptedText) {
+            // Restore only this edit. Concurrent resolution, replies and drawings remain untouched.
+            target.text = previousText;
+            // Rollback is a new revision so collaboration/merge does not revive the failed text.
+            const revision = new Date(Math.max(Date.now(), new Date(target.updatedAt).getTime() || 0,
+              new Date(marker.updatedAt).getTime() || 0) + 1);
+            target.updatedAt = marker.updatedAt = revision;
+            if (replyId) commentManager._emit('replyUpdated', { marker, markerId, replyId, reply: target, updates: { text: previousText } });
+            commentManager._emit('markerUpdated', { marker });
+            commentManager._emit('markersChanged');
+            rolledBack = true;
+          }
+          // The draft stays in the editor. A restored model has no failed edit to drain on navigation.
+          throw Object.assign(new Error(error?.message || '저장 실패 · 다시 시도'), { blocksNavigation: !rolledBack });
+        }
+        return result;
+      });
+    } catch (error) { showToast(error.message, 'warning'); return false; }
+    finally { unlockForm(); }
+  }
+
+  function retireDeletedCommentResolutionFailures() {
+    const videoPath = reviewDataManager.getVideoPath();
+    if (!videoPath) return;
+    playlistResolutionQueue.retireDeletedMarkers(videoPath, markerId => {
+      const marker = commentManager.getMarker(markerId);
+      return !marker || marker.deleted === true;
+    });
+  }
+
+  async function toggleCurrentMarkerResolved(markerId) {
+    const marker = commentManager.getMarker(markerId);
+    const layer = commentManager.layers.find(layer => layer.markers.has(markerId));
+    if (!marker || !layer) return false;
+    const videoPath = reviewDataManager.getVideoPath();
+    const intent = { key: `${normalizeComparableFilePath(videoPath)}:current:${layer.id}:${markerId}`,
+      videoPath, markerId, scope: 'current-resolution', bframePath: reviewDataManager.getBframePath(), desiredResolved: !marker.resolved };
+    if (playlistResolutionQueue.hasPending(intent.key)) { showToast('댓글 완료 상태를 저장하고 있습니다.', 'info'); return false; }
+    try {
+      await playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation(
+        { markerId, layerId: layer.id, resolved: marker.resolved }, intent));
+      return true;
+    } catch (error) { showToast(error.message || '저장 실패 · 다시 시도', 'warning'); return false; }
   }
 
   async function submitPlaylistAggregateReply(key, textarea) {
@@ -13078,6 +13509,7 @@ async function initApp() {
     activeRange.replies = [...(activeRange.replies || []), reply];
     playlistExpandedReplyKeys.add(key);
     textarea.value = '';
+    finishCommentEdit({ discard: true, flush: false });
     resizeReplyEditorToContent(textarea);
     renderPlaylistContinuousCommentList(commentFilterState.status);
     highlightPlaylistAggregateComment(key);
@@ -13086,6 +13518,7 @@ async function initApp() {
   }
 
   function renderPlaylistContinuousCommentList(filter = getActiveCommentFilter()) {
+    if (deferCommentListRefresh(() => renderPlaylistContinuousCommentList(filter))) return;
     const container = elements.commentsList;
     if (!container) return;
 
@@ -13129,6 +13562,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
+      refreshCommentPlaybackIndex();
       return;
     }
 
@@ -13143,10 +13577,13 @@ async function initApp() {
       const resolveTitle = getResolveButtonLabel(range.resolved, range.resolvedBy);
       const resolveTooltipHtml = range.resolved ? getResolveTooltipHtml(range.resolvedBy, range.resolvedAt) : '';
       const imageUrl = range.image ? escapeHtmlAttribute(range.image) : '';
+      const localLabel = range.timingValid === false ? '시간 정보 없음' : range.localStartTimecode;
+      const globalLabel = range.timingValid === false ? '' : `전체 ${range.globalStartTimecode}`;
 
       return `
       <div class="comment-item playlist-aggregate-comment ${range.resolved ? 'resolved' : ''} ${replyCount > 0 ? 'has-replies' : ''}"
         data-aggregate-comment-key="${escapeHtmlAttribute(key)}"
+        data-timing-valid="${range.timingValid !== false}"
         data-marker-id="${escapeHtmlAttribute(range.markerId)}"
         data-item-id="${escapeHtmlAttribute(range.itemId)}"
         title="${title}">
@@ -13155,9 +13592,8 @@ async function initApp() {
           ${resolveTooltipHtml}
         </button>
         <div class="playlist-comment-time-row">
-          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
-          <span class="playlist-comment-global-time">전체 ${highlightCommentSearchMatches(range.globalStartTimecode, normalizedSearch)}</span>
-          <span class="playlist-comment-local-time">컷 ${highlightCommentSearchMatches(range.localStartTimecode, normalizedSearch)}</span>
+          <span class="comment-timecode">${highlightCommentSearchMatches(range.cutLabel, normalizedSearch)} ${highlightCommentSearchMatches(localLabel, normalizedSearch)}</span>
+          <span class="playlist-comment-global-time">${highlightCommentSearchMatches(globalLabel, normalizedSearch)}</span>
         </div>
         <div class="comment-content">
           <p class="comment-text">${highlightMentions(renderGDriveLinks(highlightCommentSearchMatches(range.text || '댓글', normalizedSearch)))}</p>
@@ -13187,6 +13623,7 @@ async function initApp() {
       const replies = item.querySelector('.playlist-comment-replies');
 
       item.addEventListener('click', async (e) => {
+        if (item.dataset.timingValid === 'false') return;
         if (e.target.closest('.gdrive-link-btn')) return;
         if (e.target.closest('.playlist-comment-reply-form, .playlist-comment-reply-toggle, .playlist-comment-replies, .playlist-comment-resolve-toggle')) return;
         await openPlaylistAggregateComment(item.dataset.aggregateCommentKey);
@@ -13250,7 +13687,7 @@ async function initApp() {
       });
 
       replyInput?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented && !e.__mentionHandled && !e.__mentionComposing && !e.isComposing && e.keyCode !== 229 && !mentionManager.isVisibleFor(e.target)) {
           e.preventDefault();
           e.stopPropagation();
           item.querySelector('.playlist-comment-reply-submit')?.click();
@@ -13258,7 +13695,9 @@ async function initApp() {
       });
     });
 
+    for (const key of playlistResolutionStates.keys()) renderPlaylistResolutionState(key);
     container.scrollTop = savedScrollTop;
+    refreshCommentPlaybackIndex();
   }
 
   function getCutlistAggregateCommentKey(range) {
@@ -13402,6 +13841,7 @@ async function initApp() {
           <p style="font-size: 11px; color: var(--text-muted);">${emptyHint}</p>
         </div>
       `;
+      refreshCommentPlaybackIndex();
       return;
     }
 
@@ -13446,6 +13886,7 @@ async function initApp() {
     });
 
     container.scrollTop = savedScrollTop;
+    refreshCommentPlaybackIndex();
   }
 
   function getFilteredCurrentCommentMarkers(filter = getActiveCommentFilter()) {
@@ -13498,7 +13939,15 @@ async function initApp() {
     timeline.scrollToPlayhead();
   }
 
+  function seekToCommentFrame(value) {
+    const frame = readPlaylistMarkerFrame(value);
+    if (frame === null) return false;
+    videoPlayer.seekToFrame(frame);
+    return true;
+  }
+
   function updateCommentListImmediate(filter = getActiveCommentFilter()) {
+    if (deferCommentListRefresh(() => updateCommentListImmediate(filter))) return;
     const container = elements.commentsList;
     if (!container) return;
     previousReviewPanel?.refreshContext();
@@ -13587,7 +14036,8 @@ async function initApp() {
       const replyCount = marker.replies?.length || 0;
       const avatarImage = userSettings.getAvatarForName(marker.author);
       const cutlistCommentLabel = getCutlistCommentLabelForMarker(marker);
-      const commentTimeLabel = cutlistCommentLabel || marker.startTimecode;
+      const markerFrame = readPlaylistMarkerFrame(marker.startFrame);
+      const commentTimeLabel = markerFrame === null ? '시간 정보 없음' : cutlistCommentLabel || marker.startTimecode;
       const commentPanelLine = getCutlistCommentPanelLineForMarker(marker);
       const resolveTitle = getResolveButtonLabel(marker.resolved, marker.resolvedBy);
       const resolveTooltipHtml = marker.resolved ? getResolveTooltipHtml(marker.resolvedBy, marker.resolvedAt) : '';
@@ -13612,9 +14062,9 @@ async function initApp() {
       }).join('');
 
       // 썸네일 URL 가져오기 — 정확 프레임 우선, 없으면 근사치 + 온디맨드 캡처 요청
-      const markerTime = marker.startFrame / videoPlayer.fps;
+      const markerTime = markerFrame === null ? null : markerFrame / videoPlayer.fps;
       let thumbnailUrl = null;
-      if (showThumbnails && thumbnailGenerator?.isReady) {
+      if (markerFrame !== null && showThumbnails && thumbnailGenerator?.isReady) {
         thumbnailUrl = thumbnailGenerator.getThumbnailUrlAtExact(markerTime);
         if (!thumbnailUrl) {
           thumbnailGenerator.requestExactCapture(markerTime);
@@ -13635,7 +14085,7 @@ async function initApp() {
       ` : '';
 
       return `
-      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${marker.startFrame}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
+      <div class="comment-item ${marker.resolved ? 'resolved' : ''} ${avatarImage ? 'has-avatar' : ''} ${thumbnailUrl ? 'has-thumbnail' : ''} ${marker.image ? 'has-image' : ''}" data-marker-id="${marker.id}" data-start-frame="${markerFrame ?? ''}"${commentPanelLine ? ` title="${escapeHtmlAttribute(commentPanelLine)}"` : ''}>
         ${avatarImage ? `<div class="comment-avatar-bg" style="background-image: url('${avatarImage}')"></div>` : ''}
         <button class="comment-resolve-toggle resolve-btn" title="${escapeHtmlAttribute(resolveTitle)}" aria-label="${escapeHtmlAttribute(resolveTitle)}">
           ${marker.resolved ? '✓ 해결됨' : '○ 미해결'}
@@ -13697,8 +14147,7 @@ async function initApp() {
       item.addEventListener('click', (e) => {
         if (e.target.closest('.comment-action-btn')) return;
         if (e.target.closest('.gdrive-link-btn')) return;
-        const frame = parseInt(item.dataset.startFrame);
-        videoPlayer.seekToFrame(frame);
+        seekToCommentFrame(item.dataset.startFrame);
         container.querySelectorAll('.comment-item').forEach(i => i.classList.remove('selected'));
         item.classList.add('selected');
       });
@@ -13714,7 +14163,7 @@ async function initApp() {
       // 해결 버튼
       item.querySelector('.resolve-btn')?.addEventListener('click', (e) => {
         e.stopPropagation();
-        commentManager.toggleMarkerResolved(item.dataset.markerId, userName);
+        void toggleCurrentMarkerResolved(item.dataset.markerId);
       });
 
       // 삭제 버튼
@@ -13813,13 +14262,11 @@ async function initApp() {
           const marker = commentManager.getMarker(markerId);
           if (marker) {
             const oldText = marker.text;
-            const updated = commentManager.updateMarker(markerId, { text: newText });
+            const updated = await saveCurrentCommentEdit(markerId, () => commentManager.updateMarker(markerId, { text: newText }), '', editFormEl);
 
             // 권한 없음 시 중단
             if (!updated) {
-              showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
-              // 편집 잠금 해제
-              liveblocksManager.updatePresence({ activeComment: null });
+              // Keep the presence lock while the retryable draft remains open.
               return;
             }
 
@@ -13838,21 +14285,22 @@ async function initApp() {
             });
 
             // 수정 후 UI 업데이트
+            finishCommentEdit({ discard: true, flush: false });
             updateCommentList();
             renderVideoMarkers();
             updateTimelineMarkers();
 
             showToast('댓글이 수정되었습니다.', 'success');
+            liveblocksManager.updatePresence({ activeComment: null });
           }
         }
 
-        // 편집 잠금 해제
-        liveblocksManager.updatePresence({ activeComment: null });
       });
 
       // 수정 취소
       item.querySelector('.comment-edit-cancel')?.addEventListener('click', async (e) => {
         e.stopPropagation();
+        finishCommentEdit({ discard: true });
         const markerId = item.dataset.markerId;
 
         // 편집 잠금 해제
@@ -13874,7 +14322,7 @@ async function initApp() {
         // 이미 처리 중이면 무시 (중복 호출 방지)
         if (editFormEl.style.display === 'none') return;
         // 멘션 드롭다운 열림 중에는 멘션 매니저가 키를 처리
-        if (e.__mentionHandled || mentionManager.isVisible) return;
+        if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
 
         if (e.key === 'Escape') {
           e.stopPropagation();
@@ -13996,6 +14444,7 @@ async function initApp() {
         commentManager._emit('markersChanged');
 
         replyInput.value = '';
+        finishCommentEdit({ discard: true });
         resizeReplyEditorToContent(replyInput);
         clearReplyImage();
         showToast('답글이 추가되었습니다.', 'success');
@@ -14003,7 +14452,7 @@ async function initApp() {
 
       // Enter로 답글 제출
       replyInput?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
+        if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented && !e.__mentionHandled && !e.__mentionComposing && !e.isComposing && e.keyCode !== 229 && !mentionManager.isVisibleFor(e.target)) {
           e.preventDefault();
           e.stopPropagation();
           replySubmit?.click();
@@ -14045,6 +14494,7 @@ async function initApp() {
 
     // 스크롤 위치 복원
     container.scrollTop = savedScrollTop;
+    refreshCommentPlaybackIndex();
   }
 
   /**
@@ -14142,7 +14592,7 @@ async function initApp() {
     }
 
     // 해당 프레임으로 이동
-    videoPlayer.seekToFrame(marker.startFrame);
+    seekToCommentFrame(marker.startFrame);
 
     // 기존 글로우 함수 재사용 (패널 열기 + 스크롤 + 선택 + 글로우)
     scrollToCommentWithGlow(markerId);
@@ -14745,18 +15195,22 @@ async function initApp() {
 
     // ====== 공통 단축키 (사용자 설정 기반) ======
 
+    const hasBoundSpaceChord = e.code === 'Space' && (e.ctrlKey || e.shiftKey || e.altKey || e.metaKey) &&
+      !isPlayPauseInput && !!userSettings.findActionByEvent?.(e);
+    if (e.code === 'Space' && state.isDrawMode && !hasBoundSpaceChord &&
+        !shouldIgnoreGlobalShortcutTarget(shortcutTarget, e) &&
+        !shouldIgnoreComposingKeyboardEvent(e)) {
+      e.preventDefault(); e.stopPropagation();
+      if (e.repeat || state.isSpaceHeld) return;
+      state.isSpaceHeld = true;
+      state.spacePanUsed = false;
+      viewportPanOwner.keyDown({ tapAllowed: isPlayPauseInput, drawing: drawingManager.drawingCanvas.isDrawing === true });
+      elements.videoWrapper?.classList.add('space-pan');
+      return;
+    }
+
     // 재생/일시정지
     if (isPlayPauseInput) {
-      if (e.code === 'Space' && state.isDrawMode && !isFabricDrawingPilotEngaged()) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (e.repeat) return;
-        if (drawingManager.drawingCanvas.isDrawing) return;
-        state.isSpaceHeld = true;
-        state.spacePanUsed = false;
-        elements.videoWrapper?.classList.add('space-pan');
-        return;
-      }
       if (e.code === 'Space') {
         suppressPlayPauseShortcutKeyup = true;
       }
@@ -15445,11 +15899,12 @@ async function initApp() {
     if (state.isSpaceHeld) {
       e.preventDefault();
       e.stopPropagation();
-      const shouldTogglePlayback = !state.spacePanUsed && !state.isPanningVideo;
+      if (state.spacePanUsed) viewportPanOwner?.consume();
+      endVideoPan();
       state.isSpaceHeld = false;
       state.spacePanUsed = false;
       elements.videoWrapper?.classList.remove('space-pan');
-      if (shouldTogglePlayback) handleUserPlayPauseToggle();
+      viewportPanOwner?.keyUp();
       return;
     }
     if (!suppressPlayPauseShortcutKeyup) return;
@@ -16885,10 +17340,16 @@ async function initApp() {
    * 스레드 팝업 열기
    */
   function openThreadPopup(markerId) {
+    if (currentThreadMarkerId === markerId && commentEditSession.getElement() && threadOverlay.contains(commentEditSession.getElement())) {
+      commentEditSession.deferRefresh(() => openThreadPopup(markerId));
+      return;
+    }
+    finishCommentEdit({ flush: false });
     const marker = commentManager.getMarker(markerId);
     if (!marker) return;
 
     currentThreadMarkerId = markerId;
+    threadEditor.dataset.editMarkerId = markerId;
 
     // 헤더에 작성자 표시 (색상 포함)
     const authorColor = userSettings.getColorForName(marker.author);
@@ -16978,6 +17439,7 @@ async function initApp() {
    * 스레드 팝업 닫기
    */
   function closeThreadPopup() {
+    finishCommentEdit({ flush: false });
     threadOverlay.classList.remove('open');
     currentThreadMarkerId = null;
     threadEditor.innerHTML = '';
@@ -17237,6 +17699,7 @@ async function initApp() {
 
     // 에디터 및 이미지 초기화
     threadEditor.innerHTML = '';
+    finishCommentEdit({ discard: true, flush: false });
     resizeReplyEditorToContent(threadEditor);
     clearThreadImage();
     updateSubmitButtonState();
@@ -17265,6 +17728,8 @@ async function initApp() {
     });
   });
 
+  installCommentEditProtection(threadOverlay);
+
   // 에디터 키보드 단축키
   threadEditor?.addEventListener('keydown', (e) => {
     // Ctrl+B: Bold
@@ -17283,7 +17748,7 @@ async function initApp() {
       applyFormat('underline');
     }
     // Enter: Submit (without Shift) — 멘션 드롭다운 열려있으면 무시
-    if (e.key === 'Enter' && !e.shiftKey && !mentionManager.isVisible) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.defaultPrevented && !e.__mentionHandled && !e.__mentionComposing && !e.isComposing && e.keyCode !== 229 && !mentionManager.isVisibleFor(e.target)) {
       e.preventDefault();
       submitThreadReply();
     }
@@ -17436,9 +17901,7 @@ async function initApp() {
 
     const clearChildKeyboardState = () => {
       suppressPlayPauseShortcutKeyup = false;
-      state.isSpaceHeld = false;
-      state.spacePanUsed = false;
-      elements.videoWrapper?.classList.remove('space-pan');
+      resetViewportPanCycle();
     };
     childWindow.addEventListener('blur', clearChildKeyboardState);
     return () => {
@@ -19575,7 +20038,14 @@ async function initApp() {
   async function seekContinuousTimeline(globalTime, options = {}) {
     const { resumePlayback = true } = options;
     const playlistManager = getPlaylistManager();
-    const mapped = mapGlobalTimeToSegment(timeline.playlistSegments, globalTime);
+    let mapped = mapGlobalTimeToSegment(timeline.playlistSegments, globalTime);
+    if (options.frameExact === true) {
+      const segment = timeline.playlistSegments.find(segment => segment.itemId === options.itemId);
+      const frame = options.localFrame;
+      const count = segment ? Math.floor(segment.duration * segment.fps + 1e-6) : 0;
+      if (!segment || !Number.isSafeInteger(frame) || frame < 0 || frame >= count) return false;
+      mapped = { segment, localTime: frame / segment.fps };
+    }
     if (!mapped) return false;
 
     const item = playlistManager.getItems()[mapped.segment.index];
@@ -19618,7 +20088,7 @@ async function initApp() {
       }
       const isAlreadyLoaded = canReuseCurrentMedia && isSameFilePath(state.currentFile, item.videoPath) &&
       !hasActiveVideoLoadForDifferentFile(item.videoPath);
-      const targetFrame = Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
+      const targetFrame = options.frameExact === true ? options.localFrame : Math.max(0, Math.floor(mapped.localTime * (mapped.segment.fps || item.fps || videoPlayer.fps || 24)));
       const previousLoadingItemId = continuousPlaybackState.loadingItemId;
       const previousLoadingSessionId = continuousPlaybackState.loadingSessionId;
       let setManualLoadingItem = false;
@@ -19641,7 +20111,8 @@ async function initApp() {
         }
 
         if (!isCurrentNavigation()) return false;
-        videoPlayer.seek(mapped.localTime);
+        if (options.frameExact === true) videoPlayer.seekToFrame(targetFrame);
+        else videoPlayer.seek(mapped.localTime);
         playbackSync.broadcastSeek(mapLocalTimeToGlobal(mapped.segment, mapped.localTime), {
           playlistContinuous: true
         });
@@ -19895,58 +20366,159 @@ async function initApp() {
     return metadata;
   }
 
+  function readPlaylistCommentSnapshot(bframePath, item = null) {
+    const currentPath = reviewDataManager.getVideoPath();
+    if (!reviewDataManager.isLoading && (
+      (item?.videoPath && isSameFilePath(item.videoPath, currentPath)) ||
+      (bframePath && isSameFilePath(bframePath, reviewDataManager.getBframePath()))
+    )) {
+      // Capture synchronously before any await, without collecting the drawing document.
+      return Promise.resolve({ comments: commentManager.toJSON(), fps: videoPlayer.fps });
+    }
+    return playlistCommentCache.read(bframePath);
+  }
+
+  function startPlaylistCommentRevalidation() {
+    if (playlistCommentRevalidationTimer) return;
+    playlistCommentRevalidationTimer = setInterval(async () => {
+      if (playlistUIState.mode !== 'continuous') {
+        clearInterval(playlistCommentRevalidationTimer);
+        playlistCommentRevalidationTimer = null;
+        return;
+      }
+      if (playlistCommentRevalidationRunning || playlistCommentScanPromise) return;
+      playlistCommentRevalidationRunning = true;
+      const generation = playlistCommentModeGeneration;
+      const seen = new Set();
+      let changed = false;
+      try {
+        const items = getPlaylistManager().getItems();
+        let checked = 0;
+        // One low-priority worker, at most four paths checked per tick.
+        for (let scanned = 0; scanned < items.length && checked < 4; scanned++) {
+          if (generation !== playlistCommentModeGeneration || playlistUIState.mode !== 'continuous') break;
+          const item = items[playlistCommentRevalidationCursor % items.length];
+          playlistCommentRevalidationCursor = (playlistCommentRevalidationCursor + 1) % items.length;
+          const path = item.bframePath;
+          if (!path || isSameFilePath(item.videoPath, reviewDataManager.getVideoPath())) continue;
+          const key = normalizeComparableFilePath(path);
+          if (seen.has(key) || playlistCommentCache.isFresh(path)) continue;
+          seen.add(key); checked++;
+          try {
+            const result = await playlistCommentCache.revalidate(path);
+            if (generation !== playlistCommentModeGeneration || playlistUIState.mode !== 'continuous') break;
+            if (result.changed) changed = (await refreshPlaylistCommentsForItem(item.id, { render: false })) || changed;
+          } catch (error) { log.warn('댓글 변경 확인 실패', { error: error.message }); }
+        }
+        if (changed && generation === playlistCommentModeGeneration && playlistUIState.mode === 'continuous') {
+          const visible = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+          timeline.renderPlaylistCommentRanges(visible.filter(range => range.timingValid !== false), timeline.playlistDuration);
+          renderPlaylistContinuousCommentList(commentFilterState.status);
+        }
+      } finally { playlistCommentRevalidationRunning = false; }
+    }, 5000);
+  }
+
+  async function refreshPlaylistCommentsForItem(itemId, { render = true } = {}) {
+    if (playlistUIState.mode !== 'continuous') return;
+    const manager = getPlaylistManager();
+    const playlist = manager.currentPlaylist;
+    const generation = playlistCommentModeGeneration;
+    const updateToken = playlistTimelineUpdateToken;
+    const item = manager.getItems().find(item => item.id === itemId);
+    if (!item) return;
+    if (playlistCommentScanPromise) await playlistCommentScanPromise;
+    if (generation !== playlistCommentModeGeneration || playlist !== manager.currentPlaylist) return;
+    const path = await manager.ensureItemBframePath(item);
+    if (!path) return;
+    try {
+      const data = await readPlaylistCommentSnapshot(path, item);
+      if (playlist !== manager.currentPlaylist || generation !== playlistCommentModeGeneration ||
+          updateToken !== playlistTimelineUpdateToken || playlistUIState.mode !== 'continuous') return;
+      const sameItems = new Set(manager.getItems().filter(candidate =>
+        isSameFilePath(candidate.videoPath, item.videoPath) || (candidate.bframePath && isSameFilePath(candidate.bframePath, path))
+      ).map(candidate => candidate.id));
+      const replacement = playlistCommentSegments.filter(segment => sameItems.has(segment.itemId))
+        .flatMap(segment => extractPlaylistCommentRanges({ bframeData: data, segment }));
+      const previous = playlistAggregateCommentRanges.filter(range => sameItems.has(range.itemId));
+      if (JSON.stringify(previous) === JSON.stringify(replacement)) return false;
+      playlistAggregateCommentRanges = [
+        ...playlistAggregateCommentRanges.filter(range => !sameItems.has(range.itemId)), ...replacement
+      ].sort((a, b) => a.itemIndex - b.itemIndex || Number(b.timingValid !== false) - Number(a.timingValid !== false) || a.localStartFrame - b.localStartFrame);
+      if (render) {
+        const visible = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+        timeline.renderPlaylistCommentRanges(visible.filter(range => range.timingValid !== false), timeline.playlistDuration);
+        renderPlaylistContinuousCommentList(commentFilterState.status);
+      }
+      return true;
+    } catch (error) { log.warn('댓글 부분 갱신 실패', { error: error.message }); }
+  }
+
   async function updatePlaylistContinuousTimeline() {
     if (playlistUIState.mode !== 'continuous') return;
+    const playlistManager = getPlaylistManager();
+    const playlist = playlistManager.currentPlaylist;
+    const items = playlistManager.getItems();
+    const structureKey = JSON.stringify([playlist?.id, items.map(item => [item.id, item.videoPath, item.bframePath, item.duration, item.fps])]);
+    if (structureKey !== playlistCommentStructureKey) {
+      playlistCommentStructureKey = structureKey;
+      playlistTimelineUpdateToken++;
+      playlistCommentScanPromise = null;
+    } else if (playlistCommentSegments.length && !playlistCommentScanPromise) {
+      const current = items.find(item => isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()));
+      if (current) await refreshPlaylistCommentsForItem(current.id);
+      return;
+    }
+    if (playlistCommentScanPromise) return playlistCommentScanPromise;
     timeline.clearCommentMarkers();
     timeline.renderPlaylistCommentRanges([], 0);
     const updateToken = ++playlistTimelineUpdateToken;
-    const playlistManager = getPlaylistManager();
-    const items = playlistManager.getItems();
-
-    setPlaylistContinuousTimelineBusy(true);
-    try {
-      const metadata = await collectPlaylistMetadata(items);
-      if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-
-      const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
-      timeline.setPlaylistTimeline(segments, totalDuration);
-      renderActiveDrawingLayers();
-      timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
-
-      const aggregateRanges = [];
-
-      for (const segment of segments) {
-        const item = items[segment.index];
-        const bframePath = await playlistManager.ensureItemBframePath(item);
-        if (!bframePath) continue;
-        try {
-          const bframeData = await window.electronAPI.loadReview(bframePath);
-          if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-          if (!bframeData) continue;
-          aggregateRanges.push(...extractPlaylistCommentRanges({
-            bframeData,
-            segment,
-            visibleLayerIds: null,
-            allowedAuthorIds: null
-          }));
-        } catch (error) {
-          log.warn('타임라인 이어붙이기 댓글 로드 실패', { fileName: item.fileName, error: error.message });
-        }
-      }
-
-      if (playlistUIState.mode !== 'continuous' || playlistTimelineUpdateToken !== updateToken) return;
-      playlistAggregateCommentRanges = aggregateRanges;
-      const filteredRanges = filterPlaylistAggregateCommentRanges(
-        aggregateRanges,
-        commentFilterState.status
-      );
-      timeline.renderPlaylistCommentRanges(filteredRanges, totalDuration);
-      renderPlaylistContinuousCommentList(commentFilterState.status);
-    } finally {
-      if (playlistUIState.mode === 'continuous' && playlistTimelineUpdateToken === updateToken) {
-        setPlaylistContinuousTimelineBusy(false);
-      }
-    }
+    const generation = playlistCommentModeGeneration;
+    const currentVideoPath = reviewDataManager.getVideoPath();
+    const currentSnapshot = !reviewDataManager.isLoading
+      ? { comments: commentManager.toJSON(), fps: videoPlayer.fps } : null;
+    const isCurrent = () => playlistUIState.mode === 'continuous' &&
+      playlistTimelineUpdateToken === updateToken && generation === playlistCommentModeGeneration &&
+      playlist === playlistManager.currentPlaylist;
+    const work = (async () => {
+      setPlaylistContinuousTimelineBusy(true);
+      try {
+        const metadata = await collectPlaylistMetadata(items);
+        if (!isCurrent()) return;
+        const { segments, totalDuration } = buildPlaylistSegments(items, metadata);
+        playlistCommentSegments = segments;
+        timeline.setPlaylistTimeline(segments, totalDuration);
+        renderActiveDrawingLayers();
+        timeline.setCurrentTime(getContinuousTimelinePlaybackTime());
+        const results = new Array(segments.length);
+        let nextIndex = 0;
+        const worker = async () => {
+          while (nextIndex < segments.length && isCurrent()) {
+            const index = nextIndex++;
+            const segment = segments[index];
+            const item = items[segment.index];
+            try {
+              const bframePath = await playlistManager.ensureItemBframePath(item);
+              if (!isCurrent()) return;
+              const bframeData = currentSnapshot && isSameFilePath(item.videoPath, currentVideoPath)
+                ? currentSnapshot : (bframePath ? await readPlaylistCommentSnapshot(bframePath, item) : null);
+              if (!isCurrent()) return;
+              results[index] = extractPlaylistCommentRanges({ bframeData, segment });
+            } catch (error) { log.warn('타임라인 이어붙이기 댓글 로드 실패', { error: error.message }); }
+          }
+        };
+        await Promise.all([worker(), worker()]);
+        if (!isCurrent()) return;
+        const aggregateRanges = results.flat().filter(Boolean);
+        playlistAggregateCommentRanges = aggregateRanges;
+        const filteredRanges = filterPlaylistAggregateCommentRanges(playlistAggregateCommentRanges, commentFilterState.status);
+        timeline.renderPlaylistCommentRanges(filteredRanges.filter(range => range.timingValid !== false), totalDuration);
+        renderPlaylistContinuousCommentList(commentFilterState.status);
+        startPlaylistCommentRevalidation();
+      } finally { if (isCurrent()) setPlaylistContinuousTimelineBusy(false); }
+    })();
+    playlistCommentScanPromise = work;
+    try { await work; } finally { if (playlistCommentScanPromise === work) playlistCommentScanPromise = null; }
   }
 
   async function quickCheckPlaylistForContinuous(sessionId, itemsToCheck = null) {
@@ -21120,17 +21692,18 @@ async function initApp() {
 
   async function seekCutlistMappedPosition(mapped) {
     if (!mapped?.segment) return false;
+    const seekGeneration = ++cutlistSeekGeneration;
+    const isCurrentSeek = () => seekGeneration === cutlistSeekGeneration && cutlistUIState.active;
     const cutlistManager = getCutlistManager();
     const cut = cutlistManager.getCutById(mapped.segment.cutId) || mapped.segment.cut;
     if (!cut) return false;
 
     const source = await resolveCutlistSourceForPlayback(cut);
-    if (!source?.videoPath) return false;
+    if (!source?.videoPath || !isCurrentSeek()) return false;
 
     setCutlistCurrentCut(cut);
 
-    const frame = Math.max(0, Number(mapped.sourceFrame) || Number(cut.startFrame) || 0);
-    const fps = videoPlayer.fps || mapped.segment.fps || cut.fps || 24;
+    const frame = Number.isSafeInteger(mapped.sourceFrame) && mapped.sourceFrame >= 0 ? mapped.sourceFrame : Math.max(0, Number(cut.startFrame) || 0);
     const globalTime = (Number(mapped.segment.globalStartTime) || 0) + (Number(mapped.localTime) || 0);
 
     if (!isSameFilePath(state.currentFile, source.videoPath)) {
@@ -21138,11 +21711,14 @@ async function initApp() {
         initialFrame: frame,
         revealAfterInitialSeek: true,
         holdPreviousFrameUntilReady: true,
+        shouldContinue: isCurrentSeek,
         deferCollaborationStart: true
       });
       if (!loaded) return false;
     }
 
+    if (!isCurrentSeek()) return false;
+    const fps = videoPlayer.fps || mapped.segment.fps || cut.fps || 24;
     videoPlayer.seekToFrame(frame);
     playbackSync.broadcastSeek(frame / fps);
     timeline.setCurrentTime(globalTime);
@@ -21152,8 +21728,15 @@ async function initApp() {
     return true;
   }
 
-  async function seekCutlistTimeline(globalTime) {
-    const mapped = mapGlobalTimeToCut(getCutlistManager().getTimeline().segments, globalTime);
+  async function seekCutlistTimeline(globalTime, options = {}) {
+    const segments = getCutlistManager().getTimeline().segments;
+    let mapped = mapGlobalTimeToCut(segments, globalTime);
+    if (options.frameExact === true) {
+      const segment = segments.find(segment => segment.cutId === options.cutId);
+      const frame = options.localFrame;
+      if (!segment || !Number.isSafeInteger(frame) || frame < segment.sourceStartFrame || frame > segment.sourceEndFrame) return false;
+      mapped = { segment, sourceFrame: frame, localTime: (frame - segment.sourceStartFrame) / segment.fps };
+    }
     return seekCutlistMappedPosition(mapped);
   }
 
@@ -21397,6 +21980,7 @@ async function initApp() {
 
     // 콜백 설정
     playlistManager.onPlaylistLoaded = async (playlist, loadContext = {}) => {
+      abandonPlaylistResolutionFailures();
       log.info('재생목록 로드됨', { name: playlist.name });
       await refreshModifiedSortIfActive({ shouldContinue: loadContext.shouldContinue });
       if (loadContext.shouldContinue?.() === false) return;
@@ -21478,7 +22062,7 @@ async function initApp() {
       }
       updatePlaylistCurrentItem();
       updatePlaylistPosition();
-      updatePlaylistContinuousTimeline();
+      await refreshPlaylistCommentsForItem(item.id);
 
       if (loaded && shouldAutoPlaySelectedItem) {
         await playPlaylistSelectedItemImmediately(item);
@@ -21490,6 +22074,7 @@ async function initApp() {
     };
 
     playlistManager.onPlaylistClosed = () => {
+      abandonPlaylistResolutionFailures();
       playlistSelectionLoadToken += 1;
       clearPlaylistMediaPreload();
       resetPlaylistContinuousTimelineState();
@@ -21502,6 +22087,7 @@ async function initApp() {
 
     // 리뷰 데이터 저장 시 재생목록 진행률 업데이트
     reviewDataManager.addEventListener('saved', async (e) => {
+      retireDeletedCommentResolutionFailures();
       if (playlistManager.isActive()) {
         // 현재 아이템의 bframePath 업데이트 (새로 생성된 경우)
         const currentItem = playlistManager.getCurrentItem();
@@ -21512,7 +22098,7 @@ async function initApp() {
 
         // 현재 아이템의 진행률 업데이트
         await refreshVisiblePlaylistProgress(e.detail.path);
-        updatePlaylistContinuousTimeline();
+        if (currentItem) await refreshPlaylistCommentsForItem(currentItem.id);
       }
     });
 
@@ -21926,9 +22512,8 @@ async function initApp() {
     const container = elements.playlistItems;
     if (!container) return;
 
-    container.innerHTML = '';
-
     if (playlistManager.isEmpty()) {
+      container.innerHTML = '';
       elements.playlistSidebar?.classList.add('empty');
       return;
     }
@@ -21936,10 +22521,20 @@ async function initApp() {
     elements.playlistSidebar?.classList.remove('empty');
 
     const items = playlistManager.getItems();
-    const progressById = new Map(await Promise.all(items.map(async item => [
-      item.id,
-      await playlistManager.getItemProgress(item)
-    ])));
+    const playlist = playlistManager.currentPlaylist;
+    const progressById = new Map();
+    let nextIndex = 0;
+    const worker = async () => {
+      while (nextIndex < items.length) {
+        const item = items[nextIndex++];
+        progressById.set(item.id, await playlistManager.getItemProgress(item, { readReview: readPlaylistCommentSnapshot }));
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    if (playlist !== playlistManager.currentPlaylist) return;
+    playlistProgressById.clear();
+    for (const [id, progress] of progressById) playlistProgressById.set(id, progress);
+    container.innerHTML = '';
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -22034,24 +22629,25 @@ async function initApp() {
   async function updatePlaylistItemProgress(bframePath = null) {
     const playlistManager = getPlaylistManager();
     if (!playlistManager.isActive()) return;
+    const playlist = playlistManager.currentPlaylist;
+    const path = bframePath || reviewDataManager.getBframePath();
+    const items = playlistManager.getItems().filter(item => path
+      ? (item.bframePath && isSameFilePath(item.bframePath, path)) || isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()) && isSameFilePath(path, reviewDataManager.getBframePath())
+      : isSameFilePath(item.videoPath, reviewDataManager.getVideoPath()));
+    for (const item of items) {
+      const progress = await playlistManager.getItemProgress(item, { readReview: readPlaylistCommentSnapshot });
+      if (playlist !== playlistManager.currentPlaylist) return;
+      playlistProgressById.set(item.id, progress);
+      const el = [...(elements.playlistItems?.querySelectorAll('.playlist-item') || [])].find(el => el.dataset.id === item.id);
+      if (el) applyPlaylistItemProgress(el, progress);
+    }
+  }
 
-    const currentIndex = playlistManager.currentIndex;
-    const items = playlistManager.getItems();
-    if (currentIndex < 0 || currentIndex >= items.length) return;
-
-    const item = items[currentIndex];
-    // bframePath가 전달되면 사용, 아니면 아이템에서 영상 옆 .bframe까지 복구
-    const pathToUse = bframePath || item;
-    const progress = await playlistManager.getItemProgress(pathToUse);
-
-    // 현재 아이템의 DOM 요소 찾기
-    const el = document.querySelector(`.playlist-item[data-index="${currentIndex}"]`);
-    if (!el) return;
-
+  function applyPlaylistItemProgress(el, progress) {
     // 댓글 수 업데이트
     const commentsEl = el.querySelector('.playlist-item-comments');
     if (commentsEl) {
-      const svg = commentsEl.querySelector('svg').outerHTML;
+      const svg = commentsEl.querySelector('svg')?.outerHTML || '';
       commentsEl.innerHTML = `${svg}\n              ${progress.total > 0 ? progress.total : '-'}`;
     }
 
@@ -22093,27 +22689,34 @@ async function initApp() {
 
   // 전체 진행률 업데이트
   async function updatePlaylistProgress() {
-    const playlistManager = getPlaylistManager();
-    const progress = await playlistManager.getTotalProgress();
-
-    if (elements.playlistProgressFill) {
-      elements.playlistProgressFill.style.width = `${progress.percent}%`;
+    const items = getPlaylistManager().getItems();
+    const values = items.map(item => playlistProgressById.get(item.id));
+    if (values.some(value => !value)) {
+      if (elements.playlistProgressText) elements.playlistProgressText.textContent = '피드백 확인 중';
+      return;
     }
-    if (elements.playlistProgressText) {
-      if (progress.total > 0) {
-        elements.playlistProgressText.textContent = `${progress.resolved}/${progress.total} 완료 (${progress.percent}%)`;
-      } else {
-        elements.playlistProgressText.textContent = '피드백 없음';
-      }
-    }
+    const total = values.reduce((sum, value) => sum + value.total, 0);
+    const resolved = values.reduce((sum, value) => sum + value.resolved, 0);
+    const percent = total ? Math.round(resolved / total * 100) : 0;
+    if (elements.playlistProgressFill) elements.playlistProgressFill.style.width = `${percent}%`;
+    if (elements.playlistProgressText) elements.playlistProgressText.textContent = total ? `${resolved}/${total} 완료 (${percent}%)` : '피드백 없음';
   }
 
-  async function refreshVisiblePlaylistProgress(bframePath = null) {
-    const playlistManager = getPlaylistManager();
-    if (!playlistManager.isActive?.()) return;
-
-    await updatePlaylistItemProgress(bframePath);
-    await updatePlaylistProgress();
+  function refreshVisiblePlaylistProgress(bframePath = null) {
+    if (!getPlaylistManager().isActive?.()) return Promise.resolve();
+    playlistProgressRefreshPaths.add(bframePath || reviewDataManager.getBframePath());
+    if (playlistProgressRefreshPromise) return playlistProgressRefreshPromise;
+    const playlist = getPlaylistManager().currentPlaylist;
+    const work = Promise.resolve().then(async () => {
+      while (playlistProgressRefreshPaths.size && playlist === getPlaylistManager().currentPlaylist) {
+        const paths = [...playlistProgressRefreshPaths];
+        playlistProgressRefreshPaths.clear();
+        for (const path of paths) await updatePlaylistItemProgress(path);
+      }
+      if (playlist === getPlaylistManager().currentPlaylist) await updatePlaylistProgress();
+    });
+    playlistProgressRefreshPromise = work;
+    return work.finally(() => { if (playlistProgressRefreshPromise === work) playlistProgressRefreshPromise = null; });
   }
 
   // 파일 누락 표시
@@ -22416,6 +23019,7 @@ async function initApp() {
     manager: reviewCarryoverManager,
     windowRef: window,
     onTimelineChange: entries => previousReviewTimeline.render(entries),
+    onRowsChanged: refreshCommentPlaybackIndex,
     onSelect: key => previousReviewTimeline.select(key),
     getContext: () => ({
       path: state.currentFile,

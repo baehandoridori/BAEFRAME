@@ -6,6 +6,19 @@
 >
 > 작업 전 [드로잉 작업 규칙](drawing-work-guide.md)을 읽는다. 기능 변경 시 관련 상태·데이터 출처·검증 기준을 함께 갱신한다.
 
+## 입력 개선 (2026-09-14, v2.12.0-beta)
+
+| 동작 | 현재 구현과 검증 |
+|---|---|
+| 그리기 중 댓글 포인트 | 메인과 native Fabric 오버레이에서 점·답글 배지·툴팁 입력 차단. 종료 시 복원. 자동 검사 완료 |
+| 화면 이동 | primary mouse/pen/touch PointerEvent와 CSS 좌표 사용. 가운데 고정 ON·100% 이하의 기존 제한 유지 |
+| Space 임시 이동 | 실제 native overlay down을 메인 키 상태로 판정. 3 CSS px 이상 이동하면 재생 tap 소비. 프레임·레이어 확인 전에 pan 소유권 확정 |
+| Space 전달 | sender와 host/video/persistence session·gesture sequence 검증. keyup flush·timeout·blur·취소 시 정리. 재생 단축키 재지정과 별도로 물리 Space를 임시 이동에 사용 |
+| 프레임바 release | 최종 포인터 좌표를 정수 프레임으로 확정. 혼합 FPS·cutlist 정체 유지. native 테스트 영상 A의 burned-in 58, UI 58, 저장 그림 58 대조 완료 |
+| 현재 댓글 강조 | 양끝 포함 범위만 강조. DOM 전체 재생성·자동 스크롤·포커스 이동 없음 |
+
+실제 격리 앱에서 native mouse pan과 저장·재열기를 확인했다. 실물 태블릿, 실제 IME 장치 입력, OS 창 간 키 전달, 다른 PC 동시 편집은 미확인이다. 전체 작업·검사 근거는 [이번 구현 기록](../DEVLOG/2026-09-14-review-playback-input.md)에 구분한다. 아래 기존 기능의 검증 기준일은 각 항목 기록을 따른다.
+
 ## 1. 단축키 대조표
 
 액션 id는 `renderer/scripts/modules/user-settings.js`의 기본값이며 사용자가 재지정할 수 있다. **판정은 항상 액션 id로 하고 키 문자열로 하지 말 것.**

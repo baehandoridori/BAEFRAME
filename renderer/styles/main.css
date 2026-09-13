@@ -12936,3 +12936,21 @@ body.audio-mode .frame-indicator {
     gap: 8px;
   }
 }
+
+/* Saving is a transient state; persisted completion retains its own styling. */
+.playlist-aggregate-comment.is-save-pending .playlist-comment-resolve-toggle { opacity: .75; }
+.playlist-aggregate-comment.is-save-failed .playlist-comment-resolve-toggle { color: var(--color-danger, #e47777); }
+
+.drawing-active .comment-marker,
+.drawing-active .comment-marker *,
+.drawing-active .marker-replies-badge,
+.drawing-active .comment-marker-input-wrapper,
+body.drawing-mode-active .comment-marker-tooltip,
+body.drawing-mode-active .comment-marker-tooltip * { pointer-events: none !important; }
+
+.comment-item.is-current-frame, .pr-review.is-current-frame {
+  box-shadow: inset 3px 0 0 var(--accent-primary);
+  background-color: var(--bg-tertiary);
+}
+
+#videoPlayer, #drawingCanvas, #videoWrapper canvas { touch-action: none; }

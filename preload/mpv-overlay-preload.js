@@ -1,4 +1,18 @@
 const { contextBridge, ipcRenderer } = require('electron');
+const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require('../shared/viewport-pan-message');
+contextBridge.exposeInMainWorld('mpvOverlayViewportPan', {
+  send(value) {
+    const normalized = normalizeViewportPanMessage(value);
+    if (!normalized) return false;
+    try { ipcRenderer.send(PAN_CHANNEL, normalized); return true; } catch { return false; }
+  },
+  onCommand(callback) {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, value) => { const command = normalizeViewportPanCommand(value); if (command) callback(command); };
+    ipcRenderer.on(PAN_COMMAND_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(PAN_COMMAND_CHANNEL, listener);
+  }
+});
 
 const PERSISTENCE_CHANNEL = 'mpv-overlay:fabric-drawing-persistence';
 const POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';

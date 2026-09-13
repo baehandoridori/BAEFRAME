@@ -154,9 +154,9 @@ test('generic timeline seeking routes through cutlist global time when cutlist i
   const listenerBody = extractBalancedBlock(appSource, "timeline.addEventListener('seek'");
 
   assert.match(listenerBody, /timeline\.cutlistDuration > 0/);
-  assert.match(listenerBody, /await seekCutlistTimeline\(e\.detail\.time\)/);
+  assert.match(listenerBody, /await seekCutlistTimeline\(e\.detail\.time, e\.detail\)/);
   assert.ok(
-    listenerBody.indexOf('await seekCutlistTimeline(e.detail.time)') <
+    listenerBody.indexOf('await seekCutlistTimeline(e.detail.time, e.detail)') <
       listenerBody.indexOf('videoPlayer.seek(e.detail.time)'),
     'cutlist seek branch should run before raw media seek'
   );
@@ -206,7 +206,7 @@ test('cutlist source switches reveal new video only after the target cut frame i
   assert.match(appSource, /elements\.videoPlayer\.style\.visibility = 'hidden'/);
   assert.match(appSource, /await seekInitialVideoFrameBeforeReveal\(html5InitialFrame\(\)\)/);
 
-  const frameIndex = mappedSeekBody.indexOf('const frame = Math.max');
+  const frameIndex = mappedSeekBody.indexOf('const frame = Number.isSafeInteger(mapped.sourceFrame)');
   const loadIndex = mappedSeekBody.indexOf('await loadVideo(source.videoPath, {');
   assert.notEqual(frameIndex, -1, 'cutlist seek should resolve the target source frame');
   assert.notEqual(loadIndex, -1, 'cutlist seek should pass initial frame options into loadVideo');

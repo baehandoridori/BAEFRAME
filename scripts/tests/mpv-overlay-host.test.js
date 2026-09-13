@@ -1121,7 +1121,7 @@ test('passive ensure stays ready without reading or injecting the Fabric bundle'
   assert.equal(windows[0].options.webPreferences.sandbox, true);
   assert.equal(
     windows[0].options.webPreferences.preload,
-    path.resolve(__dirname, '../../preload/mpv-overlay-preload.js')
+    path.resolve(__dirname, '../../preload/mpv-overlay-preload.bundle.js')
   );
   assert.ok(result.drawingCapability, 'ensure should return the current drawing capability');
   assert.equal(result.drawingCapability.hostGeneration, 1);

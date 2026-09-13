@@ -16,6 +16,7 @@ function fixture(t) {
   const child = new JSDOM('<body><aside id="commentPanel"><button class="filter-chip active" data-filter="unresolved"></button><button class="filter-chip" data-filter="all"></button><button id="authorFilterBtn" class="active"></button><button id="markerToggleBtn"></button><div id="authorFilterMenu" class="open"></div><textarea class="comment-reply-input"></textarea></aside></body>');
   t.after(() => { parent.window.close(); child.window.close(); });
   const context = vm.createContext({
+    viewportFocusEpoch: 0, viewportPanOwner: null, endVideoPan() {},
     document: parent.window.document,
     window: parent.window,
     Element: parent.window.Element,
@@ -25,6 +26,7 @@ function fixture(t) {
     commentFilterState: { status: 'unresolved', authors: ['a'], showMarkers: false },
     isTextEntryShortcutTarget: target => target.tagName === 'TEXTAREA'
   });
+  vm.runInContext(functionSource('resetViewportPanCycle'), context);
   return { parent, child, context };
 }
 
@@ -162,3 +164,41 @@ test('the first inline reply stays expanded on redraw before a thread toggle exi
   assert.equal(expandedIds.has('closed'), false);
   assert.equal(expandedIds.size, 2, 'one comment is kept once even when both controls are expanded');
 });
+
+for (const transition of ['blur', 'dock', 'disable']) { test(`${transition} clears native Space ownership before the next ordinary draw`, t => {
+  const { parent, child, context } = fixture(t);
+  const { createViewportPanOwner } = require('../../shared/viewport-pan-controller');
+  const fence = { hostGeneration: 1, videoGeneration: 1, persistenceSessionId: 's', stableVideoIdentity: 'v' };
+  const commands = [], noop = () => {};
+  const owner = createViewportPanOwner({ getFence: () => fence, canPan: () => true, getTransform: () => ({ scale: 2, panX: 0, panY: 0 }),
+    applyTransform: noop, togglePlayback: () => assert.fail('reset must not toggle playback'), send: c => { commands.push(c); return true; } });
+  t.after(() => owner.cancel()); owner.keyDown({ tapAllowed: true });
+  Object.assign(context, { viewportPanOwner: owner, state: { isSpaceHeld: true, spacePanUsed: false }, suppressPlayPauseShortcutKeyup: true,
+    MutationObserver: parent.window.MutationObserver, handleKeydown: noop, handleKeyup: noop, handleSidebarCommentEscape: noop,
+    handleCommentMenusOutsideClick: noop, handleCommentImageClick: noop, handleDriveLinkClick: noop,
+    drawModePreparationToken: 0, mpvDrawPlaybackTransitionToken: 0, setDrawModePreparingState: noop, setDrawModeReadyState: noop,
+    isMpvReviewInteractionActive: () => true, drawingManager: { commitActiveSelection: noop }, scheduleMpvOverlayStateSync: noop, exitHybridReviewEngineIfNeeded: noop });
+  vm.runInContext(functionSource('installCommentPopoutDocument') + functionSource('applyDrawModeState'), context);
+  if (transition === 'disable') context.applyDrawModeState(false);
+  else { const cleanup = context.installCommentPopoutDocument(child.window); if (transition === 'blur') child.window.dispatchEvent(new child.window.Event('blur')); else cleanup(); }
+  assert.equal(context.state.isSpaceHeld, false); assert.equal(owner.isHeld(), false);
+  owner.message({ ...fence, gestureId: 'after-reset', sequence: 0, pointerId: 1, phase: 'start', clientX: 0, clientY: 0 });
+  assert.equal(commands.at(-1).disposition, 'draw');
+}); }
+
+for (const [modifier, action, pan] of [['ctrlKey','undo',false],['shiftKey','onionSkin',false],['altKey','undo',false],['ctrlKey','playPause',true],['altKey',null,true],['',null,true]]) {
+  test(`draw-mode ${modifier || 'plain'} Space routes ${action || 'unbound'} without losing its configured action`, async t => {
+    const { parent, context } = fixture(t); let routed = 0, held = 0; const noop = () => {};
+    Object.assign(context, { state: { isDrawMode: true, isSpaceHeld: false }, commentManager: {},
+      getEffectiveKeyboardShortcutTarget: () => parent.window.document.body, isTextEntryShortcutTarget: () => false,
+      shouldIgnoreComposingKeyboardEvent: () => false, shouldIgnoreGlobalShortcutTarget: () => false,
+      shouldHandlePlayPauseShortcutFromTarget: () => true, getSplitViewManager: () => ({ isOpen: () => false }),
+      userSettings: { findActionByEvent: () => action, matchShortcut: name => name === action && action === 'playPause' },
+      viewportPanOwner: { keyDown: () => { held++; } }, drawingManager: { drawingCanvas: {} },
+      fabricDrawingPilotController: { routeKeydown: () => { routed++; return true; } } });
+    vm.runInContext(functionSource('handleKeydown'), context);
+    await context.handleKeydown({ code: 'Space', ctrlKey: false, shiftKey: false, altKey: false, ...(modifier ? { [modifier]: true } : {}),
+      target: parent.window.document.body, preventDefault: noop, stopPropagation: noop });
+    assert.equal(held, pan ? 1 : 0); assert.equal(routed, pan ? 0 : 1); assert.equal(context.state.isSpaceHeld, pan);
+  });
+}

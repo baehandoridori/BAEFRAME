@@ -1,0 +1,14 @@
+{
+  "untimed": {
+    "frame": 32,
+    "seekCalls": [],
+    "label": "시간 정보 없음"
+  },
+  "zero": {
+    "frame": 0,
+    "seekCalls": [
+      0
+    ],
+    "label": "00:00:00:00"
+  }
+}

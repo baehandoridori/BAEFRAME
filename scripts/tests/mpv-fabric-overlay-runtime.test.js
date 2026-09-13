@@ -18241,3 +18241,86 @@ test('정규화 재정렬은 히스토리를 남기지 않고 획 이력도 지�
   );
   runtime.destroy();
 });
+
+
+test('native Fabric pointer ownership precedes locked layers and pans without stroke or undo', async () => {
+  const sceneStore = createSessionSceneStore();
+  assert.equal(sceneStore.hydrateVideo(makePersistenceHydration({ hostGeneration: 1, videoGeneration: 1, stableVideoIdentity: 'real-fabric-video' })).accepted, true);
+  const sent = []; let command;
+  const h = createRealFabricHarness({ sceneStore, viewportPanBridge: {
+    send(value) { sent.push(value); return true; }, onCommand(callback) { command = callback; return () => {}; }
+  } });
+  try {
+    h.runtime.updateDrawingLayerView({ hostGeneration: 1, videoGeneration: 1, inputRevision: 1,
+      sessionId: 'real-fabric-session', layerViewRevision: 1, hiddenObjectIds: [], lockedObjectIds: [], activeLayerDrawable: false });
+    h.dispatchPointer(h.element, 'pointerdown', 10, 20, 7, 1, { pointerType: 'pen', altKey: true });
+    h.dispatchPointer(h.element, 'pointermove', 50, 40, 7, 1, { pointerType: 'pen' });
+    h.dispatchPointer(h.element, 'pointerup', 60, 50, 7, 0, { pointerType: 'pen' });
+    assert.equal(sent[0].phase, 'start');
+    const { phase, clientX, clientY, ...fields } = sent[0];
+    command({ ...fields, type: 'decision', disposition: 'pan', transform: { scale: 2, panX: 5, panY: 7 } });
+    assert.equal(sent.at(-1).phase, 'end');
+    const viewport = h.root.querySelector('.mpv-fabric-pilot-viewport');
+    assert.equal(viewport.style.transform, 'scale(2) translate(30px, 22px)');
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 0);
+    assert.equal(h.runtime.getDiagnostics().undoDepth, 0);
+    assert.equal(h.runtime.updateViewport({ revision: 20, canvasRect: { left: 0, top: 0, width: 200, height: 200 }, scale: 1, panX: 0, panY: 0 }).reason, 'stale-pan-viewport');
+  } finally { await h.destroy(); }
+});
+
+test('native draw ownership replays once into original frame confirmation with early pen up', async () => {
+  const sceneStore = createSessionSceneStore();
+  sceneStore.hydrateVideo(makePersistenceHydration({ hostGeneration: 1, videoGeneration: 1, stableVideoIdentity: 'real-fabric-video' }));
+  const sent = [], requests = []; let command;
+  const h = createRealFabricHarness({ sceneStore,
+    requestPointerdownFrame(value) { requests.push(value); return true; },
+    viewportPanBridge: { send(value) { sent.push(value); return true; }, onCommand(callback) { command = callback; return () => {}; } }
+  });
+  try {
+    h.drawStroke([{ x: 20, y: 20 }, { x: 60, y: 20 }], 8);
+    assert.equal(requests.length, 0);
+    const { phase, clientX, clientY, ...fields } = sent[0];
+    const decision = { ...fields, type: 'decision', disposition: 'draw', transform: { scale: 1, panX: 0, panY: 0 } };
+    command(decision); command(decision);
+    assert.equal(requests.length, 1);
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 0);
+    const confirmed = h.runtime.confirmDrawingPointerdownFrame({ ...requests[0], targetFrame: 2 });
+    assert.equal(confirmed.accepted, true);
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 1);
+    assert.equal(h.runtime.getDiagnostics().undoDepth, 1);
+    assert.equal(sent.at(-1).phase, 'end', 'early release must retire native draw ownership');
+    h.drawStroke([{ x: 20, y: 20 }, { x: 60, y: 20 }], 9);
+    const nextStart = sent.filter(message => message.phase === 'start').at(-1);
+    assert.notEqual(nextStart.gestureId, fields.gestureId);
+    const { phase: nextPhase, clientX: nextX, clientY: nextY, ...nextFields } = nextStart;
+    command({ ...nextFields, type: 'decision', disposition: 'pan', transform: { scale: 2, panX: 0, panY: 0 } });
+    assert.equal(requests.length, 1, 'next Space pan must not ask for a drawing frame');
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 1);
+    assert.equal(h.runtime.getDiagnostics().undoDepth, 1);
+  } finally { await h.destroy(); }
+});
+
+
+test('native Fabric pointercancel keeps the owner and DOM viewport aligned without drawing', async () => {
+  const { createViewportPanOwner } = require('../../shared/viewport-pan-controller');
+  const sceneStore = createSessionSceneStore();
+  sceneStore.hydrateVideo(makePersistenceHydration({ hostGeneration: 1, videoGeneration: 1, stableVideoIdentity: 'real-fabric-video' }));
+  let command; let mainTransform = { scale: 2, panX: 5, panY: 7 };
+  const h = createRealFabricHarness({ sceneStore, viewportPanBridge: {
+    send(value) { return owner.message(value); }, onCommand(callback) { command = callback; return () => {}; }
+  } });
+  const owner = createViewportPanOwner({ getFence: () => sceneStore.getPersistenceFence(), canPan: () => true,
+    getTransform: () => mainTransform, applyTransform: value => { mainTransform = value; }, togglePlayback: () => assert.fail('cancel played'),
+    send(value) { command(value); return true; } });
+  try {
+    owner.keyDown({ tapAllowed: true });
+    h.dispatchPointer(h.element, 'pointerdown', 10, 20, 77, 1, { pointerType: 'pen' });
+    h.dispatchPointer(h.element, 'pointermove', 50, 40, 77, 1, { pointerType: 'pen' });
+    h.dispatchPointer(h.element, 'pointercancel', 50, 40, 77, 0, { pointerType: 'pen' });
+    assert.deepEqual(mainTransform, { scale: 2, panX: 25, panY: 17 });
+    assert.equal(h.root.querySelector('.mpv-fabric-pilot-viewport').style.transform, 'scale(2) translate(25px, 17px)');
+    const mirrored = h.runtime.updateViewport({ revision: 20, canvasRect: { left: 0, top: 0, width: 200, height: 200 }, ...mainTransform, panGesture: owner.getMirror() });
+    assert.notEqual(mirrored.reason, 'stale-pan-viewport');
+    assert.equal(h.runtime.getDiagnostics().mutationCount, 0); assert.equal(h.runtime.getDiagnostics().undoDepth, 0);
+  } finally { owner.cancel(); await h.destroy(); }
+});

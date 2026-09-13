@@ -1,0 +1,362 @@
+[
+  {
+    "storage": "local",
+    "iteration": 0,
+    "total": 1379.7999999998137,
+    "nextRequestedAfterMs": 0.5,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 1,
+    "total": 1256.2999999998137,
+    "nextRequestedAfterMs": 0.09999999962747097,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 2,
+    "total": 1464.7999999998137,
+    "nextRequestedAfterMs": 0.39999999944120646,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 3,
+    "total": 1314.6000000005588,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 4,
+    "total": 1345,
+    "nextRequestedAfterMs": 0.10000000055879354,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 5,
+    "total": 1435,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 6,
+    "total": 1365.4000000003725,
+    "nextRequestedAfterMs": 0.09999999962747097,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 7,
+    "total": 1400.9000000003725,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 8,
+    "total": 1281.7000000001863,
+    "nextRequestedAfterMs": 0.10000000055879354,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 9,
+    "total": 1325.0999999996275,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 10,
+    "total": 1381.2999999998137,
+    "nextRequestedAfterMs": 0.39999999944120646,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 11,
+    "total": 1342.1000000005588,
+    "nextRequestedAfterMs": 0.10000000055879354,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 12,
+    "total": 1367.300000000745,
+    "nextRequestedAfterMs": 0.10000000055879354,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 13,
+    "total": 1309.4000000003725,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 14,
+    "total": 1436,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 15,
+    "total": 1193,
+    "nextRequestedAfterMs": 0.40000000037252903,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 16,
+    "total": 1383,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 17,
+    "total": 1383.0999999996275,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 18,
+    "total": 1450.7999999998137,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "local",
+    "iteration": 19,
+    "total": 1272.4000000003725,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 0,
+    "total": 1947.7999999998137,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 1,
+    "total": 2106.7999999998137,
+    "nextRequestedAfterMs": 0.19999999925494194,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 2,
+    "total": 2188.9000000003725,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 3,
+    "total": 2117.2999999998137,
+    "nextRequestedAfterMs": 0.19999999925494194,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 4,
+    "total": 2101.5,
+    "nextRequestedAfterMs": 0.2999999998137355,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 5,
+    "total": 2157.5,
+    "nextRequestedAfterMs": 1,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 6,
+    "total": 2128.5999999996275,
+    "nextRequestedAfterMs": 0.09999999962747097,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 7,
+    "total": 2040.0999999996275,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 8,
+    "total": 2267.7999999998137,
+    "nextRequestedAfterMs": 0.19999999925494194,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 9,
+    "total": 2205.5999999996275,
+    "nextRequestedAfterMs": 0.39999999944120646,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 10,
+    "total": 2292,
+    "nextRequestedAfterMs": 0.19999999925494194,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 11,
+    "total": 2112.2999999998137,
+    "nextRequestedAfterMs": 0.39999999944120646,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 12,
+    "total": 2074.100000000559,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 13,
+    "total": 1882.5999999996275,
+    "nextRequestedAfterMs": 0.09999999962747097,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 14,
+    "total": 2193.7999999998137,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 15,
+    "total": 1985.1000000005588,
+    "nextRequestedAfterMs": 0.10000000055879354,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 16,
+    "total": 2056.2000000001863,
+    "nextRequestedAfterMs": 0.09999999962747097,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 17,
+    "total": 2094.4000000003725,
+    "nextRequestedAfterMs": 0.09999999962747097,
+    "pendingText": "C 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 18,
+    "total": 2082.600000000559,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "A 00:00:01:00",
+    "saved": true,
+    "loaded": true
+  },
+  {
+    "storage": "Drive",
+    "iteration": 19,
+    "total": 1952.2000000001863,
+    "nextRequestedAfterMs": 0.20000000018626451,
+    "pendingText": "B 00:00:01:08",
+    "saved": true,
+    "loaded": true
+  }
+]

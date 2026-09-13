@@ -1,0 +1,43 @@
+{
+  "sourceFps": 24,
+  "currentFps": 30,
+  "range": {
+    "source": [
+      24,
+      48
+    ],
+    "current": [
+      30,
+      60
+    ]
+  },
+  "fixtureNote": "anonymous v1 zero comment endFrame explicitly set to 0",
+  "checks": [
+    {
+      "frame": 30,
+      "fps": 30,
+      "active": [
+        "익명 A 구간"
+      ]
+    },
+    {
+      "frame": 60,
+      "fps": 30,
+      "active": [
+        "익명 A 구간"
+      ]
+    },
+    {
+      "frame": 61,
+      "fps": 30,
+      "active": []
+    },
+    {
+      "frame": 0,
+      "fps": 30,
+      "active": [
+        "첫 프레임 검증"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,146 @@
+{
+  "main": {
+    "scale": 1.5,
+    "panX": 80,
+    "panY": 26.666666666666668,
+    "playing": false
+  },
+  "overlay": {
+    "transform": "scale(1.5) translate(80px, 26.6667px)",
+    "diagnostics": {
+      "state": "active",
+      "prepared": true,
+      "inputEnabled": true,
+      "devicePixelRatio": 1.5,
+      "tokens": {
+        "hostGeneration": 2,
+        "videoGeneration": 1,
+        "inputRevision": 2
+      },
+      "gestures": {
+        "altSizeAdjustActive": false,
+        "ctrlStrokeEraseActive": false,
+        "strokeEraseCandidateCount": 0,
+        "modifierAlt": false,
+        "modifierCtrl": false,
+        "overlayAltKeyDownCount": 0,
+        "overlayCtrlKeyDownCount": 0,
+        "lastPointerdown": {
+          "pointerType": "mouse",
+          "button": 0,
+          "altKey": false,
+          "ctrlKey": false,
+          "latchAlt": false,
+          "latchCtrl": false,
+          "documentHasFocus": true,
+          "replayed": false
+        }
+      },
+      "presentationRevision": 3,
+      "presentedStableVideoIdentity": "C:\\BAEframe\\BAEFRAME\\.worktrees\\review-playback-input\\.local\\review-playback-input\\fixtures\\A.mp4",
+      "presentedStoreRevision": 1,
+      "presentedTargetFrame": 0,
+      "presentedSourceFrame": null,
+      "activeFrameRevision": 76,
+      "armedTargetFrame": 71,
+      "armedSourceFrame": 58,
+      "provisional": true,
+      "activeSessionId": "fca4b874-bff4-4c28-88aa-daba0e6bd909",
+      "activeSceneKey": "C:\\BAEframe\\BAEFRAME\\.worktrees\\review-playback-input\\.local\\review-playback-input\\fixtures\\A.mp4\u00000",
+      "targetFrame": 0,
+      "viewportRevision": 3,
+      "tool": "brush",
+      "selectionTarget": "stroke",
+      "selectionShape": "rectangle",
+      "eraserMode": "stroke",
+      "activeEraseMode": null,
+      "selectionControlEventCount": 0,
+      "lastSelectionControlAction": null,
+      "activeSelectionGesture": null,
+      "lastSelectionGesture": null,
+      "objectCount": 0,
+      "selectionCount": 0,
+      "mutationCount": 0,
+      "dirty": false,
+      "undoDepth": 0,
+      "redoDepth": 0,
+      "globalUndoDepth": 0,
+      "globalRedoDepth": 0,
+      "undoBytes": 0,
+      "historyBytes": 0,
+      "cache": {
+        "videoCount": 1,
+        "sceneCount": 2,
+        "estimatedBytes": 2590,
+        "evictionCount": 0
+      },
+      "drawingPersistence": {
+        "videoCount": 1,
+        "observerFailureCount": 0,
+        "unboundCommitCount": 0
+      },
+      "drawingV3Shadow": {
+        "enabled": true,
+        "status": "active",
+        "sceneCount": 1,
+        "bootstrapCount": 1,
+        "commitCount": 0,
+        "failureCount": 0,
+        "divergenceCount": 0,
+        "resyncCount": 0,
+        "staleCount": 0,
+        "gapCount": 0,
+        "headSequence": 0,
+        "objectCount": 0,
+        "estimatedBytes": 0,
+        "latencyP50Ms": 0,
+        "latencyP95Ms": 0,
+        "lastReason": null
+      },
+      "metrics": {
+        "maxSamples": 512,
+        "toggleLatency": {
+          "count": 1,
+          "average": 2.900000000372529,
+          "max": 2.900000000372529,
+          "p50": 2.900000000372529,
+          "p95": 2.900000000372529,
+          "samples": [
+            2.900000000372529
+          ]
+        },
+        "pointerPreviewLatency": {
+          "count": 0,
+          "average": 0,
+          "max": 0,
+          "p50": 0,
+          "p95": 0,
+          "samples": []
+        },
+        "pointerSamples": {
+          "count": 0,
+          "pressureMin": null,
+          "pressureMax": null,
+          "pressureRange": 0
+        },
+        "longTasks": {
+          "count": 0,
+          "average": 0,
+          "max": 0,
+          "p50": 0,
+          "p95": 0,
+          "samples": []
+        },
+        "objectCount": {
+          "current": 0,
+          "peak": 0
+        },
+        "duplicateActionCount": 0,
+        "saveAttemptCount": 0,
+        "staleMessageDropCount": 0,
+        "surfaceErrorCount": 0
+      },
+      "lastError": null
+    }
+  }
+}

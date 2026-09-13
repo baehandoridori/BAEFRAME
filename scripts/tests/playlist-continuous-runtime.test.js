@@ -188,9 +188,9 @@ test('continuous timeline updates ignore stale async completions', () => {
   const timelineUpdateSource = timelineUpdateMatch[1];
   assert.match(appSource, /let playlistTimelineUpdateToken = 0;/);
   assert.match(timelineUpdateSource, /const updateToken = \+\+playlistTimelineUpdateToken;/);
-  assert.match(timelineUpdateSource, /playlistTimelineUpdateToken !== updateToken/);
-  assert.match(timelineUpdateSource, /const metadata = await collectPlaylistMetadata\(items\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
-  assert.match(timelineUpdateSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);[\s\S]+const bframeData = await window\.electronAPI\.loadReview\(bframePath\);[\s\S]+playlistTimelineUpdateToken !== updateToken/);
+  assert.match(timelineUpdateSource, /playlistTimelineUpdateToken === updateToken/);
+  assert.match(timelineUpdateSource, /const metadata = await collectPlaylistMetadata\(items\);[\s\S]+if \(!isCurrent\(\)\) return/);
+  assert.match(timelineUpdateSource, /await readPlaylistCommentSnapshot\(bframePath, item\)[\s\S]+if \(!isCurrent\(\)\) return/);
 });
 
 test('opening or replacing playlists commits visible continuous work only after a file opens', () => {
@@ -331,8 +331,8 @@ test('continuous aggregate comments recover missing bframePath from the media pa
 
   const timelineUpdateSource = timelineUpdateMatch[1];
   assert.match(timelineUpdateSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);/);
-  assert.match(timelineUpdateSource, /if \(!bframePath\) continue;/);
-  assert.match(timelineUpdateSource, /window\.electronAPI\.loadReview\(bframePath\)/);
+  assert.match(timelineUpdateSource, /bframePath \? await readPlaylistCommentSnapshot/);
+  assert.match(timelineUpdateSource, /readPlaylistCommentSnapshot\(bframePath, item\)/);
   assert.doesNotMatch(timelineUpdateSource, /if \(!item\?\.bframePath\) continue;/);
 });
 
@@ -587,8 +587,8 @@ test('continuous aggregate comments update the right comment panel', () => {
   assert.match(appSource, /playlistAggregateCommentRanges = aggregateRanges;/);
   assert.match(appSource, /formatPlaylistCommentPanelLine\(range\)/);
   assert.match(appSource, /data-aggregate-comment-key/);
-  assert.match(appSource, /전체 \$\{highlightCommentSearchMatches\(range\.globalStartTimecode/);
-  assert.match(appSource, /컷 \$\{highlightCommentSearchMatches\(range\.localStartTimecode/);
+  assert.match(appSource, /highlightCommentSearchMatches\(globalLabel/);
+  assert.match(appSource, /highlightCommentSearchMatches\(localLabel/);
   assert.match(appSource, /playlist-comment-resolve-toggle/);
   assert.match(appSource, /playlist-comment-replies/);
 });
@@ -770,8 +770,8 @@ test('continuous cut loads reuse the existing aggregate timeline instead of rebu
   assert.ok(helperMatch, 'current-mode comment range refresher should accept options');
 
   const helperSource = helperMatch[1];
-  assert.match(helperSource, /skipContinuousTimelineRefresh = false/);
-  assert.match(helperSource, /if \(skipContinuousTimelineRefresh && timeline\.playlistDuration > 0\) \{[\s\S]+renderPlaylistContinuousCommentList\(commentFilterState\.status\);[\s\S]+return;/);
+  assert.match(helperSource, /playlistCommentSegments\.length > 0 && !options\.rebuild/);
+  assert.match(helperSource, /await refreshPlaylistCommentsForItem\(item\.id\);[\s\S]+return;/);
   assert.match(helperSource, /await updatePlaylistContinuousTimeline\(\);/);
 
   const loadVideoCommentRefreshMatch = appSource.match(/renderHighlights\(\);\s*\n\s*\/\/ 댓글 범위 렌더링([\s\S]*?)\/\/ ====== 최근 파일 목록에 추가/);
@@ -2080,6 +2080,7 @@ function createActualLoadRaceScenario({
     addEventListener: () => {}, removeEventListener: () => {}
   };
   const reviewDataManager = {
+    getVideoPath: () => state.currentFile,
     currentBframePath: null,
     isModified: false,
     waitForPendingSave: async () => {},
@@ -2127,6 +2128,10 @@ function createActualLoadRaceScenario({
     elements,
     videoPlayer,
     reviewDataManager,
+    endVideoPan() {}, resetViewportPanCycle() {},
+    finishCommentEdit() {},
+    createTransitionMetrics: () => ({ mark() {}, finish() {} }),
+    playlistResolutionQueue: { lockPaths: () => () => {}, drainPaths: async () => {} },
     fabricDrawingPilotInitialization: Promise.resolve(true),
     fabricDrawingPilotController,
     confirm: () => false,
@@ -2270,7 +2275,7 @@ function createActualLoadRaceScenario({
       const timer = setTimeout(callback, delay); timer.unref?.(); return timer;
     },
     clearTimeout: timer => { if (!timer?.deadline) clearTimeout(timer); },
-    invalidatePlaylistBackgroundWork: () => {}, resetPlaylistContinuousTimelineState: () => {},
+    invalidatePlaylistBackgroundWork: () => {}, resetPlaylistContinuousTimelineState: () => {}, abandonPlaylistResolutionFailures: () => {},
     playlistUIState: { mode: 'continuous' },
     mapGlobalTimeToSegment: (_segments, time) => invalidSeekMap ? null : ({
       segment: {
@@ -2594,7 +2599,7 @@ function createSingleFlightScenario({ itemCount = 2, currentIndex = 0, captureDe
     },
     invalidateActiveVideoLoad: () => { invalidations += 1; },
     invalidatePlaylistBackgroundWork: () => {},
-    resetPlaylistContinuousTimelineState: () => {},
+    resetPlaylistContinuousTimelineState: () => {}, abandonPlaylistResolutionFailures: () => {},
     log: { error: () => {}, warn: () => {} },
     isSameFilePath: (left, right) => left === right,
     hasActiveVideoLoadForDifferentFile: () => false,

@@ -459,6 +459,13 @@ function setupIpcHandlers({
       // Cursor presence is ephemeral; the next pointer event recovers the signal.
     }
   });
+  ipcMain.on('mpv-overlay:viewport-pan', (event, value) => {
+    if (isFabricDrawingPilotEnabled) mpvOverlayHost.forwardViewportPan(event, value);
+  });
+  ipcMain.on('mpv-overlay:viewport-pan-command', (event, value) => {
+    if (isFabricDrawingPilotEnabled) mpvOverlayHost.forwardViewportPanCommand(event, value);
+  });
+  ipcMain.handle('mpv-overlay:input-focus', event => mpvOverlayHost.getInputFocus(event));
   ipcMain.on('mpv-overlay:drawing-pointerdown-frame-request', (event, request) => {
     if (!isFabricDrawingPilotEnabled || !mpvOverlayHost.isCurrentOverlaySender(event)) {
       return;

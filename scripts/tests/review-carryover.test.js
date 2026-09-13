@@ -115,3 +115,21 @@ test('root envelope migration and validation preserve incompatible optional data
   assert.deepEqual(migrated.reviewCarryoverV1, payload);
   assert.ok(validateReviewData(migrated).warnings.some(w => w.includes('reviewCarryoverV1')));
 });
+
+
+test('optional carried endpoint validates malformed payloads as opaque while old snapshots remain editable', async () => {
+  const Manager = await managerClass(); const { isSupportedReviewCarryover, mergeReviewCarryover } = await shared();
+  const m = new Manager(); m.carry(await source()); const valid = m.toJSON();
+  for (const endFrame of [undefined, null, 60, 90]) {
+    const payload = structuredClone(valid); if (endFrame !== undefined) payload.items[0].source.endFrame = endFrame;
+    assert.equal(isSupportedReviewCarryover(payload), true); const loaded = new Manager(); loaded.fromJSON(payload);
+    assert.equal(loaded.isEditable, true); assert.deepEqual(loaded.toJSON(), payload);
+  }
+  for (const endFrame of ['90', {}, -1, 59]) {
+    const payload = structuredClone(valid); payload.items[0].source.endFrame = endFrame;
+    assert.equal(isSupportedReviewCarryover(payload), false); const loaded = new Manager(); loaded.fromJSON(payload);
+    assert.equal(loaded.isEditable, false); assert.deepEqual(loaded.toJSON(), payload);
+    assert.throws(() => loaded.setResolved(payload.items[0].id, true));
+    assert.deepEqual(mergeReviewCarryover(payload, payload, undefined), payload);
+  }
+});

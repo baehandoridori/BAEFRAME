@@ -42,13 +42,14 @@ v2.0 파일은 선택적으로 `reviewDocumentId`를 가질 수 있습니다. �
 | `generation` | 첫 이어받기는 0. 취소 후 명시적으로 다시 이어받을 때만 1 증가하며 가져오는 원본의 미해결·해결 상태를 따릅니다. 누락 시 0으로 해석합니다. |
 
 `source`는 `{key, sourcePath, sourceLabel, sourceDocumentId, commentId, author, authorId?, text,
-startFrame, fps, resolved, images, replies}`입니다. `sourceDocumentId`가 같아도 경로가
+startFrame, endFrame?, fps, resolved, images, replies}`입니다. `sourceDocumentId`가 같아도 경로가
 다른 버전은 별도 출처입니다. `images`는 안전한 raster base64 data URI 문자열 배열이며,
 `replies`는 `{id, author, text, images}` 배열입니다. 현재 앱의 `image` 필드와 `images`
 배열을 함께 읽습니다. SVG·외부 URL·파일 URL은 포함하지 않습니다. 삭제된 댓글·답글은
 이어받을 원문 목록에서 제외합니다. 레거시 배열형 댓글의 `content`와 `frame`도 읽으며,
 댓글 FPS → 리뷰 루트 FPS → 24 순으로 사용합니다. 시간이 없으면 `startFrame`은 `null`입니다.
 안정적인 원본 댓글 ID가 없는 손상 항목은 출처 목록에서 제외합니다.
+원본에 끝 프레임이 있으면 선택적 `endFrame`도 원본 FPS 기준으로 보존합니다. 기존 snapshot에 없으면 시작 프레임만 사용하며, 잘못된 끝 값은 `null`로 남겨 재생 강조에서 제외합니다. 목록과 팝업의 강조 위치는 원본 프레임/FPS를 현재 영상 FPS로 환산하며 저장한 원본 프레임을 바꾸지 않습니다. 이미 저장된 `endFrame`이 문자열·객체·음수·시작 이전 값이면 전체 이어받기 데이터를 지원하지 않는 형식으로 취급하여 원문 그대로 보존하고 편집을 차단합니다.
 
 `shared/review-carryover.js`의 세 방향 병합은 수락한 기준, 로컬 변경, 최신 디스크를 비교합니다.
 서로 다른 항목의 변경을 함께 유지하며, 같은 세대의 취소는 상태 변경보다 우선합니다.

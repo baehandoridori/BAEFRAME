@@ -5,6 +5,7 @@
 
 import { createLogger } from '../logger.js';
 import { getAuthManager } from './auth-manager.js';
+import { readPlaylistMarkerFrame } from './playlist-comment-index.js';
 
 const log = createLogger('CommentManager');
 
@@ -89,7 +90,7 @@ export class CommentMarker {
     // 시간 범위 (프레임 단위)
     this.startFrame = options.startFrame || 0;
     const fps = options.fps || 24;
-    this.endFrame = options.endFrame || (this.startFrame + fps * 4); // 기본 4초
+    this.endFrame = options.endFrame || (this.startFrame + Math.round(fps * 4)); // 기본 4초
     this.fps = fps;
 
     // 내용
@@ -162,7 +163,8 @@ export class CommentMarker {
    * 시작 타임코드
    */
   get startTimecode() {
-    return frameToTimecode(this.startFrame, this.fps);
+    const frame = readPlaylistMarkerFrame(this.startFrame);
+    return frame === null ? '시간 정보 없음' : frameToTimecode(frame, this.fps);
   }
 
   /**
@@ -190,7 +192,9 @@ export class CommentMarker {
    * 특정 프레임에서 보이는지 확인
    */
   isVisibleAtFrame(frame) {
-    return frame >= this.startFrame && frame <= this.endFrame;
+    const start = readPlaylistMarkerFrame(this.startFrame);
+    const end = readPlaylistMarkerFrame(this.endFrame) ?? start;
+    return start !== null && frame >= start && frame <= end;
   }
 
   /**
@@ -251,6 +255,9 @@ export class CommentMarker {
       json.imageHeight = this.imageHeight;
     }
 
+    // An implicit loaded interval is one frame (plan section 1.1), without rewriting a missing file field.
+    if (this._loadedWithoutEndFrame && this.endFrame === this.startFrame) delete json.endFrame;
+
     return json;
   }
 
@@ -258,7 +265,7 @@ export class CommentMarker {
    * JSON에서 생성
    */
   static fromJSON(json) {
-    return new CommentMarker({
+    const marker = new CommentMarker({
       ...json,
       createdAt: new Date(json.createdAt),
       updatedAt: json.updatedAt ? new Date(json.updatedAt) : new Date(json.createdAt),
@@ -270,6 +277,12 @@ export class CommentMarker {
         updatedAt: r.updatedAt ? new Date(r.updatedAt) : (r.createdAt ? new Date(r.createdAt) : new Date())
       }))
     });
+    // Plan section 1.1: missing loaded endpoints are one-frame intervals; new markers keep the creation default.
+    marker._loadedWithoutEndFrame = json.endFrame === undefined;
+    const start = readPlaylistMarkerFrame(json.startFrame);
+    marker.startFrame = start ?? json.startFrame;
+    marker.endFrame = readPlaylistMarkerFrame(json.endFrame) ?? marker.startFrame;
+    return marker;
   }
 }
 
@@ -374,8 +387,9 @@ export class CommentManager extends EventTarget {
         const sourceFps = Number(marker.fps) > 0 ? Number(marker.fps) : 24;
         if (sourceFps !== nextFps) {
           const factor = nextFps / sourceFps;
-          const startFrame = Number(marker.startFrame) || 0;
-          const endFrame = Number(marker.endFrame) || startFrame;
+          const startFrame = readPlaylistMarkerFrame(marker.startFrame);
+          if (startFrame === null) return;
+          const endFrame = readPlaylistMarkerFrame(marker.endFrame) ?? startFrame;
           marker.startFrame = Math.max(0, Math.round(startFrame * factor));
           marker.endFrame = Math.max(marker.startFrame, Math.round(endFrame * factor));
         }
@@ -495,7 +509,7 @@ export class CommentManager extends EventTarget {
       x,
       y,
       startFrame: this.currentFrame,
-      endFrame: this.currentFrame + this.fps * 4, // 기본 4초
+      endFrame: this.currentFrame + Math.round(this.fps * 4), // 기본 4초
       fps: this.fps,
       layerId: this.activeLayerId,
       author: this.author
@@ -863,7 +877,7 @@ export class CommentManager extends EventTarget {
     for (const layer of this.layers) {
       markers.push(...layer.getAllMarkers());
     }
-    return markers.sort((a, b) => a.startFrame - b.startFrame);
+    return markers.sort((a, b) => (readPlaylistMarkerFrame(a.startFrame) ?? Infinity) - (readPlaylistMarkerFrame(b.startFrame) ?? Infinity));
   }
 
   /**
@@ -872,16 +886,12 @@ export class CommentManager extends EventTarget {
    * @returns {number|null} 이전 마커의 시작 프레임 또는 null
    */
   getPrevMarkerFrame(currentFrame, markers = this.getAllMarkers()) {
-    // 현재 프레임보다 시작 프레임이 작은 마커들 중 가장 큰 것
-    let prevMarker = null;
+    let previous = null;
     for (const marker of markers) {
-      if (marker.startFrame < currentFrame) {
-        if (!prevMarker || marker.startFrame > prevMarker.startFrame) {
-          prevMarker = marker;
-        }
-      }
+      const frame = readPlaylistMarkerFrame(marker.startFrame);
+      if (frame !== null && frame < currentFrame && (previous === null || frame > previous)) previous = frame;
     }
-    return prevMarker ? prevMarker.startFrame : null;
+    return previous;
   }
 
   /**
@@ -890,16 +900,12 @@ export class CommentManager extends EventTarget {
    * @returns {number|null} 다음 마커의 시작 프레임 또는 null
    */
   getNextMarkerFrame(currentFrame, markers = this.getAllMarkers()) {
-    // 현재 프레임보다 시작 프레임이 큰 마커들 중 가장 작은 것
-    let nextMarker = null;
+    let next = null;
     for (const marker of markers) {
-      if (marker.startFrame > currentFrame) {
-        if (!nextMarker || marker.startFrame < nextMarker.startFrame) {
-          nextMarker = marker;
-        }
-      }
+      const frame = readPlaylistMarkerFrame(marker.startFrame);
+      if (frame !== null && frame > currentFrame && (next === null || frame < next)) next = frame;
     }
-    return nextMarker ? nextMarker.startFrame : null;
+    return next;
   }
 
   /**
@@ -979,13 +985,15 @@ export class CommentManager extends EventTarget {
     for (const layer of layersToCheck) {
       if (!layer) continue;
       for (const marker of layer.getAllMarkers()) {
+        const startFrame = readPlaylistMarkerFrame(marker.startFrame);
+        if (startFrame === null) continue;
         // 마커 개별 색상 사용 (없으면 레이어 색상)
         const markerColor = marker.colorInfo?.color || layer.color;
         ranges.push({
           layerId: layer.id,
           markerId: marker.id,
-          startFrame: marker.startFrame,
-          endFrame: marker.endFrame,
+          startFrame,
+          endFrame: readPlaylistMarkerFrame(marker.endFrame) ?? startFrame,
           color: markerColor,
           colorKey: marker.colorKey || 'default',
           text: marker.text,

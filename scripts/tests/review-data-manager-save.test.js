@@ -7098,3 +7098,54 @@ test('드로잉 저장 차단은 재시도하지 않고 즉시 save-blocked로 �
   assert.equal(saveErrorEvents, 1);
   manager.disconnect();
 });
+
+test('checkpoint needs the write containing its revision and rejects a changed owner', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const manager = new ReviewDataManager({ autoSave: false });
+  manager.currentVideoPath = 'C:/test/a.mp4';
+  manager.currentBframePath = 'C:/test/a.bframe';
+  manager._changeRevision = 2;
+  const checkpoint = manager.captureSaveCheckpoint();
+  manager._lastPersistedChangeRevision = 1;
+  let saves = 0;
+  manager.save = async () => {
+    manager._lastPersistedChangeRevision = ++saves === 1 ? 1 : 2;
+    return true;
+  };
+  assert.equal(await manager.saveThroughCheckpoint(checkpoint), true);
+  assert.equal(saves, 2);
+  manager.currentVideoPath = 'C:/test/b.mp4';
+  assert.equal(await manager.saveThroughCheckpoint(checkpoint), false);
+  assert.equal(saves, 2);
+});
+
+test('real in-flight write cannot acknowledge a later completion revision', async () => {
+  const { ReviewDataManager } = await import('../../renderer/scripts/modules/review-data-manager.js');
+  const comments = createCommentManager();
+  const started = createDeferred(); const release = createDeferred(); const writes = [];
+  let disk = createReviewRoot({ reviewDocumentId: REVIEW_ID_EXISTING });
+  window.electronAPI = {
+    loadReview: async () => structuredClone(disk),
+    saveReview: async (_path, data) => {
+      const snapshot = structuredClone(data); writes.push(snapshot);
+      if (writes.length === 1) { started.resolve(); await release.promise; }
+      disk = snapshot; return { success: true };
+    }
+  };
+  const manager = new ReviewDataManager({ autoSave: false, commentManager: comments });
+  await manager.setVideoFile('C:/test/checkpoint.mp4');
+  addSubstantiveComment(manager, comments, 'completion');
+  const first = manager.save(); await started.promise;
+  const marker = comments.layers[0].markers.get('completion');
+  marker.resolved = true; manager._markDirty();
+  const checkpoint = manager.captureSaveCheckpoint();
+  let completed = false;
+  const through = manager.saveThroughCheckpoint(checkpoint).then(value => { completed = value; return value; });
+  await Promise.resolve(); assert.equal(completed, false);
+  release.resolve(); assert.equal(await first, true);
+  assert.equal(await through, true);
+  assert.equal(writes.length, 2);
+  assert.notEqual(writes[0].comments.layers[0].markers[0].resolved, true);
+  assert.equal(writes[1].comments.layers[0].markers[0].resolved, true);
+  assert.equal(manager._lastPersistedChangeRevision, checkpoint.revision);
+});

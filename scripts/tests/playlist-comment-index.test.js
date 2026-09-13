@@ -255,3 +255,77 @@ test('통합 댓글 키는 한 헬퍼에서 만든다', () => {
     'item-1:layer-a:m1'
   );
 });
+
+test('zero and missing frames are different and malformed times remain visible without seeking', async () => {
+  const m = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  assert.equal(m.readPlaylistMarkerFrame(0), 0);
+  assert.equal(m.readPlaylistMarkerFrame('32'), 32);
+  for (const value of [null, undefined, '', ' ', 'bad', -1, 1.2, Infinity, NaN, true, {}]) assert.equal(m.readPlaylistMarkerFrame(value), null);
+  const ranges = m.extractPlaylistCommentRanges({ segment: { itemId: 'a', startTime: 0, duration: 3, fps: 24 }, bframeData: { comments: { layers: [{ markers: [{ id: 'bad' }, { id: 'zero', startFrame: 0 }] }] } } });
+  assert.equal(ranges[0].markerId, 'zero');
+  assert.equal(ranges[1].timingValid, false);
+  assert.equal(ranges[1].localStartFrame, null);
+  assert.equal(ranges[1].globalStartTime, null);
+  assert.match(m.formatPlaylistCommentLabel(ranges[1]), /시간 정보 없음/);
+});
+
+test('numeric frames override stale labels for integer and fractional segment fps', async () => {
+  const m = await import('../../renderer/scripts/modules/playlist-comment-index.js');
+  for (const fps of [24, 30, 23.976, 29.97]) {
+    const [range] = m.extractPlaylistCommentRanges({ segment: { itemId: 'a', startTime: 3, duration: 5, fps }, bframeData: { fps: 60, comments: { layers: [{ markers: [{ startFrame: 32, endFrame: 'bad', fps: 60 }] }] } } });
+    assert.equal(range.localStartTime, 32 / fps);
+    assert.equal(range.localEndFrame, 32);
+    assert.equal(m.formatPlaylistCommentLabel({ ...range, localStartTimecode: '00:00:00:00' }), `${m.getPlaylistCutLabel(range)} ${range.localStartTimecode}`);
+  }
+});
+
+
+test('loaded comments retain genuine zero, missing time, and single-frame endpoints', async () => {
+  const { CommentMarker } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const zero = CommentMarker.fromJSON({ id: 'zero', startFrame: 0, endFrame: 0, createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(zero.endFrame, 0);
+  const missing = CommentMarker.fromJSON({ id: 'missing', createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(missing.startFrame, undefined);
+  assert.equal(missing.isVisibleAtFrame(0), false);
+  const single = CommentMarker.fromJSON({ id: 'single', startFrame: 32, createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(single.endFrame, 32);
+  assert.equal(single.isVisibleAtFrame(32), true);
+  assert.equal(single.isVisibleAtFrame(33), false);
+});
+
+
+test('untimed loaded markers stay out of marker navigation and timeline ranges while real zero stays usable', async () => {
+  const { CommentMarker, CommentManager } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const markers = [undefined, null, -1, 'bad', true, 0, 24].map((startFrame, i) => CommentMarker.fromJSON({ id: String(i), startFrame, createdAt: '2026-09-14T00:00:00Z' }));
+  for (const marker of markers.slice(0, 5)) assert.equal(marker.startTimecode, '시간 정보 없음');
+  assert.equal(markers[5].startTimecode, '00:00:00:00');
+  const context = { layers: [{ id: 'l', getAllMarkers: () => markers }], getAllMarkers: () => markers };
+  assert.equal(CommentManager.prototype.getPrevMarkerFrame.call(context, 12), 0);
+  assert.equal(CommentManager.prototype.getNextMarkerFrame.call(context, 0), 24);
+  assert.deepEqual(CommentManager.prototype.getMarkerRanges.call(context).map(r => r.startFrame), [0, 24]);
+});
+
+
+test('implicit one-frame loaded ranges preserve an absent endpoint on unrelated saves', async () => {
+  const { CommentMarker } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const loaded = CommentMarker.fromJSON({ id: 'legacy', startFrame: 32, createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(loaded.isVisibleAtFrame(32), true); assert.equal(loaded.isVisibleAtFrame(33), false);
+  loaded.text = 'edited'; assert.equal(Object.hasOwn(loaded.toJSON(), 'endFrame'), false);
+  loaded.setDuration(12); assert.equal(loaded.toJSON().endFrame, 44);
+  const created = new CommentMarker({ startFrame: 32, fps: 24 });
+  assert.equal(created.toJSON().endFrame, 128, 'new comments keep the four-second creation default');
+});
+
+for (const fps of [23.976, 29.97]) { test(`new four-second comments use integer endpoints at ${fps}fps`, async t => {
+  const { CommentMarker, CommentManager } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const priorWindow = global.window; global.window = {}; t.after(() => { global.window = priorWindow; });
+  const expected = 32 + Math.round(fps * 4);
+  const direct = new CommentMarker({ startFrame: 32, fps });
+  assert.equal(direct.endFrame, expected);
+  const context = { isCommentMode: true, currentFrame: 32, fps, _emit() {} };
+  const marker = CommentManager.prototype.startMarkerCreation.call(context, .5, .5);
+  assert.equal(marker.endFrame, expected);
+  const loaded = CommentMarker.fromJSON(marker.toJSON());
+  assert.equal(loaded.endFrame, expected); assert.equal(loaded.isVisibleAtFrame(expected - 1), true);
+});
+}

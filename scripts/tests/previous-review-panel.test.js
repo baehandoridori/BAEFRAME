@@ -475,3 +475,54 @@ test('search matching and empty-state visibility include historical rows without
   assert.equal(x.document.querySelector('.comment-item'), current);
   assert.equal(x.document.querySelector('.pr-current-badge'), null);
 });
+
+
+for (const [sourceFps, currentFps] of [[24, 30], [30, 24], [23.976, 29.97]]) {
+  test(`historical range ${sourceFps}fps follows current ${currentFps}fps in list, carried row and popup`, async t => {
+    const x = await setup(t); x.context.fps = currentFps; x.root.fps = sourceFps;
+    const sourceFrame = Math.round(sourceFps), endFrame = Math.round(sourceFps * 2);
+    x.root.comments.layers[0].markers = [{ id: 'range', text: 'range', startFrame: sourceFrame, endFrame }];
+    await x.selectVersion(0);
+    const first = Math.round(sourceFrame / sourceFps * currentFps), last = Math.round(endFrame / sourceFps * currentFps);
+    let row = x.document.querySelector('[data-pr-source]');
+    assert.equal(Number(row.dataset.playbackStartFrame), first); assert.equal(Number(row.dataset.playbackEndFrame), last);
+    row.querySelector('.pr-time').click(); assert.equal(x.seeks.at(-1), first);
+    row.querySelector('[data-pr-carry]').click(); row = x.document.querySelector('[data-pr-item]');
+    assert.equal(Number(row.dataset.playbackStartFrame), first); assert.equal(Number(row.dataset.playbackEndFrame), last);
+    assert.equal(x.manager.getItems()[0].source.startFrame, sourceFrame, 'stored source keeps its original FPS domain');
+    x.click('[data-pr-mode="popup"]'); await tick();
+    const popupRow = x.children[0].child.document.querySelector('[data-pr-item]');
+    x.panel.updatePlaybackFrame(first - 1); assert.equal(popupRow.classList.contains('is-current-frame'), false);
+    x.panel.updatePlaybackFrame(first); assert.equal(popupRow.classList.contains('is-current-frame'), true);
+    x.panel.updatePlaybackFrame(last); assert.equal(popupRow.classList.contains('is-current-frame'), true);
+    x.panel.updatePlaybackFrame(last + 1); assert.equal(popupRow.classList.contains('is-current-frame'), false);
+  });
+}
+
+test('historical conversion preserves real zero, rejects missing time and matches clamped seek at the last frame', async t => {
+  const x = await setup(t); x.context.fps = 30; x.context.duration = 1; x.root.fps = 24;
+  x.root.comments.layers[0].markers = [
+    { id: 'zero', text: 'zero', startFrame: 0, endFrame: 0 },
+    { id: 'missing', text: 'missing' }, { id: 'last', text: 'last', startFrame: 23.99 },
+    { id: 'outside', text: 'outside', startFrame: 48 }, { id: 'bad-end', text: 'bad-end', startFrame: 12, endFrame: -1 }
+  ];
+  await x.selectVersion(0);
+  const row = text => [...x.document.querySelectorAll('[data-pr-source]')].find(node => node.querySelector('.pr-text').textContent === text);
+  assert.equal(row('zero').dataset.playbackStartFrame, '0'); assert.equal(row('zero').dataset.playbackEndFrame, '0');
+  assert.equal(row('missing').dataset.playbackStartFrame, ''); assert.equal(row('outside').dataset.playbackStartFrame, '');
+  assert.equal(row('bad-end').dataset.playbackEndFrame, ''); assert.equal(row('bad-end').dataset.playbackStartFrame, '');
+  row('last').querySelector('.pr-time').click(); assert.equal(x.seeks.at(-1), 29);
+  assert.equal(row('last').dataset.playbackStartFrame, '29'); assert.equal(row('last').dataset.playbackEndFrame, '29');
+});
+
+test('carried null endpoint highlights exactly its start frame in current FPS', async t => {
+  const x = await setup(t); x.context.fps = 30; x.root.fps = 24;
+  x.root.comments.layers[0].markers = [{ id: 'nullable', text: 'nullable', startFrame: 24 }];
+  await x.selectVersion(0); x.click('[data-pr-carry]');
+  const saved = x.manager.toJSON(); saved.items[0].source.endFrame = null; x.manager.fromJSON(saved);
+  x.click('[data-pr-mode="popup"]'); await tick();
+  const row = x.children[0].child.document.querySelector('[data-pr-item]');
+  assert.equal(row.dataset.playbackStartFrame, '30'); assert.equal(row.dataset.playbackEndFrame, '30');
+  x.panel.updatePlaybackFrame(30); assert.equal(row.classList.contains('is-current-frame'), true);
+  x.panel.updatePlaybackFrame(31); assert.equal(row.classList.contains('is-current-frame'), false);
+});

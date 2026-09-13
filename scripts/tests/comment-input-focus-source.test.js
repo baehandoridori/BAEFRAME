@@ -34,17 +34,9 @@ test('right sidebar comment input is covered by the same focus recovery path', (
   assert.match(appSource, /target\.closest\('\.comment-input,/);
 });
 
-test('video panning does not steal mouse down from comment editors', () => {
-  const panHandlerMatch = appSource.match(/elements\.videoWrapper\?\.addEventListener\('mousedown', \(e\) => \{([\s\S]*?)\n  \}\);/);
-  assert.ok(panHandlerMatch, 'video wrapper panning mousedown handler should exist');
-  const panHandlerSource = panHandlerMatch[1];
-
-  assert.match(panHandlerSource, /if \(getCommentEditableTarget\(e\.target\)\) return;/);
-  assert.ok(
-    panHandlerSource.indexOf('if (getCommentEditableTarget(e.target)) return;') <
-      panHandlerSource.indexOf('if (canPanVideo() && e.button === 0)'),
-    'comment editor guard should run before panning preventDefault'
-  );
+test('video pointer panning checks comment editors before gesture capture', () => {
+  assert.match(appSource, /canStart: e => !getCommentEditableTarget\(e\.target\) && canPanVideo\(\)/);
+  assert.match(appSource, /addEventListener\('pointerdown', e => \{[\s\S]*videoPanGesture\.pointerDown\(e\)/);
 });
 
 test('pending marker input stops pointer events from bubbling into video panning', () => {
@@ -214,7 +206,7 @@ test('playlist aggregate replies can expand and resolved state can be toggled fr
   assert.match(appSource, /playlistExpandedReplyKeys\.has\(key\)/);
   assert.match(appSource, /playlistExpandedReplyKeys\.add\(key\);[\s\S]+playlistExpandedReplyKeys\.delete\(key\);/);
   assert.match(appSource, /async function togglePlaylistAggregateResolved\(key\) \{/);
-  assert.match(appSource, /async function togglePlaylistAggregateResolvedWithoutNavigation\(range\) \{/);
+  assert.match(appSource, /async function togglePlaylistAggregateResolvedWithoutNavigation\(range, intent = \{\}\) \{/);
   assert.match(appSource, /const bframePath = await playlistManager\.ensureItemBframePath\(item\);/);
   assert.match(appSource, /commentManager\.getMarker\(range\.markerId\)/);
   assert.match(appSource, /window\.electronAPI\.loadReviewSnapshot\(bframePath\)/);
@@ -223,7 +215,7 @@ test('playlist aggregate replies can expand and resolved state can be toggled fr
     appSource,
     /window\.electronAPI\.saveReview\(\s*bframePath,\s*bframeData,\s*\{ expectedVersionToken: expectedVersionToken \}\s*\)/
   );
-  assert.match(appSource, /marker\.resolved = !previous\.resolved;/);
+  assert.match(appSource, /marker\.resolved = desiredResolved;/);
   assert.match(appSource, /restoreMarkerResolution\(marker, previous\);/);
   assert.match(appSource, /marker\.updatedAt = new Date\(\);/);
   assert.match(appSource, /suppressCommentRangeRefreshOnce = true;/);
@@ -269,5 +261,5 @@ test('comment edit textarea participates in mention autocomplete', () => {
   assert.match(appSource, /if \(editTextarea\) mentionManager\.attach\(editTextarea\);/);
   assert.match(appSource, /'\.comment-reply-input, \.comment-reply-edit-textarea, \.comment-edit-textarea'/);
   assert.match(mentionManagerSource, /e\.__mentionHandled = true;/);
-  assert.match(appSource, /editTextarea\?\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.__mentionHandled \|\| mentionManager\.isVisible\) return;[\s\S]*?if \(e\.key === 'Escape'\) \{/);
+  assert.match(appSource, /editTextarea\?\.addEventListener\('keydown', \(e\) => \{[\s\S]*?if \(e\.defaultPrevented \|\| e\.__mentionHandled[\s\S]*?mentionManager\.isVisibleFor\(e\.target\)\) return;[\s\S]*?if \(e\.key === 'Escape'\) \{/);
 });

@@ -1,3 +1,4 @@
+import { getActiveCommentKeys, applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } from './comment-playback-highlight.js';
 import { createPreviousReviewSources, isSafeReviewImage } from '../../../shared/review-carryover.js';
 import { createCommentPanelPopout } from './comment-panel-popout.js';
 import { previousReviewColor } from './previous-review-timeline.js';
@@ -6,6 +7,12 @@ const pathKey = value => String(value || '').replace(/\\/g, '/').toLowerCase();
 const versionLabel = info => info.displayLabel || (info.version ? `v${info.version}` : info.fileName) || '이전 버전';
 const isResolved = item => item.status === 'verified';
 const secondsOf = source => source.startFrame === null || source.startFrame === undefined ? NaN : Number(source.startFrame) / Number(source.fps);
+const currentFrameOf = (frame, source, context) => {
+  if (typeof frame !== 'number' || !Number.isFinite(frame) || frame < 0 ||
+      !Number.isFinite(source.fps) || source.fps <= 0 || !(Number(context.duration) > 0)) return null;
+  const fps = Number(context.fps) > 0 ? Number(context.fps) : 24;
+  return Math.min(Math.round(frame / source.fps * fps), Math.max(0, Math.ceil(context.duration * fps) - 1));
+};
 const compareSources = (a, b) => {
   const first = Number.isFinite(secondsOf(a)) ? secondsOf(a) : Infinity;
   const second = Number.isFinite(secondsOf(b)) ? secondsOf(b) : Infinity;
@@ -21,7 +28,7 @@ const readableTime = seconds => {
 export function createPreviousReviewPanel({
   mount, list, manager, getContext, getVersions, loadReview, seek, toggleButton = null,
   notify = () => {}, getActor = () => '', onOpenChange = () => {}, windowRef = window,
-  matchesReview = () => true, onSummaryChange = () => {}, onTimelineChange = () => {}, onSelect = () => {}
+  matchesReview = () => true, onSummaryChange = () => {}, onTimelineChange = () => {}, onSelect = () => {}, onRowsChanged = () => {}
 }) {
   const document = windowRef.document;
   let contextPath = pathKey(getContext().path);
@@ -37,6 +44,7 @@ export function createPreviousReviewPanel({
   let mode = 'split';
   let timelineVisible = true;
   let activeKey = null;
+  let playbackRows = null;
   let optionsDocument = null;
   const availableSources = new Map();
   const selected = new Map();
@@ -227,6 +235,7 @@ export function createPreviousReviewPanel({
     const row = el('article', queueItem ? 'pr-review pr-carried' : 'pr-review pr-source');
     if (queueItem) row.dataset.prItem = queueItem.id;
     else row.dataset.prSource = source.key;
+    row.dataset.playbackCommentKey = `previous:${queueItem?.id || source.key}`;
     row.style.setProperty('--pr-blue', previousReviewColor(source.sourceLabel));
     row.classList.toggle('pr-selected', source.key === activeKey);
     const meta = el('div', 'pr-source-meta');
@@ -236,6 +245,10 @@ export function createPreviousReviewPanel({
     const context = getContext();
     const valid = enabled() && Number.isFinite(secondsOf(source)) && secondsOf(source) >= 0
       && Number(context.duration) > 0 && secondsOf(source) < Number(context.duration);
+    row.dataset.playbackStartFrame = valid ? currentFrameOf(source.startFrame, source, context) ?? '' : '';
+    row.dataset.playbackEndFrame = valid
+      ? currentFrameOf((source.endFrame === undefined || (queueItem && source.endFrame === null)) ? source.startFrame : source.endFrame, source, context) ?? '' : '';
+    if (row.dataset.playbackEndFrame === '') row.dataset.playbackStartFrame = '';
     time.disabled = !valid;
     time.title = valid ? `현재 ${context.label || '영상'}의 같은 시간으로 이동` : '현재 영상 길이 밖이거나 시간 정보를 확인할 수 없습니다';
     time.setAttribute('aria-label', `현재 ${context.label || '영상'}의 ${readableTime(secondsOf(source))}로 이동`);
@@ -299,10 +312,12 @@ export function createPreviousReviewPanel({
     if (empty) empty.hidden = visibleEntries.length > 0 && mode !== 'popup';
     onSummaryChange({ total: entries.length, resolved: entries.filter(entry => entry.resolved).length, visible: visibleEntries.length });
     onTimelineChange(show && timelineVisible ? visibleEntries : []);
+    playbackRows = null;
+    invalidateCommentPlaybackHighlight(popupList);
     const popupScroll = popupList.scrollTop;
     popupList.replaceChildren();
     popupPanel.hidden = !show || mode !== 'popup';
-    if (!show) { popout.dock(); return; }
+    if (!show) { popout.dock(); onRowsChanged(); return; }
     const currentFps = Number(getContext().fps) > 0 ? Number(getContext().fps) : 24;
     const native = [...list.querySelectorAll(':scope > .comment-item')];
     for (const item of native) item.querySelector('.comment-header, .comment-item-header')?.prepend(el('span', 'pr-current-badge', getContext().label || '현재'));
@@ -323,7 +338,7 @@ export function createPreviousReviewPanel({
     }
     if (!entries.length) notice.append(el('p', 'pr-empty', '버전을 선택해 리뷰를 가져오세요.'));
     if (notice.childElementCount) destination.append(notice);
-    popupList.scrollTop = popupScroll;
+    popupList.scrollTop = popupScroll;    onRowsChanged();
   }
 
   function positionOptions() {
@@ -373,6 +388,8 @@ export function createPreviousReviewPanel({
   }
 
   function render() {
+    playbackRows = null;
+    invalidateCommentPlaybackHighlight(popupList);
     if (disposed || batching) return;
     const visible = enabled() && (!toggleButton || hasReviewContent());
     if (toggleButton) {
@@ -413,8 +430,7 @@ export function createPreviousReviewPanel({
     const source = sourceFor(key);
     const context = getContext();
     if (!source || !opened || !enabled() || pathKey(context.path) !== contextPath || !(secondsOf(source) >= 0 && secondsOf(source) < Number(context.duration))) return;
-    const fps = Number(context.fps) > 0 ? Number(context.fps) : 24;
-    seek(Math.min(Math.round(secondsOf(source) * fps), Math.max(0, Math.ceil(context.duration * fps) - 1)));
+    seek(currentFrameOf(source.startFrame, source, context));
     activeKey = key; onSelect(key);
     for (const row of [...list.querySelectorAll('.pr-review'), ...popupList.querySelectorAll('.pr-review')]) {
       const active = (row.dataset.prItem || row.dataset.prSource) === key;
@@ -529,6 +545,14 @@ export function createPreviousReviewPanel({
   void refreshAvailability();
   return {
     setOpen, isOpen: () => opened, refreshContext, refreshAvailability, decorateList, seekSource,
+    updatePlaybackFrame(currentFrame) {
+      if (!playbackRows) {playbackRows = [...popupList.querySelectorAll('[data-playback-comment-key]')].map(row => ({
+        key: row.dataset.playbackCommentKey,
+        startFrame: row.dataset.playbackStartFrame === '' ? null : Number(row.dataset.playbackStartFrame),
+        endFrame: row.dataset.playbackEndFrame === '' ? null : Number(row.dataset.playbackEndFrame)
+      }));}
+      applyCommentPlaybackHighlight(popupList, getActiveCommentKeys(playbackRows, { mode: 'single', currentFrame }));
+    },
     getAuthorFilterSources: () => !disposed && opened && enabled() ? reviewEntries().map(entry => entry.source) : [],
     suspend() {
       availabilityGeneration++; availabilityKey = ''; hasPreviousReviews = false;

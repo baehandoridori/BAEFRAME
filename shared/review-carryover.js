@@ -49,6 +49,7 @@ export function createPreviousReviewSources(reviewData, versionInfo) {
       sourceDocumentId: text(reviewData?.reviewDocumentId),
       commentId: String(marker.id), author: text(marker.author), authorId: text(marker.authorId), text: text(marker.text ?? marker.content),
       startFrame: typeof frame === 'number' && Number.isFinite(frame) && frame >= 0 ? frame : null,
+      ...((marker.endFrame === undefined || marker.endFrame === null) ? {} : { endFrame: typeof marker.endFrame === 'number' && Number.isFinite(marker.endFrame) && marker.endFrame >= frame ? marker.endFrame : null }),
       fps: positive(marker.fps) ? marker.fps : positive(reviewData?.fps) ? reviewData.fps : 24,
       resolved: marker.resolved === true, images: imagesOf(marker),
       replies: (Array.isArray(marker.replies) ? marker.replies : [])
@@ -66,6 +67,9 @@ export function isValidReviewSource(source) {
     source.key === reviewSourceKey(source.sourcePath, source.commentId) &&
     ['sourceLabel', 'sourceDocumentId', 'author', 'text'].every(key => typeof source[key] === 'string') &&
     (source.startFrame === null || (typeof source.startFrame === 'number' && Number.isFinite(source.startFrame) && source.startFrame >= 0)) &&
+    (source.endFrame === undefined || source.endFrame === null ||
+      (typeof source.endFrame === 'number' && Number.isFinite(source.endFrame) && source.endFrame >= 0 &&
+        (source.startFrame === null || source.endFrame >= source.startFrame))) &&
     positive(source.fps) && typeof source.resolved === 'boolean' &&
     Array.isArray(source.images) && source.images.every(isSafeReviewImage) &&
     Array.isArray(source.replies) && source.replies.every(reply => reply &&

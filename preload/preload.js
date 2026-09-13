@@ -4,6 +4,7 @@
  */
 
 const { contextBridge, ipcRenderer } = require('electron');
+const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require('../shared/viewport-pan-message');
 
 const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
 const MPV_OVERLAY_POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
@@ -373,6 +374,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvGetOverlayDrawingDiagnostics: () => ipcRenderer.invoke('mpv:get-overlay-drawing-diagnostics'),
   mpvHydrateOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:hydrate-overlay-drawing-video', request),
   mpvExportOverlayDrawingVideo: (request) => ipcRenderer.invoke('mpv:export-overlay-drawing-video', request),
+  onMpvOverlayViewportPan: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, value) => { const message = normalizeViewportPanMessage(value); if (message) callback(message); };
+    ipcRenderer.on(PAN_CHANNEL, listener);
+    return () => ipcRenderer.removeListener(PAN_CHANNEL, listener);
+  },
+  sendMpvOverlayViewportPanCommand: (value) => {
+    const command = normalizeViewportPanCommand(value);
+    if (!command) return false;
+    try { ipcRenderer.send(PAN_COMMAND_CHANNEL, command); return true; } catch { return false; }
+  },
+  getMpvOverlayInputFocus: () => ipcRenderer.invoke('mpv-overlay:input-focus'),
+  onMpvOverlayInputBlur: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = () => callback();
+    ipcRenderer.on('mpv-overlay:input-blur', listener);
+    return () => ipcRenderer.removeListener('mpv-overlay:input-blur', listener);
+  },
   onMpvOverlayKeyboardInput: (callback) => {
     if (typeof callback !== 'function') return () => {};
     const listener = (_event, input) => {
