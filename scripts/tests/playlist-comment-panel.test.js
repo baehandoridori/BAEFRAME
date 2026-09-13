@@ -20,7 +20,7 @@ test('current editor frame 32 wins over disk frame zero without collecting drawi
   const manager = { getItems: () => [item], getPlaylist: () => manager, ensureItemBframePath: async () => 'a.bframe' };
   const context = vm.createContext({ ...mod, ...cacheMod, Map, Set, Promise,
     playlistUIState: { mode: 'continuous' }, playlistTimelineUpdateToken: 0, playlistCommentModeGeneration: 0,
-    playlistAggregateCommentRanges: [], playlistCommentStructureKey: "", playlistCommentSegments: [], playlistCommentScanPromise: null,
+    playlistAggregateCommentRanges: [], playlistCommentStructureKey: '', playlistCommentSegments: [], playlistCommentScanPromise: null,
     commentFilterState: { status: 'all' }, videoPlayer: { fps: 24 },
     timeline: { clearCommentMarkers() {}, renderPlaylistCommentRanges(r) { context.timelineRanges = r; }, setPlaylistTimeline() {}, setCurrentTime() {} },
     getPlaylistManager: () => manager, collectPlaylistMetadata: async () => new Map(),
@@ -81,7 +81,7 @@ test('one changed cut in 100 refreshes only its snapshot and leaves segment meta
   let reads = 0; let probes = 0; let clears = 0;
   const context = vm.createContext({ ...mod, playlistUIState: { mode: 'continuous' }, playlistCommentModeGeneration: 0,
     playlistTimelineUpdateToken: 0, playlistCommentSegments: segments, playlistCommentScanPromise: null,
-    playlistAggregateCommentRanges: [], getPlaylistManager: () => manager, isSameFilePath: (a,b) => a===b,
+    playlistAggregateCommentRanges: [], getPlaylistManager: () => manager, isSameFilePath: (a,b) => a === b,
     readPlaylistCommentSnapshot: async path => { reads++; assert.equal(path, '52.bframe'); return { comments: { layers: [{ id: 'l', markers: [{ id: 'm', startFrame: 32 }] }] } }; },
     commentFilterState: { status: 'all' }, filterPlaylistAggregateCommentRanges: r => r,
     timeline: { playlistDuration: 300, clearCommentMarkers() { clears++; }, renderPlaylistCommentRanges() {} },
@@ -91,5 +91,18 @@ test('one changed cut in 100 refreshes only its snapshot and leaves segment meta
   await context.refreshPlaylistCommentsForItem('52');
   assert.equal(reads, 1); assert.equal(probes, 0); assert.equal(clears, 0);
   assert.equal(context.playlistCommentSegments, segments);
-  assert.equal(context.playlistAggregateCommentRanges[0].globalStartTime, 156 + 32/24);
+  assert.equal(context.playlistAggregateCommentRanges[0].globalStartTime, 156 + 32 / 24);
+});
+
+
+test('list filtering keeps unknown timing after valid comments within its cut', () => {
+  const context = vm.createContext({ filterByAuthors: rows => rows, getActiveCommentFilter: () => 'all' });
+  vm.runInContext(appFunction('filterPlaylistAggregateCommentRanges'), context);
+  const rows = context.filterPlaylistAggregateCommentRanges([
+    { id: 'zero', itemIndex: 0, globalStartTime: 0 },
+    { id: 'bad', itemIndex: 0, globalStartTime: null, timingValid: false },
+    { id: 'later', itemIndex: 0, globalStartTime: 1 },
+    { id: 'next', itemIndex: 1, globalStartTime: 3 }
+  ]);
+  assert.deepEqual(Array.from(rows, r => r.id), ['zero', 'later', 'bad', 'next']);
 });

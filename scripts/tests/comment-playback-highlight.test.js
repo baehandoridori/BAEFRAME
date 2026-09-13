@@ -18,9 +18,9 @@ test('playlist item identity disambiguates an inclusive boundary; cutlist uses g
 });
 test('500 rows keep selection, focus, drafts and scroll with no HTML writes or repeated DOM queries', async () => {
   const { applyCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
-  const dom = new JSDOM(`<div id="list">${Array.from({length:500},(_,i)=>`<div class="comment-item ${i===1?'selected':''}" data-playback-comment-key="${i}"><textarea>draft</textarea></div>`).join('')}</div>`);
-  const list = dom.window.document.querySelector('#list'); const editor = list.children[1].firstChild; editor.focus(); editor.setSelectionRange(1,3); list.scrollTop=88;
-  const query = list.querySelectorAll.bind(list); let queries=0;
+  const dom = new JSDOM(`<div id="list">${Array.from({ length:500 },(_,i) => `<div class="comment-item ${i === 1 ? 'selected' : ''}" data-playback-comment-key="${i}"><textarea>draft</textarea></div>`).join('')}</div>`);
+  const list = dom.window.document.querySelector('#list'); const editor = list.children[1].firstChild; editor.focus(); editor.setSelectionRange(1,3); list.scrollTop = 88;
+  const query = list.querySelectorAll.bind(list); let queries = 0;
   list.querySelectorAll = (...args) => { queries++; return query(...args); };
   Object.defineProperty(list, 'innerHTML', { set() { throw new Error('DOM replaced'); } });
   applyCommentPlaybackHighlight(list, new Set(['1','2']));

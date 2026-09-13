@@ -17,7 +17,7 @@ test('refresh keeps the actual editing DOM, draft, selection and focus; last ref
 
 const fs = require('node:fs'); const path = require('node:path'); const vm = require('node:vm');
 const appSource = fs.readFileSync(path.join(__dirname, '../../renderer/scripts/app.js'), 'utf8');
-function fn(name) { const start = appSource.indexOf(`function ${name}(`); return appSource.slice(start, appSource.indexOf('\n  }', start)+4); }
+function fn(name) { const start = appSource.indexOf(`function ${name}(`); return appSource.slice(start, appSource.indexOf('\n  }', start) + 4); }
 test('actual playlist and normal list renderers defer refresh while an editor owns the DOM', async () => {
   const { createCommentEditSession } = await import('../../renderer/scripts/modules/comment-edit-session.js');
   for (const name of ['renderPlaylistContinuousCommentList', 'updateCommentListImmediate']) {

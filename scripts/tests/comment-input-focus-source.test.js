@@ -34,17 +34,9 @@ test('right sidebar comment input is covered by the same focus recovery path', (
   assert.match(appSource, /target\.closest\('\.comment-input,/);
 });
 
-test('video panning does not steal mouse down from comment editors', () => {
-  const panHandlerMatch = appSource.match(/elements\.videoWrapper\?\.addEventListener\('mousedown', \(e\) => \{([\s\S]*?)\n  \}\);/);
-  assert.ok(panHandlerMatch, 'video wrapper panning mousedown handler should exist');
-  const panHandlerSource = panHandlerMatch[1];
-
-  assert.match(panHandlerSource, /if \(getCommentEditableTarget\(e\.target\)\) return;/);
-  assert.ok(
-    panHandlerSource.indexOf('if (getCommentEditableTarget(e.target)) return;') <
-      panHandlerSource.indexOf('if (canPanVideo() && e.button === 0)'),
-    'comment editor guard should run before panning preventDefault'
-  );
+test('video pointer panning checks comment editors before gesture capture', () => {
+  assert.match(appSource, /canStart: e => !getCommentEditableTarget\(e\.target\) && canPanVideo\(\)/);
+  assert.match(appSource, /addEventListener\('pointerdown', e => \{[\s\S]*videoPanGesture\.pointerDown\(e\)/);
 });
 
 test('pending marker input stops pointer events from bubbling into video panning', () => {

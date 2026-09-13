@@ -19,7 +19,7 @@
 
 ## 진행
 
-T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR/머지/배포 아직 미수행.
+T0~T8 및 T9 구현 커밋 완료. T10 통합 검증 진행. 아래 각 task 수치는 그 task 시점의 검사이며, 최신 통합 결과는 T10에 기록한다.
 - T0 최종 결과: 271 pass / 0 fail / 0 cancelled, exit 0.
 
 ## T1
@@ -97,3 +97,61 @@ T0 검증 완료 후 T1 시작. T1~T10 미완료. 빌드/실제 앱/태블릿/PR
 - T7 취소에서 다른 pointerId 무시와 종료 여부 반환을 보완했다.
 - RED: validator 미구현 1 fail, ownership 미구현 1 fail. 초기 전체 검사 225 fail 중 223은 npm ci --ignore-scripts로 생긴 canvas native 모듈 미설치였다. npm rebuild canvas 성공 후 실제 Fabric 검사가 실행됐다. 나머지 2개는 새 bridge/번들 경로의 기존 계약 갱신이었다.
 - bundle exit0, T8 관련 node tests exit0 / pass579 / fail0 / cancelled0 (`.local/review-playback-input/T8-final.log`). 실제 앱/실물 태블릿은 아직 미수행.
+
+
+## T10 — 통합 검증
+
+- 신규 검사를 package.json의 실제 playlist/mpv/frame-grid/comment-input/ux/video-pan 명령에 연결했다. 버전은 기능 추가와 하위 호환 수정 범위에 맞춰 2.12.0-beta로 올렸다.
+- 기존 소스 검사 중 옛 전체 Promise.all/마우스 이벤트/preload 경로를 강제하던 항목은 새 동작의 안전 계약을 검사하도록 갱신했다. 기존 fixture harness에 새 queue/pan 정책 의존성을 추가했다.
+- ESLint는 숨김 worktree를 기본 제외하므로 ignore:false로 변경 파일을 실제 검사했다. CRLF를 LF로 통일하고 새 코드의 스타일 오류를 수정했다.
+- 실제 앱에서 native mpvLoad 계측 누락을 발견해 실제 load 호출 시작/완료에 연결했다. thumbnail 준비를 mpvLoad 종료로 표시하지 않는다. firstPlay는 재생 호출 완료일 뿐 최초 영상 표시 시간이 아니다.
+- 추가 RED/GREEN: 같은 댓글의 다른 답글 저장이 합쳐지는 재현 5 pass/1 fail → reply id로 분리 후 6 pass/0 fail. 저장 실패 이유를 잘못된 권한 오류로 덮어쓰지 않도록 수정했다.
+- 추가 RED/GREEN: 저장 원본의 endFrame=0이 생성 기본값96으로 바뀌는 실제 CommentMarker.fromJSON 재현 11 pass/1 fail → 로드 시 원본 시간과 누락을 보존 후 12 pass/0 fail. 새 댓글 생성의 기본 길이는 유지하고, 누락된 기존 댓글 시간은 0으로 변환하지 않는다. 끝이 없는 기존 댓글은 한 프레임으로 해석한다.
+
+### 격리 앱과 데이터 경계
+
+- Playwright Electron으로 별도 userData와 --skip-shell-registration/--multi-instance-user-data 실행. 익명 A(3초24fps)/B(5초24fps)/C(3초30fps) 영상을 FFmpeg로 생성하고 프레임 번호를 새겼다. 기존 실행 앱을 종료·재시작하지 않았다.
+- 외부 네트워크는 테스트 앱 session에서 차단했다. 이때 기존 Liveblocks 초기 연결 대기가 첫 저장을 막아, 테스트 페이지 debugger 경계에서 협업 시작을 실패시키는 가짜 구현을 주입했다. 이는 제품 코드 변경이 아니며 원격 협업 성공을 의미하지 않는다.
+- 최초 그림은 위 연결 대기로 수동 fixture export 후 재열기했다. 이후 실제 saveThroughCheckpoint/CAS 저장을 성공시켜 저장 전후 그림 동일성을 확인했다. 수동 export와 제품 저장을 구분한다.
+- import fixture에 createdAt을 빠뜨려 InvalidDate 오류가 한 차례 발생했다. 익명 fixture를 올바른 직렬화 형식으로 수정 후 실제 저장 성공. 제품 오류/성공 수치에 섞지 않았다.
+- native overlay 150%에서 (120,40) CSS px mouse 이동 → main/runtime pan(80,26.6667), objects/undo/mutation 증가0. 실제 태블릿 검증은 미수행.
+- 실제 타임라인 drag release → UI frame58. mpvScreenshot의 burned-in A58을 이미지로 확인. 해당 프레임의 새 그림은 drawingsV3 keyframe58에 저장됐다.
+- 3컷 목록: A24=로컬1초/전체1초, B32=로컬1초8프레임/전체4초8프레임, C30=로컬1초/전체9초. 실제 frame0은 00:00:00:00 유지. 중복 컷 시간 배지는 없다.
+- 완료→다음 컷→복귀 제품 저장 성공, 완료 true. drawingsV3/manualVersions 및 root key 집합 동일. 첫 실측 다음 컷 요청은 이벤트 루프 대기로62.5ms여서 '50ms 이내 실기' 통과로 쓰지 않는다. 50ms race는 통제 자동 검사로 검증했다.
+- CDP native overlay keyDown은 확인됐지만 sendInputEvent keyUp은 테스트 자동화에서 전달되지 않았다. OS 강제 입력은 대상 foreground 검증이 실패해 보내지 않았다. 메인 Space tap 재생과 native mouse pan은 확인, 실제 OS focus handoff·키 유실·태블릿은 미확인.
+
+### 최신 검사 결과
+
+| suite | pass | fail | cancelled | exit |
+|---|---:|---:|---:|---:|
+| test:playlist | 353 | 0 | 0 | 0 |
+| test:mpv | 394 | 0 | 0 | 0 |
+| test:frame-grid | 68 | 0 | 0 | 0 |
+| test:comment-input | 32 | 0 | 0 | 0 |
+| test:comment-popout | 52 | 0 | 0 | 0 |
+| test:ux | 73 | 0 | 0 | 0 |
+| test:fabric-drawing-persistence | 166 | 0 | 0 | 0 |
+| test:fabric-drawing-pilot | 630 | 0 | 0 | 0 |
+
+- 번들 생성 exit0, 변경 파일 ESLint 오류0. 로그는 `.local/review-playback-input/T10-*`에 보존했다. suite는 일부 검사가 겹치므로 합계를 고유 테스트 수로 쓰지 않는다.
+- 쓰기 전 잠금/권한 거절이 영구 저장 실패로 남아 이동을 막는 재현6 pass/1 fail → mutation 전 거절과 실제 실패를 구분 후7 pass/0 fail. 실제 저장 실패는 계속 재시도 성공까지 이동을 막는다.
+- 최종 실제 완료→즉시 다음 컷: local20/Drive20 모두 저장·전환 성공, 요청 간격 최대1ms. 별도 pending 목록 검사0.4ms에 aria-busy=true/저장 중 확인. 초기62.5ms 측정과 구분한다.
+- 실제 수정창 한글 멘션 후보 선택 성공. frame32로 이동하고 markersChanged를 발생시켜도 같은 DOM/초안/포커스 유지.
+- 성능 조건/원본 JSON/median·p95/이미지: [T10 실제 검증 증거](../docs/superpowers/plans/2026-09-14-playlist-review-evidence/T10/README.md). local warm p95 1399.7→980.2ms, Drive1465.8→1005.4ms. versionScan p9544.9ms로 조건부 지연 로드 미적용. cold와 Drive 지연 제거는 주장하지 않는다.
+
+### 요구별 인수 상태
+
+| 요구 | 구현/자동 검사 | 실제 격리 앱 | 미확인 |
+|---|---|---|---|
+| R1 | 시간 출처·0/누락·FPS·캐시 통과 | 3컷 로컬/전체 시간 | 실제 업무 파일 시나리오 |
+| R2 | queue/checkpoint/CAS conflict/실패·전환 보호 통과 | local/Drive40회 즉시 전환 및 재열기·그림 보존 | 다른 PC 동시 편집 |
+| R3 | 100컷 부분 갱신·단계 계측 통과 | baseline/after local/Drive 각20 warm 및 first-touch 별도 | cold 다운로드·모든 환경의 끊김 제거 |
+| R4 | 메인/host 입력 소유권과 댓글 차단 통과 | native 포인터 경로 작동 | 실물 펜으로 점 위 획 |
+| R5 | 편집면·IME·pointer·draft 검사 통과 | 수정창 한글 후보와 DOM/초안 유지 | OS IME 장치·실물 펜 선택 |
+| R6 | 겹친 구간·현재 컷·필터·DOM delta 통과 | frame32 해당 댓글 강조 | 장시간 재생·다른 PC |
+| R7/R8 | 엄격 IPC·실제 Fabric DOM·cancel/flush/session 통과 | native mouse pan, mutation/undo0, 메인 Space tap | 실물 태블릿·실제 OS keyup/focus handoff |
+| R9 | 최종 release·혼합 FPS·DPR·scroll·cutlist 통과 | burned-in58/UI58/그림 저장58 | 기타 실제 디코더/장치 |
+
+PR·머지·정확한 merge SHA 빌드·배포는 다음 릴리스 단계에서 기록한다. 태블릿 등 미확인은 자동 검사나 빌드 성공으로 대체하지 않는다.
+
+- 추가 실제 익명 D 재열기: start/end0 보존, 시간 누락 행의 `시간 정보 없음` 표시 확인. 필터가 null 시간을0으로 다시 정렬하던 문제3 pass/1 fail 재현 후 컷 안의 유효 시간 뒤에 배치하도록 수정했다.

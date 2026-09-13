@@ -2128,7 +2128,7 @@ function createActualLoadRaceScenario({
     elements,
     videoPlayer,
     reviewDataManager,
-    endVideoPan() {},
+    endVideoPan() {}, resetViewportPanCycle() {},
     finishCommentEdit() {},
     createTransitionMetrics: () => ({ mark() {}, finish() {} }),
     playlistResolutionQueue: { lockPaths: () => () => {}, drainPaths: async () => {} },

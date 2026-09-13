@@ -15,7 +15,7 @@ test('Fabric active/preparing/recovery blocks comment input while legacy canvas 
   const dom = new JSDOM('<div id="markers"></div><div class="comment-marker-tooltip visible pinned"></div>');
   const noop = () => {};
   const context = vm.createContext({ document: dom.window.document, markerContainer: dom.window.document.querySelector('#markers'),
-    endVideoPan() {}, state: { isDrawMode: false }, elements: {}, activeMarkerDragCancels: new Set(),
+    endVideoPan() {}, resetViewportPanCycle() {}, state: { isDrawMode: false }, elements: {}, activeMarkerDragCancels: new Set(),
     fabricDrawingPilotStatusSnapshot: null, lastLoggedFabricPersistenceReason: null,
     fabricDrawingPilotFailureToastShown: false, fabricDrawingPilotUiEngaged: false,
     seedFabricDrawingLayerAssignmentTracking: noop, pushFabricPilotLayerView: noop,

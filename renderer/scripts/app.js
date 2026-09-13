@@ -985,7 +985,7 @@ async function initApp() {
   let pendingVideoPan = null;
   let playlistCommentModeGeneration = 0;
   let playlistCommentSegments = [];
-  let playlistCommentStructureKey = "";
+  let playlistCommentStructureKey = '';
   let playlistCommentRevalidationTimer = null;
   let playlistCommentRevalidationRunning = false;
   let playlistCommentScanPromise = null;
@@ -1063,7 +1063,7 @@ async function initApp() {
     playlistProgressById.clear();
     playlistProgressRefreshPaths.clear();
     playlistCommentSegments = [];
-    playlistCommentStructureKey = "";
+    playlistCommentStructureKey = '';
     playlistCommentScanPromise = null;
     clearInterval(playlistCommentRevalidationTimer);
     playlistCommentRevalidationTimer = null;
@@ -1503,8 +1503,10 @@ async function initApp() {
     const key = commentEditSession.getKey();
     if (element && key) {
       if (discard) commentDrafts.delete(key);
-      else commentDrafts.set(key, { value: 'value' in element ? element.value : element.innerHTML,
-        start: element.selectionStart, end: element.selectionEnd });
+      else {
+        commentDrafts.set(key, { value: 'value' in element ? element.value : element.innerHTML,
+          start: element.selectionStart, end: element.selectionEnd });
+      }
     }
     commentEditSession.end({ flush });
   }
@@ -6471,8 +6473,9 @@ async function initApp() {
   window.addEventListener('blur', () => {
     endVideoPan();
     const epoch = ++viewportFocusEpoch;
+    if (!state.isSpaceHeld) { resetViewportPanCycle(); return; }
     const fence = fabricDrawingPilotController.getViewportPanFence();
-    if (!fence || !state.isSpaceHeld) { resetViewportPanCycle(); return; }
+    if (!fence) { resetViewportPanCycle(); return; }
     // The native host must confirm the actual focused overlay and the same persistence session.
     Promise.resolve(window.electronAPI.getMpvOverlayInputFocus?.()).then(focused => {
       if (epoch !== viewportFocusEpoch) return;
@@ -11026,12 +11029,14 @@ async function initApp() {
 
         if (useMpvPilot) {
           try {
+            transitionMetrics.mark('mpvLoad:start');
             const mpvLoaded = await loadVideoWithMpvPilot(filePath, {
               initialFrame,
               initialTime,
               loadToken,
               isStaleVideoLoad
             });
+            transitionMetrics.mark('mpvLoad:end');
             if (!canContinueVideoLoad()) return false;
             if (!mpvLoaded) {
               log.warn('mpv 파일럿 준비가 중단되어 기존 재생 방식으로 재시도');
@@ -12368,7 +12373,7 @@ async function initApp() {
       replyBadge.textContent = `💬 ${replyCount}`;
       replyBadge.title = `답글 ${replyCount}개 보기`;
       replyBadge.addEventListener('click', (e) => {
-      if (commentInputBlocked()) return;
+        if (commentInputBlocked()) return;
         e.stopPropagation();
         window.scrollToCommentAndExpandThread(marker.id);
       });
@@ -12998,7 +13003,7 @@ async function initApp() {
       e.stopPropagation();
       const newText = (config.editorType === 'textarea' ? editor.value : editor.textContent).trim();
       if (!newText) return;
-      const success = await saveCurrentCommentEdit(markerId, () => commentManager.updateReply(markerId, replyId, { text: newText }));
+      const success = await saveCurrentCommentEdit(markerId, () => commentManager.updateReply(markerId, replyId, { text: newText }), replyId);
       if (success) {
         cleanup();
         onSaved(newText);
@@ -13090,7 +13095,8 @@ async function initApp() {
       filtered = filtered.filter(range => playlistRangeMatchesCommentSearch(range, normalizedSearch));
     }
 
-    return filtered.sort((a, b) => a.globalStartTime - b.globalStartTime);
+    return filtered.sort((a, b) => (a.itemIndex ?? 0) - (b.itemIndex ?? 0) ||
+      Number(a.timingValid === false) - Number(b.timingValid === false) || a.globalStartTime - b.globalStartTime);
   }
 
   function highlightPlaylistAggregateComment(key) {
@@ -13201,7 +13207,7 @@ async function initApp() {
     const item = intent.videoPath
       ? { id: range.itemId, videoPath: intent.videoPath, bframePath: intent.bframePath }
       : playlistManager.getItems().find(candidate => candidate.id === range.itemId);
-    if (!item) throw new Error('재생목록 항목을 찾을 수 없습니다.');
+    if (!item) throw Object.assign(new Error('재생목록 항목을 찾을 수 없습니다.'), { blocksNavigation: false });
     const desiredResolved = intent.desiredResolved ?? !range.resolved;
     const bframePath = await playlistManager.ensureItemBframePath(item);
     if (!bframePath) throw new Error('댓글 파일을 찾을 수 없습니다.');
@@ -13210,8 +13216,8 @@ async function initApp() {
     if (currentBframePath && isSameFilePath(currentBframePath, bframePath)) {
       const marker = commentManager.getMarker(range.markerId);
       const layer = commentManager.layers.find(layer => layer.id === range.layerId);
-      if (!marker || marker.deleted || !layer?.markers?.has(marker.id)) throw new Error('원본 댓글을 찾을 수 없습니다.');
-      if (layer.locked || liveblocksManager.checkEditLock(marker.id)?.isLocked) throw new Error('다른 편집이 진행 중인 댓글입니다.');
+      if (!marker || marker.deleted || !layer?.markers?.has(marker.id)) throw Object.assign(new Error('원본 댓글을 찾을 수 없습니다.'), { blocksNavigation: false });
+      if (layer.locked || liveblocksManager.checkEditLock(marker.id)?.isLocked) throw Object.assign(new Error('다른 편집이 진행 중인 댓글입니다.'), { blocksNavigation: false });
       const previous = applyMarkerResolutionToggle(marker, desiredResolved);
       suppressCommentRangeRefreshOnce = true;
       commentManager._emit('markerUpdated', { marker });
@@ -13236,8 +13242,8 @@ async function initApp() {
       if (!bframeData || typeof expectedVersionToken !== 'string') throw new Error('댓글 파일의 최신 저장 버전을 확인할 수 없습니다.');
       const marker = findMarkerRecordInBframeData(bframeData, range.markerId, range.layerId);
       const layer = bframeData.comments?.layers?.find(layer => layer.id === range.layerId);
-      if (!marker) throw new Error('원본 댓글을 찾을 수 없습니다.');
-      if (layer?.locked) throw new Error('잠긴 댓글 레이어입니다.');
+      if (!marker) throw Object.assign(new Error('원본 댓글을 찾을 수 없습니다.'), { blocksNavigation: false });
+      if (layer?.locked) throw Object.assign(new Error('잠긴 댓글 레이어입니다.'), { blocksNavigation: false });
       const dataVersion = getDataVersion(bframeData);
       const unsupportedMajor = getUnsupportedBframeMajor(dataVersion, BFRAME_VERSION, !hasExplicitBframeVersion(bframeData));
       if (unsupportedMajor !== null) throw new Error(`지원하지 않는 .bframe ${dataVersion} 파일은 이 버전에서 저장할 수 없습니다.`);
@@ -13340,17 +13346,17 @@ async function initApp() {
     }
   }
 
-  async function saveCurrentCommentEdit(markerId, mutate) {
+  async function saveCurrentCommentEdit(markerId, mutate, replyId = '') {
     const owner = reviewDataManager.captureSaveCheckpoint();
-    const intent = { key: `${normalizeComparableFilePath(owner.videoPath)}:edit:${markerId}`,
+    const intent = { key: `${normalizeComparableFilePath(owner.videoPath)}:edit:${markerId}:${replyId}`,
       videoPath: owner.videoPath };
     try {
       return await playlistResolutionQueue.enqueue(intent, async () => {
-        if (!reviewDataManager._ownsSave(owner)) throw new Error('영상이 바뀌어 댓글 수정을 중단했습니다.');
+        if (!reviewDataManager._ownsSave(owner)) throw Object.assign(new Error('영상이 바뀌어 댓글 수정을 중단했습니다.'), { blocksNavigation: false });
         const marker = commentManager.getMarker(markerId);
-        if (!marker || marker.deleted || liveblocksManager.checkEditLock(markerId)?.isLocked) throw new Error('댓글을 수정할 수 없습니다.');
+        if (!marker || marker.deleted || liveblocksManager.checkEditLock(markerId)?.isLocked) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
         const result = mutate();
-        if (!result) throw new Error('댓글을 수정할 수 없습니다.');
+        if (!result) throw Object.assign(new Error('댓글을 수정할 수 없습니다.'), { blocksNavigation: false });
         if (await reviewDataManager.saveThroughCheckpoint(reviewDataManager.captureSaveCheckpoint()) !== true) {
           throw new Error('저장 실패 · 다시 시도');
         }
@@ -14146,7 +14152,7 @@ async function initApp() {
 
             // 권한 없음 시 중단
             if (!updated) {
-              showToast('본인 코멘트만 수정할 수 있습니다.', 'warning');
+              // 저장/권한 실패 사유는 saveCurrentCommentEdit에서 표시한다.
               // 편집 잠금 해제
               liveblocksManager.updatePresence({ activeComment: null });
               return;

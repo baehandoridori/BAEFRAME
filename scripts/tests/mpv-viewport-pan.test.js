@@ -6,11 +6,10 @@ function harness({ canPan = true, delayed = false } = {}) {
   let transform = { scale: 2, panX: 5, panY: 7 }, toggles = 0, draws = 0;
   const commands = [], messages = [], timers = new Map(); let tid = 0;
   const timing = { setTimeout: cb => { timers.set(++tid, cb); return tid; }, clearTimeout: id => timers.delete(id) };
-  let input;
   const owner = createViewportPanOwner({ ...timing, getFence: () => fence, canPan: () => canPan,
     getTransform: () => transform, applyTransform: t => { transform = t; }, togglePlayback: () => toggles++,
     send: value => { commands.push(value); if (!delayed) input.command(value); return true; } });
-  input = createViewportPanInput({ ...timing, getFence: () => fence, createId: () => 'g',
+  const input = createViewportPanInput({ ...timing, getFence: () => fence, createId: () => 'g',
     send: value => { messages.push(value); owner.message(value); return true; },
     applyTransform: t => { transform = t; }, replay: events => { draws += events.filter(e => e.type === 'pointerdown').length; },
     requestAnimationFrame: cb => { timers.set(++tid, cb); return tid; }, cancelAnimationFrame: id => timers.delete(id) });
@@ -95,7 +94,7 @@ test('generated sandbox preload loads with electron-only require and validates f
     assert.equal(name, 'electron');
     return { contextBridge: { exposeInMainWorld: (key, value) => { exposed[key] = value; } },
       ipcRenderer: { send: (...args) => sent.push(args), on: (key, cb) => received.set(key, cb), removeListener: key => received.delete(key) } };
-  }});
+  } });
   vm.runInContext(fs.readFileSync(require.resolve('../../preload/mpv-overlay-preload.bundle.js'), 'utf8'), context);
   assert.ok(exposed.mpvOverlayViewportPan);
   context.bridge = exposed.mpvOverlayViewportPan;

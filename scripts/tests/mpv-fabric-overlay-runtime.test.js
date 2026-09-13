@@ -18249,7 +18249,7 @@ test('native Fabric pointer ownership precedes locked layers and pans without st
   const sent = []; let command;
   const h = createRealFabricHarness({ sceneStore, viewportPanBridge: {
     send(value) { sent.push(value); return true; }, onCommand(callback) { command = callback; return () => {}; }
-  }});
+  } });
   try {
     h.runtime.updateDrawingLayerView({ hostGeneration: 1, videoGeneration: 1, inputRevision: 1,
       sessionId: 'real-fabric-session', layerViewRevision: 1, hiddenObjectIds: [], lockedObjectIds: [], activeLayerDrawable: false });

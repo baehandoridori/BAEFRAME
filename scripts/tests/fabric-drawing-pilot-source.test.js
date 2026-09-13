@@ -75,9 +75,8 @@ test('Fabric pilot controller is initialized with live mpv video and canvas cont
 
 test('overlay capability and real load tokens reconcile only confirmed normal video loads', () => {
   assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+await fabricDrawingPilotInitialization;[\s\S]+await fabricDrawingPilotController\.adoptOverlayCapability\(result\.drawingCapability\);/);
-  const loadVideo = appSource.match(
-    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
-  )?.[1] || '';
+  const loadStart = appSource.indexOf('async function loadVideo(');
+  const loadVideo = appSource.slice(loadStart, appSource.indexOf('\n  }', loadStart) + 4);
   const saveDecisionIndex = loadVideo.indexOf("confirm('현재 파일 저장에 실패했습니다. 저장하지 않고 전환할까요?')");
   const beforeChangeIndex = loadVideo.indexOf(
     'await fabricDrawingPilotController.beforeVideoChange(loadToken)'
@@ -166,7 +165,7 @@ test('pilot state and B routing avoid every legacy playback and persistence muta
 });
 
 test('capture keyboard and click firewalls stop legacy drawing mutations while keeping navigation separate', () => {
-  assert.match(appSource, /if \(e\.code === 'Space' && state\.isDrawMode && !isFabricDrawingPilotEngaged\(\)\) \{/);
+  assert.match(appSource, /if \(e\.code === 'Space' && state\.isDrawMode &&[\s\S]*viewportPanOwner\.keyDown/);
   assert.match(appSource, /if \(shouldIgnoreGlobalShortcutTarget\(shortcutTarget, e\)\) return;\n\n\s+if \(fabricDrawingPilotController\.routeKeydown\(e\)\) return;\n\s+if \(shouldBlockFabricDrawingLegacyShortcut\(e\)\) \{/);
   assert.match(appSource, /const FABRIC_DRAWING_LEGACY_SHORTCUTS = new Set\(\[[\s\S]+drawingLayerAdd[\s\S]+keyframeAddWithCopy[\s\S]+frameCopy[\s\S]+onionSkinToggle[\s\S]+drawingToolSelect[\s\S]+\]\);/);
   assert.match(appSource, /document\.addEventListener\('click', handleFabricDrawingPilotLegacyClick, true\);/);
@@ -182,7 +181,7 @@ test('capture keyboard and click firewalls stop legacy drawing mutations while k
   assert.match(appSource, /function shouldSuppressLegacyDrawingForFabricPilot\(\) \{[\s\S]+fabricDrawingPilotController\.shouldOwnDrawingShortcut\(\)[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+\}/);
   assert.match(appSource, /const suppressLegacyDrawing = shouldSuppressLegacyDrawingForFabricPilot\(\);[\s\S]+drawingDataUrl: suppressLegacyDrawing \? '' : getCompositedDrawingOverlayDataUrl\(\),[\s\S]+onionDataUrl: !suppressLegacyDrawing && drawingManager\.onionSkin\?\.enabled/);
   assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
-  assert.match(appSource, /if \(!engaged && !wasEngaged\) \{\n\s+if \(nextState === 'failed'\) notifyFabricDrawingPilotFailure\(\);\n\s+else fabricDrawingPilotFailureToastShown = false;\n\s+return;\n\s+\}/);
+  assert.match(appSource, /if \(!engaged && !wasEngaged\) \{\n\s+syncCommentInteractionPolicy\(\);\n\s+if \(nextState === 'failed'\) notifyFabricDrawingPilotFailure\(\);\n\s+else fabricDrawingPilotFailureToastShown = false;\n\s+return;\n\s+\}/);
   assert.match(appSource, /fabricViewport:\s*getFabricDrawingPilotViewport\(\)/);
 });
 
@@ -192,11 +191,10 @@ test('Fabric persistence is pulled after root refresh and before save and video 
     /reviewDataManager\.setFinalFabricSnapshotHandler\(async \(\) => \{[\s\S]+await fabricDrawingPilotController\.preparePersistenceSnapshotForSave\(\)[\s\S]+throw new Error\('Fabric 드로잉 최신 상태를 가져오지 못했습니다\.'\);[\s\S]+\}\);/
   );
 
-  const loadVideo = appSource.match(
-    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
-  )?.[1] || '';
+  const loadStart = appSource.indexOf('async function loadVideo(');
+  const loadVideo = appSource.slice(loadStart, appSource.indexOf('\n  }', loadStart) + 4);
   const flushIndex = loadVideo.indexOf(
-    'await fabricDrawingPilotController.flushPersistenceBeforeLeave()'
+    'fabricDrawingPilotController.flushPersistenceBeforeLeave()'
   );
   const beforeChangeIndex = loadVideo.indexOf(
     'await fabricDrawingPilotController.beforeVideoChange(loadToken)'
@@ -271,9 +269,8 @@ test('quit transaction disables Fabric before dirty/save decisions and resumes e
 });
 
 test('video teardown drains any late autosave after pausing it and before clearing review managers', () => {
-  const loadVideo = appSource.match(
-    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
-  )?.[1] || '';
+  const loadStart = appSource.indexOf('async function loadVideo(');
+  const loadVideo = appSource.slice(loadStart, appSource.indexOf('\n  }', loadStart) + 4);
   const pauseIndex = loadVideo.indexOf('reviewDataManager.pauseAutoSave()');
   const finalSaveDrainIndex = loadVideo.indexOf(
     'await reviewDataManager.waitForPendingSave()',
@@ -329,9 +326,8 @@ test('stable Fabric UI does not create or poll the old manual verification HUD',
 });
 
 test('persistence gate abandon stays manual, load-local, and clears overlay preservation', () => {
-  const loadVideo = appSource.match(
-    /async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \/\/ 피드백 36/
-  )?.[1] || '';
+  const loadStart = appSource.indexOf('async function loadVideo(');
+  const loadVideo = appSource.slice(loadStart, appSource.indexOf('\n  }', loadStart) + 4);
   assert.match(loadVideo, /let fabricPersistenceAbandonedForThisLoad = false;/);
   assert.match(
     loadVideo,
@@ -339,7 +335,7 @@ test('persistence gate abandon stays manual, load-local, and clears overlay pres
   );
   assert.match(
     loadVideo,
-    /let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;\n\s+if \(!finalFabricPersistenceReadyToLeave\) \{\n\s+finalFabricPersistenceReadyToLeave =\n\s+await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);/
+    /let finalFabricPersistenceReadyToLeave = fabricPersistenceAbandonedForThisLoad;\n\s+if \(!finalFabricPersistenceReadyToLeave\) \{[\s\S]*?finalFabricPersistenceReadyToLeave =\n\s+await fabricDrawingPilotController\.flushPersistenceBeforeLeave\(\);/
   );
   assert.match(
     loadVideo,

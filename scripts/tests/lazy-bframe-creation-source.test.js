@@ -202,7 +202,7 @@ test('playlist aggregate direct save protects identity and uses a version token 
   );
 
   const directSaveStart = appSource.indexOf(
-    'async function togglePlaylistAggregateResolvedWithoutNavigation(range)'
+    'async function togglePlaylistAggregateResolvedWithoutNavigation(range, intent = {})'
   );
   const directSaveEnd = appSource.indexOf(
     'function renderPlaylistAggregateReplies(range, normalizedSearch)',
@@ -217,11 +217,11 @@ test('playlist aggregate direct save protects identity and uses a version token 
   );
   assert.match(
     directSaveSource,
-    /if \(unsupportedMajor !== null\) \{[\s\S]*throw new Error\([\s\S]*?\);[\s\S]*\}/
+    /if \(unsupportedMajor !== null\) throw new Error\(/
   );
   assert.match(
     directSaveSource,
-    /ensureReviewDocumentId\(bframeData\);[\s\S]*if \(!isValidReviewDocumentId\(bframeData\.reviewDocumentId\)\) \{[\s\S]*throw new Error/
+    /ensureReviewDocumentId\(bframeData\);[\s\S]*if \(!isValidReviewDocumentId\(bframeData\.reviewDocumentId\)\) throw new Error/
   );
   assert.match(
     directSaveSource,
@@ -233,7 +233,7 @@ test('playlist aggregate direct save protects identity and uses a version token 
   );
   assert.match(
     directSaveSource,
-    /if \(saved\?\.success !== true\) \{[\s\S]*?restoreMarkerResolution\(marker, previous\);[\s\S]*?saved\?\.conflict[\s\S]*?throw new Error/
+    /if \(saved\?\.success === true\) return marker;[\s\S]*if \(saved\?\.conflict === true && attempt === 0\) continue;[\s\S]*throw new Error/
   );
   assert.ok(
     directSaveSource.indexOf('ensureReviewDocumentId(bframeData);') <

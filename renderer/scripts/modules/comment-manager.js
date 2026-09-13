@@ -5,6 +5,7 @@
 
 import { createLogger } from '../logger.js';
 import { getAuthManager } from './auth-manager.js';
+import { readPlaylistMarkerFrame } from './playlist-comment-index.js';
 
 const log = createLogger('CommentManager');
 
@@ -190,7 +191,9 @@ export class CommentMarker {
    * 특정 프레임에서 보이는지 확인
    */
   isVisibleAtFrame(frame) {
-    return frame >= this.startFrame && frame <= this.endFrame;
+    const start = readPlaylistMarkerFrame(this.startFrame);
+    const end = readPlaylistMarkerFrame(this.endFrame) ?? start;
+    return start !== null && frame >= start && frame <= end;
   }
 
   /**
@@ -258,7 +261,7 @@ export class CommentMarker {
    * JSON에서 생성
    */
   static fromJSON(json) {
-    return new CommentMarker({
+    const marker = new CommentMarker({
       ...json,
       createdAt: new Date(json.createdAt),
       updatedAt: json.updatedAt ? new Date(json.updatedAt) : new Date(json.createdAt),
@@ -270,6 +273,11 @@ export class CommentMarker {
         updatedAt: r.updatedAt ? new Date(r.updatedAt) : (r.createdAt ? new Date(r.createdAt) : new Date())
       }))
     });
+    // New markers keep the creation default; loaded records retain their saved timing.
+    const start = readPlaylistMarkerFrame(json.startFrame);
+    marker.startFrame = start ?? json.startFrame;
+    marker.endFrame = readPlaylistMarkerFrame(json.endFrame) ?? marker.startFrame;
+    return marker;
   }
 }
 
@@ -374,8 +382,9 @@ export class CommentManager extends EventTarget {
         const sourceFps = Number(marker.fps) > 0 ? Number(marker.fps) : 24;
         if (sourceFps !== nextFps) {
           const factor = nextFps / sourceFps;
-          const startFrame = Number(marker.startFrame) || 0;
-          const endFrame = Number(marker.endFrame) || startFrame;
+          const startFrame = readPlaylistMarkerFrame(marker.startFrame);
+          if (startFrame === null) return;
+          const endFrame = readPlaylistMarkerFrame(marker.endFrame) ?? startFrame;
           marker.startFrame = Math.max(0, Math.round(startFrame * factor));
           marker.endFrame = Math.max(marker.startFrame, Math.round(endFrame * factor));
         }

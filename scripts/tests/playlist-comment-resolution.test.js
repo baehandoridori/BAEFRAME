@@ -91,14 +91,14 @@ test('CAS conflict retries the desired state once while preserving the latest un
   const range = { itemId: 'a', markerId: 'm', layerId: 'l', resolved: false };
   const manager = { getItems: () => [{ id: 'a', videoPath: 'a.mp4' }], ensureItemBframePath: async () => 'a.bframe' };
   const context = vm.createContext({ getPlaylistManager: () => manager,
-    reviewDataManager: { getBframePath: () => 'b.bframe' }, isSameFilePath: (a,b) => a===b,
+    reviewDataManager: { getBframePath: () => 'b.bframe' }, isSameFilePath: (a,b) => a === b,
     userName: 'tester', BFRAME_VERSION: '2.0', getDataVersion: () => '2.0', getUnsupportedBframeMajor: () => null,
     hasExplicitBframeVersion: () => true, ensureReviewDocumentId() {}, isValidReviewDocumentId: () => true,
     liveblocksManager: { checkEditLock: () => ({ locked: false }) },
     window: { electronAPI: {
       loadReviewSnapshot: async () => ({ versionToken: String(++reads), data: { reviewDocumentId: 'valid', untouched: reads,
-        drawingsV3: { sentinel: reads }, comments: { layers: [{ id: 'l', markers: [{ id: 'm', resolved: reads===2 }, { id: 'other', text: 'new'+reads }] }] } } }),
-      saveReview: async (path, data) => { records.push(structuredClone(data)); return records.length===1 ? { success: false, conflict: true } : { success: true }; }
+        drawingsV3: { sentinel: reads }, comments: { layers: [{ id: 'l', markers: [{ id: 'm', resolved: reads === 2 }, { id: 'other', text: 'new' + reads }] }] } } }),
+      saveReview: async (path, data) => { records.push(structuredClone(data)); return records.length === 1 ? { success: false, conflict: true } : { success: true }; }
     } }
   });
   for (const name of ['findMarkerRecordInBframeData', 'snapshotMarkerResolution', 'applyMarkerResolutionToggle', 'restoreMarkerResolution', 'togglePlaylistAggregateResolvedWithoutNavigation']) vm.runInContext(appFunction(name), context);
@@ -107,4 +107,35 @@ test('CAS conflict retries the desired state once while preserving the latest un
   assert.equal(records.length, 2);
   assert.equal(records[1].comments.layers[0].markers[1].text, 'new2');
   assert.deepEqual(records[1].drawingsV3, { sentinel: 2 });
+});
+
+
+test('reply edits on the same marker retain distinct save intents', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const held = deferred(); const edits = []; let saves = 0;
+  const context = vm.createContext({
+    playlistResolutionQueue: createPlaylistResolutionQueue({ keyForPath: p => p }),
+    normalizeComparableFilePath: p => p,
+    reviewDataManager: { captureSaveCheckpoint: () => ({ videoPath: 'A' }), _ownsSave: () => true,
+      saveThroughCheckpoint: async () => { if (++saves === 1) await held.promise; return true; } },
+    commentManager: { getMarker: () => ({}) }, liveblocksManager: { checkEditLock: () => null }, showToast() {}
+  });
+  vm.runInContext(appFunction('saveCurrentCommentEdit'), context);
+  const first = context.saveCurrentCommentEdit('marker', () => { edits.push('reply1'); return true; }, 'reply1');
+  const second = context.saveCurrentCommentEdit('marker', () => { edits.push('reply2'); return true; }, 'reply2');
+  await Promise.resolve(); held.resolve(); await Promise.all([first, second]);
+  assert.deepEqual(edits, ['reply1', 'reply2']);
+  assert.equal(saves, 2);
+});
+
+
+test('rejected permissions before mutation do not trap navigation; actual failed writes still do', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const queue = createPlaylistResolutionQueue({ keyForPath: p => p });
+  await assert.rejects(queue.enqueue({ key: 'locked', videoPath: 'A' }, () => {
+    throw Object.assign(new Error('locked'), { blocksNavigation: false });
+  }), /locked/);
+  await queue.drainPaths(['A']);
+  await assert.rejects(queue.enqueue({ key: 'write', videoPath: 'A' }, () => { throw new Error('disk'); }), /disk/);
+  await assert.rejects(queue.drainPaths(['A']), /disk/);
 });

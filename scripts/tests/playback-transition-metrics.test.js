@@ -34,3 +34,11 @@ test('playlist progress accepts a snapshot reader for items and totals without d
   assert.equal((await manager.getItemProgress('a.bframe', { readReview })).total, 2);
   assert.deepEqual(await manager.getTotalProgress({ readReview }), { total: 4, resolved: 2, percent: 50 });
 });
+
+
+test('native load timing surrounds the media operation, not thumbnail preparation', () => {
+  const source = require('node:fs').readFileSync(require('node:path').join(__dirname, '../../renderer/scripts/app.js'), 'utf8');
+  assert.match(source, /mark\('mpvLoad:start'\);\s+const mpvLoaded = await loadVideoWithMpvPilot[\s\S]*?mark\('mpvLoad:end'\);/);
+  const thumbnails = source.slice(source.indexOf('thumbnailVideoPath = await resolveMpvThumbnailVideoPath'));
+  assert.doesNotMatch(thumbnails.slice(0, thumbnails.indexOf('shouldGenerateThumbnails =')), /mpvLoad/);
+});

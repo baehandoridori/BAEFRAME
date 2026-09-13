@@ -78,7 +78,7 @@ test('playlist row progress loads in parallel before rendering rows', () => {
   assert.ok(renderMatch, 'playlist item renderer should exist');
   const renderSource = renderMatch[1];
 
-  assert.match(renderSource, /const progressById = new Map\(await Promise\.all\(items\.map\(async item =>/);
+  assert.match(renderSource, /const progressById = new Map\(\);[\s\S]*await Promise\.all\(\[worker\(\), worker\(\)\]\);/);
   assert.ok(
     renderSource.indexOf('const progressById = new Map') <
       renderSource.indexOf('for (let i = 0; i < items.length; i++)'),

@@ -278,3 +278,17 @@ test('numeric frames override stale labels for integer and fractional segment fp
     assert.equal(m.formatPlaylistCommentLabel({ ...range, localStartTimecode: '00:00:00:00' }), `${m.getPlaylistCutLabel(range)} ${range.localStartTimecode}`);
   }
 });
+
+
+test('loaded comments retain genuine zero, missing time, and single-frame endpoints', async () => {
+  const { CommentMarker } = await import('../../renderer/scripts/modules/comment-manager.js');
+  const zero = CommentMarker.fromJSON({ id: 'zero', startFrame: 0, endFrame: 0, createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(zero.endFrame, 0);
+  const missing = CommentMarker.fromJSON({ id: 'missing', createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(missing.startFrame, undefined);
+  assert.equal(missing.isVisibleAtFrame(0), false);
+  const single = CommentMarker.fromJSON({ id: 'single', startFrame: 32, createdAt: '2026-09-14T00:00:00Z' });
+  assert.equal(single.endFrame, 32);
+  assert.equal(single.isVisibleAtFrame(32), true);
+  assert.equal(single.isVisibleAtFrame(33), false);
+});

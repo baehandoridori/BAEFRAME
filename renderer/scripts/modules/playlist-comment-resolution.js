@@ -15,7 +15,7 @@ export function createPlaylistResolutionQueue({ keyForPath }) {
         failures.delete(intent.key);
         return result;
       }).catch(error => {
-        failures.set(intent.key, { path, error });
+        if (error?.blocksNavigation !== false) failures.set(intent.key, { path, error });
         throw error;
       }).finally(() => {
         if (pending.get(intent.key) === record) pending.delete(intent.key);

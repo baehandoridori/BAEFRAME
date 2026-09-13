@@ -5025,7 +5025,7 @@ class MPVOverlayHost {
       this.activeCollaborationDragPointerId = null;
       this.desiredInputEnabled = false;
       this.activeSessionId = null;
-    this.viewportPanGesture = null;
+      this.viewportPanGesture = null;
       this.currentToolRevision = -1;
       this.currentBrushRevision = -1;
       this.currentLayerViewRevision = -1;
