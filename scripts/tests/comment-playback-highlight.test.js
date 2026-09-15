@@ -32,6 +32,68 @@ test('500 rows keep selection, focus, drafts and scroll with no HTML writes or r
   assert.equal(dom.window.document.activeElement,editor); assert.equal(editor.selectionStart,1); assert.equal(editor.value,'draft'); dom.window.close();
 });
 
+function scrollFixture() {
+  const dom = new JSDOM('<section class="comment-panel"><div id="list"><div data-playback-comment-key="a"></div><div data-playback-comment-key="b"></div></div><textarea>draft</textarea></section>');
+  const list = dom.window.document.querySelector('#list');
+  // jsdom has no layout; supply viewport geometry while using real elements/state.
+  list.getBoundingClientRect = () => ({ top: 100, bottom: 300, height: 200 });
+  Object.defineProperty(list, 'clientHeight', { value: 200 });
+  list.children[0].getBoundingClientRect = () => ({ top: 600 - list.scrollTop, bottom: 680 - list.scrollTop, height: 80 });
+  list.children[1].getBoundingClientRect = () => ({ top: 900 - list.scrollTop, bottom: 980 - list.scrollTop, height: 80 });
+  return { dom, list };
+}
+
+test('newly active offscreen comment scrolls into view without repeatedly pulling the list back', async () => {
+  const { applyCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.ok(list.scrollTop > 0, 'active comment must enter the viewport');
+  assert.ok(list.children[0].getBoundingClientRect().bottom <= 300);
+  const position = list.scrollTop;
+  applyCommentPlaybackHighlight(list, new Set(['a', 'b']));
+  assert.ok(list.scrollTop > position, 'new overlapping comment must be revealed');
+  assert.equal(list.children[0].dataset.currentFrame, 'true');
+  assert.equal(list.children[1].dataset.currentFrame, 'true');
+  list.scrollTop = 0; // user reads another comment in the same active range
+  applyCommentPlaybackHighlight(list, new Set(['a', 'b']));
+  assert.equal(list.scrollTop, 0);
+  applyCommentPlaybackHighlight(list, new Set());
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.ok(list.scrollTop > 0, 'returning to a range follows it again');
+  dom.window.close();
+});
+
+test('already visible comment does not move the list; backward seeking brings an earlier comment back', async () => {
+  const { applyCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  list.scrollTop = 500;
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.equal(list.scrollTop, 500);
+  applyCommentPlaybackHighlight(list, new Set(['b']));
+  const laterPosition = list.scrollTop;
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.ok(list.scrollTop < laterPosition);
+  assert.ok(list.children[0].getBoundingClientRect().top >= 100);
+  dom.window.close();
+});
+
+test('editing in the panel preserves draft, focus and scroll while the highlight still updates', async () => {
+  const { applyCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  const editor = dom.window.document.querySelector('textarea');
+  editor.focus(); editor.setSelectionRange(1, 3);
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.equal(list.scrollTop, 0);
+  assert.equal(list.children[0].dataset.currentFrame, 'true');
+  assert.equal(dom.window.document.activeElement, editor);
+  assert.equal(editor.value, 'draft');
+  assert.equal(editor.selectionStart, 1);
+  editor.blur();
+  applyCommentPlaybackHighlight(list, new Set(['b']));
+  assert.ok(list.scrollTop > 0);
+  dom.window.close();
+});
+
 
 function seekHarness(mode) {
   const fs = require('node:fs'); const path = require('node:path'); const vm = require('node:vm');

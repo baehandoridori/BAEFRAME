@@ -12948,9 +12948,11 @@ body.audio-mode .frame-indicator {
 body.drawing-mode-active .comment-marker-tooltip,
 body.drawing-mode-active .comment-marker-tooltip * { pointer-events: none !important; }
 
-.comment-item.is-current-frame, .pr-review.is-current-frame {
+.comments-list .comment-item.is-current-frame,
+.pr-review.is-current-frame {
   box-shadow: inset 3px 0 0 var(--accent-primary);
-  background-color: var(--bg-tertiary);
+  border-color: color-mix(in srgb, var(--accent-primary) 65%, var(--border-subtle));
+  background-color: color-mix(in srgb, var(--accent-primary) 14%, var(--bg-tertiary));
 }
 
 #videoPlayer, #drawingCanvas, #videoWrapper canvas { touch-action: none; }
