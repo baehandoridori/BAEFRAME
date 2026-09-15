@@ -13,13 +13,21 @@ export function getActiveCommentKeys(ranges, { mode, currentFrame, globalTime, c
   }
   return keys;
 }
-export function invalidateCommentPlaybackHighlight(container) { if (container) indexes.delete(container); }
+export function invalidateCommentPlaybackHighlight(container) {
+  const index = container && indexes.get(container);
+  if (!index) return;
+  index.observer?.disconnect();
+  clearTimeout(index.resizeTimer);
+  index.resizeTimer = null;
+  index.observer = null;
+  index.rows = null;
+}
 
 function revealActiveComment(container, row) {
   const panel = container.closest('.comment-panel, .pr-history-popout') || container;
+  if (panel.classList.contains('collapsed') || container.clientHeight <= 0 || container.clientWidth <= 0) return false;
   const focused = container.ownerDocument.activeElement;
-  if (panel.contains(focused) && focused.matches('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, [contenteditable]:not([contenteditable="false"])')) return;
-  if (!row || container.clientHeight <= 0) return;
+  if (panel.contains(focused) && focused.matches('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, [contenteditable]:not([contenteditable="false"])')) return true;
 
   const viewport = container.getBoundingClientRect();
   const bounds = row.getBoundingClientRect();
@@ -30,20 +38,63 @@ function revealActiveComment(container, row) {
   } else if (bounds.bottom > viewport.bottom) {
     container.scrollTop += bounds.bottom - viewport.bottom + padding;
   }
+  return true;
+}
+
+function cancelPendingReveal(index) {
+  index.pendingKey = null;
+  index.waitingForVisibility = false;
+  clearTimeout(index.resizeTimer);
+  index.resizeTimer = null;
+  index.observer?.disconnect();
+  index.observer = null;
+}
+
+function revealPendingComment(container, index, afterResize = false) {
+  if (!index.pendingKey) return;
+  const row = index.rows?.get(index.pendingKey)?.[0];
+  if (!row) {
+    cancelPendingReveal(index);
+    return;
+  }
+  if (!index.waitingForVisibility || afterResize) {
+    if (revealActiveComment(container, row)) {
+      cancelPendingReveal(index);
+      return;
+    }
+    index.waitingForVisibility = true;
+  }
+  // A paused playhead emits no new frame when a hidden panel returns.
+  const Observer = container.ownerDocument.defaultView?.ResizeObserver;
+  if (!index.observer && Observer) {
+    index.observer = new Observer(() => {
+      // Wait for the panel's width transition to settle before measuring rows.
+      clearTimeout(index.resizeTimer);
+      index.resizeTimer = setTimeout(() => {
+        index.resizeTimer = null;
+        revealPendingComment(container, index, true);
+      }, 60);
+    });
+    index.observer.observe(container);
+  }
 }
 
 export function applyCommentPlaybackHighlight(container, keys, { autoScroll = true } = {}) {
   if (!container) return;
   let index = indexes.get(container);
   if (!index) {
-    index = { rows: new Map(), active: new Set() };
+    index = { rows: null, active: new Set(), pendingKey: null, observer: null, resizeTimer: null, waitingForVisibility: false };
+    indexes.set(container, index);
+  }
+  if (!index.rows) {
+    index.rows = new Map();
+    index.active = new Set();
     for (const row of container.querySelectorAll('[data-playback-comment-key]')) {
       const key = row.dataset.playbackCommentKey;
       if (!index.rows.has(key)) index.rows.set(key, []);
       index.rows.get(key).push(row);
       if (row.classList.contains('is-current-frame')) index.active.add(key);
     }
-    indexes.set(container, index);
   }
   const newlyActive = [...keys].filter(key => !index.active.has(key));
   const resumed = autoScroll && index.autoScroll === false;
@@ -61,7 +112,8 @@ export function applyCommentPlaybackHighlight(container, keys, { autoScroll = tr
   index.autoScroll = autoScroll;
   // Follow once when the active range changes, allowing manual reading within it.
   if (autoScroll && (changed || resumed)) {
-    const targetKey = newlyActive[0] || keys.values().next().value;
-    revealActiveComment(container, index.rows.get(targetKey)?.[0]);
+    index.pendingKey = newlyActive[0] || keys.values().next().value;
   }
+  if (!autoScroll || !keys.size) cancelPendingReveal(index);
+  else revealPendingComment(container, index);
 }

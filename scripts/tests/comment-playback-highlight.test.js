@@ -37,7 +37,8 @@ function scrollFixture() {
   const list = dom.window.document.querySelector('#list');
   // jsdom has no layout; supply viewport geometry while using real elements/state.
   list.getBoundingClientRect = () => ({ top: 100, bottom: 300, height: 200 });
-  Object.defineProperty(list, 'clientHeight', { value: 200 });
+  Object.defineProperty(list, 'clientHeight', { value: 200, configurable: true });
+  Object.defineProperty(list, 'clientWidth', { value: 300, configurable: true });
   list.children[0].getBoundingClientRect = () => ({ top: 600 - list.scrollTop, bottom: 680 - list.scrollTop, height: 80 });
   list.children[1].getBoundingClientRect = () => ({ top: 900 - list.scrollTop, bottom: 980 - list.scrollTop, height: 80 });
   return { dom, list };
@@ -112,6 +113,48 @@ test('auto scroll can be disabled without disabling highlights and reenabled at 
   dom.window.close();
 });
 
+test('a hidden panel retries its pending reveal when reopened at the same paused frame', async () => {
+  const { applyCommentPlaybackHighlight, invalidateCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  let visible = false, resized;
+  Object.defineProperty(list, 'clientHeight', { get: () => visible ? 200 : 0 });
+  dom.window.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe() { resized = this.callback; }
+    disconnect() { if (resized === this.callback) resized = null; }
+  };
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.equal(list.scrollTop, 0);
+  invalidateCommentPlaybackHighlight(list); // previous review decoration can rebuild the index while hidden
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  visible = true;
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  assert.equal(list.scrollTop, 0, 'playback updates wait for the pending panel resize to settle');
+  resized?.(); // no new playback event: paused frame is unchanged
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.ok(list.scrollTop > 0);
+  assert.equal(resized, null, 'one-shot visibility observer is released after following');
+  dom.window.close();
+});
+
+test('turning follow off while hidden cancels any deferred scroll', async () => {
+  const { applyCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  let visible = false, resized;
+  Object.defineProperty(list, 'clientWidth', { get: () => visible ? 300 : 0 });
+  dom.window.ResizeObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe() { resized = this.callback; }
+    disconnect() { if (resized === this.callback) resized = null; }
+  };
+  applyCommentPlaybackHighlight(list, new Set(['a']));
+  applyCommentPlaybackHighlight(list, new Set(['a']), { autoScroll: false });
+  visible = true; resized?.();
+  assert.equal(list.scrollTop, 0);
+  assert.equal(resized, null);
+  dom.window.close();
+});
+
 test('auto scroll defaults on for older settings and persists a disabled choice across restarts', async () => {
   const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
   const dom = new JSDOM('', { url: 'https://settings.test' });
@@ -146,6 +189,7 @@ test('the actual checkbox handler applies the preference to current and popup co
   const popup = list.cloneNode(true); list.parentElement.append(popup);
   popup.getBoundingClientRect = list.getBoundingClientRect;
   Object.defineProperty(popup, 'clientHeight', { value: 200 });
+  Object.defineProperty(popup, 'clientWidth', { value: 300 });
   popup.children[0].getBoundingClientRect = () => ({ top: 600 - popup.scrollTop, bottom: 680 - popup.scrollTop, height: 80 });
   const html = fs.readFileSync(path.join(__dirname, '../../renderer/index.html'), 'utf8');
   const markup = new JSDOM(html);
