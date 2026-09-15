@@ -18,7 +18,7 @@ export function invalidateCommentPlaybackHighlight(container) { if (container) i
 function revealActiveComment(container, row) {
   const panel = container.closest('.comment-panel, .pr-history-popout') || container;
   const focused = container.ownerDocument.activeElement;
-  if (panel.contains(focused) && focused.matches('input, textarea, [contenteditable]:not([contenteditable="false"])')) return;
+  if (panel.contains(focused) && focused.matches('input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), textarea, [contenteditable]:not([contenteditable="false"])')) return;
   if (!row || container.clientHeight <= 0) return;
 
   const viewport = container.getBoundingClientRect();
@@ -32,7 +32,7 @@ function revealActiveComment(container, row) {
   }
 }
 
-export function applyCommentPlaybackHighlight(container, keys) {
+export function applyCommentPlaybackHighlight(container, keys, { autoScroll = true } = {}) {
   if (!container) return;
   let index = indexes.get(container);
   if (!index) {
@@ -46,6 +46,7 @@ export function applyCommentPlaybackHighlight(container, keys) {
     indexes.set(container, index);
   }
   const newlyActive = [...keys].filter(key => !index.active.has(key));
+  const resumed = autoScroll && index.autoScroll === false;
   let changed = false;
   for (const key of new Set([...index.active, ...keys])) {
     const active = keys.has(key);
@@ -57,8 +58,9 @@ export function applyCommentPlaybackHighlight(container, keys) {
     }
   }
   index.active = new Set(keys);
+  index.autoScroll = autoScroll;
   // Follow once when the active range changes, allowing manual reading within it.
-  if (changed) {
+  if (autoScroll && (changed || resumed)) {
     const targetKey = newlyActive[0] || keys.values().next().value;
     revealActiveComment(container, index.rows.get(targetKey)?.[0]);
   }

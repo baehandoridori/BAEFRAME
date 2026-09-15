@@ -545,13 +545,13 @@ export function createPreviousReviewPanel({
   void refreshAvailability();
   return {
     setOpen, isOpen: () => opened, refreshContext, refreshAvailability, decorateList, seekSource,
-    updatePlaybackFrame(currentFrame) {
+    updatePlaybackFrame(currentFrame, options = {}) {
       if (!playbackRows) {playbackRows = [...popupList.querySelectorAll('[data-playback-comment-key]')].map(row => ({
         key: row.dataset.playbackCommentKey,
         startFrame: row.dataset.playbackStartFrame === '' ? null : Number(row.dataset.playbackStartFrame),
         endFrame: row.dataset.playbackEndFrame === '' ? null : Number(row.dataset.playbackEndFrame)
       }));}
-      applyCommentPlaybackHighlight(popupList, getActiveCommentKeys(playbackRows, { mode: 'single', currentFrame }));
+      applyCommentPlaybackHighlight(popupList, getActiveCommentKeys(playbackRows, { mode: 'single', currentFrame }), options);
     },
     getAuthorFilterSources: () => !disposed && opened && enabled() ? reviewEntries().map(entry => entry.source) : [],
     suspend() {

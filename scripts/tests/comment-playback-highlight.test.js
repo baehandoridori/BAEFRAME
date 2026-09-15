@@ -94,6 +94,94 @@ test('editing in the panel preserves draft, focus and scroll while the highlight
   dom.window.close();
 });
 
+test('auto scroll can be disabled without disabling highlights and reenabled at the same position', async () => {
+  const { applyCommentPlaybackHighlight } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  applyCommentPlaybackHighlight(list, new Set(['a']), { autoScroll: false });
+  assert.equal(list.scrollTop, 0);
+  assert.equal(list.children[0].dataset.currentFrame, 'true');
+  applyCommentPlaybackHighlight(list, new Set(['b']), { autoScroll: false });
+  assert.equal(list.scrollTop, 0);
+  assert.equal(list.children[0].dataset.currentFrame, 'false');
+  assert.equal(list.children[1].dataset.currentFrame, 'true');
+  const checkbox = dom.window.document.createElement('input');
+  checkbox.type = 'checkbox'; list.parentElement.append(checkbox); checkbox.focus();
+  applyCommentPlaybackHighlight(list, new Set(['b']), { autoScroll: true });
+  assert.ok(list.scrollTop > 0, 'turning on follows the current comment, including with checkbox focused');
+  assert.equal(dom.window.document.activeElement, checkbox);
+  dom.window.close();
+});
+
+test('auto scroll defaults on for older settings and persists a disabled choice across restarts', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const dom = new JSDOM('', { url: 'https://settings.test' });
+  let savedFile = { lightMode: true };
+  dom.window.electronAPI = {
+    loadSettings: async () => ({ success: true, data: savedFile }),
+    saveSettings: async value => { savedFile = JSON.parse(JSON.stringify(value)); return { success: true }; }
+  };
+  const source = fs.readFileSync(path.join(__dirname, '../../renderer/scripts/modules/user-settings.js'), 'utf8')
+    .replace(/^import .*;\r?$/gm, '').replace(/export default UserSettings;/, '').replace(/export /g, '');
+  const context = vm.createContext({ window: dom.window, document: dom.window.document,
+    localStorage: dom.window.localStorage, EventTarget: dom.window.EventTarget, CustomEvent: dom.window.CustomEvent,
+    createLogger: () => ({ info() {}, warn() {}, error() {} }), setTimeout });
+  vm.runInContext(source + '\nthis.TestSettings = UserSettings;', context);
+  const initial = new context.TestSettings(); await initial.waitForReady();
+  assert.equal(initial.getCommentAutoScroll(), true);
+  initial.setCommentAutoScroll(false);
+  assert.equal(JSON.parse(dom.window.localStorage.getItem('baeframe_user_settings')).commentAutoScroll, false);
+  assert.equal(savedFile.commentAutoScroll, false);
+  const reopened = new context.TestSettings(); await reopened.waitForReady();
+  assert.equal(reopened.getCommentAutoScroll(), false);
+  assert.equal(reopened.settings.lightMode, true, 'unrelated preferences are preserved');
+  reopened.setCommentAutoScroll(true);
+  assert.equal(savedFile.commentAutoScroll, true);
+  dom.window.close();
+});
+
+test('the actual checkbox handler applies the preference to current and popup comments without moving the playhead', async () => {
+  const fs = require('node:fs'), path = require('node:path'), vm = require('node:vm');
+  const { applyCommentPlaybackHighlight, getActiveCommentKeys } = await import('../../renderer/scripts/modules/comment-playback-highlight.js');
+  const { dom, list } = scrollFixture();
+  const popup = list.cloneNode(true); list.parentElement.append(popup);
+  popup.getBoundingClientRect = list.getBoundingClientRect;
+  Object.defineProperty(popup, 'clientHeight', { value: 200 });
+  popup.children[0].getBoundingClientRect = () => ({ top: 600 - popup.scrollTop, bottom: 680 - popup.scrollTop, height: 80 });
+  const html = fs.readFileSync(path.join(__dirname, '../../renderer/index.html'), 'utf8');
+  const markup = new JSDOM(html);
+  const checkbox = markup.window.document.getElementById('toggleCommentAutoScroll');
+  list.parentElement.append(dom.window.document.adoptNode(checkbox));
+  const popupModule = fs.readFileSync(path.join(__dirname, '../../renderer/scripts/modules/previous-review-panel.js'), 'utf8');
+  const popupBody = popupModule.match(/    updatePlaybackFrame\(currentFrame[^]*?\n    \},/)?.[0];
+  assert.ok(popupBody);
+  const popupContext = vm.createContext({ popupList: popup, playbackRows: [{ key: 'a', startFrame: 24, endFrame: 48 }], applyCommentPlaybackHighlight, getActiveCommentKeys });
+  const popupPanel = vm.runInContext('({' + popupBody + '})', popupContext);
+  let enabled = false;
+  const context = vm.createContext({
+    toggleCommentAutoScroll: checkbox, commentPlaybackLastPosition: null,
+    userSettings: { getCommentAutoScroll: () => enabled, setCommentAutoScroll: value => { enabled = value; } },
+    playlistUIState: { mode: 'single' }, cutlistUIState: { active: false },
+    getPlaylistManager: () => ({}), getCurrentContinuousSegment: () => null,
+    videoPlayer: { currentFrame: 30, currentTime: 1.25 }, getActiveTimelinePlaybackTime: time => time,
+    commentPlaybackRanges: [{ key: 'a', startFrame: 24, endFrame: 48 }], elements: { commentsList: list },
+    applyCommentPlaybackHighlight, getActiveCommentKeys, previousReviewPanel: popupPanel
+  });
+  const app = fs.readFileSync(path.join(__dirname, '../../renderer/scripts/app.js'), 'utf8');
+  const update = app.match(/  function updateCommentPlaybackHighlight\([^]*?\n  \}/)?.[0];
+  const binding = app.match(/  toggleCommentAutoScroll\?\.addEventListener\('change', \(\) => \{[^]*?\n  \}\);/)?.[0];
+  assert.ok(update); assert.ok(binding);
+  vm.runInContext(update + '\n' + binding, context);
+  checkbox.checked = false; checkbox.dispatchEvent(new dom.window.Event('change'));
+  assert.equal(list.scrollTop, 0); assert.equal(popup.scrollTop, 0);
+  assert.equal(list.children[0].dataset.currentFrame, 'true');
+  assert.equal(popup.children[0].dataset.currentFrame, 'true');
+  checkbox.checked = true; checkbox.dispatchEvent(new dom.window.Event('change'));
+  assert.ok(list.scrollTop > 0); assert.ok(popup.scrollTop > 0);
+  assert.equal(context.videoPlayer.currentFrame, 30);
+  markup.window.close();
+  dom.window.close();
+});
+
 
 function seekHarness(mode) {
   const fs = require('node:fs'); const path = require('node:path'); const vm = require('node:vm');

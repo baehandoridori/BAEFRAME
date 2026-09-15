@@ -198,6 +198,7 @@ export class UserSettings extends EventTarget {
       // 댓글 썸네일 설정
       showCommentThumbnails: true,
       commentThumbnailScale: 35, // 35 ~ 200 (기본값: 35%)
+      commentAutoScroll: true,
       // 토스트 알림 설정
       showToastNotifications: true,
       toastPosition: 'top-center', // top-left, top-center, top-right, bottom-left, bottom-center, bottom-right
@@ -943,6 +944,16 @@ export class UserSettings extends EventTarget {
   }
 
   // ====== 댓글 썸네일 설정 ======
+
+  getCommentAutoScroll() {
+    return this.settings.commentAutoScroll !== false;
+  }
+
+  setCommentAutoScroll(enabled) {
+    this.settings.commentAutoScroll = !!enabled;
+    this._save();
+    this._emit('commentAutoScrollChanged', { enabled: this.settings.commentAutoScroll });
+  }
 
   /**
    * 댓글 썸네일 표시 여부 가져오기

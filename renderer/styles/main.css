@@ -5227,6 +5227,26 @@ button.layer-lock:not(.locked):hover {
   gap: 6px;
 }
 
+.comment-auto-scroll {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  min-height: 24px;
+  color: var(--text-secondary);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.comment-auto-scroll input {
+  width: 12px;
+  height: 12px;
+  margin: 0;
+  accent-color: var(--accent-primary);
+  cursor: pointer;
+}
+
 .filter-chip {
   border: 1px solid var(--glass-border);
   color: var(--text-secondary);
