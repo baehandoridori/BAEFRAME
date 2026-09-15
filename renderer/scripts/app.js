@@ -1873,8 +1873,9 @@ async function initApp() {
     if (position === commentPlaybackLastPosition) return;
     commentPlaybackLastPosition = position;
     const keys = getActiveCommentKeys(commentPlaybackRanges, { mode, currentFrame, globalTime, currentItemId });
-    applyCommentPlaybackHighlight(elements.commentsList, keys);
-    previousReviewPanel?.updatePlaybackFrame?.(currentFrame);
+    const options = { autoScroll: userSettings.getCommentAutoScroll() };
+    applyCommentPlaybackHighlight(elements.commentsList, keys, options);
+    previousReviewPanel?.updatePlaybackFrame?.(currentFrame, options);
   }
 
   function syncPlaybackPositionUI(currentTime, currentFrame, options = {}) {
@@ -4102,6 +4103,7 @@ async function initApp() {
   const btnCommentSettings = document.getElementById('btnCommentSettings');
   const commentSettingsDropdown = document.getElementById('commentSettingsDropdown');
   const toggleCommentThumbnails = document.getElementById('toggleCommentThumbnails');
+  const toggleCommentAutoScroll = document.getElementById('toggleCommentAutoScroll');
   const thumbnailScaleSlider = document.getElementById('thumbnailScaleSlider');
   const thumbnailScaleValue = document.getElementById('thumbnailScaleValue');
   const thumbnailScaleItem = document.getElementById('thumbnailScaleItem');
@@ -4127,6 +4129,13 @@ async function initApp() {
     commentSettingsDropdown?.classList.remove('open');
     btnCommentSettings?.classList.remove('active');
     openUserSettingsModal(false); // 필수 모드 아님
+  });
+
+  // 자동 스크롤은 강조와 별도로 제어하며 다시 켜면 현재 구간부터 따라간다.
+  toggleCommentAutoScroll?.addEventListener('change', () => {
+    userSettings.setCommentAutoScroll(toggleCommentAutoScroll.checked);
+    commentPlaybackLastPosition = null;
+    updateCommentPlaybackHighlight();
   });
 
   // 썸네일 토글 변경
@@ -16183,6 +16192,11 @@ async function initApp() {
   }
 
   // ====== 댓글 설정 초기화 (waitForReady 이후) ======
+  if (toggleCommentAutoScroll) {
+    toggleCommentAutoScroll.checked = userSettings.getCommentAutoScroll();
+    commentPlaybackLastPosition = null;
+    updateCommentPlaybackHighlight();
+  }
   // 썸네일 표시 설정
   if (toggleCommentThumbnails) {
     toggleCommentThumbnails.checked = userSettings.getShowCommentThumbnails();
