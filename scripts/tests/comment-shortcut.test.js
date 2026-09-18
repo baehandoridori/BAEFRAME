@@ -45,7 +45,13 @@ async function createHarness(commentShortcut = { key: 'KeyC', ctrl: false, shift
   }
   vm.runInContext(appFunction('handleKeydown', true), context);
   const pending = [];
+  const errors = [];
+  dom.window.addEventListener('error', event => { errors.push(event.message); event.preventDefault(); });
   dom.window.document.addEventListener('keydown', event => pending.push(context.handleKeydown(event)), true);
+  // 전역 단축키와 같은 document에서 실행되는 실제 하이라이트 listener도 연결한다.
+  // 릴레이의 target=document를 Element로 가정하면 이 경로에서 예외가 발생한다.
+  const highlightStart = appSource.indexOf("  document.addEventListener('keydown',", appSource.indexOf('// 하이라이트 복사/붙여넣기 키보드 단축키'));
+  vm.runInContext(appSource.slice(highlightStart, appSource.indexOf('\n  });', highlightStart) + 6), context);
   const send = async (init, forwarded = false) => {
     if (forwarded) {
       assert.equal(relay.dispatchMpvOverlayKeyboardInput({
@@ -62,6 +68,7 @@ async function createHarness(commentShortcut = { key: 'KeyC', ctrl: false, shift
       }));
     }
     await Promise.all(pending.splice(0));
+    assert.deepEqual(errors, [], 'all document keyboard listeners must accept relayed targets');
   };
   return { dom, context, send, toggles: () => toggles };
 }

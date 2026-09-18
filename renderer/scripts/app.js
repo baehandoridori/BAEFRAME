@@ -5332,7 +5332,7 @@ async function initApp() {
   // 하이라이트 복사/붙여넣기 키보드 단축키
   document.addEventListener('keydown', (e) => {
     // input, textarea에서는 무시
-    if (e.target.matches('input, textarea')) return;
+    if (e.target?.matches?.('input, textarea')) return;
     // Alt 조합(Ctrl+Alt+C/V 프레임 복붙)은 하이라이트 복붙이 아님
     if (e.altKey) return;
 

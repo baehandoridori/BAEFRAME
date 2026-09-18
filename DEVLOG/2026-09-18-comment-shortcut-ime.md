@@ -33,3 +33,4 @@
 - 수정 JS 구문 검사와 `git diff --check` 종료 0.
 - 버전: 2.12.4-beta. main 호스트와 renderer 라우팅만 수정했으며 오버레이 런타임 원본 변경은 없다. npm ci 후 생성 번들 변경 없음.
 - 실제 문제 PC의 IME 상태 및 최종 동작은 아직 미확인. 리뷰·merge·배포 증거는 별도 릴리스 기록에 남긴다.
+- 패키지 실행 점검에서 document로 전달된 키를 하이라이트 단축키 listener가 Element로 가정해 `e.target.matches is not a function`을 발생시키는 것을 확인. 실제 listener를 연결한 테스트에서 2건 실패를 재현하고, optional method guard로 수정한다.
