@@ -9909,6 +9909,9 @@ async function initApp() {
         alt: drawModeShortcut.alt
       });
     }
+    // 댓글 모드는 그리기 오버레이에서 메인 화면으로 돌아가는 동작이다.
+    // 메인에 남은 댓글 초안 포커스가 이 전환 단축키를 삼키지 않게 한다.
+    add(describe('commentMode'));
     for (const actionId of MPV_OVERLAY_RELAY_DRAWING_ACTIONS) add(describe(actionId));
     return shortcuts;
   }
@@ -9951,6 +9954,7 @@ async function initApp() {
       // 작업4: 오버레이 호스트의 키 릴레이가 대조할 drawMode 단축키 서술자.
       // MPV_OVERLAY_DIFF_FIELDS에 없으므로 매 sync마다 항상 실린다.
       drawModeShortcut: getMpvOverlayDrawModeShortcutDescriptor(),
+      commentModeShortcut: userSettings.getShortcut('commentMode'),
       canvas: {
         left: canvasRect.left - wrapperRect.left,
         top: canvasRect.top - wrapperRect.top,
@@ -15242,6 +15246,7 @@ async function initApp() {
     // 댓글 모드
     if (userSettings.matchShortcut('commentMode', e)) {
       e.preventDefault();
+      if (e.repeat) return;
       if (!state.isCommentMode && !(await ensureCutlistCommentTargetReady())) return;
       toggleCommentMode();
       return;

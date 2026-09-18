@@ -2704,6 +2704,49 @@ test('오버레이 릴레이는 동기화된 drawMode 서술자로 조합 입력
   assert.equal(harness.events.some(([name]) => name === 'mainWindow.send'), false);
 });
 
+test('comment shortcut relays Korean IME physical keys with the configured chord only', async () => {
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, { videoGeneration: 12, sessionId: 'comment-ime' });
+  const overlay = harness.windows[0];
+  const emit = input => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', { preventDefault() { prevented = true; } }, {
+      type: 'keyDown', key: 'Process', code: 'KeyC', isComposing: true,
+      shift: false, control: false, alt: false, meta: false, isAutoRepeat: false, ...input
+    });
+    return prevented;
+  };
+  const sent = () => harness.events.filter(([name, channel]) =>
+    name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input');
+
+  await harness.host.updateState({ commentModeShortcut: { key: 'KeyC', ctrl: false, shift: false, alt: false } });
+  for (const key of ['Process', 'ㅊ', 'c']) {
+    harness.events.length = 0;
+    assert.equal(emit({ key }), true, `comment key ${key} should relay`);
+    assert.equal(sent().length, 1);
+    assert.equal(sent()[0][2].code, 'KeyC');
+    assert.notEqual(sent()[0][2].key, 'Process', 'IPC keeps rejecting raw IME sentinel values');
+  }
+
+  await harness.host.updateState({ commentModeShortcut: { key: 'KeyG', shift: true } });
+  await harness.host.updateState({ markerHtml: '' });
+  harness.events.length = 0;
+  for (const input of [
+    {}, { code: 'KeyG' }, { code: 'KeyG', shift: true, control: true },
+    { code: 'KeyG', shift: true, meta: true },
+    { code: 'KeyG', shift: true, key: 'Dead' },
+    { code: 'InjectedCode', shift: true },
+    { code: 'KeyG', shift: 'true' }
+  ]) assert.equal(emit(input), false);
+  assert.equal(sent().length, 0);
+  assert.equal(emit({ code: 'KeyG', shift: true }), true);
+  assert.equal(sent()[0][2].code, 'KeyG');
+  assert.equal(sent()[0][2].shiftKey, true);
+
+  await harness.host.updateState({ commentModeShortcut: null });
+  assert.equal(emit({ code: 'KeyG', shift: true }), false);
+});
+
 test('overlay history shortcuts relay once to the main renderer without host-side history execution', async () => {
   const harness = createDrawingHostHarness();
   await activateDrawingHost(harness, {
