@@ -1,6 +1,6 @@
 {
   "name": "baeframe",
-  "version": "2.12.3-beta",
+  "version": "2.12.4-beta",
   "description": "애니메이션 스튜디오를 위한 비디오 리뷰/피드백 도구",
   "main": "main/index.js",
   "scripts": {
@@ -39,7 +39,7 @@
     "test:fps": "node --test scripts/tests/fps-accuracy-source.test.js",
     "test:audio-waveform": "node --test scripts/tests/audio-waveform-hit-area.test.js",
     "test:collaboration": "node --test scripts/tests/collaboration-cursors-source.test.js",
-    "test:comment-input": "node --test scripts/tests/comment-input-focus-source.test.js scripts/tests/mention-manager-editors.test.js scripts/tests/comment-edit-session.test.js scripts/tests/comment-playback-highlight.test.js",
+    "test:comment-input": "node --test scripts/tests/comment-input-focus-source.test.js scripts/tests/mention-manager-editors.test.js scripts/tests/comment-edit-session.test.js scripts/tests/comment-playback-highlight.test.js scripts/tests/comment-shortcut.test.js",
     "test:comment-popout": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/comment-author-colors.test.js scripts/tests/comment-panel-window.test.js scripts/tests/comment-panel-popout.test.js scripts/tests/comment-popout-integration.test.js scripts/tests/mention-manager-popout.test.js scripts/tests/image-utils-cross-window.test.js",
     "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js scripts/tests/toast-position-source.test.js",
     "test:version": "node --test scripts/tests/version-switch-source.test.js",

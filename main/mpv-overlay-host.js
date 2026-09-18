@@ -2117,7 +2117,7 @@ function isOptionalBoolean(value) {
   return value === undefined || typeof value === 'boolean';
 }
 
-function createForwardedKeyboardInput(input = {}, drawModeShortcut = null) {
+function createForwardedKeyboardInput(input = {}, drawModeShortcut = null, commentModeShortcut = null) {
   if (input.type !== 'keyDown' && input.type !== 'keyUp') return null;
   const key = typeof input.key === 'string' ? input.key : '';
   const code = typeof input.code === 'string' ? input.code : '';
@@ -2131,19 +2131,21 @@ function createForwardedKeyboardInput(input = {}, drawModeShortcut = null) {
       !isOptionalBoolean(input.isComposing)) {
     return null;
   }
-  // 그리기 토글 물리 키는 IME 조합 플래그가 붙어도 릴레이한다. 조합 대상이 없는
-  // 오버레이 창에서 조합 플래그만으로 B가 통째로 사라지던 비대칭을 없앤다.
-  // key 자체가 'Process'/'Dead'/'Unidentified'면 식별 가능한 키 정보가 없고
-  // 렌더러 릴레이 모듈도 독립적으로 거부하므로 예외 없이 계속 차단한다.
-  if ((input.isComposing === true && !matchesDrawModeShortcutInput(input, drawModeShortcut)) ||
-      ['Process', 'Dead', 'Unidentified'].includes(key) ||
+  // 입력을 소유한 그리기 오버레이에는 텍스트 조합 대상이 없다. 동기화된 댓글
+  // 단축키의 물리 코드와 수식키가 맞으면 한글 IME의 Process도 단축키로 전달한다.
+  // IPC에는 Process 원문을 보내지 않아 preload/renderer의 기존 검증을 유지한다.
+  const isCommentShortcut = matchesModeShortcutInput(input, commentModeShortcut);
+  if ((input.isComposing === true && !isCommentShortcut &&
+        !matchesModeShortcutInput(input, drawModeShortcut)) ||
+      (key === 'Process' && !isCommentShortcut) ||
+      ['Dead', 'Unidentified'].includes(key) ||
       ['Process', 'Dead', 'Unidentified'].includes(code)) {
     return null;
   }
 
   return {
     type: input.type,
-    key,
+    key: key === 'Process' ? code : key,
     code,
     shiftKey: input.shift === true,
     ctrlKey: input.control === true,
@@ -2153,9 +2155,9 @@ function createForwardedKeyboardInput(input = {}, drawModeShortcut = null) {
   };
 }
 
-// 렌더러가 상태 sync로 실어 보낸 drawMode 단축키 서술자. 아직 동기화 전이면 null이며,
-// null이면 기존 기본값(KeyB 단독)과 완전히 같은 판정을 유지한다.
-function normalizeDrawModeShortcutDescriptor(value, previous = null) {
+// 렌더러가 상태 sync로 보낸 모드 단축키. 생략된 필드는 직전 값을 유지하고,
+// 명시적인 null(단축키 해제)과 잘못된 코드는 IME 예외를 해제한다.
+function normalizeModeShortcutDescriptor(value, previous = null) {
   if (value === undefined) return previous;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   if (!isForwardedPhysicalKeyCode(value.key)) return null;
@@ -2167,12 +2169,12 @@ function normalizeDrawModeShortcutDescriptor(value, previous = null) {
   };
 }
 
-function matchesDrawModeShortcutInput(input = {}, drawModeShortcut = null) {
-  if (!drawModeShortcut) return false;
-  return input.code === drawModeShortcut.key &&
-    (input.shift === true) === (drawModeShortcut.shift === true) &&
-    (input.control === true) === (drawModeShortcut.ctrl === true) &&
-    (input.alt === true) === (drawModeShortcut.alt === true) &&
+function matchesModeShortcutInput(input = {}, shortcut = null) {
+  if (!shortcut) return false;
+  return input.code === shortcut.key &&
+    (input.shift === true) === (shortcut.shift === true) &&
+    (input.control === true) === (shortcut.ctrl === true) &&
+    (input.alt === true) === (shortcut.alt === true) &&
     input.meta !== true;
 }
 
@@ -3059,6 +3061,7 @@ class MPVOverlayHost {
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
+    this.commentModeShortcutDescriptor = null;
     this.completedActionIds = new Map();
     this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
@@ -4679,9 +4682,13 @@ class MPVOverlayHost {
 
     // 작업4: 릴레이 판정용 서술자만 호스트에 남기고, 오버레이 페이지로 내려보내는
     // normalized 페이로드에는 넣지 않는다(오버레이 런타임 계약 불변).
-    this.drawModeShortcutDescriptor = normalizeDrawModeShortcutDescriptor(
+    this.drawModeShortcutDescriptor = normalizeModeShortcutDescriptor(
       state?.drawModeShortcut,
       this.drawModeShortcutDescriptor
+    );
+    this.commentModeShortcutDescriptor = normalizeModeShortcutDescriptor(
+      state?.commentModeShortcut,
+      this.commentModeShortcutDescriptor
     );
     const normalized = normalizeOverlayState(state);
     try {
@@ -4826,6 +4833,7 @@ class MPVOverlayHost {
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
+    this.commentModeShortcutDescriptor = null;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
@@ -4897,6 +4905,7 @@ class MPVOverlayHost {
     this.keyboardRelayCount = 0;
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
+    this.commentModeShortcutDescriptor = null;
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
@@ -4963,7 +4972,9 @@ class MPVOverlayHost {
         // 물리 키 입력을 즉시 릴레이한다.
       }
       const drawModeShortcut = this.drawModeShortcutDescriptor;
-      const forwardedInput = createForwardedKeyboardInput(input, drawModeShortcut);
+      const forwardedInput = createForwardedKeyboardInput(
+        input, drawModeShortcut, this.commentModeShortcutDescriptor
+      );
       const mainWindow = this.getMainWindow();
       if (!forwardedInput ||
           !mainWindow ||
@@ -5032,6 +5043,7 @@ class MPVOverlayHost {
       this.keyboardRelayCount = 0;
       this.lastKeyboardRelayCode = null;
       this.drawModeShortcutDescriptor = null;
+      this.commentModeShortcutDescriptor = null;
       this.completedActionIds.clear();
       this.inFlightDrawingActions.clear();
       this.suppressedOverlayHistoryKeys.clear();
