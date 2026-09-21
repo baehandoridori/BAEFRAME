@@ -79,7 +79,6 @@ class MPVEmbedHost {
     this.parentHideHandler = null;
     this.parentShowHandler = null;
     this.parentClosedHandler = null;
-    this.repositionPending = false;
     this.requestedVisible = true;
   }
 
@@ -93,7 +92,7 @@ class MPVEmbedHost {
     const screenBounds = this._toScreenBounds(this.lastBounds, mainWindow);
     const hostWindow = this._ensureWindow(mainWindow);
     this._bindParentWindow(mainWindow);
-    hostWindow.setBounds(screenBounds);
+    this._applyScreenBounds(screenBounds);
 
     if (!this.contentLoaded) {
       try {
@@ -126,13 +125,14 @@ class MPVEmbedHost {
 
     this.lastBounds = normalizeEmbedBounds(bounds);
     const screenBounds = this._toScreenBounds(this.lastBounds, mainWindow);
-    // 피드백 32: 동일 bounds 재적용은 생략 — 네이티브 창의 계단식 리사이즈/진동 방지
-    if (this._boundsEquals(this._lastAppliedScreenBounds, screenBounds)) {
-      return { success: true, bounds: screenBounds };
-    }
-    this._lastAppliedScreenBounds = { ...screenBounds };
-    this.window.setBounds(screenBounds);
+    this._applyScreenBounds(screenBounds);
     return { success: true, bounds: screenBounds };
+  }
+
+  _applyScreenBounds(screenBounds) {
+    if (this._boundsEquals(this._lastAppliedScreenBounds, screenBounds)) return;
+    this.window.setBounds(screenBounds);
+    this._lastAppliedScreenBounds = { ...screenBounds };
   }
 
   _boundsEquals(a, b) {
@@ -235,6 +235,7 @@ class MPVEmbedHost {
     this.window.on?.('closed', () => {
       this.window = null;
       this.contentLoaded = false;
+      this._lastAppliedScreenBounds = null;
     });
 
     return this.window;
@@ -247,7 +248,9 @@ class MPVEmbedHost {
     this._unbindParentWindow();
     this.parentWindow = parent;
     this.parentRepositionHandler = () => {
-      this._scheduleRepositionToParent();
+      // Windows' native move loop can delay setImmediate until after the drag.
+      // Apply now; the shared bounds cache coalesces duplicate move/moved events.
+      this._repositionToParent();
     };
     this.parentHideHandler = () => {
       this._hideHostWindow();
@@ -315,23 +318,13 @@ class MPVEmbedHost {
     this.parentClosedHandler = null;
   }
 
-  _scheduleRepositionToParent() {
-    if (this.repositionPending) return;
-
-    this.repositionPending = true;
-    setImmediate(() => {
-      this.repositionPending = false;
-      this._repositionToParent();
-    });
-  }
-
   _repositionToParent() {
     if (!this.window || this.window.isDestroyed?.() || !this.lastBounds) return;
 
     const mainWindow = this.parentWindow || this.getMainWindow();
     if (!mainWindow || mainWindow.isDestroyed?.()) return;
 
-    this.window.setBounds(this._toScreenBounds(this.lastBounds, mainWindow));
+    this._applyScreenBounds(this._toScreenBounds(this.lastBounds, mainWindow));
   }
 
   _hideHostWindow() {

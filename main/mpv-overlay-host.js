@@ -3017,7 +3017,6 @@ class MPVOverlayHost {
     this.parentHideHandler = null;
     this.parentShowHandler = null;
     this.parentClosedHandler = null;
-    this.repositionPending = false;
     this.requestedVisible = true;
     this.hostGeneration = 0;
     this.fabricReadyGeneration = 0;
@@ -3335,7 +3334,7 @@ class MPVOverlayHost {
     if (!request.enabled && this.fabricReadyGeneration !== this.hostGeneration) {
       // 2767-2769행에서 이미 focusable:false로 전환했으므로 sibling mpv 창이
       // 위로 올라올 수 있다. Fabric 준비 여부와 무관하게 창 순서를 복원한다.
-      hostWindow.moveTop?.();
+      this._raiseVisibleOverlay(hostWindow);
       hostWindow.webContents?.invalidate?.();
       return { success: true, accepted: true, enabled: false, fabricReady: false };
     }
@@ -3345,7 +3344,7 @@ class MPVOverlayHost {
       if (!request.enabled) {
         // (g)와 동일 — focusable:false 전환은 이미 끝났으므로 준비 실패로 되돌아가도
         // 창 순서는 반드시 복원한다. (j)의 restack 완전일치 계약이 이 경로를 포함한다.
-        hostWindow.moveTop?.();
+        this._raiseVisibleOverlay(hostWindow);
         hostWindow.webContents?.invalidate?.();
         return { success: true, accepted: true, enabled: false, fabricReady: false };
       }
@@ -3369,7 +3368,7 @@ class MPVOverlayHost {
       // focusable:false 전환은 Windows에서 sibling mpv 창을 위로 올릴 수 있다.
       // runtime이 passive 장면을 거부해도 focusable 전환은 이미 일어났으므로,
       // 창 순서 복원은 승인 여부와 무관하게 disable 요청마다 대칭으로 수행한다.
-      hostWindow.moveTop?.();
+      this._raiseVisibleOverlay(hostWindow);
       hostWindow.webContents?.invalidate?.();
     }
     if (request.enabled && runtimeResult?.accepted === true && stillCurrent) {
@@ -3422,7 +3421,7 @@ class MPVOverlayHost {
       // V는 overlay에서 메인 renderer로 전달되며 처리 중 main 창이 잠시 포커스를
       // 소유한다. 도구 변경이 확정된 뒤 overlay를 다시 활성화해야 다음 툴바
       // 클릭이 Windows의 창 활성화 클릭으로 소모되지 않는다.
-      if (this.window === hostWindow && !hostWindow?.isDestroyed?.()) {
+      if (this._canRaiseOverlay(hostWindow)) {
         hostWindow.focus?.();
       }
       return { success: true, accepted: true, tool: normalizeFabricDrawingTool(result.tool) };
@@ -4089,7 +4088,7 @@ class MPVOverlayHost {
           ...echo
         };
       }
-      hostWindow.moveTop?.();
+      this._raiseVisibleOverlay(hostWindow);
       hostWindow.webContents?.invalidate?.();
       return { success: true, accepted: true, ...echo };
     } catch (_error) {
@@ -4458,14 +4457,14 @@ class MPVOverlayHost {
       hostWindow.setIgnoreMouseEvents?.(false);
       // 네이티브 확장 스타일 변경이 sibling mpv 창을 위로 올릴 수 있으므로
       // overlay 순서를 복원한 뒤 재합성을 한 번 더 강제한다.
-      hostWindow.moveTop?.();
+      const raised = this._raiseVisibleOverlay(hostWindow);
       hostWindow.webContents?.invalidate?.();
       // Windows 마우스 메시지에는 Ctrl/Shift 플래그만 실리고 Alt 플래그가 없다.
       // Chromium은 Alt를 그 창의 키보드 입력 큐에서 읽으므로, 포커스를 준 적이
       // 없는 overlay에서는 Alt 드래그가 altKey:false로 도착해 제스처가 열리지
       // 않는다(Ctrl 지우개만 되고 Alt 크기 조절은 안 되던 비대칭의 원인).
       // 도구 변경 경로도 이미 같은 이유로 마지막에 focus를 되돌린다.
-      hostWindow.focus?.();
+      if (raised) hostWindow.focus?.();
       return;
     }
 
@@ -4571,7 +4570,7 @@ class MPVOverlayHost {
     try {
       await this._executeFabricMethod('setDrawingInput', disableRequest);
       if (this._inputRequestStillDesired(hostWindow, disableRequest)) {
-        hostWindow.moveTop?.();
+        this._raiseVisibleOverlay(hostWindow);
         hostWindow.webContents?.invalidate?.();
       }
     } catch (error) {
@@ -4606,7 +4605,7 @@ class MPVOverlayHost {
     const screenBounds = this._toScreenBounds(this.lastBounds, mainWindow);
     const hostWindow = this._ensureWindow(mainWindow);
     this._bindParentWindow(mainWindow);
-    hostWindow.setBounds(screenBounds);
+    this._applyScreenBounds(screenBounds);
 
     if (!this.contentLoaded) {
       const contentLoadGeneration = ++this.contentLoadGeneration;
@@ -4659,16 +4658,33 @@ class MPVOverlayHost {
 
     this.lastBounds = normalizeEmbedBounds(bounds);
     const screenBounds = this._toScreenBounds(this.lastBounds, mainWindow);
-    // 피드백 32: 동일 bounds 재적용은 생략 — 네이티브 창의 계단식 리사이즈/진동 방지.
-    // moveTop은 기존 z-order 의미론(호출마다 최상위 보장)을 보존하기 위해 항상 호출한다.
-    if (this._boundsEquals(this._lastAppliedScreenBounds, screenBounds)) {
-      this.window.moveTop?.();
-      return { success: true, bounds: screenBounds };
-    }
-    this._lastAppliedScreenBounds = { ...screenBounds };
-    this.window.setBounds(screenBounds);
-    this.window.moveTop?.();
+    this._applyScreenBounds(screenBounds);
+    this._raiseVisibleOverlay();
     return { success: true, bounds: screenBounds };
+  }
+
+  _applyScreenBounds(screenBounds) {
+    if (this._boundsEquals(this._lastAppliedScreenBounds, screenBounds)) return;
+    this.window.setBounds(screenBounds);
+    this._lastAppliedScreenBounds = { ...screenBounds };
+  }
+
+  _canRaiseOverlay(hostWindow = this.window) {
+    // Electron/Windows moveTop() also shows hidden windows. Layout or an async
+    // drawing completion must never reopen the native surface over a DOM menu.
+    const parent = this.parentWindow || this.getMainWindow();
+    if (!hostWindow || hostWindow !== this.window || hostWindow.isDestroyed?.() ||
+        this.requestedVisible === false || hostWindow.isVisible?.() === false ||
+        parent?.isDestroyed?.() || parent?.isMinimized?.() || parent?.isVisible?.() === false) {
+      return false;
+    }
+    return true;
+  }
+
+  _raiseVisibleOverlay(hostWindow = this.window) {
+    if (!this._canRaiseOverlay(hostWindow)) return false;
+    hostWindow.moveTop?.();
+    return true;
   }
 
   _boundsEquals(a, b) {
@@ -5004,7 +5020,7 @@ class MPVOverlayHost {
             this.window === hostWindow &&
             this.hostGeneration === hostGeneration &&
             this.desiredInputEnabled === true &&
-            !hostWindow.isDestroyed?.()) {
+            !hostWindow.isDestroyed?.() && this._canRaiseOverlay(hostWindow)) {
           try {
             hostWindow.focus?.();
           } catch (_error) { /* best-effort focus restoration */ }
@@ -5078,7 +5094,9 @@ class MPVOverlayHost {
     this._unbindParentWindow();
     this.parentWindow = parent;
     this.parentRepositionHandler = () => {
-      this._scheduleRepositionToParent();
+      // Keep both native surfaces in the same move event, without a deferred
+      // callback or z-order change on every drag update.
+      this._repositionToParent();
     };
     this.parentHideHandler = () => {
       this._resetCollaborationActionRelay({ resetSequence: false });
@@ -5147,24 +5165,13 @@ class MPVOverlayHost {
     this.parentClosedHandler = null;
   }
 
-  _scheduleRepositionToParent() {
-    if (this.repositionPending) return;
-
-    this.repositionPending = true;
-    setImmediate(() => {
-      this.repositionPending = false;
-      this._repositionToParent();
-    });
-  }
-
   _repositionToParent() {
     if (!this.window || this.window.isDestroyed?.() || !this.lastBounds) return;
 
     const mainWindow = this.parentWindow || this.getMainWindow();
     if (!mainWindow || mainWindow.isDestroyed?.()) return;
 
-    this.window.setBounds(this._toScreenBounds(this.lastBounds, mainWindow));
-    this.window.moveTop?.();
+    this._applyScreenBounds(this._toScreenBounds(this.lastBounds, mainWindow));
   }
 
   _hideOverlayWindow() {
@@ -5186,7 +5193,7 @@ class MPVOverlayHost {
     } else {
       this.window.show();
     }
-    this.window.moveTop?.();
+    this._raiseVisibleOverlay();
     // 숨김 중 갱신된 DOM(툴바·드로잉)이 이전 프레임으로 남지 않게 재표시 직후 재합성을 강제한다
     this.window.webContents?.invalidate?.();
   }
