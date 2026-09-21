@@ -1677,12 +1677,12 @@ test('B 토글 상태기계는 정착 지점마다 예약을 소비하고 창 �
   assert.notEqual(setDrawingInputSource, '');
   assert.match(
     setDrawingInputSource,
-    /if \(!request\.enabled && this\.fabricReadyGeneration !== this\.hostGeneration\) \{[\s\S]*?hostWindow\.moveTop\?\.\(\);[\s\S]*?return \{ success: true, accepted: true, enabled: false, fabricReady: false \};/
+    /if \(!request\.enabled && this\.fabricReadyGeneration !== this\.hostGeneration\) \{[\s\S]*?this\._raiseVisibleOverlay\(hostWindow\);[\s\S]*?return \{ success: true, accepted: true, enabled: false, fabricReady: false \};/
   );
   // runtime 준비 실패 disable도 창 순서를 복원한다 (h-2)
   assert.match(
     setDrawingInputSource,
-    /if \(!prepared\.success\) \{\n\s+if \(!request\.enabled\) \{[\s\S]*?hostWindow\.moveTop\?\.\(\);[\s\S]*?return \{ success: true, accepted: true, enabled: false, fabricReady: false \};/
+    /if \(!prepared\.success\) \{\n\s+if \(!request\.enabled\) \{[\s\S]*?this\._raiseVisibleOverlay\(hostWindow\);[\s\S]*?return \{ success: true, accepted: true, enabled: false, fabricReady: false \};/
   );
   assert.match(setDrawingInputSource, /if \(!request\.enabled && stillCurrent\) \{/);
   assert.doesNotMatch(
@@ -1691,7 +1691,7 @@ test('B 토글 상태기계는 정착 지점마다 예약을 소비하고 창 �
   );
   // restack 지점은 정확히 세 곳이다
   assert.equal(
-    (setDrawingInputSource.match(/hostWindow\.moveTop\?\.\(\);/g) || []).length,
+    (setDrawingInputSource.match(/this\._raiseVisibleOverlay\(hostWindow\);/g) || []).length,
     3
   );
 
@@ -1790,7 +1790,7 @@ test('오버레이 슬라이더를 탭 순서에 넣지 않는다 — 키가 도
   }
   // 릴레이한 키는 오버레이 문서에 남기지 않는다.
   assert.ok(overlayHostSource.includes('this.keyboardRelayCount += 1;'));
-  assert.ok(overlayHostSource.includes('createForwardedKeyboardInput(input, drawModeShortcut)'));
+  assert.match(overlayHostSource, /createForwardedKeyboardInput\(\s*input, drawModeShortcut, this\.commentModeShortcutDescriptor\s*\)/);
 
   // 슬라이더는 모두 탭 순서 밖이다.
   const marker = "input.type = 'range';";

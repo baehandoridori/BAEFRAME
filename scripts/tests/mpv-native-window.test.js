@@ -19,6 +19,12 @@ async function probe() {
     parent.showInactive();
     assert.equal((await embed.ensure(local)).success, true);
     assert.equal((await overlay.ensure(local)).success, true);
+    const originalBounds = overlay.window.getBounds();
+    const closed = new Promise(resolve => overlay.window.once('closed', resolve));
+    overlay.window.close();
+    await closed;
+    assert.equal((await overlay.ensure(local)).success, true);
+    assert.deepEqual(overlay.window.getBounds(), originalBounds, 'recreated overlay must receive bounds even at the same position');
     for (const [x, y] of [[170, 130], [240, 160], [100, 100]]) {
       parent.setPosition(x, y);
       const origin = parent.getContentBounds();

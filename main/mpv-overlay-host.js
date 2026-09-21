@@ -4872,6 +4872,8 @@ class MPVOverlayHost {
       return this.window;
     }
 
+    // Screen bounds belong to a native window, not to the host's lifetime.
+    this._lastAppliedScreenBounds = null;
     const hostWindow = new this.BrowserWindow({
       parent,
       modal: false,
