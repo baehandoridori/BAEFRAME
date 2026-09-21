@@ -25,3 +25,15 @@
 ## 남은 검증
 - 버전 실제 Chromium pointer 입력, 관련 회귀 묶음, 독립 리뷰와 릴리스 증거를 아래에 추가한다.
 - 실제 사용자의 장시간 마우스 드래그, 다중 DPI 모니터 이동, 팀원 PC 동기화는 자동/격리 검사와 구분한다.
+
+## 최종 회귀와 로컬 리뷰
+- 로컬 리뷰 1차 `71373c1`: P2 1건. overlay 일반 closed 후 동일 bounds로 재생성하면 이전 창 캐시로 배치를 건너뛴다. 실제 Electron close/recreate 검사로 fail 1 재현 후 새 창 생성 시 캐시 초기화, pass 1로 해결(`52b281a`).
+- `test:mpv`: 407 pass / 0 fail / 0 cancelled, exit 0.
+- `test:version`: 11 pass / 0 fail / 0 cancelled, exit 0.
+- `test:playlist`: 375 pass / 0 fail / 0 cancelled, exit 0.
+- `test:comment-input`: 54 pass / 0 fail / 0 cancelled, exit 0.
+- `test:fabric-drawing-pilot`: 631 pass / 0 fail / 0 cancelled, exit 0.
+- 총 1,478 pass. 수정 파일 ESLint `--no-ignore`: exit 0, 경고/오류 없음. `git diff --check` 통과.
+- 검사 보완: mpv 명령 목록과 guarded restack을 기존 source assertions에 반영. 이전 댓글 단축키 릴리스가 바꾼 3인자 호출을 오래된 2인자 assertion에 반영(기준 SHA에서도 불일치 확인).
+- 격리 실제 앱/생성 영상에서 menu 열림 시 embed/overlay 모두 hidden, Chromium `sendInputEvent` 마우스 클릭 후 `probe_v1.mp4 → probe_v2.mp4`, badge v2, 메뉴 닫힘 확인. Electron 입력 테스트에는 창 활성화가 필요했다. OS 실제 마우스 드래그 검사와 구분한다.
+- 상세 실행 로그와 재현 JSON: 작업 폴더 `.cache/diagnostics/`. 배포 결과는 exact merge 이후 별도 로컬 릴리스 보고서에 기록한다.
