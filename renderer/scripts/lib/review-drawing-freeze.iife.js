@@ -7374,25 +7374,30 @@ void main() {
   }
 
   // renderer/scripts/modules/review-drawing-freeze.js
-  async function composite(baseDataUrl, keyframe, drawingLayers) {
-    if (!keyframe?.objects?.length) return baseDataUrl;
+  async function composite(baseDataUrl, keyframe, drawingLayers, legacyDataUrl = "") {
+    if (!keyframe?.objects?.length && !legacyDataUrl) return baseDataUrl;
     const layers = normalizeDrawingLayers(drawingLayers);
     const ranks = new Map(layers.layers.map((layer, index) => [layer.id, layers.layers.length - index - 1]));
-    const records = keyframe.objects.filter((record) => isObjectVisible(layers, record.id)).sort((a2, b2) => (ranks.get(layerIdForObject(layers, a2.id)) ?? 0) - (ranks.get(layerIdForObject(layers, b2.id)) ?? 0));
-    if (!records.length) return baseDataUrl;
+    const records = (keyframe?.objects || []).filter((record) => isObjectVisible(layers, record.id)).sort((a2, b2) => (ranks.get(layerIdForObject(layers, a2.id)) ?? 0) - (ranks.get(layerIdForObject(layers, b2.id)) ?? 0));
+    if (!records.length && !legacyDataUrl) return baseDataUrl;
     const background = new Image();
     background.src = baseDataUrl;
     await background.decode();
     const width = background.naturalWidth;
     const height = background.naturalHeight;
-    const canvas = new yt(document.createElement("canvas"), {
+    const legacy = legacyDataUrl ? new Image() : null;
+    if (legacy) {
+      legacy.src = legacyDataUrl;
+      await legacy.decode();
+    }
+    const canvas = records.length ? new yt(document.createElement("canvas"), {
       width,
       height,
       enableRetinaScaling: false,
       renderOnAddRemove: false
-    });
+    }) : null;
     try {
-      canvas.setViewportTransform([width / keyframe.sourceWidth, 0, 0, height / keyframe.sourceHeight, 0, 0]);
+      if (canvas) canvas.setViewportTransform([width / keyframe.sourceWidth, 0, 0, height / keyframe.sourceHeight, 0, 0]);
       for (const record of records) {
         const drawing = new Mo(record.renderGeometry?.pathData || record.pathData, {
           fill: record.style.color,
@@ -7404,16 +7409,17 @@ void main() {
         drawing.set(record.transform);
         canvas.add(drawing);
       }
-      canvas.renderAll();
+      canvas?.renderAll();
       const output = document.createElement("canvas");
       output.width = width;
       output.height = height;
       const context = output.getContext("2d");
       context.drawImage(background, 0, 0);
-      context.drawImage(canvas.lowerCanvasEl, 0, 0);
+      if (legacy) context.drawImage(legacy, 0, 0, width, height);
+      if (canvas) context.drawImage(canvas.lowerCanvasEl, 0, 0);
       return output.toDataURL("image/png");
     } finally {
-      await canvas.dispose();
+      await canvas?.dispose();
     }
   }
   window.BAEReviewDrawingFreeze = Object.freeze({ composite });

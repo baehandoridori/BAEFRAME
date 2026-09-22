@@ -31,23 +31,6 @@ test('old per-PC playback and review flags migrate without replacing personal se
   }
 });
 
-for (const scenario of ['html5', 'disabled', 'preparing', 'ready']) {
-  test(`B uses current drawing only when playback/controller are ${scenario}`, () => {
-    const calls = [];
-    const context = vm.createContext({ state: { isAudioMode: false, isDrawMode: false, isCommentMode: false },
-      isMpvPilotPlaybackActive: () => scenario !== 'html5',
-      fabricDrawingPilotController: {
-        isEnabled: () => scenario !== 'disabled', getState: () => 'passive',
-        shouldOwnDrawingShortcut: () => scenario !== 'preparing', toggle: () => calls.push('current')
-      },
-      fabricDrawingPilotStatusSnapshot: {}, fabricDrawingPilotDegradedNoticeShown: false,
-      applyDrawModeState: () => calls.push('legacy'), showToast: () => calls.push('notice'), log: { debug() {} }
-    });
-    vm.runInContext(appFunction('toggleDrawMode'), context);
-    context.toggleDrawMode();
-    assert.deepEqual(calls, [scenario === 'ready' ? 'current' : 'notice']);
-  });
-}
 
 test('the legacy palette cannot be reactivated by an asynchronous ready callback', () => {
   const visible = new Set();

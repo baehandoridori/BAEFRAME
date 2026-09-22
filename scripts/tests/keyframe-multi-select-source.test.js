@@ -81,12 +81,12 @@ test('shift range selection is limited to the clicked drawing layer keyframes', 
   assert.match(timelineSource, /this\._setKeyframeSelection\(nextSelection, \{ anchor: \{ layerId, frame \} \}\);/);
 });
 
-test('selected keyframes can be deleted through the drawing manager', () => {
+test('legacy keyframe metadata is preserved without the old delete shortcut', () => {
   assert.match(drawingManagerSource, /removeKeyframes\(selectedKeyframes = \[\]\)/);
   assert.match(drawingManagerSource, /this\._emit\('keyframeRemoved'/);
-  assert.match(appSource, /deleteSelectedOrCurrentKeyframes\(\)/);
+  assert.doesNotMatch(appSource, /deleteSelectedOrCurrentKeyframes\(\)/);
   assert.match(appSource, /timeline\.selectedKeyframes/);
-  assert.match(appSource, /drawingManager\.removeKeyframes\(selectedKeyframes\)/);
+  assert.doesNotMatch(appSource, /drawingManager\.removeKeyframes\(selectedKeyframes\)/);
 });
 
 test('selected keyframe moves are ordered by drag direction to keep adjacent moves together', () => {

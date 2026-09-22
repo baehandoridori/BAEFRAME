@@ -176,10 +176,10 @@ for (const transition of ['blur', 'dock', 'disable']) { test(`${transition} clea
   Object.assign(context, { viewportPanOwner: owner, state: { isSpaceHeld: true, spacePanUsed: false }, suppressPlayPauseShortcutKeyup: true,
     MutationObserver: parent.window.MutationObserver, handleKeydown: noop, handleKeyup: noop, handleSidebarCommentEscape: noop,
     handleCommentMenusOutsideClick: noop, handleCommentImageClick: noop, handleDriveLinkClick: noop,
-    drawModePreparationToken: 0, mpvDrawPlaybackTransitionToken: 0, setDrawModePreparingState: noop, setDrawModeReadyState: noop,
-    isMpvReviewInteractionActive: () => true, drawingManager: { commitActiveSelection: noop }, scheduleMpvOverlayStateSync: noop, exitHybridReviewEngineIfNeeded: noop });
-  vm.runInContext(functionSource('installCommentPopoutDocument') + functionSource('applyDrawModeState'), context);
-  if (transition === 'disable') context.applyDrawModeState(false);
+    drawingEntryRevision: 0, setDrawModePreparingState: noop, setDrawModeReadyState: noop,
+    isFabricDrawingPilotControllerEngaged: () => true, fabricDrawingPilotController: { disable: noop } });
+  vm.runInContext(functionSource('installCommentPopoutDocument') + functionSource('exitDrawModeForSystemPath'), context);
+  if (transition === 'disable') context.exitDrawModeForSystemPath();
   else { const cleanup = context.installCommentPopoutDocument(child.window); if (transition === 'blur') child.window.dispatchEvent(new child.window.Event('blur')); else cleanup(); }
   assert.equal(context.state.isSpaceHeld, false); assert.equal(owner.isHeld(), false);
   owner.message({ ...fence, gestureId: 'after-reset', sequence: 0, pointerId: 1, phase: 'start', clientX: 0, clientY: 0 });

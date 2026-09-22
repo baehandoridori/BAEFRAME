@@ -19,8 +19,7 @@ import {
 import { VideoPlayer } from './modules/video-player.js';
 import { Timeline } from './modules/timeline.js';
 import { CompositionLayerManager } from './modules/composition-layer-manager.js';
-import { DrawingManager, DrawingTool } from './modules/drawing-manager.js';
-import { ERASER_MODES, normalizeEraserMode } from './modules/drawing-stroke-records.js';
+import { DrawingManager } from './modules/drawing-manager.js';
 import { CommentManager, MARKER_COLORS, getAuthorColor } from './modules/comment-manager.js';
 import { ReviewDataManager, getBframePath } from './modules/review-data-manager.js';
 import {
@@ -639,10 +638,8 @@ async function initApp() {
     layersBelowCanvas: document.getElementById('layersBelowCanvas'),
     drawingCanvas: document.getElementById('drawingCanvas'),
     layersAboveCanvas: document.getElementById('layersAboveCanvas'),
-    brushSizeHud: document.getElementById('brushSizeHud'),
     onionSkinCanvas: document.getElementById('onionSkinCanvas'),
     selectionOverlayCanvas: document.getElementById('selectionOverlayCanvas'),
-    drawingTools: document.getElementById('drawingTools'),
     btnOpenFile: document.getElementById('btnOpenFile'),
 
     // 컨트롤
@@ -736,8 +733,6 @@ async function initApp() {
     btnTimelineZoomReset: document.getElementById('btnTimelineZoomReset'),
 
     // 그리기 도구 액션 버튼
-    btnUndo: document.getElementById('btnUndo'),
-    btnClearDrawing: document.getElementById('btnClearDrawing'),
 
     // 레이어 추가/삭제 버튼
     btnAddLayer: document.getElementById('btnAddLayer'),
@@ -1949,7 +1944,6 @@ async function initApp() {
     if (
       isMpvReviewInteractionActive() &&
       isMpvPilotPlaybackActive() &&
-      !elements.drawingTools?.classList.contains('playback-hidden') &&
       invalidateMpvReviewFreezeForFrameChange()
     ) {
       scheduleMpvReviewFreezeRefresh();
@@ -1966,8 +1960,7 @@ async function initApp() {
     });
     if (
       isMpvReviewInteractionActive() &&
-      isMpvPilotPlaybackActive() &&
-      !elements.drawingTools?.classList.contains('playback-hidden')
+      isMpvPilotPlaybackActive()
     ) {
       invalidateMpvReviewFreezeForFrameChange();
       scheduleMpvReviewFreezeRefresh();
@@ -2005,16 +1998,6 @@ async function initApp() {
     // 피드백 25: 재생 중에는 공용 리뷰 freeze를 해제해 mpv 영상을 표시한다.
     // 패널은 즉시 감추고, release가 호스트 복원을 확인한 뒤 freeze를 제거하므로
     // 정지 화면과 실제 영상 사이에 검은 구간이 생기지 않는다.
-    if (
-      state.isDrawMode &&
-      !fabricDrawingPilotController.isActiveOrPreparing() &&
-      isMpvPilotPlaybackActive()
-    ) {
-      mpvDrawPlaybackTransitionToken += 1;
-      elements.drawingTools?.classList.add('playback-hidden');
-      scheduleMpvOverlayStateSync({ force: true });
-      void releaseMpvReviewFreezeFrame();
-    }
   });
 
   videoPlayer.addEventListener('pause', () => {
@@ -2025,14 +2008,6 @@ async function initApp() {
     getAudioWaveform()?.setPlaying(false);
     // 일시정지 시점에 누적된 온디맨드 정확-프레임 큐를 소진
     getThumbnailGenerator()?._drainExactQueue?.();
-    if (
-      state.isDrawMode &&
-      !fabricDrawingPilotController.isActiveOrPreparing() &&
-      isMpvPilotPlaybackActive() &&
-      elements.drawingTools?.classList.contains('playback-hidden')
-    ) {
-      void restoreMpvDrawFreezeAfterPlayback();
-    }
   });
 
   videoPlayer.addEventListener('ended', () => {
@@ -2042,14 +2017,6 @@ async function initApp() {
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, false);
     getAudioWaveform()?.setPlaying(false);
 
-    if (
-      state.isDrawMode &&
-      !fabricDrawingPilotController.isActiveOrPreparing() &&
-      isMpvPilotPlaybackActive() &&
-      elements.drawingTools?.classList.contains('playback-hidden')
-    ) {
-      void restoreMpvDrawFreezeAfterPlayback();
-    }
 
     if (cutlistUIState.active && getCutlistManager().isActive()) {
       const currentCut = getCutlistManager().getCutById(getCutlistManager().currentCutId);
@@ -2244,34 +2211,6 @@ async function initApp() {
   drawingManager.addEventListener('layersChanged', () => {
     renderActiveDrawingLayers();
     scheduleMpvOverlayStateSync();
-  });
-
-  drawingManager.addEventListener('drawstart', () => {
-    scheduleMpvOverlayStateSync();
-  });
-
-  drawingManager.addEventListener('drawmove', () => {
-    scheduleMpvOverlayStateSync({ liveDrawing: true });
-  });
-
-  drawingManager.addEventListener('selectionoverlaychanged', () => {
-    scheduleMpvOverlayStateSync({ liveDrawing: true });
-  });
-
-  drawingManager.addEventListener('drawend', () => {
-    scheduleMpvOverlayStateSync({ force: true });
-  });
-
-  drawingManager.addEventListener('drawblocked', (e) => {
-    const reason = e.detail?.reason;
-    const message = reason === 'hidden'
-      ? '숨긴 레이어에는 그릴 수 없습니다. 레이어를 보이게 켠 뒤 다시 시도하세요.'
-      : '잠긴 레이어에는 그릴 수 없습니다. 잠금을 해제한 뒤 다시 시도하세요.';
-    showToast(message, 'warning');
-  });
-
-  drawingManager.addEventListener('strokeeraserunavailable', () => {
-    showToast('픽셀 지우개로 편집된 그림은 획 단위로 지울 수 없습니다. 픽셀 지우개로 지우거나 새로 그린 획을 지워주세요.', 'warning');
   });
 
   // 프레임 렌더링 완료 시
@@ -2590,34 +2529,6 @@ async function initApp() {
     void handleTimelineKeyframesMove({ keyframes, frameDelta, anchor });
   });
 
-  function deleteSelectedOrCurrentKeyframes() {
-    // 파일럿 투영 레이어는 읽기 전용 — passive에서 선택된 투영 키프레임의 삭제 시도를 차단
-    if (getFabricPilotTimelineLayers()) return false;
-    const selectedKeyframes = Array.isArray(timeline.selectedKeyframes)
-      ? timeline.selectedKeyframes
-      : [];
-
-    if (selectedKeyframes.length > 0) {
-      const removedCount = drawingManager.removeKeyframes(selectedKeyframes);
-      if (removedCount > 0) {
-        timeline.clearSelection();
-        renderActiveDrawingLayers();
-        showToast(`키프레임 ${removedCount}개가 삭제되었습니다.`, 'info');
-      } else {
-        showToast('삭제할 수 있는 선택 키프레임이 없습니다.', 'warn');
-      }
-      return removedCount > 0;
-    }
-
-    const removed = drawingManager.removeKeyframe();
-    if (removed) {
-      renderActiveDrawingLayers();
-      showToast('키프레임이 삭제되었습니다.', 'info');
-    } else {
-      showToast('삭제할 키프레임이 없습니다.', 'warn');
-    }
-    return removed;
-  }
 
   // ====== 리뷰 데이터 매니저 이벤트 ======
 
@@ -2726,7 +2637,8 @@ async function initApp() {
 
   let commentModePreparationToken = 0;
   let commentMarkerPlacementToken = 0;
-  let drawModePreparationToken = 0;
+  let drawingEntryRevision = 0;
+  let drawingEntryPromise = null;
   let suppressReviewFreezeReleaseForMediaChange = false;
   let sidebarCommentDraft = null;
   let sidebarCommentSubmissionToken = 0;
@@ -2791,7 +2703,7 @@ async function initApp() {
     state.commentModePauseOwner = null;
     state.isCommentMode = isCommentMode;
     endVideoPan();
-    if (isCommentMode && (state.isDrawMode || isFabricDrawingPilotControllerEngaged())) {
+    if (isCommentMode) {
       exitDrawModeForSystemPath();
     }
 
@@ -2815,7 +2727,6 @@ async function initApp() {
       if (!isMpvReviewInteractionActive() && !suppressReviewFreezeReleaseForMediaChange) {
         void releaseMpvReviewFreezeFrame();
       }
-      void exitHybridReviewEngineIfNeeded();
     }
   });
 
@@ -4215,399 +4126,6 @@ async function initApp() {
   }
   btnToggleRemoteCursors?.addEventListener('click', toggleRemoteCollaboratorCursors);
 
-  const savedBrush = userSettings.getBrushSettings();
-
-  // 그리기 도구 선택
-  const opacitySection = document.getElementById('opacitySection');
-  const brushSizeSlider = document.getElementById('brushSizeSlider');
-  const brushSizeValue = document.getElementById('brushSizeValue');
-  const sizePreview = document.getElementById('sizePreview');
-  const brushOpacitySlider = document.getElementById('brushOpacitySlider');
-  const brushOpacityValue = document.getElementById('brushOpacityValue');
-  const eraserModeSection = document.getElementById('eraserModeSection');
-  const colorSection = document.getElementById('colorSection');
-  const strokeSection = document.getElementById('strokeSection');
-  const eraserModeButtons = document.querySelectorAll('.eraser-mode-btn[data-eraser-mode]');
-  const brushSizeHud = elements.brushSizeHud;
-
-  // 도구 매핑
-  const toolMap = {
-    select: DrawingTool.SELECT,
-    pen: DrawingTool.PEN,
-    brush: DrawingTool.BRUSH,
-    eraser: DrawingTool.ERASER,
-    line: DrawingTool.LINE,
-    arrow: DrawingTool.ARROW,
-    rect: DrawingTool.RECT,
-    circle: DrawingTool.CIRCLE
-  };
-
-  // 색상 선택 (8색 팔레트)
-  const colorMap = {
-    red: '#ff4757',
-    yellow: '#ffd000',
-    green: '#26de81',
-    blue: '#4a9eff',
-    white: '#ffffff',
-    black: '#000000',
-    mint: '#1abc9c',
-    pink: '#ff6b9d'
-  };
-
-  // 도구별 설정 저장 (크기, 불투명도)
-  const toolSettings = {
-    eraser: { size: savedBrush.eraserSize },
-    brush: { size: savedBrush.brushSize, opacity: savedBrush.opacity }
-  };
-  let currentToolType = savedBrush.tool === 'eraser' ? 'eraser' : 'brush';
-  let currentToolName = toolMap[savedBrush.tool] ? savedBrush.tool : 'brush';
-  let currentColor = savedBrush.color;
-
-  function clampBrushSize(size, fallback = 3) {
-    const parsed = parseInt(size);
-    return Math.min(50, Math.max(1, Number.isFinite(parsed) ? parsed : fallback));
-  }
-
-  function clampBrushOpacity(opacity, fallback = 100) {
-    const parsed = parseInt(opacity);
-    return Math.min(100, Math.max(10, Number.isFinite(parsed) ? parsed : fallback));
-  }
-
-  function clampStrokeWidth(width, fallback = 3) {
-    const parsed = parseInt(width);
-    return Math.min(10, Math.max(1, Number.isFinite(parsed) ? parsed : fallback));
-  }
-
-  function getColorNameByHex(hex) {
-    const normalized = String(hex || '').toLowerCase();
-    return Object.entries(colorMap).find(([, value]) => value.toLowerCase() === normalized)?.[0] || 'red';
-  }
-
-  function getCurrentSizeSettingPatch(size = toolSettings[currentToolType].size) {
-    return currentToolType === 'eraser'
-      ? { eraserSize: size }
-      : { brushSize: size };
-  }
-
-  function updateSizePreview() {
-    const size = brushSizeSlider.value;
-    brushSizeValue.textContent = `${size}px`;
-    sizePreview.classList.toggle('eraser-preview', currentToolType === 'eraser');
-    sizePreview.style.setProperty('--preview-size', `${Math.min(size, 20)}px`);
-    sizePreview.style.setProperty('--preview-color', currentColor);
-  }
-
-  function applyBrushSizeValue(size, options = {}) {
-    const nextSize = clampBrushSize(size, toolSettings[currentToolType].size);
-    toolSettings[currentToolType].size = nextSize;
-    brushSizeSlider.value = String(nextSize);
-    drawingManager.setLineWidth(nextSize);
-    updateSizePreview();
-
-    if (options.persist) {
-      userSettings.setBrushSettings(getCurrentSizeSettingPatch(nextSize));
-    }
-    return nextSize;
-  }
-
-  function applyBrushOpacityValue(opacity, options = {}) {
-    const nextOpacity = clampBrushOpacity(opacity, toolSettings.brush.opacity);
-    toolSettings.brush.opacity = nextOpacity;
-    brushOpacitySlider.value = String(nextOpacity);
-    brushOpacityValue.textContent = `${nextOpacity}%`;
-    if (currentToolType !== 'eraser') {
-      drawingManager.setOpacity(nextOpacity / 100);
-    }
-    if (options.persist) {
-      userSettings.setBrushSettings({ opacity: nextOpacity });
-    }
-    return nextOpacity;
-  }
-
-  function setActiveColorButton(color) {
-    const activeColor = getColorNameByHex(color);
-    document.querySelectorAll('.color-btn').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.color === activeColor);
-    });
-  }
-
-  function setCurrentColor(color, options = {}) {
-    currentColor = color || '#ff4757';
-    setActiveColorButton(currentColor);
-    drawingManager.setColor(currentColor);
-    updateSizePreview();
-    if (options.persist) {
-      userSettings.setBrushSettings({ color: currentColor });
-    }
-  }
-
-  function updateBrushSizeHud(detail = {}) {
-    if (!brushSizeHud) return;
-    const size = clampBrushSize(detail.size, toolSettings[currentToolType].size);
-    const rect = elements.drawingCanvas?.getBoundingClientRect();
-    const scale = rect && elements.drawingCanvas?.width
-      ? rect.width / elements.drawingCanvas.width
-      : 1;
-    const displaySize = Math.max(2, Math.round(size * scale));
-    const x = Number.isFinite(detail.clientX) ? detail.clientX : window.innerWidth / 2;
-    const y = Number.isFinite(detail.clientY) ? detail.clientY : window.innerHeight / 2;
-
-    brushSizeHud.style.left = `${x}px`;
-    brushSizeHud.style.top = `${y}px`;
-    brushSizeHud.style.width = `${displaySize}px`;
-    brushSizeHud.style.height = `${displaySize}px`;
-    brushSizeHud.style.background = currentToolType === 'eraser' ? 'transparent' : `${currentColor}80`;
-    brushSizeHud.style.borderColor = currentToolType === 'eraser' ? 'rgba(255, 255, 255, 0.95)' : currentColor;
-    brushSizeHud.dataset.sizeLabel = `${size}px`;
-    brushSizeHud.textContent = '';
-  }
-
-  function showBrushSizeHud(detail = {}) {
-    if (!brushSizeHud) return;
-    brushSizeHud.hidden = false;
-    updateBrushSizeHud(detail);
-  }
-
-  function hideBrushSizeHud() {
-    if (!brushSizeHud) return;
-    brushSizeHud.hidden = true;
-  }
-
-  function applyEraserMode(mode, persist = false) {
-    mode = normalizeEraserMode(mode);
-    eraserModeButtons.forEach(btn => {
-      const active = btn.dataset.eraserMode === mode;
-      btn.classList.toggle('active', active);
-      btn.setAttribute('aria-pressed', active ? 'true' : 'false');
-    });
-    drawingManager.setEraserMode(mode);
-    if (persist) {
-      userSettings.setEraserMode(mode);
-    }
-    return mode;
-  }
-
-  let currentEraserMode = applyEraserMode(userSettings.getEraserMode() || ERASER_MODES.PIXEL);
-
-  eraserModeButtons.forEach(btn => {
-    btn.addEventListener('click', () => {
-      const mode = normalizeEraserMode(btn.dataset.eraserMode);
-      currentEraserMode = applyEraserMode(mode, true);
-    });
-  });
-
-  function selectDrawingTool(toolName, options = {}) {
-    const persist = options.persist !== false;
-    drawingManager.commitActiveSelection();
-    toolName = toolMap[toolName] ? toolName : 'brush';
-    document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.tool === toolName);
-    });
-
-    if (persist) {
-      toolSettings[currentToolType].size = clampBrushSize(brushSizeSlider.value, toolSettings[currentToolType].size);
-      if (currentToolType === 'brush') {
-        toolSettings.brush.opacity = clampBrushOpacity(brushOpacitySlider.value, toolSettings.brush.opacity);
-      }
-    }
-
-    currentToolName = toolName;
-    currentToolType = toolName === 'eraser' ? 'eraser' : 'brush';
-    applyBrushSizeValue(toolSettings[currentToolType].size);
-
-    if (currentToolType === 'eraser') {
-      opacitySection.style.display = 'none';
-      if (colorSection) colorSection.style.display = 'none';
-      if (strokeSection) strokeSection.style.display = 'none';
-      if (eraserModeSection) eraserModeSection.hidden = false;
-      applyEraserMode(currentEraserMode);
-      drawingManager.setOpacity(1);
-    } else {
-      opacitySection.style.display = 'block';
-      if (colorSection) colorSection.style.display = 'block';
-      if (strokeSection) strokeSection.style.display = 'block';
-      if (eraserModeSection) eraserModeSection.hidden = true;
-      applyBrushOpacityValue(toolSettings.brush.opacity);
-    }
-
-    drawingManager.setTool(toolMap[toolName]);
-
-    if (persist) {
-      userSettings.setBrushSettings({ tool: toolName, brushSize: toolSettings.brush.size, eraserSize: toolSettings.eraser.size });
-    }
-    log.debug('도구 선택', { tool: toolName, size: toolSettings[currentToolType].size });
-  }
-
-  document.querySelectorAll('.tool-btn[data-tool]').forEach(btn => {
-    btn.addEventListener('click', function() {
-      selectDrawingTool(this.dataset.tool);
-    });
-  });
-
-  document.querySelectorAll('.color-btn').forEach(btn => {
-    btn.addEventListener('click', function() {
-      setCurrentColor(colorMap[this.dataset.color] || '#ff4757', { persist: true });
-      log.debug('색상 선택', { color: this.dataset.color });
-    });
-  });
-
-  brushSizeSlider.addEventListener('input', function() {
-    applyBrushSizeValue(this.value);
-  });
-
-  brushSizeSlider.addEventListener('change', function() {
-    applyBrushSizeValue(this.value, { persist: true });
-  });
-
-  // 불투명도 슬라이더
-  brushOpacitySlider.addEventListener('input', function() {
-    applyBrushOpacityValue(this.value);
-  });
-
-  brushOpacitySlider.addEventListener('change', function() {
-    applyBrushOpacityValue(this.value, { persist: true });
-  });
-
-  function adjustBrushSizeBy(delta, options = {}) {
-    const nextSize = toolSettings[currentToolType].size + delta;
-    return applyBrushSizeValue(nextSize, options);
-  }
-
-  // ====== 브러시 외곽선 ======
-  const strokeToggle = document.getElementById('strokeToggle');
-  const strokeControls = document.getElementById('strokeControls');
-  const strokeWidthSlider = document.getElementById('strokeWidthSlider');
-  const strokeWidthValue = document.getElementById('strokeWidthValue');
-  let currentStrokeColor = savedBrush.strokeColor;
-
-  function setActiveStrokeColorButton(color) {
-    document.querySelectorAll('.stroke-color-btn[data-stroke-color]').forEach(btn => {
-      btn.classList.toggle('active', btn.dataset.strokeColor === color);
-    });
-  }
-
-  function applyStrokeSettings(settings = {}, options = {}) {
-    const strokeEnabled = settings.strokeEnabled === true;
-    const strokeWidth = clampStrokeWidth(settings.strokeWidth, 3);
-    const strokeColor = settings.strokeColor || '#ffffff';
-
-    strokeToggle?.classList.toggle('active', strokeEnabled);
-    if (strokeToggle) strokeToggle.textContent = strokeEnabled ? 'ON' : 'OFF';
-    strokeControls?.classList.toggle('visible', strokeEnabled);
-    if (strokeWidthSlider) strokeWidthSlider.value = String(strokeWidth);
-    if (strokeWidthValue) strokeWidthValue.textContent = `${strokeWidth}px`;
-    currentStrokeColor = strokeColor;
-    setActiveStrokeColorButton(currentStrokeColor);
-
-    drawingManager.setStrokeEnabled(strokeEnabled);
-    drawingManager.setStrokeWidth(strokeWidth);
-    drawingManager.setStrokeColor(currentStrokeColor);
-
-    if (options.persist) {
-      userSettings.setBrushSettings({
-        strokeEnabled,
-        strokeWidth,
-        strokeColor: currentStrokeColor
-      });
-    }
-  }
-
-  // 외곽선 토글
-  strokeToggle?.addEventListener('click', () => {
-    const isActive = !strokeToggle.classList.contains('active');
-    applyStrokeSettings({
-      strokeEnabled: isActive,
-      strokeWidth: strokeWidthSlider?.value,
-      strokeColor: currentStrokeColor
-    }, { persist: true });
-  });
-
-  // 외곽선 두께
-  strokeWidthSlider?.addEventListener('input', function() {
-    const width = clampStrokeWidth(this.value);
-    strokeWidthValue.textContent = `${width}px`;
-    drawingManager.setStrokeWidth(width);
-  });
-  strokeWidthSlider?.addEventListener('change', function() {
-    userSettings.setBrushSettings({ strokeWidth: clampStrokeWidth(this.value) });
-  });
-
-  // 외곽선 색상
-  document.querySelectorAll('.stroke-color-btn[data-stroke-color]').forEach(btn => {
-    btn.addEventListener('click', function() {
-      const color = this.dataset.strokeColor;
-      currentStrokeColor = color;
-      setActiveStrokeColorButton(color);
-      drawingManager.setStrokeColor(color);
-      userSettings.setBrushSettings({ strokeColor: color });
-    });
-  });
-
-  drawingManager.drawingCanvas?.addEventListener('sizeadjuststart', (event) => {
-    showBrushSizeHud(event.detail);
-  });
-  drawingManager.drawingCanvas?.addEventListener('sizeadjust', (event) => {
-    const size = applyBrushSizeValue(event.detail.size);
-    updateBrushSizeHud({ ...event.detail, size });
-  });
-  drawingManager.drawingCanvas?.addEventListener('sizeadjustend', (event) => {
-    const size = applyBrushSizeValue(event.detail.size, { persist: true });
-    updateBrushSizeHud({ ...event.detail, size });
-    hideBrushSizeHud();
-  });
-
-  function applySavedBrushSettings(settings = userSettings.getBrushSettings()) {
-    toolSettings.eraser.size = clampBrushSize(settings.eraserSize, 20);
-    toolSettings.brush.size = clampBrushSize(settings.brushSize, 3);
-    toolSettings.brush.opacity = clampBrushOpacity(settings.opacity, 100);
-    currentStrokeColor = settings.strokeColor || '#ffffff';
-
-    setCurrentColor(settings.color, { persist: false });
-    applyBrushOpacityValue(toolSettings.brush.opacity);
-    applyStrokeSettings(settings);
-    selectDrawingTool(settings.tool, { persist: false });
-  }
-
-  applySavedBrushSettings(savedBrush);
-
-  // Undo 버튼
-  elements.btnUndo?.addEventListener('click', async () => {
-    if (await globalUndo()) {
-      showToast('실행 취소됨', 'info');
-    }
-  });
-
-  // 전체 지우기 버튼
-  elements.btnClearDrawing?.addEventListener('click', () => {
-    const layer = drawingManager.getActiveLayer();
-    if (layer) {
-      if (layer.locked || layer.visible === false) {
-        const message = layer.visible === false
-          ? '숨긴 레이어는 지울 수 없습니다. 레이어를 보이게 켠 뒤 다시 시도하세요.'
-          : '잠긴 레이어는 지울 수 없습니다. 잠금을 해제한 뒤 다시 시도하세요.';
-        showToast(message, 'warning');
-        return;
-      }
-
-      // 현재 키프레임의 데이터를 지움
-      const keyframe = layer.getKeyframeAtFrame(drawingManager.currentFrame);
-      const hasClearableSelection = !!(
-        drawingManager.drawingCanvas?.floatingImage ||
-        drawingManager.drawingCanvas?.selection
-      );
-      if ((keyframe && !keyframe.isEmpty) || hasClearableSelection) {
-        drawingManager._saveToHistory();
-        drawingManager.drawingCanvas?.clearSelection?.();
-        if (keyframe && !keyframe.isEmpty) {
-          keyframe.setCanvasData(null);
-          keyframe.baseCanvasData = null;
-          keyframe.strokeRecords = [];
-        }
-        drawingManager.renderFrame(drawingManager.currentFrame);
-        showToast('현재 프레임 지워짐', 'info');
-      }
-    }
-  });
 
   function renderDrawingLayerTimeline() {
     renderActiveDrawingLayers();
@@ -4645,18 +4163,7 @@ async function initApp() {
     deleteDrawingLayer(drawingManager.activeLayerId);
   }
 
-  function selectDrawingLayerByOffset(offset) {
-    if (drawingManager.selectActiveLayerByOffset(offset)) {
-      renderDrawingLayerTimeline();
-    }
-  }
 
-  function moveDrawingLayerByOffset(offset) {
-    if (drawingManager.moveActiveLayerByOffset(offset)) {
-      renderDrawingLayerTimeline();
-      showToast('레이어 순서가 변경되었습니다.', 'info');
-    }
-  }
 
   // 레이어 추가 버튼
   elements.btnAddLayer?.addEventListener('click', addDrawingLayer);
@@ -4664,189 +4171,6 @@ async function initApp() {
   // 레이어 삭제 버튼
   elements.btnDeleteLayer?.addEventListener('click', deleteActiveDrawingLayer);
 
-  // ====== 그리기 도구 메뉴 이동/접기 ======
-  const drawingToolsPanel = elements.drawingTools;
-  const drawingToolsHeader = document.getElementById('drawingToolsHeader');
-  const collapseToolsBtn = document.getElementById('collapseToolsBtn');
-
-  // 접기/펴기 기능
-  collapseToolsBtn.addEventListener('click', (e) => {
-    e.stopPropagation();
-    drawingToolsPanel.classList.toggle('collapsed');
-  });
-
-  // 드래그로 이동 기능
-  let isDraggingTools = false;
-  let toolsDragStartX = 0;
-  let toolsDragStartY = 0;
-  let toolsInitialLeft = 0;
-  let toolsInitialTop = 0;
-
-  drawingToolsHeader.addEventListener('mousedown', (e) => {
-    if (e.target === collapseToolsBtn) return;
-    isDraggingTools = true;
-    toolsDragStartX = e.clientX;
-    toolsDragStartY = e.clientY;
-    toolsInitialLeft = drawingToolsPanel.offsetLeft;
-    toolsInitialTop = drawingToolsPanel.offsetTop;
-    drawingToolsPanel.style.transition = 'none';
-  });
-
-  document.addEventListener('mousemove', (e) => {
-    if (!isDraggingTools) return;
-
-    const deltaX = e.clientX - toolsDragStartX;
-    const deltaY = e.clientY - toolsDragStartY;
-
-    const newLeft = toolsInitialLeft + deltaX;
-    const newTop = toolsInitialTop + deltaY;
-
-    // 경계 체크
-    const container = elements.videoWrapper;
-    const maxLeft = container.offsetWidth - drawingToolsPanel.offsetWidth - 10;
-    const maxTop = container.offsetHeight - 50;
-
-    drawingToolsPanel.style.left = `${Math.max(10, Math.min(newLeft, maxLeft))}px`;
-    drawingToolsPanel.style.top = `${Math.max(10, Math.min(newTop, maxTop))}px`;
-  });
-
-  document.addEventListener('mouseup', () => {
-    if (isDraggingTools) {
-      isDraggingTools = false;
-      drawingToolsPanel.style.transition = '';
-    }
-  });
-
-  // ====== 어니언 스킨 ======
-  const onionToggle = document.getElementById('onionToggle');
-  const onionControls = document.getElementById('onionControls');
-  const onionBefore = document.getElementById('onionBefore');
-  const onionAfter = document.getElementById('onionAfter');
-  const onionOpacity = document.getElementById('onionOpacity');
-  const onionOpacityValue = document.getElementById('onionOpacityValue');
-
-  // 어니언 스킨 토글 함수 (UI 동기화 포함)
-  function toggleOnionSkinWithUI() {
-    const isActive = !onionToggle.classList.contains('active');
-    onionToggle.classList.toggle('active', isActive);
-    onionToggle.textContent = isActive ? 'ON' : 'OFF';
-    onionControls.classList.toggle('visible', isActive);
-    drawingManager.setOnionSkin(isActive, {
-      before: parseInt(onionBefore.value),
-      after: parseInt(onionAfter.value),
-      opacity: parseInt(onionOpacity.value) / 100
-    });
-    return isActive;
-  }
-
-  onionToggle.addEventListener('click', () => {
-    toggleOnionSkinWithUI();
-  });
-
-  onionBefore.addEventListener('change', updateOnionSettings);
-  onionAfter.addEventListener('change', updateOnionSettings);
-  onionOpacity.addEventListener('input', () => {
-    onionOpacityValue.textContent = `${onionOpacity.value}%`;
-    updateOnionSettings();
-  });
-
-  function updateOnionSettings() {
-    if (onionToggle.classList.contains('active')) {
-      drawingManager.setOnionSkin(true, {
-        before: parseInt(onionBefore.value),
-        after: parseInt(onionAfter.value),
-        opacity: parseInt(onionOpacity.value) / 100
-      });
-    }
-  }
-
-  // ====== 영상 어니언 스킨 ======
-  // TODO: 영상 어니언 스킨 기능 - 비디오 가림 문제로 임시 비활성화
-  // 문제: 캔버스 오버레이가 비디오를 가려서 검은 화면으로 표시됨
-  // 해결 필요: z-index, visibility 조정으로 해결 안됨 - 다른 접근 방식 필요
-  /*
-  const videoOnionToggle = document.getElementById('videoOnionToggle');
-  const videoOnionControls = document.getElementById('videoOnionControls');
-  const videoOnionBefore = document.getElementById('videoOnionBefore');
-  const videoOnionAfter = document.getElementById('videoOnionAfter');
-  const videoOnionOpacity = document.getElementById('videoOnionOpacity');
-  const videoOnionOpacityValue = document.getElementById('videoOnionOpacityValue');
-  const videoOnionSkinCanvas = document.getElementById('videoOnionSkinCanvas');
-
-  // 비디오 플레이어에 영상 어니언 스킨 캔버스 설정
-  videoPlayer.setVideoOnionSkinCanvas(videoOnionSkinCanvas);
-
-  // 컨트롤바의 영상 어니언 스킨 버튼
-  const btnVideoOnionSkin = document.getElementById('btnVideoOnionSkin');
-
-  // 영상 어니언 스킨 토글 함수 (UI 동기화 포함)
-  function toggleVideoOnionSkinWithUI() {
-    const isActive = !videoOnionToggle.classList.contains('active');
-    // 그리기 도구 패널 버튼 업데이트
-    videoOnionToggle.classList.toggle('active', isActive);
-    videoOnionToggle.textContent = isActive ? 'ON' : 'OFF';
-    videoOnionControls.classList.toggle('visible', isActive);
-    // 컨트롤바 버튼 업데이트
-    btnVideoOnionSkin.classList.toggle('active', isActive);
-    // 캔버스 표시/숨김
-    videoOnionSkinCanvas.classList.toggle('visible', isActive);
-    videoPlayer.setVideoOnionSkin(isActive, {
-      before: parseInt(videoOnionBefore.value),
-      after: parseInt(videoOnionAfter.value),
-      opacity: parseInt(videoOnionOpacity.value) / 100
-    });
-    return isActive;
-  }
-
-  videoOnionToggle.addEventListener('click', () => {
-    toggleVideoOnionSkinWithUI();
-  });
-
-  btnVideoOnionSkin.addEventListener('click', () => {
-    toggleVideoOnionSkinWithUI();
-  });
-
-  videoOnionBefore.addEventListener('change', updateVideoOnionSettings);
-  videoOnionAfter.addEventListener('change', updateVideoOnionSettings);
-  videoOnionOpacity.addEventListener('input', () => {
-    videoOnionOpacityValue.textContent = `${videoOnionOpacity.value}%`;
-    updateVideoOnionSettings();
-  });
-
-  function updateVideoOnionSettings() {
-    if (videoOnionToggle.classList.contains('active')) {
-      videoPlayer.setVideoOnionSkin(true, {
-        before: parseInt(videoOnionBefore.value),
-        after: parseInt(videoOnionAfter.value),
-        opacity: parseInt(videoOnionOpacity.value) / 100
-      });
-    }
-  }
-
-  // 비디오 일시정지 시 영상 어니언 스킨 렌더링
-  videoPlayer.addEventListener('pause', () => {
-    if (videoPlayer.videoOnionSkin?.enabled) {
-      videoPlayer.renderVideoOnionSkin();
-    }
-  });
-
-  // 비디오 재생 시 영상 어니언 스킨 클리어
-  videoPlayer.addEventListener('play', () => {
-    videoPlayer._clearVideoOnionSkin();
-  });
-
-  // 비디오 시간 변경 시 (일시정지 상태에서 seeking) 영상 어니언 스킨 업데이트
-  let videoOnionSkinDebounceTimer = null;
-  videoPlayer.addEventListener('timeupdate', () => {
-    if (!videoPlayer.isPlaying && videoPlayer.videoOnionSkin?.enabled) {
-      // 디바운스 처리 (너무 자주 렌더링하지 않도록)
-      clearTimeout(videoOnionSkinDebounceTimer);
-      videoOnionSkinDebounceTimer = setTimeout(() => {
-        videoPlayer.renderVideoOnionSkin();
-      }, 150);
-    }
-  });
-  */
 
   // ====== 구간 반복 ======
   const loopControlsEl = document.getElementById('loopControls');
@@ -6338,7 +5662,6 @@ async function initApp() {
   let mpvReviewFreezeFailureHandling = false;
   let mpvReviewFreezeFrameSnapshot = null;
   let mpvReviewTargetFrameSnapshot = null;
-  let mpvDrawPlaybackTransitionToken = 0;
   let pendingMpvReviewFreezeMediaChange = null;
   const mpvReviewFrameTracker = createMpvReviewFrameTracker();
   const mpvReviewFreezeCaptureOwner = createSharedAsyncCaptureOwner();
@@ -6626,7 +5949,6 @@ async function initApp() {
     'drawingToolSelect'
   ]);
   const FABRIC_DRAWING_LEGACY_CLICK_SELECTOR = [
-    '#drawingTools',
     '#btnUndo',
     '#btnClearDrawing',
     '#btnAddLayer',
@@ -6823,6 +6145,61 @@ async function initApp() {
     return videoPlayer.engine !== 'html5' && document.body.classList.contains('mpv-pilot-mode');
   }
 
+  function isHtml5DrawingSurfaceReady() {
+    const surface = state.html5DrawingSurface;
+    return videoPlayer.engine === 'html5' && videoPlayer.isLoaded && !state.isAudioMode &&
+      surface?.ready === true && surface.filePath === state.currentFile &&
+      mpvOverlayLifecycle.isReady(surface.owner);
+  }
+
+  function isCurrentDrawingSurfaceReady() {
+    return isMpvPilotPlaybackActive() || isHtml5DrawingSurfaceReady();
+  }
+
+  async function ensureHtml5DrawingSurface(loadToken, isCurrent = () => true) {
+    if (videoPlayer.engine !== 'html5' || state.isAudioMode || !videoPlayer.isLoaded || !isCurrent()) return false;
+    if (isHtml5DrawingSurfaceReady()) return true;
+    const filePath = state.currentFile;
+    const intent = videoLoadIntentGeneration;
+    const stillCurrent = () => isCurrent() && videoPlayer.engine === 'html5' &&
+      videoPlayer.isLoaded && filePath === state.currentFile && intent === videoLoadIntentGeneration;
+    return mpvTeardownGate.run(async () => {
+      if (!stillCurrent()) return false;
+      if (isHtml5DrawingSurfaceReady()) return true;
+      const owner = mpvOverlayLifecycle.begin(loadToken);
+      const surface = { owner, filePath, intent, ready: false, hydrated: false };
+      let prepared = false;
+      state.html5DrawingSurface = surface;
+      const ownsSurface = () => stillCurrent() && state.html5DrawingSurface === surface && mpvOverlayLifecycle.owns(owner);
+      try {
+        // Ensure must not briefly cover the HTML video with an input surface.
+        const hidden = await window.electronAPI?.mpvSetOverlayVisible?.(false);
+        if (!ownsSurface() || !hidden?.success) return false;
+        const overlay = await prepareMpvOverlayHost();
+        if (!ownsSurface() || !overlay?.success) return false;
+        surface.ready = true;
+        if (!mpvOverlayLifecycle.markReady(owner)) return false;
+        const overlayState = getMpvOverlayState();
+        const synced = await window.electronAPI.mpvUpdateOverlayState(overlayState);
+        if (!ownsSurface() || !synced?.success) return false;
+        document.body.classList.add('drawing-surface-ready');
+        prepared = true;
+        return true;
+      } catch (error) {
+        log.warn('현재 드로잉 화면 준비 실패', { error: error.message });
+        return false;
+      } finally {
+        if (state.html5DrawingSurface === surface && (!ownsSurface() || !prepared)) {
+          state.html5DrawingSurface = null;
+          document.body.classList.remove('drawing-surface-ready');
+          mpvOverlayLifecycle.invalidate(owner);
+          try { await window.electronAPI?.mpvSetOverlayVisible?.(false); }
+          catch (error) { log.debug('드로잉 화면 숨김 실패', { error: error?.message }); }
+        }
+      }
+    });
+  }
+
   function getFabricDrawingPilotViewport() {
     const renderArea = getVideoRenderArea();
     if (!renderArea) return null;
@@ -6859,8 +6236,9 @@ async function initApp() {
     const viewport = getFabricDrawingPilotViewport();
     return {
       isMpvActive: isMpvPilotPlaybackActive(),
+      isDrawingSurfaceReady: isCurrentDrawingSurfaceReady(),
       isAudio: state.isAudioMode,
-      stableVideoIdentity: videoPlayer.filePath || state.currentFile || '',
+      stableVideoIdentity: state.currentFile || videoPlayer.filePath || '',
       targetFrame: videoPlayer.currentFrame,
       sourceWidth: videoPlayer.videoWidth,
       sourceHeight: videoPlayer.videoHeight,
@@ -6906,7 +6284,7 @@ async function initApp() {
 
   function shouldSuppressLegacyDrawingForFabricPilot() {
     return fabricDrawingPilotController.shouldOwnDrawingShortcut() &&
-      isMpvPilotPlaybackActive();
+      isCurrentDrawingSurfaceReady();
   }
 
   function isFabricDrawingPilotControllerEngaged() {
@@ -6916,7 +6294,7 @@ async function initApp() {
   }
 
   function isFabricDrawingPilotEngaged() {
-    return isMpvPilotPlaybackActive() && isFabricDrawingPilotControllerEngaged();
+    return isCurrentDrawingSurfaceReady() && isFabricDrawingPilotControllerEngaged();
   }
 
   // 파일럿 드로잉(drawingsV3)을 타임라인 드로잉 레이어로 읽기 전용 투영한다.
@@ -6924,7 +6302,7 @@ async function initApp() {
   // 파일럿이 소유하는 동안에는 레거시 drawings도 읽기 전용 행으로 함께 투영한다.
   function getFabricPilotTimelineLayers() {
     if (!fabricDrawingPilotController.shouldOwnDrawingShortcut() ||
-        !isMpvPilotPlaybackActive()) {
+        !isCurrentDrawingSurfaceReady()) {
       return null;
     }
     const hasPlaylistAggregateTimeline = playlistUIState.mode === 'continuous' &&
@@ -7075,8 +6453,7 @@ async function initApp() {
   }
 
   function requiresMpvReviewFreeze() {
-    return state.isCommentMode ||
-      (state.isDrawMode && !fabricDrawingPilotController.isActiveOrPreparing());
+    return state.isCommentMode;
   }
 
   function isMpvReviewInteractionActive() {
@@ -7099,11 +6476,6 @@ async function initApp() {
       videoPlayer.filePath,
       videoPlayer.currentFrame
     );
-    if (state.isDrawMode) {
-      drawModePreparationToken += 1;
-      setDrawModeReadyState(false);
-      setDrawModePreparingState(true);
-    }
     if (state.isCommentMode) {
       commentModePreparationToken += 1;
       setCommentModeReadyState(false);
@@ -7128,11 +6500,7 @@ async function initApp() {
   }
 
   async function refreshMpvReviewFreezeFrameForCurrentFrame() {
-    const drawPreparationToken = drawModePreparationToken;
     const commentPreparationToken = commentModePreparationToken;
-    const isDrawPreparationCurrent = () => (
-      state.isDrawMode && drawPreparationToken === drawModePreparationToken
-    );
     const isCommentPreparationCurrent = () => (
       state.isCommentMode && commentPreparationToken === commentModePreparationToken
     );
@@ -7141,13 +6509,9 @@ async function initApp() {
       prepareFreeze: () => showMpvReviewFreezeFrame(),
       isStillActive: () => (
         isMpvPilotPlaybackActive() &&
-        (isDrawPreparationCurrent() || isCommentPreparationCurrent())
+        isCommentPreparationCurrent()
       ),
       setReady: () => {
-        if (isDrawPreparationCurrent()) {
-          setDrawModePreparingState(false);
-          setDrawModeReadyState(true);
-        }
         if (isCommentPreparationCurrent()) {
           setCommentModePreparingState(false);
           setCommentModeReadyState(true);
@@ -7198,12 +6562,26 @@ async function initApp() {
 
   async function captureMpvReviewFrameWithDrawings() {
     if (!window.electronAPI?.mpvScreenshot) throw new Error('mpv screenshot API unavailable');
-    const keyframe = fabricDrawingPersistenceStore.resolveKeyframeAtFrame(videoPlayer.currentFrame);
+    const filePath = state.currentFile;
+    const frame = videoPlayer.currentFrame;
+    const keyframe = fabricDrawingPersistenceStore.resolveKeyframeAtFrame(frame);
     const layers = reviewDataManager.getDrawingLayers();
     const screenshot = await window.electronAPI.mpvScreenshot();
-    if (!screenshot?.success || !keyframe?.objects?.length) return screenshot;
+    if (!screenshot?.success || state.currentFile !== filePath || videoPlayer.currentFrame !== frame) return screenshot;
+    const hasLegacyDrawing = drawingManager.layers.some(layer => {
+      if (!layer.visible || (layer.opacity ?? 1) <= 0) return false;
+      const held = layer.getKeyframeAtFrame(frame);
+      return held && !held.isEmpty && !!held.canvasData;
+    });
+    let legacyDataUrl = '';
+    if (hasLegacyDrawing) {
+      await drawingManager.renderFrame(frame);
+      if (state.currentFile !== filePath || videoPlayer.currentFrame !== frame) return screenshot;
+      legacyDataUrl = getCompositedDrawingOverlayDataUrl();
+    }
+    if (!keyframe?.objects?.length && !legacyDataUrl) return screenshot;
     const renderer = await loadReviewDrawingFreezeRenderer();
-    const dataUrl = await renderer.composite(screenshot.dataUrl, keyframe, layers);
+    const dataUrl = await renderer.composite(screenshot.dataUrl, keyframe, layers, legacyDataUrl);
     return { ...screenshot, dataUrl };
   }
 
@@ -7376,46 +6754,7 @@ async function initApp() {
     return true;
   }
 
-  async function restoreMpvDrawFreezeAfterPlayback() {
-    const restoreToken = ++mpvDrawPlaybackTransitionToken;
-    const freezePrepared = await showMpvReviewFreezeFrame();
-    if (
-      restoreToken !== mpvDrawPlaybackTransitionToken ||
-      !state.isDrawMode ||
-      videoPlayer.isPlaying
-    ) return;
 
-    if (!freezePrepared) {
-      elements.drawingTools?.classList.remove('playback-hidden');
-      scheduleMpvReviewFreezeRefresh();
-      forceMpvHostVisibilitySync();
-      return false;
-    }
-
-    elements.drawingTools?.classList.remove('playback-hidden');
-    scheduleMpvOverlayStateSync({ force: true });
-    forceMpvHostVisibilitySync();
-    return true;
-  }
-
-  function preserveMpvReviewFreezeFrameForMediaChange() {
-    const canPreserve = Boolean(
-      mpvReviewFreezeElement &&
-      elements.videoWrapper?.classList.contains('mpv-review-freeze-ready')
-    );
-    if (!canPreserve) return false;
-
-    mpvReviewFreezeToken += 1;
-    mpvReviewFrameTracker.invalidate();
-    mpvReviewTargetFrameSnapshot = null;
-    mpvReviewFreezeCaptureOwner.cancel();
-    mpvReviewFreezeRefreshScheduler.cancel();
-    mpvReviewFreezeHostHideOwner = null;
-    drawModePreparationToken += 1;
-    setDrawModeReadyState(false);
-    setDrawModePreparingState(true);
-    return true;
-  }
 
   function beginDestructiveMpvReviewMediaChange(loadToken) {
     if (activeVideoLoadToken !== loadToken) return null;
@@ -8751,13 +8090,15 @@ async function initApp() {
     if (e.detail?.status !== 'saved' || e.detail?.bypassed === true) return;
     fabricDrawingPilotController.clearPersistenceSaveBlock?.();
   });
-  const fabricDrawingPilotInitialization = fabricDrawingPilotController.initialize().then(enabled => {
+  async function initializeCurrentDrawing() {
+    const enabled = await fabricDrawingPilotController.initialize();
     document.body.classList.toggle(
       'fabric-drawing-pilot-enabled',
       enabled && fabricDrawingPilotController.shouldOwnDrawingShortcut()
     );
     return enabled;
-  });
+  }
+  void initializeCurrentDrawing();
   const mpvTeardownGate = createMpvTeardownGate();
   const mpvPilotOwnershipGate = createMpvPilotOwnershipGate({
     teardownGate: mpvTeardownGate,
@@ -8851,36 +8192,19 @@ async function initApp() {
 
   function beginMpvHtml5FallbackReviewTransition() {
     const drawModeWasActive = state.isDrawMode;
-    const drawPreparationToken = drawModeWasActive ? ++drawModePreparationToken : null;
-
-    if (drawModeWasActive) {
-      setDrawModePreparingState(false);
-      setDrawModeReadyState(false);
-    }
+    exitDrawModeForSystemPath();
     if (state.isCommentMode) {
       ++commentModePreparationToken;
       setCommentModePreparingState(false);
       commentManager.setCommentMode(false);
     }
-
-    return Object.freeze({ drawModeWasActive, drawPreparationToken });
+    return Object.freeze({ drawModeWasActive, revision: drawingEntryRevision });
   }
 
   function finishMpvHtml5FallbackReviewTransition(transition, { filePath, loaded }) {
-    if (!transition?.drawModeWasActive || !state.isDrawMode) return;
-    if (drawModePreparationToken !== transition.drawPreparationToken) return;
-    if (hasActiveVideoLoadForDifferentFile(filePath)) return;
-
-    const html5FileReady = loaded &&
-      videoPlayer.engine === 'html5' &&
-      isSameFilePath(filePath, state.currentFile);
-    if (html5FileReady) {
-      setDrawModePreparingState(false);
-      setDrawModeReadyState(true);
-      return;
-    }
-
-    exitDrawModeForSystemPath();
+    if (!transition?.drawModeWasActive || transition.revision !== drawingEntryRevision) return;
+    if (loaded && videoPlayer.engine === 'html5' && isSameFilePath(filePath, state.currentFile) &&
+        !hasActiveVideoLoadForDifferentFile(filePath)) void toggleDrawMode();
   }
 
   async function loadVideoWithHtml5Fallback(filePath, options = {}, { owner = null, skipReviewTransition = false } = {}) {
@@ -8904,112 +8228,10 @@ async function initApp() {
   }
 
   // 작업 4: 드로잉/댓글 모드 하이브리드 엔진 — HTML5 직재생 가능 코덱이면 모드 동안 HTML5로 전환
-  const hybridReviewCodecCache = new Map(); // filePath -> boolean
 
-  async function isHtml5DirectPlayableForReview(filePath) {
-    if (!filePath) return false;
-    if (hybridReviewCodecCache.has(filePath)) return hybridReviewCodecCache.get(filePath);
-    let playable = false;
-    try {
-      // loadVideo HTML5 경로와 동일한 프로브 재사용
-      const available = await window.electronAPI.ffmpegIsAvailable?.();
-      if (available) {
-        const codecInfo = await window.electronAPI.ffmpegProbeCodec(filePath);
-        playable = codecInfo?.isSupported === true;
-      }
-    } catch (error) {
-      log.debug('하이브리드 코덱 프로브 실패 — freeze 방식 유지', { error: error?.message });
-    }
-    hybridReviewCodecCache.set(filePath, playable);
-    return playable;
-  }
 
-  let hybridReviewSwapInFlight = false;
-  let hybridReviewResumeMpvFile = null; // 모드 종료 시 mpv로 복귀할 파일 경로
 
-  async function enterHybridReviewEngineIfPossible() {
-    if (hybridReviewSwapInFlight) return false;
-    if (!userSettings.getHybridReviewEngine()) return false;
-    if (!isMpvPilotPlaybackActive()) return false;
-    if (state.isAudioMode || !state.currentFile) return false;
-    // HTML5 레거시 캔버스는 V3 획과 레이어를 표시하지 못하므로 기존 mpv 호스트를 유지한다.
-    if (fabricDrawingPersistenceStore.getStatus().keyframeCount > 0) return false;
-    const filePath = state.currentFile;
-    const loadIntent = videoLoadIntentGeneration;
-    const commentToken = commentModePreparationToken;
-    const drawToken = drawModePreparationToken;
-    const isCurrentRequest = () => filePath === state.currentFile &&
-      loadIntent === videoLoadIntentGeneration &&
-      commentToken === commentModePreparationToken && drawToken === drawModePreparationToken &&
-      isMpvReviewInteractionActive();
 
-    hybridReviewSwapInFlight = true;
-    try {
-      if (!(await isHtml5DirectPlayableForReview(filePath)) || !isCurrentRequest()) return false;
-      if (fabricDrawingPersistenceStore.getStatus().keyframeCount > 0) return false;
-      const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
-      // 로딩 도중 취소해 false로 끝나더라도 이미 바뀐 HTML5 엔진을 되돌릴 수 있어야 한다.
-      hybridReviewResumeMpvFile = filePath;
-      const swapped = await loadVideoWithHtml5Fallback(filePath, {
-        keepVersionContext: true,
-        engineSwap: true,
-        videoLoadIntent: loadIntent,
-        shouldContinue: isCurrentRequest,
-        initialFrame: resumeFrame,
-        playWhenMediaReady: false
-      }, { skipReviewTransition: true });
-      if (swapped && filePath === state.currentFile && loadIntent === videoLoadIntentGeneration) {
-        hybridReviewResumeMpvFile = filePath;
-      }
-      if (!swapped && filePath === state.currentFile && loadIntent === videoLoadIntentGeneration &&
-        videoPlayer.engine === 'html5' && resumeFrame !== null) {
-        videoPlayer.seekToFrame(resumeFrame);
-      }
-      return swapped && isCurrentRequest();
-    } catch (error) {
-      log.warn('하이브리드 진입 실패 — freeze 방식으로 폴백', { error: error?.message });
-      return false;
-    } finally {
-      hybridReviewSwapInFlight = false;
-      if (!isCurrentRequest()) void exitHybridReviewEngineIfNeeded();
-    }
-  }
-
-  async function exitHybridReviewEngineIfNeeded() {
-    if (hybridReviewSwapInFlight) return;
-    if (!hybridReviewResumeMpvFile) return;
-    if (isMpvReviewInteractionActive()) return; // 아직 다른 리뷰 모드가 켜져 있음
-    // 다른 파일 열기가 이미 진행돼 currentFile이 바뀌었으면 복귀하지 않는다 —
-    // 아래 hybridReviewResumeMpvFile === state.currentFile 비교가 이를 차단하고,
-    // (c) 말미의 정리 규칙(비-engineSwap loadVideo 초입에서 hybridReviewResumeMpvFile = null)이
-    // 로드 시작 직후의 좁은 경합 창까지 닫는다. 별도 토큰 가드는 두지 않는다.
-    if (videoPlayer.engine === 'html5' && hybridReviewResumeMpvFile === state.currentFile) {
-      hybridReviewSwapInFlight = true;
-      const filePath = state.currentFile;
-      const loadIntent = videoLoadIntentGeneration;
-      const resumeFrame = Number.isFinite(Number(videoPlayer.currentFrame)) ? Number(videoPlayer.currentFrame) : null;
-      const resumePlayback = videoPlayer.isPlaying === true;
-      try {
-        await loadVideo(filePath, {
-          allowMpvPilot: true,
-          keepVersionContext: true,
-          engineSwap: true,
-          videoLoadIntent: loadIntent,
-          shouldContinue: () => filePath === state.currentFile && loadIntent === videoLoadIntentGeneration &&
-            !isMpvReviewInteractionActive(),
-          initialFrame: resumeFrame,
-          playWhenMediaReady: resumePlayback
-        });
-      } catch (error) {
-        log.warn('하이브리드 복귀 실패 — HTML5 유지', { error: error?.message });
-      } finally {
-        hybridReviewSwapInFlight = false;
-      }
-    }
-    if (videoPlayer.engine !== 'html5' || hybridReviewResumeMpvFile !== state.currentFile) {
-      hybridReviewResumeMpvFile = null;
-    }
-  }
 
   async function fallbackFromMpvOverlayRecoveryFailure(owner, filePath, error) {
     if (!isCurrentMpvOverlayFallbackOwner(owner, filePath)) return false;
@@ -9108,6 +8330,9 @@ async function initApp() {
     mpvOverlayRecoveryInFlightOwner = owner;
     mpvOverlaySyncEpoch += 1;
     const recoveryFilePath = videoPlayer.filePath || state.currentFile;
+    const html5Surface = videoPlayer.engine === 'html5' && state.html5DrawingSurface?.owner === owner
+      ? state.html5DrawingSurface : null;
+    if (html5Surface) html5Surface.hydrated = false;
     const recoveryPromise = mpvTeardownGate.run(async () => {
       if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
 
@@ -9117,8 +8342,14 @@ async function initApp() {
         if (!destroyResult?.success) {
           throw new Error(destroyResult?.error || 'mpv overlay destroy failed');
         }
+        if (html5Surface) {
+          // destroy resets requested visibility; hide the replacement after it.
+          const hidden = await window.electronAPI.mpvSetOverlayVisible(false);
+          if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
+          if (!hidden?.success) throw new Error('drawing overlay hide failed');
+        }
 
-        const overlayHost = await prepareMpvOverlayHost();
+        const overlayHost = await prepareMpvOverlayHost({ adoptCapability: !html5Surface });
         if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
         if (!overlayHost) {
           throw new Error('mpv overlay reprepare failed');
@@ -9133,7 +8364,20 @@ async function initApp() {
         if (!recoverySyncResult?.success) {
           throw new Error(recoverySyncResult?.error || 'mpv overlay recovery sync failed');
         }
+        if (html5Surface && (state.html5DrawingSurface !== html5Surface ||
+            videoPlayer.engine !== 'html5' || state.currentFile !== html5Surface.filePath)) {
+          return { success: false, stale: true };
+        }
         if (!mpvOverlayLifecycle.markReady(owner)) return { success: false, stale: true };
+        if (html5Surface) {
+          // Reconcile may consume a pending resume. Its context must see the
+          // synchronized replacement as ready, while visibility stays hidden.
+          const adopted = await fabricDrawingPilotController.adoptOverlayCapability(overlayHost.drawingCapability);
+          if (!mpvOverlayLifecycle.owns(owner) || state.html5DrawingSurface !== html5Surface) return { success: false, stale: true };
+          if (!adopted || !isHtml5DrawingSurfaceReady()) throw new Error('drawing overlay reconciliation failed');
+          html5Surface.hydrated = true;
+          forceMpvHostVisibilitySync();
+        }
 
         log.info('mpv 오버레이 호스트를 한 번 다시 준비했습니다.');
         scheduleMpvOverlayStateSync({ force: true });
@@ -9141,6 +8385,10 @@ async function initApp() {
         scheduleMpvOverlayCollaborationStateSync({ force: true });
         return { success: true };
       } catch (recoveryError) {
+        if (html5Surface && mpvOverlayLifecycle.owns(owner)) {
+          html5Surface.hydrated = false;
+          mpvOverlayLifecycle.markUnavailable(owner, recoveryError.message);
+        }
         return {
           success: false,
           error: recoveryError.message || error || 'unknown'
@@ -9249,6 +8497,7 @@ async function initApp() {
 
   function didMpvHostVisibilityApply(result, shouldShowMpvHost) {
     if (!result?.success || result?.stale) return false;
+    if (result.overlayOnly) return result.visible === shouldShowMpvHost && (!shouldShowMpvHost || result.ready === true);
     if (shouldShowMpvHost) return true;
     return result.embed?.ready === true && result.overlay?.ready === true;
   }
@@ -9261,6 +8510,11 @@ async function initApp() {
     const requestRevision = ++mpvHostVisibilityRequestRevision;
     const shouldShow = visible === true;
     if (!shouldShow) setMpvNativeHostVisibleClass(false);
+    if (videoPlayer.engine === 'html5') {
+      const result = await window.electronAPI?.mpvSetOverlayVisible?.(shouldShow && isHtml5DrawingSurfaceReady());
+      return { ...(result || { success: false }), overlayOnly: true,
+        stale: requestRevision !== mpvHostVisibilityRequestRevision };
+    }
     if (!window.electronAPI?.mpvSetHostVisible) {
       setMpvNativeHostVisibleClass(false);
       return { success: false, error: 'mpv host visibility API is unavailable' };
@@ -9294,6 +8548,10 @@ async function initApp() {
   }
 
   function shouldShowMpvHostForCurrentState() {
+    if (videoPlayer.engine === 'html5') {
+      return isHtml5DrawingSurfaceReady() && state.html5DrawingSurface.hydrated === true &&
+        activeVideoLoadToken === null && !hasBlockingOverlayForMpv();
+    }
     return (!mpvPilotHostPreparing || mpvPilotSeamlessTransitionGate.isActive()) &&
       document.body.classList.contains('mpv-pilot-mode') &&
       mpvReviewFreezeHostHideOwner === null &&
@@ -9317,7 +8575,7 @@ async function initApp() {
   }
 
   function syncMpvHostVisibilityWithDom() {
-    if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!mpvPilotHostPreparing && !isCurrentDrawingSurfaceReady()) return;
     if (!window.electronAPI?.mpvSetHostVisible) return;
     if (mpvHostVisibilitySyncPending) return;
 
@@ -9340,7 +8598,7 @@ async function initApp() {
 
   function installMpvBlockingOverlayObserver() {
     const observer = new MutationObserver((mutations) => {
-      if (!mpvPilotHostPreparing && !document.body.classList.contains('mpv-pilot-mode')) return;
+      if (!mpvPilotHostPreparing && !isCurrentDrawingSurfaceReady()) return;
       if (!mutations.some((mutation) => mutation.type === 'attributes' || mutation.type === 'childList')) return;
       syncMpvHostVisibilityWithDom();
     });
@@ -9604,7 +8862,7 @@ async function initApp() {
     return null;
   }
 
-  async function prepareMpvOverlayHost() {
+  async function prepareMpvOverlayHost({ adoptCapability = true } = {}) {
     if (!window.electronAPI?.mpvPrepareOverlay) return null;
 
     const bounds = getMpvEmbedBounds();
@@ -9612,9 +8870,11 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
-      await fabricDrawingPilotInitialization;
-      await fabricDrawingPilotController.adoptOverlayCapability(result.drawingCapability);
-      forceMpvHostVisibilitySync();
+      await initializeCurrentDrawing();
+      if (adoptCapability) {
+        await fabricDrawingPilotController.adoptOverlayCapability(result.drawingCapability);
+        forceMpvHostVisibilitySync();
+      }
       return result;
     }
 
@@ -9625,7 +8885,7 @@ async function initApp() {
   }
 
   async function syncMpvOverlayBounds(bounds = getMpvEmbedBounds()) {
-    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!isCurrentDrawingSurfaceReady()) return;
     if (!window.electronAPI?.mpvUpdateOverlayBounds) return;
     if (!bounds) return;
 
@@ -9934,6 +9194,7 @@ async function initApp() {
   }
 
   function getMpvOverlayState() {
+    const overlayOnly = videoPlayer.engine === 'html5';
     const wrapperRect = elements.videoWrapper?.getBoundingClientRect();
     const canvasRect = elements.drawingCanvas?.getBoundingClientRect();
     if (!wrapperRect || !canvasRect) return null;
@@ -9943,23 +9204,23 @@ async function initApp() {
 
     return {
       commentInteractionBlocked: state.isDrawMode || isFabricDrawingPilotControllerEngaged(),
-      drawingDataUrl: suppressLegacyDrawing ? '' : getCompositedDrawingOverlayDataUrl(),
-      remoteStrokeDataUrl: remoteStrokeIsVisible
+      drawingDataUrl: overlayOnly ? '' : getCompositedDrawingOverlayDataUrl(),
+      remoteStrokeDataUrl: !overlayOnly && remoteStrokeIsVisible
         ? getCanvasOverlayDataUrl(remoteStrokeOverlayForMpv)
         : '',
       remoteStrokeOpacity: remoteStrokeIsVisible
         ? Math.max(0, Math.min(1, Number.parseFloat(remoteStrokeOverlayForMpv.style.opacity || '1')))
         : 0,
       // 피드백 32: 어니언 스킨이 꺼져 있으면 전체 해상도 투명 PNG 인코딩을 생략한다.
-      onionDataUrl: !suppressLegacyDrawing && drawingManager.onionSkin?.enabled
+      onionDataUrl: !overlayOnly && !suppressLegacyDrawing && drawingManager.onionSkin?.enabled
         ? getCanvasOverlayDataUrl(elements.onionSkinCanvas)
         : '',
       fabricViewport: getFabricDrawingPilotViewport(),
-      markerHtml: serializeMpvOverlayMarkerHtml(),
-      tooltipHtml: serializeMpvOverlayTooltipHtml(),
-      htmlOverlayHtml: serializeMpvOverlayHtml(),
-      toastHtml: serializeMpvOverlayToastHtml(),
-      compositionLayers: compositionLayerManager.getMpvOverlayLayers({
+      markerHtml: overlayOnly ? '' : serializeMpvOverlayMarkerHtml(),
+      tooltipHtml: overlayOnly ? '' : serializeMpvOverlayTooltipHtml(),
+      htmlOverlayHtml: overlayOnly ? '' : serializeMpvOverlayHtml(),
+      toastHtml: overlayOnly ? '' : serializeMpvOverlayToastHtml(),
+      compositionLayers: overlayOnly ? [] : compositionLayerManager.getMpvOverlayLayers({
         currentTime: videoPlayer.currentTime,
         isPlaying: videoPlayer.isPlaying && !videoPlayer.isBuffering
       }),
@@ -10010,7 +9271,7 @@ async function initApp() {
   }
 
   async function syncMpvOverlayState() {
-    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!isCurrentDrawingSurfaceReady()) return;
     if (!window.electronAPI?.mpvUpdateOverlayState) return;
     const overlayOwner = mpvOverlayLifecycle.captureReadyOwner();
     if (!overlayOwner) return;
@@ -10309,7 +9570,7 @@ async function initApp() {
   }
 
   async function syncMpvEmbedBounds() {
-    if (!document.body.classList.contains('mpv-pilot-mode')) return;
+    if (!isCurrentDrawingSurfaceReady()) return;
     if (!window.electronAPI?.mpvUpdateEmbedBounds) return;
     if (mpvEmbedBoundsSyncPending) return;
 
@@ -10320,7 +9581,7 @@ async function initApp() {
       if (!bounds) return;
 
       try {
-        await window.electronAPI.mpvUpdateEmbedBounds(bounds);
+        if (isMpvPilotPlaybackActive()) await window.electronAPI.mpvUpdateEmbedBounds(bounds);
         await syncMpvOverlayBounds(bounds);
         scheduleMpvOverlayStateSync();
       } catch (error) {
@@ -10346,6 +9607,8 @@ async function initApp() {
   }
 
   async function destroyMpvPilotHosts() {
+    state.html5DrawingSurface = null;
+    document.body.classList.remove('drawing-surface-ready');
     invalidateMpvHostVisibilityRequests();
     try {
       await window.electronAPI?.mpvDestroyOverlay?.();
@@ -10591,10 +9854,7 @@ async function initApp() {
     if (isMpvReviewInteractionActive()) {
       videoPlayer.pause();
       let reviewReady = false;
-      if (state.isDrawMode) {
-        const preparationToken = ++drawModePreparationToken;
-        reviewReady = await prepareMpvDrawMode(preparationToken);
-      } else if (state.isCommentMode) {
+      if (state.isCommentMode) {
         const preparationToken = ++commentModePreparationToken;
         reviewReady = await prepareMpvCommentMode(preparationToken);
       }
@@ -10686,7 +9946,7 @@ async function initApp() {
     let fabricPersistenceAbandonedForThisLoad = false;
     lastVideoLoadFabricCancelReason = null;
     if (!engineSwap) {
-      await fabricDrawingPilotInitialization;
+      await initializeCurrentDrawing();
       if (!canContinueVideoLoad()) return false;
       transitionMetrics.mark('fabricFlush:start');
       let fabricPersistenceReadyToLeave =
@@ -10718,8 +9978,6 @@ async function initApp() {
     resetViewportPanCycle();
     activeVideoLoadToken = loadToken;
     activeVideoLoadPath = filePath;
-    mpvDrawPlaybackTransitionToken += 1;
-    elements.drawingTools?.classList.remove('playback-hidden');
     let videoLoadCompleted = false;
     const videoLoadCompletion = beginActiveVideoLoadCompletion(filePath, loadIntent, loadToken);
     let fabricVideoChangeStarted = false;
@@ -10744,6 +10002,12 @@ async function initApp() {
     }
     const trace = log.trace('loadVideo');
     try {
+      if (engineSwap) {
+        await initializeCurrentDrawing();
+        if (!canContinueVideoLoad()) return false;
+        fabricVideoChangeStarted = true;
+        if (!(await fabricDrawingPilotController.beforeVideoChange(loadToken)) || !canContinueVideoLoad()) return false;
+      }
       // 파일 정보 가져오기
       transitionMetrics.mark('fileInfo:start');
       const fileInfo = await window.electronAPI.getFileInfo(filePath);
@@ -10818,7 +10082,6 @@ async function initApp() {
       // 파괴 구간 전체를 건너뛴다 — B/C 모드 토글마다 상태가 날아가는 것을 막는 핵심.
       if (!engineSwap) {
       // 다른 파일을 여는 일반 로드가 시작되면 하이브리드 복귀 대상을 정리한다(경합 방지).
-        hybridReviewResumeMpvFile = null;
         // 최종 저장 이후에는 검수 입력이 새 dirty 상태를 만들지 못하게 먼저 잠근다.
         // 원본 선택은 유지하므로 저장 실패로 전환을 취소하면 그대로 돌아올 수 있다.
         if (!canContinueVideoLoad()) return false;
@@ -10937,18 +10200,13 @@ async function initApp() {
 
         // 댓글 모드를 이벤트 경로로 먼저 종료한 뒤, DOM 준비 상태도 무조건 초기화한다.
         // clear()는 commentModeChanged를 발생시키지 않으므로 이 순서가 중요하다.
-        const shouldKeepMpvReviewFreeze = isMpvPilotPlaybackActive() &&
-        state.isDrawMode &&
-        useMpvPilot &&
-        !fileIsAudio &&
-        preserveMpvReviewFreezeFrameForMediaChange();
         suppressReviewFreezeReleaseForMediaChange = true;
         try {
           commentManager.setCommentMode(false);
           state.isCommentMode = false;
           setCommentModeReadyState(false);
           setCommentModePreparingState(false);
-          if (isMpvPilotPlaybackActive() && !shouldKeepMpvReviewFreeze) {
+          if (isMpvPilotPlaybackActive()) {
             await releaseMpvReviewFreezeFrame();
             if (!canContinueVideoLoad()) return false;
           }
@@ -11070,7 +10328,7 @@ async function initApp() {
         // 그리기 모드 비활성화 (오디오에서는 의미 없음)
         if (state.isDrawMode || isFabricDrawingPilotControllerEngaged()) {
           exitDrawModeForSystemPath();
-          drawingManager.disable();
+        exitDrawModeForSystemPath();
         }
         elements.btnDrawMode?.setAttribute('disabled', 'true');
 
@@ -11296,7 +10554,12 @@ async function initApp() {
       }
       reviewDataManager.setFps(videoPlayer.fps);
 
-      if (!engineSwap && canContinueVideoLoad()) {
+      if (canContinueVideoLoad()) {
+        if (videoPlayer.engine === 'html5' && !fileIsAudio) {
+          await initializeCurrentDrawing();
+          await ensureHtml5DrawingSurface(loadToken, canContinueVideoLoad);
+          if (!canContinueVideoLoad()) return false;
+        }
         const fabricDrawingPilotApplies = useMpvPilot && !fileIsAudio &&
           fabricDrawingPilotController.shouldOwnDrawingShortcut();
         transitionMetrics.mark('fabricReady:start');
@@ -11306,6 +10569,8 @@ async function initApp() {
         });
         transitionMetrics.mark('fabricReady:end');
         if (!canContinueVideoLoad()) return false;
+        if (fabricDrawingReady === true) state.currentDrawingBinding = { filePath, intent: loadIntent, loadToken };
+        if (isHtml5DrawingSurfaceReady()) state.html5DrawingSurface.hydrated = fabricDrawingReady === true;
         if (fabricDrawingPilotApplies && fabricDrawingReady !== true) return false;
       }
 
@@ -11412,7 +10677,7 @@ async function initApp() {
       }
       mpvPilotSeamlessTransitionGate.clear(loadToken);
       try {
-        if (!engineSwap && !videoLoadCompleted && fabricVideoChangeStarted) {
+        if (!videoLoadCompleted && fabricVideoChangeStarted) {
           await fabricDrawingPilotController.cancelVideoChange(loadToken, {
             restorePreviousVideo: !destructiveMpvReviewMediaChangeStarted,
             preserveAuthoritativeOverlay:
@@ -11424,6 +10689,7 @@ async function initApp() {
         if (activeVideoLoadToken === loadToken) {
           activeVideoLoadToken = null;
           activeVideoLoadPath = null;
+          if (isHtml5DrawingSurfaceReady()) forceMpvHostVisibilitySync();
           // 조기 return false 탈출(게이트 취소 등)에서도 드라이브 로딩 오버레이가 남지 않게 한다.
           if (!videoLoadCompleted && driveLoadingFeedbackShown) {
             hideVideoLoadingOverlay('drive');
@@ -11767,7 +11033,6 @@ async function initApp() {
     // 새 드로잉 도구는 Fabric 컨트롤러가 소유하며 이 경로로 열지 않는다.
     ready = false;
     elements.btnDrawMode?.classList.toggle('active', ready);
-    elements.drawingTools?.classList.toggle('visible', ready);
     elements.drawingCanvas?.classList.toggle('active', ready);
     elements.videoWrapper?.classList.toggle('drawing-mode', ready);
     syncCommentInteractionPolicy();
@@ -11782,6 +11047,7 @@ async function initApp() {
   function notifyFabricDrawingPilotFailure() {
     if (fabricDrawingPilotFailureToastShown) return;
     fabricDrawingPilotFailureToastShown = true;
+    log.warn('현재 드로잉 준비 실패', { reason: fabricDrawingPilotStatusSnapshot?.lastError || 'drawing-surface-unavailable' });
     showToast('새 드로잉 화면을 준비하지 못했습니다.', 'error');
   }
 
@@ -11841,7 +11107,7 @@ async function initApp() {
     const preparing = nextState === 'preparing';
     if (!active) resetMpvOverlayCollaborationDrag();
     const recoveringForResume = nextState === 'recovering' && snapshot?.resumeRequested === true;
-    const engaged = ownsDrawingShortcut && isMpvPilotPlaybackActive() &&
+    const engaged = ownsDrawingShortcut && isCurrentDrawingSurfaceReady() &&
       (active || preparing || nextState === 'recovering');
     const wasEngaged = fabricDrawingPilotUiEngaged;
     scheduleMpvOverlayStateSync({ force: true });
@@ -11868,110 +11134,79 @@ async function initApp() {
   }
 
   function exitDrawModeForSystemPath() {
-    if (isFabricDrawingPilotControllerEngaged()) {
-      void fabricDrawingPilotController.disable();
-      return;
-    }
-    applyDrawModeState(false);
+    drawingEntryRevision += 1;
+    drawingEntryPromise = null;
+    state.isDrawMode = false;
+    setDrawModePreparingState(false);
+    setDrawModeReadyState(false);
+    if (isFabricDrawingPilotControllerEngaged()) void fabricDrawingPilotController.disable();
+    resetViewportPanCycle();
   }
 
-  async function prepareMpvDrawMode(preparationToken) {
-    return prepareMpvCommentReadiness({
-      prepareFreeze: () => showMpvReviewFreezeFrame(),
-      isStillActive: () => (
-        preparationToken === drawModePreparationToken &&
-        state.isDrawMode &&
-        isMpvPilotPlaybackActive()
-      ),
-      setReady: setDrawModeReadyState,
-      setPreparing: setDrawModePreparingState,
-      showGuidance: () => {}
-    });
-  }
 
-  function applyDrawModeState(enabled) {
-    const preparationToken = ++drawModePreparationToken;
-    state.isDrawMode = enabled;
-    if (enabled && state.isCommentMode) {
-      commentManager.setCommentMode(false);
+
+  async function toggleDrawMode() {
+    if (state.isAudioMode || !videoPlayer.isLoaded || activeVideoLoadToken !== null) return false;
+    if (fabricDrawingPilotController.getState?.() === 'preparing') {
+      exitDrawModeForSystemPath();
+      return true;
     }
-    if (enabled && isMpvPilotPlaybackActive()) {
-      videoPlayer.pause();
-      // 하이브리드 스왑·freeze 준비가 끝날 때까지 준비중 표시를 즉시 켠다
-      setDrawModeReadyState(false);
-      setDrawModePreparingState(true);
-      // 작업 4: 하이브리드 우선 — HTML5 직재생 가능하면 엔진 전환, 아니면 기존 freeze 준비.
-      // (c-0)의 skipReviewTransition 덕에 preparationToken이 보존되어 실패 폴백이 성립한다.
-      void enterHybridReviewEngineIfPossible().then((swapped) => {
-        // 전환 중 사용자가 모드를 껐으면(B 재입력) 캔버스를 활성화하지 않고 mpv 복귀만 정리
-        if (!state.isDrawMode) {
-          void exitHybridReviewEngineIfNeeded();
-          return;
+    if (drawingEntryPromise) return drawingEntryPromise;
+    const filePath = state.currentFile;
+    const intent = videoLoadIntentGeneration;
+    const revision = ++drawingEntryRevision;
+    const isCurrent = () => revision === drawingEntryRevision &&
+      filePath === state.currentFile && intent === videoLoadIntentGeneration &&
+      activeVideoLoadToken === null && videoPlayer.isLoaded && !state.isAudioMode;
+    const enter = async () => {
+      if (!(await initializeCurrentDrawing()) || !isCurrent()) {
+        if (isCurrent()) notifyFabricDrawingPilotFailure();
+        return false;
+      }
+      const binding = state.currentDrawingBinding;
+      const needsBinding = binding?.filePath !== filePath || binding?.intent !== intent ||
+        binding?.loadToken !== latestVideoLoadToken ||
+        (videoPlayer.engine === 'html5' && !state.html5DrawingSurface?.hydrated);
+      if (needsBinding && (!(await fabricDrawingPilotController.beforeVideoChange(latestVideoLoadToken)) || !isCurrent())) return false;
+      if (videoPlayer.engine === 'html5') {
+        if (!(await ensureHtml5DrawingSurface(latestVideoLoadToken, isCurrent)) || !isCurrent()) {
+          if (isCurrent()) notifyFabricDrawingPilotFailure();
+          return false;
         }
-        if (swapped) {
-          setDrawModePreparingState(false);
-          setDrawModeReadyState(true);
-        } else {
-          void prepareMpvDrawMode(preparationToken);
+      }
+      if (needsBinding) {
+        const ready = await fabricDrawingPilotController.afterVideoReady({
+          ...getFabricDrawingPilotContext(), loadToken: latestVideoLoadToken
+        });
+        if (!isCurrent() || !ready) {
+          if (isCurrent()) notifyFabricDrawingPilotFailure();
+          return false;
         }
-      }, () => {
-        // 스왑 자체가 예외로 실패해도 준비중 표시가 고착되지 않도록 freeze 폴백으로 잇는다
-        if (state.isDrawMode) void prepareMpvDrawMode(preparationToken);
-      });
-    } else {
-      setDrawModePreparingState(false);
-      setDrawModeReadyState(enabled);
-    }
-    if (!enabled) {
-      mpvDrawPlaybackTransitionToken += 1;
-      elements.drawingTools?.classList.remove('playback-hidden');
-      if (!isMpvReviewInteractionActive()) {
-        void releaseMpvReviewFreezeFrame();
+        state.currentDrawingBinding = { filePath, intent, loadToken: latestVideoLoadToken };
       }
-      drawingManager.commitActiveSelection();
-      scheduleMpvOverlayStateSync({ force: true });
-      resetViewportPanCycle();
-      void exitHybridReviewEngineIfNeeded();
-    }
-  }
-
-  function toggleDrawMode() {
-    // 오디오 모드에서는 그리기 모드 진입 차단
-    if (state.isAudioMode) return;
-    // mpv 재생 중 B는 항상 fabric 파일럿 경로다. 저장 실패·준비 지연으로 소유권이
-    // 없더라도 레거시 팔레트로 새지 않고 사유만 알린 뒤 종료한다.
-    // 재생/브리지가 준비되지 않아도 구형 도구로 전환하지 않는다.
-    if (isMpvPilotPlaybackActive() && fabricDrawingPilotController.isEnabled()) {
-      const pilotState = fabricDrawingPilotController.getState();
-      if (pilotState === 'failed') {
-        // 직전 진입이 실패한 상태다. 사유를 알리되 재시도는 막지 않는다
-        // (toggle()이 'failed'에서도 다시 준비를 시작한다).
-        showToast('드로잉 화면을 시작하지 못했습니다.', 'error');
-        void fabricDrawingPilotController.toggle();
-        return;
+      if (videoPlayer.engine === 'html5') {
+        if (!isHtml5DrawingSurfaceReady()) return false;
+        state.html5DrawingSurface.hydrated = true;
+        forceMpvHostVisibilitySync();
       }
-      if (pilotState === 'disabled' ||
-          !fabricDrawingPilotController.shouldOwnDrawingShortcut()) {
-        showToast('드로잉 준비 중입니다. 잠시 후 다시 시도해 주세요.', 'warn', null, true);
-        return;
-      }
-      // 저장 계층이 저하된 상태에서는 지금 그린 획이 저장되지 않을 수 있음을
-      // 저하 구간마다 최초 1회만 알린다(작업 1 엣지 11).
-      // 스냅샷은 handleFabricDrawingPilotStateChange가 밀어 넣은 캐시(fabricDrawingPilotStatusSnapshot)를
-      // 읽는다 — fabric-drawing-pilot-source.test.js:302가 app.js에서
-      // 컨트롤러의 getStatusSnapshot() 직접 호출을 금지한다(HUD 폴링 금지 불변식).
-      const persistenceDegraded =
-        fabricDrawingPilotStatusSnapshot?.persistenceDegraded === true;
-      if (!persistenceDegraded) {
+      if (!isCurrent() || !isCurrentDrawingSurfaceReady()) return false;
+      if (state.isCommentMode) commentManager.setCommentMode(false);
+      if (fabricDrawingPilotStatusSnapshot?.persistenceDegraded !== true) {
         fabricDrawingPilotDegradedNoticeShown = false;
       } else if (!fabricDrawingPilotDegradedNoticeShown) {
         fabricDrawingPilotDegradedNoticeShown = true;
         showToast('저장이 일시 중단된 상태입니다. 지금 그린 획은 저장되지 않을 수 있습니다.', 'warn', null, true);
       }
-      void fabricDrawingPilotController.toggle();
-      return;
-    }
-    showToast('현재 드로잉을 사용할 수 없습니다. 최신 배포 폴더에서 다시 실행해 주세요.', 'error', null, true);
+      return await fabricDrawingPilotController.toggle();
+    };
+    const pending = enter().catch(error => {
+      log.warn('현재 드로잉 진입 실패', { error: error?.message });
+      if (isCurrent()) notifyFabricDrawingPilotFailure();
+      return false;
+    });
+    drawingEntryPromise = pending;
+    try { return await pending; }
+    finally { if (drawingEntryPromise === pending) drawingEntryPromise = null; }
   }
 
   /**
@@ -15330,6 +14565,12 @@ async function initApp() {
     // 폼 컨트롤에서는 그 컨트롤이 실제로 소비하는 키만 무시한다.
     if (shouldIgnoreGlobalShortcutTarget(shortcutTarget, e)) return;
 
+    if (userSettings.matchShortcut('drawMode', e)) {
+      e.preventDefault();
+      if (!e.repeat) void toggleDrawMode();
+      return;
+    }
+
     if (fabricDrawingPilotController.routeKeydown(e)) return;
     if (shouldBlockFabricDrawingLegacyShortcut(e)) {
       e.preventDefault();
@@ -15405,11 +14646,6 @@ async function initApp() {
     // ====== 시스템 단축키 (변경 불가) ======
     switch (e.code) {
     case 'Escape':
-      if (state.isDrawMode && drawingManager.drawingCanvas.selection) {
-        e.preventDefault();
-        drawingManager.commitActiveSelection();
-        return;
-      }
       if (state.isFullscreen) {
         e.preventDefault();
         toggleFullscreen();
@@ -15479,26 +14715,6 @@ async function initApp() {
       return;
     }
 
-    // 드로잉 선택 영역 복사/붙여넣기 (select 도구)
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyC'
-        && state.isDrawMode && drawingManager.drawingCanvas.selection) {
-      e.preventDefault();
-      e.stopPropagation();
-      if (drawingManager.drawingCanvas.copySelection()) {
-        showToast('선택 영역이 복사되었습니다', 'success');
-      }
-      return;
-    }
-    if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.code === 'KeyV'
-        && state.isDrawMode && drawingManager.drawingCanvas.hasSelectionClipboard()) {
-      e.preventDefault();
-      e.stopPropagation();
-      selectDrawingTool('select');
-      if (drawingManager.drawingCanvas.pasteSelection()) {
-        showToast('선택 영역이 붙여넣기 되었습니다', 'success');
-      }
-      return;
-    }
 
     // 파일럿이 소유 중이면 레이어 조작은 drawingLayersV1 모델을 바꾼다.
     // 레거시 drawingManager 는 mpv 모드에서 비어 있어 아무 일도 일어나지 않는다.
@@ -15699,127 +14915,9 @@ async function initApp() {
         return;
       }
     }
-    if (userSettings.matchShortcut('drawingLayerAdd', e)) {
-      e.preventDefault();
-      addDrawingLayer();
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerDelete', e)) {
-      e.preventDefault();
-      deleteActiveDrawingLayer();
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerSelectUp', e)) {
-      e.preventDefault();
-      selectDrawingLayerByOffset(-1);
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerSelectDown', e)) {
-      e.preventDefault();
-      selectDrawingLayerByOffset(1);
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerMoveUp', e)) {
-      e.preventDefault();
-      moveDrawingLayerByOffset(-1);
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerMoveDown', e)) {
-      e.preventDefault();
-      moveDrawingLayerByOffset(1);
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerVisibilityToggle', e)) {
-      if (!state.isDrawMode) return;
-      e.preventDefault();
-      const layer = drawingManager.getActiveLayer();
-      if (layer) {
-        drawingManager.toggleLayerVisibility(layer.id);
-        showToast(layer.visible ? '레이어 표시됨' : '레이어 숨김', 'info');
-      }
-      return;
-    }
-    if (userSettings.matchShortcut('drawingLayerLockToggle', e)) {
-      if (!state.isDrawMode) return;
-      e.preventDefault();
-      const layer = drawingManager.getActiveLayer();
-      if (layer) {
-        drawingManager.toggleLayerLock(layer.id);
-        showToast(layer.locked ? '레이어 잠금' : '레이어 잠금 해제', 'info');
-      }
-      return;
-    }
     if (userSettings.matchShortcut('timelineCenterOnPlayhead', e)) {
       e.preventDefault();
       timeline.centerOnPlayhead();
-      return;
-    }
-
-    const matchedBrushSizeAction = userSettings.findActionByEvent(e);
-    if (state.isDrawMode && (matchedBrushSizeAction === 'brushSizeDown' || matchedBrushSizeAction === 'brushSizeUp')) {
-      e.preventDefault();
-      const delta = matchedBrushSizeAction === 'brushSizeDown' ? -1 : 1;
-      adjustBrushSizeBy(delta, { persist: true });
-      return;
-    }
-
-    // 키프레임 삭제 (그리기 모드에서만)
-    if (userSettings.matchShortcut('keyframeDelete', e)) {
-      if (state.isDrawMode) {
-        e.preventDefault();
-        deleteSelectedOrCurrentKeyframes();
-      }
-      return;
-    }
-
-    // 키프레임 추가 (복사)
-    if (userSettings.matchShortcut('keyframeAddWithCopy', e)) {
-      e.preventDefault();
-      if (state.isDrawMode) {
-        drawingManager.addKeyframeWithContent();
-        showToast('키프레임 추가됨', 'success');
-      }
-      return;
-    }
-
-    // 빈 키프레임 추가
-    if (userSettings.matchShortcut('keyframeAddBlank', e)) {
-      e.preventDefault();
-      if (state.isDrawMode) {
-        drawingManager.addBlankKeyframe();
-        showToast('빈 키프레임 추가됨', 'success');
-      }
-      return;
-    }
-
-    // 프레임 복사 (Ctrl+Alt+C)
-    if (userSettings.matchShortcut('frameCopy', e)) {
-      if (!state.isDrawMode) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const selected = Array.isArray(timeline.selectedKeyframes) && timeline.selectedKeyframes.length > 0
-        ? timeline.selectedKeyframes
-        : null;
-      const copiedCount = drawingManager.copyFrames(selected);
-      if (copiedCount > 0) {
-        showToast(`프레임 ${copiedCount}개 복사됨`, 'success');
-      } else {
-        showToast('복사할 프레임이 없습니다', 'warning');
-      }
-      return;
-    }
-    // 프레임 붙여넣기 (Ctrl+Alt+V)
-    if (userSettings.matchShortcut('framePaste', e)) {
-      if (!state.isDrawMode) return;
-      e.preventDefault();
-      e.stopPropagation();
-      const pastedCount = drawingManager.pasteFrames();
-      if (pastedCount > 0) {
-        renderActiveDrawingLayers();
-        showToast(`프레임 ${pastedCount}개 붙여넣기됨`, 'success');
-      } else {
-        showToast('붙여넣을 프레임이 없습니다', 'warning');
-      }
       return;
     }
 
@@ -15890,27 +14988,8 @@ async function initApp() {
       return;
     }
 
-    // 그리기 모드 토글 (피드백 33: 모드 중 B는 먼저 브러시로 복귀, 브러시 상태에서 B면 종료)
-    if (userSettings.matchShortcut('drawMode', e)) {
-      e.preventDefault();
-      const pilotOwnsDrawMode = isMpvPilotPlaybackActive() &&
-        fabricDrawingPilotController.shouldOwnDrawingShortcut();
-      if (pilotOwnsDrawMode) {
-        toggleDrawMode();
-      } else if (!state.isDrawMode) {
-        toggleDrawMode();
-        // 진입 시에는 마지막으로 저장된 도구를 복원
-        const savedTool = userSettings.getBrushSettings().tool || currentToolName || 'brush';
-        const toolBtn = document.querySelector(`.tool-btn[data-tool="${savedTool}"]`) || document.querySelector('.tool-btn[data-tool="brush"]');
-        if (toolBtn && state.isDrawMode) toolBtn.click();
-      } else if (currentToolName !== 'brush') {
-        const brushBtn = document.querySelector('.tool-btn[data-tool="brush"]');
-        if (brushBtn) brushBtn.click();
-      } else {
-        toggleDrawMode();
-      }
-      return;
-    }
+    // 현재 드로잉 컨트롤러가 도구 전환과 진입을 함께 소유한다.
+
     if (userSettings.matchShortcut('prevFrameDraw', e)) {
       e.preventDefault();
       videoPlayer.prevFrame();
@@ -15933,73 +15012,11 @@ async function initApp() {
       if (nextKf !== null) videoPlayer.seekToFrame(nextKf);
       return;
     }
-    // 1: 어니언 스킨 토글
-    if (userSettings.matchShortcut('onionSkinToggle', e)) {
-      e.preventDefault();
-      toggleOnionSkinWithUI();
-      return;
-    }
     // 2: 빈 키프레임 삽입
-    if (userSettings.matchShortcut('keyframeAddBlank2', e)) {
-      e.preventDefault();
-      drawingManager.addBlankKeyframe();
-      renderActiveDrawingLayers();
-      return;
-    }
     // Shift+2: 키프레임을 일반 프레임으로 변환
-    if (userSettings.matchShortcut('keyframeConvertToFrame', e)) {
-      e.preventDefault();
-      if (drawingManager.convertKeyframeToFrame()) {
-        renderActiveDrawingLayers();
-      }
-      return;
-    }
     // Shift+3: 현재 프레임을 키프레임으로 변환
-    if (userSettings.matchShortcut('keyframeConvertToKeyframe', e)) {
-      e.preventDefault();
-      if (drawingManager.convertFrameToKeyframe()) {
-        renderActiveDrawingLayers();
-      }
-      return;
-    }
     // 3: 프레임 삽입 (홀드 추가)
-    if (userSettings.matchShortcut('insertFrame', e)) {
-      e.preventDefault();
-      drawingManager.insertFrame();
-      renderActiveDrawingLayers();
-      return;
-    }
     // 4: 프레임 삭제
-    if (userSettings.matchShortcut('deleteFrame', e)) {
-      e.preventDefault();
-      drawingManager.deleteFrame();
-      renderActiveDrawingLayers();
-      return;
-    }
-    // E: 지우개 모드 (드로잉 모드에서만 작동)
-    if (e.code === 'KeyE' && !e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
-      // 드로잉 모드가 아니면 무시
-      if (!state.isDrawMode) return;
-      e.preventDefault();
-      // 지우개 버튼 클릭으로 UI와 도구 함께 전환
-      const eraserBtn = document.querySelector('.tool-btn[data-tool="eraser"]');
-      if (eraserBtn) {
-        eraserBtn.click();
-      }
-      return;
-    }
-    // 피드백 26: V = 선택 도구 활성화 (Animate와 동일). 기존 '드로잉 모드 종료' 동작을 대체한다.
-    if (userSettings.matchShortcut('drawingToolSelect', e)) {
-      // 드로잉 모드가 아니면 무시
-      if (!state.isDrawMode) return;
-      e.preventDefault();
-      // 선택 버튼 클릭으로 UI와 도구 함께 전환 (E 지우개 패턴과 동일)
-      const selectBtn = document.querySelector('.tool-btn[data-tool="select"]');
-      if (selectBtn) {
-        selectBtn.click();
-      }
-      return;
-    }
   }
 
   function handleKeyup(e) {
@@ -16222,7 +15239,6 @@ async function initApp() {
   // ====== 사용자 이름 초기화 ======
   // 설정 파일 로드 완료 대기 (파일에서 hasSetNameOnce 등 로드)
   await userSettings.waitForReady();
-  applySavedBrushSettings(userSettings.getBrushSettings());
 
   // AuthManager 초기화
   const authManager = getAuthManager();

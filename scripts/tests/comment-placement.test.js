@@ -105,7 +105,7 @@ test('C begins the existing mpv freeze without reloading the file through anothe
   const calls = [];
   const context = vm.createContext({
     state: { isCommentMode: false, isDrawMode: false, currentFile: 'A.mp4' },
-    commentModePreparationToken: 0, videoLoadIntentGeneration: 1,
+    commentModePreparationToken: 0, videoLoadIntentGeneration: 1, exitDrawModeForSystemPath: noop,
     isMpvPilotPlaybackActive: () => true, isFabricDrawingPilotControllerEngaged: () => false,
     endVideoPan: () => calls.push('end-pan'),
     videoPlayer: { pauseAndSync: async () => { calls.push('pause'); return true; } },

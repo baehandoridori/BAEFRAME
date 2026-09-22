@@ -1638,7 +1638,7 @@ test('CLI reads raw JSON, emits only the bounded summary, and exits 1 for violat
 test('package exposes focused Fabric pilot test and diagnostics commands', () => {
   assert.equal(
     appPackage.scripts['test:fabric-drawing-pilot'],
-    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-pilot-display-controller.test.js scripts/tests/fabric-drawing-persistence-controller.test.js scripts/tests/mpv-fabric-overlay-runtime.test.js'
+    'node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/fabric-drawing-pilot-integration.test.js scripts/tests/fabric-drawing-pilot-benchmark.test.mjs scripts/tests/fabric-drawing-pilot-session.test.js scripts/tests/fabric-drawing-pilot-shortcuts.test.js scripts/tests/fabric-drawing-pilot-source.test.js scripts/tests/fabric-drawing-pilot-display-controller.test.js scripts/tests/fabric-drawing-persistence-controller.test.js scripts/tests/mpv-fabric-overlay-runtime.test.js scripts/tests/fabric-drawing-initialization.test.js'
   );
   assert.equal(
     appPackage.scripts['test:fabric-drawing-persistence'],

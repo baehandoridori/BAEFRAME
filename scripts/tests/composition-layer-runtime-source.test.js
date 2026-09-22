@@ -54,7 +54,7 @@ test('app wires composition manager into video, timeline, save, drop, and mpv ov
   assert.match(appSource, /ffmpegCheckCache\(filePath\)/);
   assert.match(appSource, /timeline\.renderCompositionLayers\(compositionLayerManager\.toJSON\(\)/);
   assert.match(appSource, /timeline\.addEventListener\('compositionLayerRangeChange'/);
-  assert.match(appSource, /compositionLayers: compositionLayerManager\.getMpvOverlayLayers\(/);
+  assert.match(appSource, /compositionLayers: overlayOnly \? \[\] : compositionLayerManager\.getMpvOverlayLayers\(/);
   assert.match(appSource, /scheduleMpvOverlayStateSync\(\{ force: true \}\)/);
 });
 

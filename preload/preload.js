@@ -356,6 +356,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvSetHostVisible: (visible) => ipcRenderer.invoke('mpv:set-host-visible', visible),
   mpvDestroyEmbed: () => ipcRenderer.invoke('mpv:destroy-embed'),
   mpvPrepareOverlay: (bounds) => ipcRenderer.invoke('mpv:prepare-overlay', bounds),
+  mpvSetOverlayVisible: (visible) => ipcRenderer.invoke('mpv:set-overlay-visible', visible),
   mpvUpdateOverlayBounds: (bounds) => ipcRenderer.invoke('mpv:update-overlay-bounds', bounds),
   mpvUpdateOverlayState: (state) => ipcRenderer.invoke('mpv:update-overlay-state', state),
   mpvUpdateOverlayRemoteCursors: (state) => ipcRenderer.invoke('mpv:update-overlay-remote-cursors', state),

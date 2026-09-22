@@ -31,14 +31,11 @@ test('Animate-style drawing layer shortcuts are configured and handled', () => {
   assert.match(appSource, /timeline\.centerOnPlayhead\(\)/);
 });
 
-test('new drawing layers are inserted above the active layer in the timeline list', () => {
-  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectUp', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(-1\);/);
-  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerSelectDown', e\)[\s\S]{0,140}selectDrawingLayerByOffset\(1\);/);
-  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveUp', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(-1\);/);
-  assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerMoveDown', e\)[\s\S]{0,140}moveDrawingLayerByOffset\(1\);/);
-  assert.match(appSource, /패널은 배열 인덱스 0이 최상단이므로 activeIndex 위치에 삽입한다\./);
-  assert.match(appSource, /const insertIndex = activeIndex === -1 \? drawingManager\.layers\.length : activeIndex;/);
-  assert.match(appSource, /const insertBeforeLayerId = activeIndex === -1 \? null : drawingManager\.activeLayerId;/);
+test('current drawing layer shortcuts update the shared layer model', () => {
+  assert.match(appSource, /const added = addDrawingLayerState\(state\)/);
+  assert.match(appSource, /const moveOffset = userSettings\.matchShortcut\('drawingLayerMoveUp', e\)[\s\S]+moveDrawingLayerState\(state, moveOffset\)/);
+  assert.match(appSource, /const selectOffset = userSettings\.matchShortcut\('drawingLayerSelectUp', e\)[\s\S]+selectDrawingLayerState\(state, selectOffset\)/);
+  assert.doesNotMatch(appSource, /selectDrawingLayerByOffset|moveDrawingLayerByOffset/);
 });
 
 test('layer settings popup deletes the layer that was right-clicked', () => {
@@ -62,10 +59,10 @@ test('DrawingManager supports selecting and moving active layers by offset', () 
 test('frame and keyframe conversion shortcuts are configured and handled', () => {
   assert.match(userSettingsSource, /keyframeConvertToFrame:\s*\{ key: 'Digit2', ctrl: false, shift: true, alt: false/);
   assert.match(userSettingsSource, /keyframeConvertToKeyframe:\s*\{ key: 'Digit3', ctrl: false, shift: true, alt: false/);
-  assert.match(appSource, /userSettings\.matchShortcut\('keyframeConvertToFrame', e\)/);
-  assert.match(appSource, /drawingManager\.convertKeyframeToFrame\(\)/);
-  assert.match(appSource, /userSettings\.matchShortcut\('keyframeConvertToKeyframe', e\)/);
-  assert.match(appSource, /drawingManager\.convertFrameToKeyframe\(\)/);
+  assert.match(appSource, /keyframeConvertToFrame: 'keyframe-to-frame'/);
+  assert.doesNotMatch(appSource, /drawingManager\.convertKeyframeToFrame\(\)/);
+  assert.match(appSource, /keyframeConvertToKeyframe: 'frame-to-keyframe'/);
+  assert.doesNotMatch(appSource, /drawingManager\.convertFrameToKeyframe\(\)/);
   assert.doesNotMatch(userSettingsSource, /keyframeDeleteAlt/);
 });
 
@@ -102,14 +99,12 @@ test('Animate-style playback, layer toggle, and frame clipboard shortcuts are co
   assert.match(userSettingsSource, /framePaste:\s*\{ key: 'KeyV', ctrl: true, shift: false, alt: true/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerVisibilityToggle', e\)/);
   assert.match(appSource, /userSettings\.matchShortcut\('drawingLayerLockToggle', e\)/);
-  assert.match(appSource, /userSettings\.matchShortcut\('frameCopy', e\)/);
-  assert.match(appSource, /userSettings\.matchShortcut\('framePaste', e\)/);
+  assert.match(appSource, /frameCopy: 'frame-copy'/);
+  assert.match(appSource, /framePaste: 'frame-paste'/);
   assert.match(drawingManagerSource, /copyFrames\(targets = null\)/);
   assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\)/);
   assert.match(userSettingsSource, /drawingToolSelect:\s*\{ key: 'KeyV', ctrl: false, shift: false, alt: false/);
-  assert.match(appSource, /userSettings\.matchShortcut\('drawingToolSelect', e\)/);
-  assert.doesNotMatch(appSource, /\/\/ V: 선택 모드 \(드로잉 모드 끄기\)/);
-  // 피드백 33: 드로잉 모드 중 B는 브러시 복귀 → 브러시 상태에서만 모드 종료
-  assert.match(appSource, /matchShortcut\('drawMode', e\)[\s\S]{0,800}?currentToolName !== 'brush'/);
-  assert.match(appSource, /\[data-tool="brush"\]'\);\s*\n\s*if \(brushBtn\) brushBtn\.click\(\);/);
+  assert.match(appSource, /fabricDrawingPilotController\.routeKeydown\(e\)/);
+  assert.match(appSource, /matchShortcut\('drawMode', e\)[\s\S]{0,100}?toggleDrawMode\(\)/);
+  assert.doesNotMatch(appSource, /currentToolName|brushBtn\.click|selectDrawingTool/);
 });

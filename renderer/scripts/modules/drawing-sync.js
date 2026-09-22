@@ -4,7 +4,7 @@
  *
  * 전략:
  * - 캔버스 데이터 (Base64 PNG): Broadcast
- * - 실시간 스트로크 스트리밍: Broadcast
+ * - 구형 클라이언트의 실시간 스트로크: 수신/표시만 지원
  * - 레이어 생성/삭제: Broadcast
  * - .bframe 파일 저장은 기존 auto-save가 처리
  */
@@ -78,15 +78,7 @@ export class DrawingSync {
     this._remoteOverlay = null;
     this._remoteStroke = null;
 
-    // 실시간 스트로크 스트리밍용
-    this._strokeBuffer = [];
-    this._strokeFlushTimer = null;
-    this._isStroking = false;
-
     // 이벤트 핸들러 바인딩
-    this._onDrawStart = this._onDrawStart.bind(this);
-    this._onDrawMove = this._onDrawMove.bind(this);
-    this._onDrawEnd = this._onDrawEnd.bind(this);
     this._onLayerCreated = this._onLayerCreated.bind(this);
     this._onLayerDeleted = this._onLayerDeleted.bind(this);
     this._onLayerOrderChanged = this._onLayerOrderChanged.bind(this);
@@ -115,13 +107,7 @@ export class DrawingSync {
   start() {
     if (this._started) return;
 
-    // Local → Remote 이벤트 리스너 (스트로크 스트리밍 포함)
-    const drawingCanvas = this._dm.drawingCanvas;
-    if (drawingCanvas) {
-      drawingCanvas.addEventListener('drawstart', this._onDrawStart);
-      drawingCanvas.addEventListener('drawmove', this._onDrawMove);
-    }
-    this._dm.addEventListener('drawend', this._onDrawEnd);
+    // 공유 레이어/키프레임 메타데이터 동기화
     this._dm.addEventListener('layerCreated', this._onLayerCreated);
     this._dm.addEventListener('layerDeleted', this._onLayerDeleted);
     this._dm.addEventListener('layerOrderChanged', this._onLayerOrderChanged);
@@ -205,12 +191,6 @@ export class DrawingSync {
    * 동기화 중지
    */
   stop() {
-    const drawingCanvas = this._dm.drawingCanvas;
-    if (drawingCanvas) {
-      drawingCanvas.removeEventListener('drawstart', this._onDrawStart);
-      drawingCanvas.removeEventListener('drawmove', this._onDrawMove);
-    }
-    this._dm.removeEventListener('drawend', this._onDrawEnd);
     this._dm.removeEventListener('layerCreated', this._onLayerCreated);
     this._dm.removeEventListener('layerDeleted', this._onLayerDeleted);
     this._dm.removeEventListener('layerOrderChanged', this._onLayerOrderChanged);
@@ -244,95 +224,6 @@ export class DrawingSync {
   // ============================================================================
   // Local → Remote
   // ============================================================================
-
-  /**
-   * 스트로크 시작 → 상대방에게 브러시 설정 전송
-   */
-  _onDrawStart(e) {
-    if (this._isRemoteUpdate) return;
-    if (!this._lm.hasOtherCollaborators()) return;
-
-    const { x, y, tool, eraserMode } = e.detail || {};
-    const layer = this._dm.getActiveLayer?.() || this._dm.activeLayer;
-    if (!layer) return;
-    if (tool === 'eraser' && eraserMode === 'stroke') {
-      this._isStroking = false;
-      return;
-    }
-
-    const canvas = this._dm.drawingCanvas;
-    this._isStroking = true;
-    this._strokeBuffer = [];
-
-    this._lm.broadcastEvent({
-      type: 'STROKE_START',
-      layerId: layer.id,
-      frame: this._dm.currentFrame ?? 0,
-      x, y, tool,
-      color: canvas?.color || '#ff4757',
-      lineWidth: canvas?.lineWidth || 3,
-      opacity: canvas?.opacity ?? 1
-    });
-  }
-
-  /**
-   * 스트로크 진행 → 50ms 스로틀로 포인트 묶어서 전송
-   */
-  _onDrawMove(e) {
-    if (this._isRemoteUpdate || !this._isStroking) return;
-    if (!this._lm.hasOtherCollaborators()) return;
-
-    const { x, y } = e.detail || {};
-    this._strokeBuffer.push({ x, y });
-
-    // 50ms 스로틀: 포인트를 묶어서 한 번에 전송
-    if (!this._strokeFlushTimer) {
-      this._strokeFlushTimer = setTimeout(() => {
-        this._strokeFlushTimer = null;
-        if (this._strokeBuffer.length > 0) {
-          this._lm.broadcastEvent({
-            type: 'STROKE_MOVE',
-            points: this._strokeBuffer
-          });
-          this._strokeBuffer = [];
-        }
-      }, 50);
-    }
-  }
-
-  /**
-   * 그리기 완료 시 캔버스 데이터 브로드캐스트
-   */
-  async _onDrawEnd(_e) {
-    // 스트로크 종료 전송
-    if (this._isStroking && this._lm.hasOtherCollaborators()) {
-      // 남은 버퍼 플러시
-      if (this._strokeFlushTimer) {
-        clearTimeout(this._strokeFlushTimer);
-        this._strokeFlushTimer = null;
-      }
-      if (this._strokeBuffer.length > 0) {
-        this._lm.broadcastEvent({
-          type: 'STROKE_MOVE',
-          points: this._strokeBuffer
-        });
-        this._strokeBuffer = [];
-      }
-      this._lm.broadcastEvent({ type: 'STROKE_END' });
-    }
-    this._isStroking = false;
-    if (this._isRemoteUpdate) return;
-    if (!this._lm.hasOtherCollaborators()) return;
-
-    const layer = this._dm.getActiveLayer?.() || this._dm.activeLayer;
-    if (!layer) return;
-
-    const currentFrame = this._dm.currentFrame ?? 0;
-    const keyframe = layer.getKeyframeAtFrame?.(currentFrame);
-    if (!keyframe?.canvasData && keyframe?.isEmpty !== true) return;
-
-    await this._broadcastKeyframeUpdate(layer, keyframe);
-  }
 
   async _onKeyframeUpdated(e) {
     if (this._isRemoteUpdate) return;

@@ -207,30 +207,23 @@ test('a share request waiting for save does not copy after navigation', async ()
   assert.equal(toasts.length, 0);
 });
 
-function hybridHarness(document = null) {
-  const probe = deferred();
-  const swaps = [];
+test('comment entry retains the current decoder and uses the native pause and freeze path', async () => {
+  const calls = [];
   const context = vm.createContext({
-    state: { currentFile: 'A.mp4', isAudioMode: false, isCommentMode: true, isDrawMode: false },
-    videoPlayer: { currentFrame: 24, engine: 'mpv', seekToFrame: noop },
-    videoLoadIntentGeneration: 1, latestVideoLoadToken: 1,
-    commentModePreparationToken: 1, drawModePreparationToken: 0,
-    userSettings: { getHybridReviewEngine: () => true },
+    state: { currentFile: 'A.mp4', isCommentMode: true },
+    videoLoadIntentGeneration: 1, commentModePreparationToken: 1,
     isMpvPilotPlaybackActive: () => true,
-    isMpvReviewInteractionActive: () => context.state.isCommentMode || context.state.isDrawMode,
-    fabricDrawingPersistenceStore: { getStatus: () => ({ keyframeCount: document?.keyframes?.length || 0 }) },
-    isHtml5DirectPlayableForReview: () => probe.promise,
-    loadVideoWithHtml5Fallback: async (file, options) => { swaps.push({ file, options }); return true; },
-    exitHybridReviewEngineIfNeeded: async () => {}, log
+    videoPlayer: { pauseAndSync: async () => { calls.push('pause'); return true; } },
+    showMpvReviewFreezeFrame: async () => { calls.push('freeze'); return true; },
+    setCommentModeReadyState: ready => calls.push(`ready:${ready}`),
+    setCommentModePreparingState: noop, showCommentModeGuidance: noop
   });
-  vm.runInContext(`let hybridReviewSwapInFlight = false; let hybridReviewResumeMpvFile = null;\n${declaration('enterHybridReviewEngineIfPossible')}`, context);
-  return { context, probe, swaps };
-}
-test('V3 drawings retain the mpv drawing host when entering comment mode', async () => {
-  const { context, probe, swaps } = hybridHarness({ keyframes: [{ frame: 0, objects: [{ id: 'stroke' }] }] });
-  probe.resolve(true);
-  assert.equal(await context.enterHybridReviewEngineIfPossible(), false);
-  assert.equal(swaps.length, 0);
+  vm.runInContext(`${declaration('prepareMpvCommentReadiness')}\n${declaration('prepareMpvCommentMode')}`, context);
+  await context.prepareMpvCommentMode(1);
+  assert.deepEqual(calls, ['ready:false', 'pause', 'freeze', 'ready:true']);
+  for (const removedFunction of ['enterHybridReviewEngineIfPossible', 'exitHybridReviewEngineIfNeeded']) {
+    assert.equal(nodes.some(node => node.type === 'Identifier' && node.name === removedFunction), false);
+  }
 });
 
 test('mpv comment freeze includes the current V3 drawing snapshot before hiding native surfaces', async () => {
@@ -241,8 +234,10 @@ test('mpv comment freeze includes the current V3 drawing snapshot before hiding 
   const calls = [];
   const context = vm.createContext({
     window: { electronAPI: { mpvScreenshot: async () => ({ success: true, dataUrl: 'original' }) } },
+    state: { currentFile: 'original.mp4' },
     videoPlayer: { currentFrame: 12 },
     fabricDrawingPersistenceStore: { resolveKeyframeAtFrame: frame => { assert.equal(frame, 12); return keyframe; } },
+    drawingManager: { layers: [] },
     reviewDataManager: { getDrawingLayers: () => ({ layers: [{ id: 'visible', visible: true }] }) },
     loadReviewDrawingFreezeRenderer: async () => ({ composite: async (...args) => { calls.push(args); return 'with-drawing'; } })
   });
@@ -404,48 +399,67 @@ test('a pending freeze from the previous video cannot replace the new video free
   assert.deepEqual(harness.presented, ['video-B']);
   assert.equal(harness.timers.size, 0);
 });
+function currentDrawingEntryHarness() {
+  const initialized = deferred();
+  const surfaceReady = deferred();
+  const surfaceStarted = deferred();
+  const calls = [];
+  const context = vm.createContext({
+    state: { currentFile: 'A.mp4', isAudioMode: false, isCommentMode: false,
+      html5DrawingSurface: { hydrated: false } },
+    videoPlayer: { isLoaded: true, engine: 'html5' },
+    activeVideoLoadToken: null, latestVideoLoadToken: 1, videoLoadIntentGeneration: 1,
+    drawingEntryRevision: 0, drawingEntryPromise: null,
+    initializeCurrentDrawing: () => { calls.push('initialize'); return initialized.promise; },
+    ensureHtml5DrawingSurface: () => { calls.push('surface'); surfaceStarted.resolve(); return surfaceReady.promise; },
+    fabricDrawingPilotController: {
+      beforeVideoChange: async () => { calls.push('bind'); return true; },
+      afterVideoReady: async () => { calls.push('hydrate'); return true; },
+      toggle: async () => { calls.push('toggle'); return true; }
+    },
+    getFabricDrawingPilotContext: () => ({}), isCurrentDrawingSurfaceReady: () => true,
+    isHtml5DrawingSurfaceReady: () => true,
+    forceMpvHostVisibilitySync: noop, notifyFabricDrawingPilotFailure: () => calls.push('failure'),
+    fabricDrawingPilotStatusSnapshot: null, fabricDrawingPilotDegradedNoticeShown: false, log
+  });
+  vm.runInContext(declaration('toggleDrawMode'), context);
+  return { context, initialized, surfaceReady, surfaceStarted, calls };
+}
+
 for (const change of ['cancel', 'reenter', 'video']) {
-  test(`late hybrid codec result cannot activate a stale ${change} request`, async () => {
-    const { context, probe, swaps } = hybridHarness();
-    const request = context.enterHybridReviewEngineIfPossible();
-    if (change === 'cancel') context.state.isCommentMode = false;
-    if (change === 'reenter') context.commentModePreparationToken += 2;
+  test(`late current drawing initialization cannot activate a stale ${change} request`, async () => {
+    const { context, initialized, calls } = currentDrawingEntryHarness();
+    const request = context.toggleDrawMode();
+    if (change === 'cancel') context.drawingEntryRevision++;
+    if (change === 'reenter') context.drawingEntryRevision += 2;
     if (change === 'video') { context.state.currentFile = 'B.mp4'; context.videoLoadIntentGeneration++; }
-    probe.resolve(true);
+    initialized.resolve(true);
     assert.equal(await request, false);
-    assert.equal(swaps.length, 0);
+    assert.deepEqual(calls, ['initialize']);
   });
 }
-test('simultaneous hybrid requests share the in-flight exclusion before codec probing', async () => {
-  const { context, probe, swaps } = hybridHarness();
-  const first = context.enterHybridReviewEngineIfPossible();
-  const second = context.enterHybridReviewEngineIfPossible();
-  probe.resolve(true);
-  const results = await Promise.all([first, second]);
-  assert.equal(swaps.length, 1);
-  assert.deepEqual(results, [true, false]);
+
+test('simultaneous drawing requests share one initialization, surface preparation, and activation', async () => {
+  const { context, initialized, surfaceReady, calls } = currentDrawingEntryHarness();
+  const first = context.toggleDrawMode();
+  const second = context.toggleDrawMode();
+  initialized.resolve(true);
+  surfaceReady.resolve(true);
+  assert.deepEqual(await Promise.all([first, second]), [true, true]);
+  assert.deepEqual(calls, ['initialize', 'bind', 'surface', 'hydrate', 'toggle']);
+  assert.equal(context.state.html5DrawingSurface.hydrated, true);
 });
 
-test('cancellation after HTML5 loading starts still schedules restoration to mpv', async () => {
-  const { context, probe } = hybridHarness();
-  const loading = deferred();
-  const started = deferred();
-  let resumedFile = null;
-  context.exitHybridReviewEngineIfNeeded = () => {
-    resumedFile = vm.runInContext('hybridReviewResumeMpvFile', context);
-  };
-  context.loadVideoWithHtml5Fallback = () => {
-    context.videoPlayer.engine = 'html5';
-    started.resolve();
-    return loading.promise;
-  };
-  const pending = context.enterHybridReviewEngineIfPossible();
-  probe.resolve(true);
-  await started.promise;
-  context.state.isCommentMode = false;
-  loading.resolve(false);
-  assert.equal(await pending, false);
-  assert.equal(resumedFile, 'A.mp4');
+test('cancelling during drawing surface preparation prevents hydration and activation', async () => {
+  const { context, initialized, surfaceReady, surfaceStarted, calls } = currentDrawingEntryHarness();
+  const request = context.toggleDrawMode();
+  initialized.resolve(true);
+  await surfaceStarted.promise;
+  assert.deepEqual(calls, ['initialize', 'bind', 'surface']);
+  context.drawingEntryRevision++;
+  surfaceReady.resolve(true);
+  assert.equal(await request, false);
+  assert.deepEqual(calls, ['initialize', 'bind', 'surface']);
 });
 
 test('comment readiness ignores completion from a cancelled then reentered mode', async () => {
@@ -453,12 +467,12 @@ test('comment readiness ignores completion from a cancelled then reentered mode'
   const ready = [];
   const context = vm.createContext({
     state: { currentFile: 'A.mp4', isCommentMode: false, isDrawMode: false },
-    commentModePreparationToken: 0, videoLoadIntentGeneration: 1,
+    commentModePreparationToken: 0, videoLoadIntentGeneration: 1, exitDrawModeForSystemPath: noop,
     isFabricDrawingPilotControllerEngaged: () => false, isMpvPilotPlaybackActive: () => true,
     videoPlayer: { pauseAndSync: async () => true }, endVideoPan: noop,
     showMpvReviewFreezeFrame: () => pending.promise,
     setCommentModeReadyState: value => ready.push(value), setCommentModePreparingState: noop,
-    showCommentModeGuidance: noop, exitHybridReviewEngineIfNeeded: noop
+    showCommentModeGuidance: noop
   });
   vm.runInContext(`${declaration('prepareMpvCommentReadiness')}\n${declaration('prepareMpvCommentMode')}`, context);
   const modeChanged = vm.runInContext(listener('commentManager', 'commentModeChanged'), context);
@@ -467,33 +481,6 @@ test('comment readiness ignores completion from a cancelled then reentered mode'
   pending.resolve(true);
   await Promise.resolve();
   assert.deepEqual(ready, [false, false]);
-});
-
-test('aborted mpv restoration keeps ownership for the next comment-mode exit', async () => {
-  const firstLoading = deferred();
-  let loads = 0;
-  const context = vm.createContext({
-    state: { currentFile: 'A.mp4', isCommentMode: false },
-    videoPlayer: { currentFrame: 24, engine: 'html5', isPlaying: false },
-    videoLoadIntentGeneration: 1,
-    isMpvReviewInteractionActive: () => context.state.isCommentMode,
-    loadVideo: async () => {
-      loads++;
-      if (loads === 1) return firstLoading.promise;
-      context.videoPlayer.engine = 'mpv';
-      return true;
-    }, log
-  });
-  vm.runInContext(`let hybridReviewSwapInFlight = false; let hybridReviewResumeMpvFile = 'A.mp4';\n${declaration('exitHybridReviewEngineIfNeeded')}`, context);
-  const first = context.exitHybridReviewEngineIfNeeded();
-  context.state.isCommentMode = true;
-  firstLoading.resolve(false);
-  await first;
-  assert.equal(vm.runInContext('hybridReviewResumeMpvFile', context), 'A.mp4');
-  context.state.isCommentMode = false;
-  await context.exitHybridReviewEngineIfNeeded();
-  assert.equal(loads, 2);
-  assert.equal(vm.runInContext('hybridReviewResumeMpvFile', context), null);
 });
 
 test('previous and next comment controls follow status, author and search filters', async () => {

@@ -59,7 +59,7 @@ test('comment mode is visibly marked on the video surface outside fullscreen', (
 test('comment mode pauses mpv and waits for a shared review freeze before native input is blocked', () => {
   assert.match(
     appSource,
-    /function requiresMpvReviewFreeze\(\) \{[\s\S]+state\.isCommentMode \|\|[\s\S]+state\.isDrawMode && !fabricDrawingPilotController\.isActiveOrPreparing\(\)/
+    /function requiresMpvReviewFreeze\(\) \{[\s\S]+return state\.isCommentMode;/
   );
   assert.match(
     appSource,

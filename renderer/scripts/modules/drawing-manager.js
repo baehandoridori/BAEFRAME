@@ -1,20 +1,11 @@
 /**
  * baeframe - Drawing Manager Module
- * 그리기 레이어, 캔버스, 타임라인 통합 관리
+ * 공유 레이어/타임라인 메타데이터와 구형 래스터 드로잉 표시 관리
  */
 
 import { createLogger } from '../logger.js';
-import { DrawingLayer, Keyframe } from './drawing-layer.js';
-import { DrawingCanvas, DrawingTool } from './drawing-canvas.js';
-import {
-  ERASER_MODES,
-  createStrokeRecord,
-  findStrokeAtPoint,
-  isRecordableStrokeTool,
-  normalizeEraserMode,
-  removeIntersectingStrokes,
-  strokesInRect
-} from './drawing-stroke-records.js';
+import { DrawingLayer } from './drawing-layer.js';
+import { LegacyDrawingDisplay } from './legacy-drawing-display.js';
 
 const log = createLogger('DrawingManager');
 
@@ -44,11 +35,7 @@ export class DrawingManager extends EventTarget {
 
     // 캔버스 요소
     this.canvas = options.canvas;
-    this.drawingCanvas = new DrawingCanvas(this.canvas);
-    this.drawingCanvas.canDraw = () => {
-      const layer = this.getActiveLayer();
-      return !layer || (layer.locked !== true && layer.visible !== false);
-    };
+    this.drawingCanvas = new LegacyDrawingDisplay(this.canvas);
 
     // 어니언 스킨 전용 캔버스 (별도 레이어)
     this.onionSkinCanvasElement = options.onionSkinCanvas;
@@ -56,7 +43,6 @@ export class DrawingManager extends EventTarget {
     this.layersBelowCanvas = options.layersBelowCanvas;
     this.layersAboveCanvas = options.layersAboveCanvas;
     this.selectionOverlayCanvas = options.selectionOverlayCanvas || null;
-    this.drawingCanvas.selectionCanvas = this.selectionOverlayCanvas;
     this.layersBelowCtx = this.layersBelowCanvas?.getContext('2d');
     this.layersAboveCtx = this.layersAboveCanvas?.getContext('2d');
 
@@ -101,552 +87,14 @@ export class DrawingManager extends EventTarget {
 
     // 렌더링 상태 관리
     this._renderingId = 0;  // 렌더링 취소용 ID
-    this.eraserMode = ERASER_MODES.PIXEL;
-    this._activeStrokeBaseData = null;
-    this._strokeEraseQueue = Promise.resolve();
-    this._strokeEraseUnavailableNotified = false;
 
     // Undo/Redo — 외부 통합 스택과 연동
     this._onUndoPush = null; // 외부에서 설정하는 콜백: (action) => void
     this._isUndoingOrRedoing = false;
 
-    // 이벤트 연결
-    this._setupEvents();
-
     log.info('DrawingManager 초기화됨');
   }
 
-  /**
-   * 이벤트 설정
-   */
-  _setupEvents() {
-    // 그리기 시작 시
-    this.drawingCanvas.addEventListener('drawstart', (e) => {
-      this._onDrawStart(e.detail);
-    });
-
-    // 그리기 진행 시
-    this.drawingCanvas.addEventListener('drawmove', (e) => {
-      this._onDrawMove(e.detail);
-    });
-
-    // 그리기 완료 시
-    this.drawingCanvas.addEventListener('drawend', (e) => {
-      this.paintStamp += 1;
-      void this._onDrawEnd(e.detail);
-    });
-
-    this.drawingCanvas.addEventListener('drawblocked', (e) => {
-      const layer = this.getActiveLayer();
-      this._emit('drawblocked', {
-        ...e.detail,
-        reason: layer?.locked ? 'locked' : 'hidden'
-      });
-    });
-
-    this.drawingCanvas.addEventListener('selectionliftstart', () => {
-      this._saveToHistory();
-    });
-
-    // 피드백 35: 클릭 획 선택 요청
-    this.drawingCanvas.addEventListener('strokeselectrequest', (e) => {
-      void this._onStrokeSelectRequest(e.detail);
-    });
-    // 피드백 35 v2: 마퀴에 획이 걸리면 벡터 다중 선택
-    this.drawingCanvas.addEventListener('strokemarqueeselect', (e) => {
-      void this._onStrokeMarqueeSelect(e.detail);
-    });
-    // 피드백 35 v2: select 도구 hover 하이라이트
-    this.drawingCanvas.addEventListener('strokehoverprobe', (e) => {
-      this._onStrokeHoverProbe(e.detail);
-    });
-
-    this.drawingCanvas.addEventListener('selectioncommitted', (e) => {
-      this._onSelectionCommitted(e.detail);
-    });
-
-    this.drawingCanvas.addEventListener('selectionoverlaychanged', (e) => {
-      this._emit('selectionoverlaychanged', {
-        ...e.detail,
-        frame: this.currentFrame
-      });
-    });
-  }
-
-  /**
-   * 그리기 시작 처리
-   */
-  _onDrawStart(detail) {
-    this._strokeEraseUnavailableNotified = false;
-
-    // 레이어가 없으면 새 레이어 생성
-    if (this.layers.length === 0 || !this.activeLayerId) {
-      this.createLayer();
-    }
-
-    const layer = this.getActiveLayer();
-    if (!layer || layer.locked || layer.visible === false) return;
-
-    // Undo를 위해 현재 상태 저장 (그리기 시작 전)
-    if (!this._isUndoingOrRedoing) {
-      this._saveToHistory();
-    }
-
-    this._activeStrokeBaseData = this.drawingCanvas.toDataURL();
-
-    if (this._isStrokeEraseDetail(detail)) {
-      this._getEditableKeyframeForCurrentFrame({
-        editHeldSourceKeyframe: true,
-        preserveSourceRecords: true,
-        fallbackBaseData: this._activeStrokeBaseData
-      });
-      const keyframe = layer.getKeyframeAtFrame(this.currentFrame);
-      this._notifyStrokeEraseUnavailable(keyframe);
-    } else {
-      // 현재 프레임에 키프레임이 없으면 생성
-      // (기존 키프레임 범위 내에서 그리는 경우는 덧그리기)
-      const existingKf = layer.getKeyframeAtFrame(this.currentFrame);
-
-      if (!existingKf) {
-        // 첫 키프레임 생성
-        layer.getOrCreateKeyframe(this.currentFrame, true);
-      } else if (existingKf.frame !== this.currentFrame) {
-        // 기존 키프레임의 범위 내에서 그리기 → 덧그리기 (키프레임 생성 안 함)
-        // 기존 키프레임의 내용이 이미 캔버스에 표시되어 있음
-      }
-    }
-
-    this._emit('drawstart', { layer, frame: this.currentFrame });
-  }
-
-  /**
-   * 그리기 진행 처리
-   */
-  _onDrawMove(detail) {
-    this._emit('drawmove', { frame: this.currentFrame, detail });
-
-    if (!this._isStrokeEraseDetail(detail)) return;
-
-    this._strokeEraseQueue = this._strokeEraseQueue
-      .then(() => this._eraseStrokeRecords(detail))
-      .catch(error => {
-        log.warn('획 지우기 처리 실패', { error: error?.message || String(error) });
-      });
-  }
-
-  /**
-   * 그리기 완료 처리
-   */
-  async _onDrawEnd(detail) {
-    if (this._isStrokeEraseDetail(detail)) {
-      this._strokeEraseQueue = this._strokeEraseQueue
-        .then(() => this._eraseStrokeRecords(detail))
-        .catch(error => {
-          log.warn('획 지우기 마무리 실패', { error: error?.message || String(error) });
-        });
-      await this._strokeEraseQueue;
-
-      this._emit('drawend', { frame: this.currentFrame });
-      this._emit('layersChanged');
-      this._activeStrokeBaseData = null;
-      return;
-    }
-
-    // 현재 키프레임에 캔버스 데이터 저장
-    const keyframe = this._saveCurrentFrameData({
-      editHeldSourceKeyframe: (detail?.effectiveTool || detail?.tool) === DrawingTool.ERASER,
-      preserveStrokeRecords: isRecordableStrokeTool(detail?.effectiveTool)
-    });
-    if (!keyframe) {
-      this._emit('drawend', { frame: this.currentFrame });
-      this._emit('layersChanged');
-      this._activeStrokeBaseData = null;
-      return;
-    }
-
-    if (isRecordableStrokeTool(detail?.effectiveTool)) {
-      this._saveRecordableStroke(detail);
-    } else {
-      this._freezeStrokeRecords(keyframe);
-    }
-
-    this._emit('drawend', { frame: this.currentFrame });
-    this._emit('layersChanged');
-    this._activeStrokeBaseData = null;
-  }
-
-  /**
-   * 선택 도구 커밋 결과를 현재 키프레임 비트맵으로 저장
-   */
-  _onSelectionCommitted(detail = {}) {
-    this.paintStamp += 1;
-    const records = Array.isArray(detail.records) ? detail.records : null;
-    if (records && records.length > 0) {
-      // 피드백 35 v2: 벡터 커밋 — 이동 오프셋을 레코드에 반영해 되살린다. 동결하지 않으므로
-      // 커밋 후에도 이 획과 프레임의 다른 획을 다시 클릭 선택할 수 있다.
-      // 중요: 리프트와 동일한 키프레임(editHeldSourceKeyframe: true)을 편집해야 한다 —
-      // _saveCurrentFrameData(editHeldSourceKeyframe: false)는 홀드 프레임에서 base 없는
-      // 새 키프레임을 파생시켜 나머지 획·비트맵을 소실시킨다 (검증으로 확정된 결함 경로).
-      const keyframe = this._getEditableKeyframeForCurrentFrame({ editHeldSourceKeyframe: true });
-      if (keyframe) {
-        const dx = Number(detail.dx) || 0;
-        const dy = Number(detail.dy) || 0;
-        const movedRecords = records.map((record) => createStrokeRecord({
-          ...record,
-          points: record.points.map((p) => ({ x: p.x + dx, y: p.y + dy }))
-        }));
-        keyframe.strokeRecords = [...(keyframe.strokeRecords || []), ...movedRecords];
-        const commitFrame = this.currentFrame;
-        void this._redrawKeyframeFromRecords(keyframe).then(() => {
-          // redraw는 async — 완료 전에 프레임이 바뀌었으면 화면 덮어쓰기를 피한다
-          // (키프레임 데이터 자체는 이미 갱신됨; 현재 프레임 화면은 renderFrame이 담당)
-          if (this.currentFrame !== commitFrame) {
-            void this.renderFrame(this.currentFrame);
-          }
-          this._emit('drawend', { frame: commitFrame });
-          this._emit('layersChanged');
-        });
-        return;
-      }
-    }
-    const keyframe = this._saveCurrentFrameData({
-      editHeldSourceKeyframe: false,
-      preserveStrokeRecords: false
-    });
-    if (keyframe) {
-      this._freezeStrokeRecords(keyframe);
-    }
-    this._emit('drawend', { frame: this.currentFrame });
-    this._emit('layersChanged');
-  }
-
-  /**
-   * 피드백 35: 클릭 좌표의 획을 floating 선택으로 리프트한다.
-   * 비트맵-only 키프레임(레코드 동결)이면 조용히 무시 — 마퀴 선택은 계속 가능.
-   */
-  async _onStrokeSelectRequest(detail) {
-    const point = { x: Number(detail?.x), y: Number(detail?.y) };
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-
-    // 1) 읽기 전용 조회로 히트부터 판정 — 빈 곳 클릭(선택 해제 의도)에서
-    //    _getEditableKeyframeForCurrentFrame이 빈 키프레임을 생성하는 부작용을 막는다.
-    const layer = this.getActiveLayer();
-    const readKeyframe = layer?.getKeyframeAtFrame?.(this.currentFrame) || null;
-    const readRecords = readKeyframe?.strokeRecords;
-    if (!layer || !Array.isArray(readRecords) || readRecords.length === 0) return;
-
-    const hit = findStrokeAtPoint(readRecords, point);
-    if (!hit) return;
-
-    // 2) 히트 확정 후에만 편집 가능 키프레임 취득 (홀드 프레임 규칙은 획 지우개와 동일)
-    const keyframe = this._getEditableKeyframeForCurrentFrame({ editHeldSourceKeyframe: true });
-    const records = keyframe?.strokeRecords;
-    if (!keyframe || !Array.isArray(records) || records.length === 0) return;
-    const target = records.find((r) => r.id === hit.id);
-    if (!target) return;
-
-    // 피드백 35 v2: additive(Shift) 리프트는 기존 floating을 유지한 채 획만 추가한다.
-    const additiveLift = detail.additive === true && !!this.drawingCanvas._floatingRecords;
-
-    // undo 스냅샷 (기존 리프트와 동일 경로) — additive는 첫 리프트의 스냅샷 하나로 undo 단위를 유지
-    // (Shift+클릭마다 스냅샷이 쌓이면 undo 1회가 "일부 획만 사라진 중간 상태"를 노출한다)
-    if (!additiveLift) this._saveToHistory();
-
-    keyframe.strokeRecords = records.filter((r) => r !== target);
-    await this._redrawKeyframeFromRecords(keyframe);
-    // 재진입 가드: redraw await 중 사용자가 그리기/선택을 시작했다면 리프트를 포기하고 원복.
-    // additive는 floating이 살아있는 것이 정상이므로 예외로 둔다.
-    if (this.drawingCanvas.isDrawing || (this.drawingCanvas.floatingImage && !additiveLift)) {
-      keyframe.strokeRecords = records;
-      await this._redrawKeyframeFromRecords(keyframe);
-      return;
-    }
-    const started = additiveLift
-      ? this.drawingCanvas.addStrokeToFloating(target)
-      : this.drawingCanvas.beginStrokeFloating(target);
-    if (!started) {
-      // 리프트 실패 시 원복
-      keyframe.strokeRecords = records;
-      await this._redrawKeyframeFromRecords(keyframe);
-      return;
-    }
-    this.paintStamp += 1;
-    this._emit('layersChanged');
-  }
-
-  /** 마퀴 사각형과 교차하는 획들을 벡터 다중 리프트한다. 획이 없으면 기존 래스터 마퀴 유지. */
-  async _onStrokeMarqueeSelect(detail) {
-    const rect = { x: Number(detail?.x), y: Number(detail?.y), w: Number(detail?.w), h: Number(detail?.h) };
-    if (![rect.x, rect.y, rect.w, rect.h].every(Number.isFinite)) return;
-    const layer = this.getActiveLayer();
-    const readRecords = layer?.getKeyframeAtFrame?.(this.currentFrame)?.strokeRecords;
-    if (!layer || !Array.isArray(readRecords) || readRecords.length === 0) return;
-    const hits = strokesInRect(readRecords, rect);
-    if (hits.length === 0) return; // 래스터 마퀴(빈 영역/비트맵 선택)로 폴백 — selection 사각형은 유지됨
-    const keyframe = this._getEditableKeyframeForCurrentFrame({ editHeldSourceKeyframe: true });
-    const records = keyframe?.strokeRecords;
-    if (!keyframe || !Array.isArray(records) || records.length === 0) return;
-    const hitIds = new Set(hits.map((s) => s.id));
-    const targets = records.filter((r) => hitIds.has(r.id));
-    if (targets.length === 0) return;
-    // 히스토리는 실제로 리프트가 성공 확정된 뒤에만 남긴다 (abort 경로의 no-op 스냅샷 방지)
-    this._saveToHistory();
-    keyframe.strokeRecords = records.filter((r) => !hitIds.has(r.id));
-    await this._redrawKeyframeFromRecords(keyframe);
-    if (this.drawingCanvas.isDrawing) {
-      keyframe.strokeRecords = records;
-      await this._redrawKeyframeFromRecords(keyframe);
-      return;
-    }
-    const started = this.drawingCanvas.beginStrokeFloating(targets);
-    if (!started) {
-      keyframe.strokeRecords = records;
-      await this._redrawKeyframeFromRecords(keyframe);
-      return;
-    }
-    this.paintStamp += 1;
-    this._emit('layersChanged');
-  }
-
-  /** hover 좌표의 획을 찾아 캔버스 하이라이트를 갱신한다 (조회 전용 — 키프레임 생성 없음). */
-  _onStrokeHoverProbe(detail) {
-    const point = { x: Number(detail?.x), y: Number(detail?.y) };
-    if (!Number.isFinite(point.x) || !Number.isFinite(point.y)) return;
-    const layer = this.getActiveLayer();
-    const readRecords = layer?.getKeyframeAtFrame?.(this.currentFrame)?.strokeRecords;
-    if (!layer || !Array.isArray(readRecords) || readRecords.length === 0) {
-      this.drawingCanvas.setHoverStroke(null);
-      return;
-    }
-    this.drawingCanvas.setHoverStroke(findStrokeAtPoint(readRecords, point));
-  }
-
-  /**
-   * 진행 중인 선택을 커밋한다.
-   */
-  commitActiveSelection() {
-    if (!this.drawingCanvas) return;
-    if (this.drawingCanvas.floatingImage) {
-      this.drawingCanvas.commitSelection();
-    } else if (this.drawingCanvas.selection) {
-      this.drawingCanvas.commitSelection();
-    }
-  }
-
-  /**
-   * 현재 프레임의 캔버스 데이터 저장
-   */
-  _saveCurrentFrameData(options = {}) {
-    const layer = this.getActiveLayer();
-    if (!layer || layer.locked || layer.visible === false) {
-      log.warn('저장 실패: 활성 레이어 없음 또는 그리기 차단 상태');
-      if (layer?.locked || layer?.visible === false) {
-        this.renderFrame(this.currentFrame);
-      }
-      return null;
-    }
-
-    const keyframe = this._getEditableKeyframeForCurrentFrame({
-      editHeldSourceKeyframe: options.editHeldSourceKeyframe === true,
-      preserveSourceRecords: options.preserveStrokeRecords === true,
-      fallbackBaseData: this._activeStrokeBaseData
-    });
-    if (!keyframe) return null;
-
-    // 캔버스 데이터 저장
-    const imageData = this.drawingCanvas.isEmpty() ? null : this.drawingCanvas.toDataURL();
-    keyframe.setCanvasData(imageData);
-
-    // 캐시 무효화 (새 데이터이므로)
-    keyframe._cachedImage = null;
-    keyframe._cachedSrc = null;
-
-    log.info('프레임 데이터 저장됨', {
-      layerId: layer.id,
-      frame: this.currentFrame,
-      dataLength: imageData?.length || 0,
-      keyframesCount: layer.keyframes.length
-    });
-
-    return keyframe;
-  }
-
-  _isStrokeEraseDetail(detail) {
-    const effectiveTool = detail?.effectiveTool || detail?.tool;
-    return effectiveTool === DrawingTool.ERASER && detail?.eraserMode === ERASER_MODES.STROKE;
-  }
-
-  _cloneStrokeRecords(records = []) {
-    return records.map(record => ({
-      ...record,
-      points: Array.isArray(record.points)
-        ? record.points.map(point => ({ ...point }))
-        : []
-    }));
-  }
-
-  _getEditableKeyframeForCurrentFrame(options = {}) {
-    const layer = this.getActiveLayer();
-    if (!layer) return null;
-
-    const exactKeyframe = layer.keyframes.find(kf => kf.frame === this.currentFrame);
-    if (exactKeyframe) return exactKeyframe;
-
-    const sourceKeyframe = layer.getKeyframeAtFrame(this.currentFrame);
-    if (sourceKeyframe && options.editHeldSourceKeyframe === true) {
-      if (!sourceKeyframe.baseCanvasData && Array.isArray(sourceKeyframe.strokeRecords) && sourceKeyframe.strokeRecords.length > 0) {
-        sourceKeyframe.baseCanvasData = sourceKeyframe.canvasData || options.fallbackBaseData || null;
-      }
-      return sourceKeyframe;
-    }
-
-    if (sourceKeyframe && sourceKeyframe.frame !== this.currentFrame) {
-      const preserveSourceRecords = options.preserveSourceRecords === true;
-      const sourceRecords = preserveSourceRecords
-        ? this._cloneStrokeRecords(sourceKeyframe.strokeRecords || [])
-        : [];
-      const baseCanvasData = preserveSourceRecords
-        ? (sourceKeyframe.baseCanvasData || (sourceRecords.length === 0 ? sourceKeyframe.canvasData : null))
-        : (options.fallbackBaseData || null);
-
-      const keyframe = new Keyframe(this.currentFrame, sourceKeyframe.canvasData, {
-        baseCanvasData,
-        strokeRecords: sourceRecords
-      });
-      keyframe.isEmpty = sourceKeyframe.isEmpty;
-      layer.keyframes.push(keyframe);
-      layer._sortKeyframes();
-      return keyframe;
-    }
-
-    const keyframe = layer.getOrCreateKeyframe(this.currentFrame, true);
-    if (keyframe && options.fallbackBaseData && !keyframe.baseCanvasData && keyframe.strokeRecords.length === 0) {
-      keyframe.baseCanvasData = options.fallbackBaseData;
-    }
-    return keyframe;
-  }
-
-  _saveRecordableStroke(detail) {
-    const layer = this.getActiveLayer();
-    const keyframe = layer?.keyframes.find(kf => kf.frame === this.currentFrame);
-    if (!keyframe || !isRecordableStrokeTool(detail?.effectiveTool)) return;
-    const points = Array.isArray(detail.points) ? detail.points : [];
-    if (points.length === 0) return;
-
-    if (!keyframe.baseCanvasData && (!keyframe.strokeRecords || keyframe.strokeRecords.length === 0)) {
-      keyframe.baseCanvasData = this._activeStrokeBaseData || null;
-    }
-
-    keyframe.strokeRecords = this._cloneStrokeRecords(keyframe.strokeRecords || []);
-    keyframe.strokeRecords.push(createStrokeRecord({
-      tool: detail.effectiveTool,
-      points,
-      color: detail.color,
-      lineWidth: detail.lineWidth,
-      opacity: detail.opacity,
-      strokeEnabled: detail.strokeEnabled,
-      strokeWidth: detail.strokeWidth,
-      strokeColor: detail.strokeColor
-    }));
-  }
-
-  _freezeStrokeRecords(keyframe) {
-    if (!keyframe || !Array.isArray(keyframe.strokeRecords) || keyframe.strokeRecords.length === 0) return;
-
-    keyframe.baseCanvasData = keyframe.canvasData || null;
-    keyframe.strokeRecords = [];
-    keyframe._cachedImage = null;
-    keyframe._cachedSrc = null;
-    keyframe._cachedBaseImage = null;
-    keyframe._cachedBaseSrc = null;
-  }
-
-  async _eraseStrokeRecords(detail) {
-    const layer = this.getActiveLayer();
-    if (!layer || layer.locked || layer.visible === false) return false;
-
-    const keyframe = this._getEditableKeyframeForCurrentFrame({
-      editHeldSourceKeyframe: true,
-      preserveSourceRecords: true,
-      fallbackBaseData: this._activeStrokeBaseData
-    });
-    if (!keyframe?.strokeRecords?.length) {
-      this._notifyStrokeEraseUnavailable(keyframe);
-      return false;
-    }
-
-    const result = removeIntersectingStrokes(
-      keyframe.strokeRecords,
-      detail?.points || [],
-      detail?.lineWidth || this.drawingCanvas.lineWidth
-    );
-    if (result.removed.length === 0) return false;
-
-    keyframe.strokeRecords = result.remaining;
-    await this._redrawKeyframeFromRecords(keyframe);
-    return true;
-  }
-
-  async _redrawKeyframeFromRecords(keyframe) {
-    if (!keyframe) return;
-
-    const baseImage = keyframe.baseCanvasData
-      ? await this._loadBaseCanvasImage(keyframe)
-      : null;
-
-    this.drawingCanvas.clear({ silent: true });
-    if (baseImage) {
-      this.drawingCanvas.ctx.drawImage(baseImage, 0, 0);
-    }
-
-    for (const record of keyframe.strokeRecords || []) {
-      this.drawingCanvas.drawStrokeRecord(record);
-    }
-
-    const imageData = this.drawingCanvas.isEmpty() ? null : this.drawingCanvas.toDataURL();
-    keyframe.setCanvasData(imageData);
-    keyframe._cachedImage = null;
-    keyframe._cachedSrc = null;
-    this.paintStamp += 1;
-  }
-
-  _loadBaseCanvasImage(keyframe) {
-    const src = keyframe?.baseCanvasData;
-    if (!src) return Promise.resolve(null);
-    if (keyframe._cachedBaseImage && keyframe._cachedBaseSrc === src) {
-      return Promise.resolve(keyframe._cachedBaseImage);
-    }
-
-    return new Promise(resolve => {
-      const image = new Image();
-      image.onload = () => {
-        keyframe._cachedBaseImage = image;
-        keyframe._cachedBaseSrc = src;
-        resolve(image);
-      };
-      image.onerror = () => {
-        log.warn('획 지우기 기준 이미지 로드 실패');
-        resolve(null);
-      };
-      image.src = src;
-    });
-  }
-
-  _notifyStrokeEraseUnavailable(keyframe) {
-    if (this._strokeEraseUnavailableNotified) return;
-    if (!keyframe || keyframe.strokeRecords?.length > 0) return;
-    if (!keyframe.canvasData && keyframe.isEmpty !== false) return;
-
-    this._strokeEraseUnavailableNotified = true;
-    this._emit('strokeeraserunavailable', {
-      frame: keyframe.frame,
-      reason: 'bitmap-only'
-    });
-  }
-
-  /**
-   * 새 레이어 생성
-   */
   getLayerInsertBeforeId(layerId) {
     return this._layerInsertAnchors.get(layerId) || null;
   }
@@ -682,10 +130,6 @@ export class DrawingManager extends EventTarget {
 
   createLayer(options = {}, saveHistory = true) {
     const shouldActivate = options.skipActivate !== true;
-    if (shouldActivate) {
-      this.commitActiveSelection();
-    }
-
     const layer = new DrawingLayer(options);
 
     // Undo를 위해 현재 상태 저장
@@ -729,7 +173,6 @@ export class DrawingManager extends EventTarget {
     const index = this.layers.findIndex(l => l.id === layerId);
     if (index === -1) return false;
 
-    this.commitActiveSelection();
 
     // Undo를 위해 현재 상태 저장
     if (saveHistory) {
@@ -837,9 +280,6 @@ export class DrawingManager extends EventTarget {
   setActiveLayer(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
-      if (layerId !== this.activeLayerId) {
-        this.commitActiveSelection();
-      }
       this.activeLayerId = layerId;
       this._emit('activeLayerChanged', { layer });
       this.renderFrame(this.currentFrame);
@@ -865,7 +305,6 @@ export class DrawingManager extends EventTarget {
     const targetIndex = index + offset;
     if (targetIndex < 0 || targetIndex >= this.layers.length) return false;
 
-    this.commitActiveSelection();
     this._saveToHistory({ kind: 'order', layerId: this.activeLayerId });
     // 사용자가 정한 현재 배열 순서를 source of truth로 삼는다.
     this._layerInsertAnchors.clear();
@@ -885,7 +324,6 @@ export class DrawingManager extends EventTarget {
   toggleLayerVisibility(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
-      this.commitActiveSelection();
       layer.visible = !layer.visible;
       this._emit('layersChanged');
       this.renderFrame(this.currentFrame);
@@ -898,7 +336,6 @@ export class DrawingManager extends EventTarget {
   toggleLayerLock(layerId) {
     const layer = this.layers.find(l => l.id === layerId);
     if (layer) {
-      this.commitActiveSelection();
       layer.locked = !layer.locked;
       this._emit('layersChanged');
     }
@@ -968,8 +405,6 @@ export class DrawingManager extends EventTarget {
    */
   _restoreSnapshot(snapshot, context = {}) {
     if (!snapshot) return;
-
-    this.drawingCanvas.clearSelection?.();
 
     const actionMetadata = context.actionMetadata || null;
     const direction = context.direction || null;
@@ -1078,8 +513,6 @@ export class DrawingManager extends EventTarget {
    * 빈 키프레임 추가 (F7)
    */
   addBlankKeyframe() {
-    this.commitActiveSelection();
-
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
 
@@ -1099,8 +532,6 @@ export class DrawingManager extends EventTarget {
    * 키프레임 복제 추가 (F6)
    */
   addKeyframeWithContent() {
-    this.commitActiveSelection();
-
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return;
 
@@ -1120,8 +551,6 @@ export class DrawingManager extends EventTarget {
    * 키프레임 삭제
    */
   removeKeyframe() {
-    this.commitActiveSelection();
-
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
     if (!layer.isKeyframe(this.currentFrame)) return false;
@@ -1138,8 +567,6 @@ export class DrawingManager extends EventTarget {
   }
 
   convertKeyframeToFrame() {
-    this.commitActiveSelection();
-
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
     if (!layer.isKeyframe(this.currentFrame)) return false;
@@ -1167,8 +594,6 @@ export class DrawingManager extends EventTarget {
    * @returns {number} 삭제된 키프레임 수
    */
   removeKeyframes(selectedKeyframes = []) {
-    this.commitActiveSelection();
-
     if (!Array.isArray(selectedKeyframes) || selectedKeyframes.length === 0) return 0;
 
     const uniqueTargets = [];
@@ -1247,8 +672,6 @@ export class DrawingManager extends EventTarget {
    * 프레임 삽입 (홀드 추가) - 현재 프레임 이후의 모든 키프레임을 1프레임씩 뒤로 이동
    */
   insertFrame() {
-    this.commitActiveSelection();
-
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
 
@@ -1267,8 +690,6 @@ export class DrawingManager extends EventTarget {
    * 프레임 삭제 - 현재 프레임 이후의 모든 키프레임을 1프레임씩 앞으로 이동
    */
   deleteFrame() {
-    this.commitActiveSelection();
-
     const layer = this.getActiveLayer();
     if (!layer || layer.locked) return false;
 
@@ -1287,8 +708,6 @@ export class DrawingManager extends EventTarget {
    * 프레임 복사 (Ctrl+Alt+C)
    */
   copyFrames(targets = null) {
-    this.commitActiveSelection();
-
     const resolved = [];
     if (Array.isArray(targets) && targets.length > 0) {
       for (const target of targets) {
@@ -1327,7 +746,6 @@ export class DrawingManager extends EventTarget {
     const clip = this._frameClipboard;
     if (!clip?.items?.length) return 0;
 
-    this.commitActiveSelection();
     this._saveToHistory();
 
     let pasted = 0;
@@ -1365,8 +783,6 @@ export class DrawingManager extends EventTarget {
    * @param {Array} keyframesToMove - [ { layerId, fromFrame, toFrame } ]
    */
   moveKeyframes(keyframesToMove) {
-    this.commitActiveSelection();
-
     if (!keyframesToMove || keyframesToMove.length === 0) return false;
 
     // Undo를 위해 현재 상태 저장
@@ -1432,12 +848,6 @@ export class DrawingManager extends EventTarget {
    * 캔버스 크기 설정
    */
   setCanvasSize(width, height) {
-    const canvasSizeChanged = this.drawingCanvas?.canvas &&
-      (this.drawingCanvas.canvas.width !== width || this.drawingCanvas.canvas.height !== height);
-    if (canvasSizeChanged && (this.drawingCanvas.floatingImage || this.drawingCanvas.selection)) {
-      this.commitActiveSelection();
-    }
-
     this.canvasWidth = width;
     this.canvasHeight = height;
     this.drawingCanvas.syncSize(width, height);
@@ -1466,15 +876,6 @@ export class DrawingManager extends EventTarget {
   setCurrentFrame(frame) {
     // 같은 프레임이면 무시 (불필요한 렌더링 방지)
     if (frame === this.currentFrame) return;
-    if (this.drawingCanvas.floatingImage || this.drawingCanvas.selection) {
-      this.commitActiveSelection();
-    }
-
-    // 이전 프레임에서 그리기 중이었으면 저장
-    if (this.drawingCanvas.isDrawing) {
-      this._saveCurrentFrameData();
-    }
-
     this.currentFrame = frame;
     this.renderFrame(frame);
   }
@@ -1510,7 +911,6 @@ export class DrawingManager extends EventTarget {
     if (this.canvas?.style) {
       this.canvas.style.opacity = String(opacity);
     }
-    this.drawingCanvas?.setSelectionImageOpacity?.(opacity);
   }
 
   _drawImageToContext(ctx, img, opacity) {
@@ -1525,17 +925,6 @@ export class DrawingManager extends EventTarget {
    */
   async renderFrame(frame) {
     this._syncActiveLayerCanvasOpacity();
-
-    if (this.drawingCanvas.floatingImage) {
-      log.debug('플로팅 선택 영역이 있어 렌더링 보류', { frame });
-      return;
-    }
-
-    // 그리기 중이면 렌더링 스킵 (사용자가 그리는 중에 캔버스 지우기 방지)
-    if (this.drawingCanvas.isDrawing) {
-      log.debug('그리기 중이므로 렌더링 스킵', { frame });
-      return;
-    }
 
     // 렌더링 ID 증가 (이전 렌더링 취소용)
     const currentRenderingId = ++this._renderingId;
@@ -1723,10 +1112,6 @@ export class DrawingManager extends EventTarget {
    * 모든 레이어 데이터 가져오기 (저장용)
    */
   exportData() {
-    if (this.drawingCanvas?.floatingImage) {
-      this.commitActiveSelection();
-    }
-
     return {
       layers: this.layers.map(l => l.toJSON()),
       activeLayerId: this.activeLayerId,
@@ -1739,7 +1124,6 @@ export class DrawingManager extends EventTarget {
    * 레이어 데이터 불러오기
    */
   importData(data) {
-    this.drawingCanvas.clearSelection?.();
     this.layers = data.layers.map(l => DrawingLayer.fromJSON(l));
     this._layerInsertAnchors.clear();
     this._deletedLayerIds.clear();
@@ -1781,7 +1165,6 @@ export class DrawingManager extends EventTarget {
    * 모든 레이어 초기화
    */
   clearAll() {
-    this.drawingCanvas.clearSelection?.();
     this.layers = [];
     this._layerInsertAnchors.clear();
     this._deletedLayerIds.clear();
@@ -1799,7 +1182,6 @@ export class DrawingManager extends EventTarget {
    * 새 파일 로드 시 초기화 (기본 레이어 생성 포함)
    */
   reset() {
-    this.drawingCanvas.clearSelection?.();
     this.layers = [];
     this._layerInsertAnchors.clear();
     this._deletedLayerIds.clear();
@@ -1818,42 +1200,6 @@ export class DrawingManager extends EventTarget {
     this.paintStamp += 1;
     this._emit('layersChanged');
     log.info('DrawingManager 초기화됨 (기본 레이어 생성)');
-  }
-
-  /**
-   * 그리기 도구 설정
-   */
-  setTool(tool) {
-    this.drawingCanvas.setTool(tool);
-  }
-
-  /**
-   * 지우개 방식 설정
-   */
-  setEraserMode(mode) {
-    this.eraserMode = normalizeEraserMode(mode);
-    this.drawingCanvas.setEraserMode(this.eraserMode);
-  }
-
-  /**
-   * 색상 설정
-   */
-  setColor(color) {
-    this.drawingCanvas.setColor(color);
-  }
-
-  /**
-   * 선 두께 설정
-   */
-  setLineWidth(width) {
-    this.drawingCanvas.setLineWidth(width);
-  }
-
-  /**
-   * 투명도 설정
-   */
-  setOpacity(opacity) {
-    this.drawingCanvas.setOpacity(opacity);
   }
 
   /**
@@ -1891,34 +1237,6 @@ export class DrawingManager extends EventTarget {
     layer.color = color;
     this._emit('layersChanged');
     log.debug('레이어 색상 변경', { layerId, color });
-  }
-
-  /**
-   * 외곽선 활성화/비활성화
-   */
-  setStrokeEnabled(enabled) {
-    this.drawingCanvas.setStrokeEnabled(enabled);
-  }
-
-  /**
-   * 외곽선 두께 설정
-   */
-  setStrokeWidth(width) {
-    this.drawingCanvas.setStrokeWidth(width);
-  }
-
-  /**
-   * 외곽선 색상 설정
-   */
-  setStrokeColor(color) {
-    this.drawingCanvas.setStrokeColor(color);
-  }
-
-  /**
-   * 현재 도구 가져오기
-   */
-  getCurrentTool() {
-    return this.drawingCanvas.tool;
   }
 
   // ====== 어니언 스킨 ======
@@ -2176,5 +1494,4 @@ export class DrawingManager extends EventTarget {
   }
 }
 
-export { DrawingTool };
 export default DrawingManager;
