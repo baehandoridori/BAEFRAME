@@ -18,6 +18,8 @@
 
 소스 실행과 배포 실행은 동일한 조건이 아니다. `main/runtime-profile.js`는 패키징된 앱의 `resources/baeframe-runtime-profile.json`을 읽는다. 실험 플래그의 실제 판정은 `main/experiment-flags.js`를 확인한다. 문제 재현 시 실행 경로·프로필·활성 엔진을 기록한다.
 
+v2.12.6-beta부터 현재 mpv/Fabric 기능은 프로필 누락 여부와 무관하게 기본 사용한다. 정확한 프로필 검증과 trial 격리, 명시적인 진단용 kill switch는 유지한다. 개발 실행과 `win-unpacked`는 Windows 파일/프로토콜 연결을 덮어쓰지 않는다.
+
 개발 빌드는 해당 체크아웃의 `dist/win-unpacked/BFRAME_alpha_v2.exe`다. 배포 경로는 [릴리스 가이드](release-guide.md)에만 관리한다. 로그는 일반 프로필에서 `%APPDATA%/baeframe/logs/`와 `startup-debug.log`를 확인하되, 격리 프로필은 실제 userData 경로를 확인한다.
 
 ## 코드 구조
@@ -46,6 +48,7 @@
 | 드로잉 데이터·레이어·실행취소 | `test:drawing`, `test:fabric-drawing-pilot` |
 | 저장·동시 저장·파일 복구 | `test:fabric-drawing-persistence` |
 | mpv·오버레이 호스트·키 입력·실행 프로필 | `test:mpv` |
+| 배포 복사본 실행·파일 연결·백업 보관 | `test:release-paths` (PowerShell 검사는 임시 파일만 사용) |
 | 재생목록·연속 재생·영상 전환 | `test:playlist` |
 | 타임라인·키프레임 표시 | `test:frame-grid`, 드로잉 변경이면 위 드로잉 테스트 추가 |
 | 합성 레이어 | `test:composition` |

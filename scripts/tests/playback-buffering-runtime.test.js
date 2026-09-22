@@ -229,6 +229,9 @@ test('native mpv overlay composition payload pauses and resumes with the primary
   const rect = { left: 0, top: 0, width: 640, height: 360 };
   const overlayState = loadFunction('getMpvOverlayState', {
     videoPlayer: player,
+    state: { isDrawMode: false },
+    isFabricDrawingPilotControllerEngaged: () => false,
+    userSettings: { getShortcut: () => null },
     elements: { videoWrapper: { getBoundingClientRect: () => rect }, drawingCanvas: { getBoundingClientRect: () => rect } },
     compositionLayerManager: { getMpvOverlayLayers: options => options },
     shouldSuppressLegacyDrawingForFabricPilot: () => true,

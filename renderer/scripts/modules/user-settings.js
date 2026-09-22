@@ -209,10 +209,9 @@ export class UserSettings extends EventTarget {
       localTheme: 'default',
       // 재생목록 자동 재생 (재생목록 파일과 별도인 개인 로컬 설정)
       playlistAutoPlay: false,
-      // mpv 직접 재생 - 기본 재생 엔진. 끄면 기존 변환(FFmpeg) 방식으로 재생 (개인 로컬 설정)
+      // 현재 드로잉은 mpv를 사용한다. 이전 엔진 선택값은 마이그레이션에서 정리한다.
       mpvPlaybackEnabled: true,
-      // 그리기/댓글 모드 동안 HTML5 엔진으로 전환 (구조 개선 — 끄면 기존 freeze 방식)
-      hybridReviewEngine: true,
+      hybridReviewEngine: false,
       // 최초 이름 설정 여부 (모달 한 번만 표시)
       hasSetNameOnce: false,
       // 사용자 정의 단축키 (기본값 위에 덮어씀)
@@ -287,9 +286,9 @@ export class UserSettings extends EventTarget {
     if ('mpvPilotEnabled' in this.settings) {
       delete this.settings.mpvPilotEnabled;
     }
-    if (typeof this.settings.mpvPlaybackEnabled !== 'boolean') {
-      this.settings.mpvPlaybackEnabled = true;
-    }
+    // PC별 과거 설정이 구형 드로잉이나 모드마다 파일 재로딩을 되살리지 않게 한다.
+    this.settings.mpvPlaybackEnabled = true;
+    this.settings.hybridReviewEngine = false;
   }
 
   /**
@@ -764,22 +763,22 @@ export class UserSettings extends EventTarget {
   }
 
   getMpvPlaybackEnabled() {
-    return this.settings.mpvPlaybackEnabled !== false;
+    return true;
   }
 
-  setMpvPlaybackEnabled(enabled) {
-    this.settings.mpvPlaybackEnabled = enabled === true;
+  setMpvPlaybackEnabled(_enabled) {
+    this.settings.mpvPlaybackEnabled = true;
     this._save();
     this._emit('mpvPlaybackEnabledChanged', { enabled: this.settings.mpvPlaybackEnabled });
     log.info('mpv 직접 재생 설정 변경됨', { enabled: this.settings.mpvPlaybackEnabled });
   }
 
   getHybridReviewEngine() {
-    return this.settings.hybridReviewEngine !== false;
+    return false;
   }
 
-  setHybridReviewEngine(enabled) {
-    this.settings.hybridReviewEngine = enabled === true;
+  setHybridReviewEngine(_enabled) {
+    this.settings.hybridReviewEngine = false;
     this._save();
     this._emit('hybridReviewEngineChanged', { enabled: this.settings.hybridReviewEngine });
     log.info('하이브리드 리뷰 엔진 설정 변경됨', { enabled: this.settings.hybridReviewEngine });

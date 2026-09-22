@@ -50,7 +50,8 @@ test('pending marker input stops pointer events from bubbling into video panning
 
 test('comment mode is visibly marked on the video surface outside fullscreen', () => {
   assert.match(cssSource, /\.video-wrapper\.comment-mode::before\s*\{[\s\S]+border:\s*2px solid var\(--accent-primary\);/);
-  assert.match(cssSource, /\.video-wrapper\.comment-mode::after\s*\{[\s\S]+radial-gradient\(circle at center, var\(--accent-primary\)/);
+  assert.match(cssSource, /\.video-wrapper\.comment-mode \.comment-markers-container\s*\{\s*cursor: crosshair;/);
+  assert.doesNotMatch(cssSource, /commentModeReticle/);
   assert.match(cssSource, /\.video-wrapper\.comment-mode \.comment-markers-container\s*\{[\s\S]+z-index:\s*30 !important;/);
   assert.match(cssSource, /body\.app-fullscreen \.video-wrapper\.comment-mode::after\s*\{[\s\S]+width:\s*auto;[\s\S]+height:\s*auto;[\s\S]+animation:\s*none;/);
 });
@@ -68,9 +69,9 @@ test('comment mode pauses mpv and waits for a shared review freeze before native
   const handlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", handlerStart);
   assert.ok(handlerStart >= 0 && handlerEnd > handlerStart, 'comment mode change handler should be bounded');
   const commentModeHandler = appSource.slice(handlerStart, handlerEnd);
-  assert.match(commentModeHandler, /if \(isCommentMode\) \{[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+videoPlayer\.pause\(\);[\s\S]+prepareMpvCommentMode\(preparationToken\)/);
+  assert.match(commentModeHandler, /if \(isCommentMode\) \{[\s\S]+isMpvPilotPlaybackActive\(\)[\s\S]+prepareMpvCommentMode\(preparationToken\)/);
   assert.match(commentModeHandler, /else \{[\s\S]+if \(!isMpvReviewInteractionActive\(\) && !suppressReviewFreezeReleaseForMediaChange\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
-  assert.match(appSource, /async function prepareMpvCommentMode\(preparationToken\) \{[\s\S]+prepareFreeze: \(\) => showMpvReviewFreezeFrame\(\)[\s\S]+setReady: setCommentModeReadyState/);
+  assert.match(appSource, /async function prepareMpvCommentMode\(preparationToken\) \{[\s\S]+await videoPlayer\.pauseAndSync\(\)[\s\S]+return showMpvReviewFreezeFrame\(\)[\s\S]+setReady: setCommentModeReadyState/);
   assert.match(appSource, /function setCommentModeReadyState\(ready\) \{[\s\S]+pointerEvents = ready \? 'auto' : 'none'/);
   assert.match(mpvSurfacePolicySource, /'\.video-wrapper\.mpv-review-freeze-ready'/);
   assert.match(appSource, /getMpvSurfaceElements\(document, MPV_SURFACE_MODE\.BLOCK\)/);

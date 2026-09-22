@@ -1,6 +1,7 @@
 const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const { shouldSkipShellRegistration } = require('./launch-path-policy');
 
 const PROJECT_FILE_ASSOCIATIONS = [
   {
@@ -90,6 +91,10 @@ async function registerProjectFileAssociations({
   projectFileIconPath = resolveProjectFileIconPath(),
   platform = process.platform,
   isDefaultApp = process.defaultApp,
+  isPackaged = true,
+  runtimeProfile = null,
+  argv = process.argv,
+  env = process.env,
   runner = runRegistryCommand,
   logger = null
 } = {}) {
@@ -99,6 +104,10 @@ async function registerProjectFileAssociations({
 
   if (isDefaultApp) {
     return { ok: false, skipped: true, reason: 'default-app' };
+  }
+
+  if (shouldSkipShellRegistration({ appPath, isPackaged, isDefaultApp, runtimeProfile, argv, env })) {
+    return { ok: false, skipped: true, reason: 'non-release-launch' };
   }
 
   let operations;

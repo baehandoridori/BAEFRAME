@@ -2725,6 +2725,7 @@ async function initApp() {
   // ====== 댓글 매니저 이벤트 (마커 기반) ======
 
   let commentModePreparationToken = 0;
+  let commentMarkerPlacementToken = 0;
   let drawModePreparationToken = 0;
   let suppressReviewFreezeReleaseForMediaChange = false;
   let sidebarCommentDraft = null;
@@ -2752,13 +2753,31 @@ async function initApp() {
   }
 
   async function prepareMpvCommentMode(preparationToken) {
+    const pauseOwner = {};
+    state.commentModePauseOwner = pauseOwner;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
+    const isStillActive = () => preparationToken === commentModePreparationToken &&
+      state.isCommentMode && isMpvPilotPlaybackActive() &&
+      filePath === state.currentFile && loadIntent === videoLoadIntentGeneration;
     return prepareMpvCommentReadiness({
-      prepareFreeze: () => showMpvReviewFreezeFrame(),
-      isStillActive: () => (
-        preparationToken === commentModePreparationToken &&
-        state.isCommentMode &&
-        isMpvPilotPlaybackActive()
-      ),
+      prepareFreeze: async () => {
+        // pause()만 호출하면 보간 프레임과 실제 mpv 정지 프레임이 다를 수 있다.
+        let paused = false;
+        try {
+          paused = await videoPlayer.pauseAndSync();
+        } finally {
+          if (state.commentModePauseOwner === pauseOwner) state.commentModePauseOwner = null;
+        }
+        if (!isStillActive()) return false;
+        if (!paused) {
+          commentManager.setCommentMode(false);
+          showToast('정지 화면을 준비하지 못했습니다. 잠시 후 C를 다시 눌러 주세요.', 'error');
+          return false;
+        }
+        return showMpvReviewFreezeFrame();
+      },
+      isStillActive,
       setReady: setCommentModeReadyState,
       setPreparing: setCommentModePreparingState,
       showGuidance: showCommentModeGuidance
@@ -2769,9 +2788,9 @@ async function initApp() {
   commentManager.addEventListener('commentModeChanged', (e) => {
     const { isCommentMode } = e.detail;
     const preparationToken = ++commentModePreparationToken;
-    const filePath = state.currentFile;
-    const loadIntent = videoLoadIntentGeneration;
+    state.commentModePauseOwner = null;
     state.isCommentMode = isCommentMode;
+    endVideoPan();
     if (isCommentMode && (state.isDrawMode || isFabricDrawingPilotControllerEngaged())) {
       exitDrawModeForSystemPath();
     }
@@ -2779,26 +2798,10 @@ async function initApp() {
     // 커서 변경
     if (isCommentMode) {
       if (isMpvPilotPlaybackActive()) {
-        videoPlayer.pause();
         setCommentModeReadyState(false);
         setCommentModePreparingState(true);
-        // 작업 4: 하이브리드 우선 — 성공 시 직접 ready, 실패 시 기존 freeze 준비로 폴백.
-        // (c-0)의 skipReviewTransition 없이는 전이 헬퍼가 댓글 모드를 강제 종료해 자멸한다.
-        void enterHybridReviewEngineIfPossible().then((swapped) => {
-          // 전환 중 사용자가 모드를 껐으면 mpv 복귀만 정리
-          if (!state.isCommentMode || preparationToken !== commentModePreparationToken ||
-            filePath !== state.currentFile || loadIntent !== videoLoadIntentGeneration) {
-            void exitHybridReviewEngineIfNeeded();
-            return;
-          }
-          if (swapped) {
-            setCommentModePreparingState(false);
-            setCommentModeReadyState(true);
-            showCommentModeGuidance();
-          } else {
-            void prepareMpvCommentMode(preparationToken);
-          }
-        });
+        // 파일을 다른 엔진으로 다시 열지 않고 현재 재생 화면으로 입력을 준비한다.
+        void prepareMpvCommentMode(preparationToken);
       } else {
         setCommentModePreparingState(false);
         setCommentModeReadyState(true);
@@ -3504,6 +3507,8 @@ async function initApp() {
   // 마커 컨테이너 클릭 (영상 위 클릭으로 마커 생성)
   markerContainer.addEventListener('click', async (e) => {
     if (!state.isCommentMode) return;
+    if (state.isSpaceHeld || state.isPanningVideo ||
+        !elements.videoWrapper.classList.contains('comment-mode')) return;
 
     // 마커 요소 클릭은 무시 (마커 자체의 이벤트 처리)
     if (e.target.closest('.comment-marker')) return;
@@ -3512,8 +3517,16 @@ async function initApp() {
     const rect = markerContainer.getBoundingClientRect();
     const x = (e.clientX - rect.left) / rect.width;
     const y = (e.clientY - rect.top) / rect.height;
+    if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || x > 1 || y < 0 || y > 1) return;
+    const placementToken = ++commentMarkerPlacementToken;
+    const preparationToken = commentModePreparationToken;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
 
     if (!(await ensureCutlistCommentTargetReady())) return;
+    if (!state.isCommentMode || preparationToken !== commentModePreparationToken ||
+        placementToken !== commentMarkerPlacementToken || filePath !== state.currentFile ||
+        loadIntent !== videoLoadIntentGeneration) return;
 
     // 마커 생성 시작
     commentManager.startMarkerCreation(x, y);
@@ -6278,7 +6291,7 @@ async function initApp() {
 
   function canPanVideo() {
     const zoomAllowsPan = state.videoZoom > 100 || !state.videoCenterLocked;
-    if (state.isDrawMode) return state.isSpaceHeld && zoomAllowsPan;
+    if (state.isDrawMode || state.isCommentMode) return state.isSpaceHeld && zoomAllowsPan;
     return zoomAllowsPan;
   }
 
@@ -7071,6 +7084,9 @@ async function initApp() {
   }
 
   function invalidateMpvReviewFreezeForFrameChange() {
+    // 정지 확인이 내보내는 최종 frameUpdate는 같은 C 진입의 일부다.
+    // 초기 캡처 전에 별도 refresh/토큰 변경이 끼어들지 않게 한다.
+    if (state.commentModePauseOwner) return false;
     if (mpvReviewFrameTracker.isSamePosition(
       mpvReviewTargetFrameSnapshot,
       videoPlayer.filePath,
@@ -7192,7 +7208,7 @@ async function initApp() {
   }
 
   async function showMpvReviewFreezeFrame() {
-    if (!isMpvPilotPlaybackActive() || !isMpvReviewInteractionActive()) return false;
+    if (state.commentModePauseOwner || !isMpvPilotPlaybackActive() || !isMpvReviewInteractionActive()) return false;
 
     return mpvReviewFreezeCaptureOwner.capture(async () => {
       const token = ++mpvReviewFreezeToken;
@@ -7463,6 +7479,7 @@ async function initApp() {
   }
 
   function scheduleMpvReviewFreezeRefresh() {
+    if (state.commentModePauseOwner) return;
     mpvReviewFreezeRefreshScheduler.schedule();
   }
 
@@ -11746,6 +11763,9 @@ async function initApp() {
   }
 
   function setDrawModeReadyState(ready) {
+    // 구형 캔버스는 저장된 그림의 표시 호환성만 유지한다.
+    // 새 드로잉 도구는 Fabric 컨트롤러가 소유하며 이 경로로 열지 않는다.
+    ready = false;
     elements.btnDrawMode?.classList.toggle('active', ready);
     elements.drawingTools?.classList.toggle('visible', ready);
     elements.drawingCanvas?.classList.toggle('active', ready);
@@ -11920,7 +11940,7 @@ async function initApp() {
     if (state.isAudioMode) return;
     // mpv 재생 중 B는 항상 fabric 파일럿 경로다. 저장 실패·준비 지연으로 소유권이
     // 없더라도 레거시 팔레트로 새지 않고 사유만 알린 뒤 종료한다.
-    // 파일럿 자체가 비활성(킬스위치·브리지 미가용)인 경우에만 아래 레거시 경로로 내려간다.
+    // 재생/브리지가 준비되지 않아도 구형 도구로 전환하지 않는다.
     if (isMpvPilotPlaybackActive() && fabricDrawingPilotController.isEnabled()) {
       const pilotState = fabricDrawingPilotController.getState();
       if (pilotState === 'failed') {
@@ -11951,16 +11971,7 @@ async function initApp() {
       void fabricDrawingPilotController.toggle();
       return;
     }
-    const shouldEnable = !state.isDrawMode;
-    if (shouldEnable) {
-      applyDrawModeState(true);
-      if (state.isCommentMode) {
-        commentManager.setCommentMode(false);
-      }
-    } else {
-      applyDrawModeState(false);
-    }
-    log.debug('그리기 모드 변경', { isDrawMode: state.isDrawMode });
+    showToast('현재 드로잉을 사용할 수 없습니다. 최신 배포 폴더에서 다시 실행해 주세요.', 'error', null, true);
   }
 
   /**
@@ -12262,8 +12273,12 @@ async function initApp() {
     inputWrapper.classList.toggle('align-above', marker.y > 0.72);
     inputWrapper.classList.toggle('align-below', marker.y < 0.22);
     inputWrapper.innerHTML = `
+      <div class="comment-image-preview comment-marker-image-preview" hidden>
+        <img alt="댓글 첨부 이미지 미리보기">
+        <button type="button" class="comment-image-remove comment-marker-image-remove" aria-label="첨부 이미지 제거" title="첨부 이미지 제거">×</button>
+      </div>
       <textarea class="comment-marker-input" placeholder="댓글 입력..." rows="1"></textarea>
-      <div class="comment-marker-input-hint">Enter 확인 · Shift+Enter 줄바꿈 · Esc 취소</div>
+      <div class="comment-marker-input-hint">Enter 확인 · Shift+Enter 줄바꿈 · Ctrl+V 이미지 · Esc 취소</div>
     `;
     inputWrapper.addEventListener('pointerdown', (e) => e.stopPropagation());
     inputWrapper.addEventListener('mousedown', (e) => e.stopPropagation());
@@ -12273,7 +12288,80 @@ async function initApp() {
 
     // 입력창 포커스
     const textarea = inputWrapper.querySelector('textarea');
-    setTimeout(() => textarea?.focus(), 50);
+    const imagePreview = inputWrapper.querySelector('.comment-marker-image-preview');
+    const imagePreviewImg = imagePreview.querySelector('img');
+    const imageRemove = inputWrapper.querySelector('.comment-marker-image-remove');
+    const inputHint = inputWrapper.querySelector('.comment-marker-input-hint');
+    const defaultHint = inputHint.textContent;
+    const imageTarget = {
+      filePath: state.currentFile,
+      loadToken: latestVideoLoadToken,
+      intentGeneration: videoLoadIntentGeneration
+    };
+    let imageRequest = 0;
+    let imageLoading = false;
+    let attachedImage = null;
+    const isCurrentPendingMarker = () => commentManager.pendingMarker === marker &&
+      markerEl.isConnected && state.currentFile === imageTarget.filePath &&
+      latestVideoLoadToken === imageTarget.loadToken &&
+      videoLoadIntentGeneration === imageTarget.intentGeneration && activeVideoLoadToken === null;
+    const setImageLoading = (loading) => {
+      imageLoading = loading;
+      inputWrapper.setAttribute('aria-busy', String(loading));
+      inputHint.textContent = loading ? '이미지 준비 중… 잠시만 기다려주세요' : defaultHint;
+    };
+    const clearPendingImage = () => {
+      imageRequest += 1;
+      setImageLoading(false);
+      if (attachedImage && commentManager._pendingImage === attachedImage) commentManager._pendingImage = null;
+      attachedImage = null;
+      imagePreviewImg.removeAttribute('src');
+      imagePreview.hidden = true;
+    };
+    const handleMarkerCancelled = (e) => {
+      if (e.detail.marker === marker) clearPendingImage();
+    };
+    commentManager.addEventListener('markerCreationCancelled', handleMarkerCancelled);
+    setTimeout(() => {
+      if (isCurrentPendingMarker()) textarea?.focus();
+    }, 50);
+
+    textarea.addEventListener('paste', async (e) => {
+      if (!hasImageInClipboard(e)) return;
+      e.preventDefault();
+      if (!isCurrentPendingMarker()) return;
+      const request = ++imageRequest;
+      const isCurrentRequest = () => request === imageRequest && isCurrentPendingMarker();
+      setImageLoading(true);
+      try {
+        const imageData = await getImageFromClipboard(e);
+        if (!isCurrentRequest()) return;
+        if (!imageData?.base64) {
+          showToast('클립보드에서 이미지를 읽지 못했습니다.', 'error');
+          return;
+        }
+        attachedImage = imageData;
+        commentManager._pendingImage = imageData;
+        imagePreviewImg.src = imageData.base64;
+        imagePreview.hidden = false;
+        scheduleMpvOverlayStateSync();
+        showToast('이미지가 첨부되었습니다', 'success');
+      } catch (error) {
+        if (isCurrentRequest()) {
+          log.error('댓글 이미지 붙여넣기 실패', error);
+          showToast('이미지를 붙여넣지 못했습니다. 다시 시도해 주세요.', 'error');
+        }
+      } finally {
+        if (request === imageRequest) setImageLoading(false);
+      }
+    });
+    imageRemove.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!isCurrentPendingMarker()) return;
+      clearPendingImage();
+      textarea.focus({ preventScroll: true });
+      scheduleMpvOverlayStateSync();
+    });
 
     // 멘션 자동완성 부착
     if (textarea) mentionManager.attach(textarea);
@@ -12295,6 +12383,11 @@ async function initApp() {
       if (e.defaultPrevented || e.__mentionHandled || e.__mentionComposing || e.isComposing || e.keyCode === 229 || mentionManager.isVisibleFor(e.target)) return;
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
+        if (!isCurrentPendingMarker()) return;
+        if (imageLoading) {
+          showToast('이미지 준비가 끝난 뒤 확인해 주세요.', 'info');
+          return;
+        }
         const text = textarea.value.trim();
         commentManager.confirmMarker(text);
       } else if (e.key === 'Escape') {
@@ -12315,10 +12408,9 @@ async function initApp() {
     // 포커스 잃으면 취소 (마커 외부 클릭 시에만)
     textarea?.addEventListener('blur', () => {
       setTimeout(() => {
-        if (commentManager.pendingMarker && !clickedInsideMarker) {
+        if (commentManager.pendingMarker === marker && !clickedInsideMarker) {
           // pending 마커 내 입력 필드에 포커스가 이동한 경우 모드 해제하지 않음
-          const pendingInput = markerEl?.querySelector('textarea, input');
-          if (pendingInput && document.activeElement === pendingInput) {
+          if (markerEl.contains(document.activeElement)) {
             clickedInsideMarker = false;
             return;
           }
@@ -12333,6 +12425,8 @@ async function initApp() {
       for (const mutation of mutations) {
         for (const removed of mutation.removedNodes) {
           if (removed === markerEl || removed.contains?.(markerEl)) {
+            clearPendingImage();
+            commentManager.removeEventListener('markerCreationCancelled', handleMarkerCancelled);
             document.removeEventListener('pointerdown', handlePointerDown);
             observer.disconnect();
             return;
@@ -16409,11 +16503,6 @@ async function initApp() {
     const status = document.getElementById('appSettingsMpvPilotStatus');
     if (!status) return;
 
-    if (!userSettings.getMpvPlaybackEnabled()) {
-      status.textContent = '꺼져 있습니다. 영상은 기존 변환(FFmpeg) 방식으로 재생됩니다.';
-      return;
-    }
-
     if (!window.electronAPI?.mpvIsAvailable) {
       status.textContent = '이 앱 버전에서는 mpv 상태 확인을 사용할 수 없습니다.';
       return;
@@ -16423,8 +16512,8 @@ async function initApp() {
     try {
       const available = await window.electronAPI.mpvIsAvailable();
       status.textContent = available
-        ? 'mpv를 찾았습니다. 다음 영상부터 원본 직접 재생을 시도합니다.'
-        : 'mpv.exe를 찾지 못했습니다. 영상은 기존 변환 방식으로 재생됩니다.';
+        ? '원본 재생과 현재 드로잉을 사용할 수 있습니다.'
+        : '재생 파일이 누락되었습니다. 최신 배포 폴더에서 다시 실행해 주세요.';
     } catch (error) {
       log.warn('mpv 파일럿 설정 상태 확인 실패', { error: error.message });
       status.textContent = 'mpv 상태 확인에 실패했습니다. 영상은 기존 방식으로 재생됩니다.';
@@ -16463,10 +16552,6 @@ async function initApp() {
     if (lmToggle) lmToggle.checked = userSettings.getLightMode();
 
     // 재생 탭 초기값
-    const mpvPilotEnabled = document.getElementById('appSettingsMpvPilotEnabled');
-    if (mpvPilotEnabled) mpvPilotEnabled.checked = userSettings.getMpvPlaybackEnabled();
-    const hybridReviewEngineToggle = document.getElementById('appSettingsHybridReviewEngine');
-    if (hybridReviewEngineToggle) hybridReviewEngineToggle.checked = userSettings.getHybridReviewEngine();
     updateMpvPilotSettingsStatus();
 
     const tGrid = document.getElementById('appThemeColorGrid');
@@ -16739,27 +16824,6 @@ async function initApp() {
     const label = document.getElementById('appSettingsToastDurationValue');
     if (label) label.textContent = `${ms / 1000}초`;
     userSettings.setToastDuration(ms);
-  });
-
-  document.getElementById('appSettingsMpvPilotEnabled')?.addEventListener('change', (e) => {
-    userSettings.setMpvPlaybackEnabled(e.target.checked);
-    updateMpvPilotSettingsStatus();
-    showToast(
-      e.target.checked
-        ? 'mpv 직접 재생을 켰습니다. 다음 영상부터 원본을 바로 재생합니다.'
-        : 'mpv 직접 재생을 껐습니다. 다음 영상부터 기존 변환 방식으로 재생합니다.',
-      'info'
-    );
-  });
-
-  document.getElementById('appSettingsHybridReviewEngine')?.addEventListener('change', (e) => {
-    userSettings.setHybridReviewEngine(e.target.checked);
-    showToast(
-      e.target.checked
-        ? '그리기/댓글 모드에서 표준 재생을 사용합니다. 다음 모드 진입부터 적용됩니다.'
-        : '그리기/댓글 모드에서 기존 freeze 방식을 사용합니다.',
-      'info'
-    );
   });
 
   // 미리보기 위치 업데이트
