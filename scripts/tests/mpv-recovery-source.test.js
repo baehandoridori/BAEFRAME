@@ -640,10 +640,8 @@ test('comment and draw handoffs acquire the next mode before releasing the previ
   const toggleCommentSource = extractNamedFunction(appSource, 'toggleCommentMode');
   const systemDrawExitSource = extractNamedFunction(appSource, 'exitDrawModeForSystemPath');
 
-  const drawAcquireIndex = toggleDrawSource.indexOf('applyDrawModeState(true)');
-  const commentReleaseIndex = toggleDrawSource.indexOf('commentManager.setCommentMode(false)');
-  assert.ok(drawAcquireIndex >= 0, 'draw handoff should acquire draw mode explicitly');
-  assert.ok(commentReleaseIndex > drawAcquireIndex, 'draw must own the shared freeze before comment mode turns off');
+  assert.match(toggleDrawSource, /fabricDrawingPilotController\.toggle\(\)/);
+  assert.doesNotMatch(toggleDrawSource, /applyDrawModeState\(true\)/);
 
   const commentAcquireIndex = toggleCommentSource.indexOf('commentManager.setCommentMode(true)');
   const drawReleaseIndex = toggleCommentSource.indexOf('exitDrawModeForSystemPath()');
@@ -817,8 +815,8 @@ test('comment and draw mpv controls become active only after readiness succeeds'
 test('mpv playback is enabled by default with legacy pilot key migration', () => {
   assert.match(userSettingsSource, /mpvPlaybackEnabled: true,/);
   assert.doesNotMatch(userSettingsSource, /mpvPilotEnabled: false,/);
-  assert.match(userSettingsSource, /getMpvPlaybackEnabled\(\) \{[\s\S]+?return this\.settings\.mpvPlaybackEnabled !== false;/);
-  assert.match(userSettingsSource, /setMpvPlaybackEnabled\(enabled\) \{[\s\S]+?this\.settings\.mpvPlaybackEnabled = enabled === true;[\s\S]+?this\._save\(\);/);
+  assert.match(userSettingsSource, /getMpvPlaybackEnabled\(\) \{\s*return true;/);
+  assert.match(userSettingsSource, /setMpvPlaybackEnabled\(_enabled\) \{[\s\S]+?this\.settings\.mpvPlaybackEnabled = true;[\s\S]+?this\._save\(\);/);
   const migrateMatch = userSettingsSource.match(/_migrateLegacySettings\(\) \{([\s\S]*?)\n  \}/);
   assert.ok(migrateMatch, 'legacy settings migration should exist');
   assert.match(migrateMatch[1], /delete this\.settings\.mpvPilotEnabled;/);

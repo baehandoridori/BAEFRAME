@@ -54,7 +54,7 @@ function setup(t, options = {}) {
     document: main.window.document,
     createLogger: () => ({ debug() {}, info() {}, error() {} })
   });
-  vm.runInContext(`${source}\nglobalThis.api = { compressImage, getImageFromClipboard, getImageFromDrop, selectImageFile };`, context);
+  vm.runInContext(`${source}\nglobalThis.api = { compressImage, hasImageInClipboard, getImageFromClipboard, getImageFromDrop, selectImageFile };`, context);
   return { main: main.window, child: child.window, api: context.api, created, revoked };
 }
 
@@ -102,6 +102,38 @@ test('자식 창의 붙여넣기와 드롭 파일이 이미지 압축으로 전�
   assert.ok(dropped.base64.startsWith('data:image/jpeg;'));
   assert.equal(h.created.length, 2);
   assert.deepEqual(h.revoked, h.created);
+});
+
+test('items가 없는 files-only 이미지 클립보드도 다른 창의 실제 File로 처리한다', async t => {
+  const h = setup(t);
+  const file = new h.child.File(['PNG'], 'clipboard.png', { type: 'image/png' });
+  const event = { clipboardData: { files: [file] } };
+  assert.equal(h.api.hasImageInClipboard(event), true);
+  assert.ok((await h.api.getImageFromClipboard(event)).base64.startsWith('data:image/jpeg;'));
+});
+
+test('읽을 수 없는 image item 뒤의 유효한 파일로 계속 탐색한다', async t => {
+  const h = setup(t);
+  const file = new h.child.File(['PNG'], 'clipboard.png', { type: 'image/png' });
+  const event = { clipboardData: {
+    items: [{ type: 'image/png', getAsFile: () => null }], files: [file]
+  } };
+  assert.equal(h.api.hasImageInClipboard(event), true);
+  assert.ok(await h.api.getImageFromClipboard(event));
+});
+
+test('클립보드의 가짜 이미지 객체와 HTML 이미지 URL은 받지 않는다', async t => {
+  const h = setup(t);
+  const fake = { type: 'image/png', size: 3, [Symbol.toStringTag]: 'Blob' };
+  for (const clipboardData of [
+    { files: [fake] },
+    { items: [{ type: 'image/png', getAsFile: () => fake }] },
+    { items: [{ type: 'text/html' }], getData: () => '<img src="https://example.test/image.png">' }
+  ]) {
+    assert.equal(h.api.hasImageInClipboard({ clipboardData }), false);
+    assert.equal(await h.api.getImageFromClipboard({ clipboardData }), null);
+  }
+  assert.equal(h.created.length, 0);
 });
 
 test('일반 객체와 Blob처럼 꾸민 객체, null을 이미지로 받아들이지 않는다', async t => {

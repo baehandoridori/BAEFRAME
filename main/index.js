@@ -7,7 +7,8 @@
 // ============================================
 const fs = require('fs');
 const path = require('path');
-const { app, BrowserWindow, ipcMain, protocol } = require('electron');
+const { app, BrowserWindow, ipcMain, protocol, dialog } = require('electron');
+const { applyLaunchPathPolicy, resolveLaunchPathPolicy, shouldSkipShellRegistration } = require('./launch-path-policy');
 const { loadRuntimeProfile } = require('./runtime-profile');
 const {
   resolveMultiInstanceUserDataPath,
@@ -18,6 +19,19 @@ const runtimeProfile = loadRuntimeProfile({
   isPackaged: app.isPackaged,
   resourcesPath: process.resourcesPath
 });
+const launchPathPolicy = resolveLaunchPathPolicy({
+  execPath: process.execPath,
+  argv: process.argv,
+  isPackaged: app.isPackaged,
+  currentVersion: app.getVersion()
+});
+if (!applyLaunchPathPolicy(launchPathPolicy, {
+  app,
+  reportBlocked: message => dialog.showErrorBox('BAEFRAME 실행 경로 확인', message)
+})) {
+  // app.exit normally terminates immediately; never fall through into startup.
+  process.exit(1);
+}
 const isDev = process.env.NODE_ENV === 'development';
 const allowMultipleInstances = shouldAllowMultipleInstances({
   isDev,
@@ -103,8 +117,12 @@ const fabricDrawingV3Shadow = resolveFabricDrawingV3Shadow({
 });
 mpvManager.configurePilotState(mpvPlaybackPilot);
 mpvOverlayHost.configureDrawingV3Shadow(fabricDrawingV3Shadow.enabled);
-const skipShellRegistration = process.argv.includes('--skip-shell-registration') ||
-  runtimeProfile.skipShellRegistration === true;
+const skipShellRegistration = shouldSkipShellRegistration({
+  appPath: process.execPath,
+  isPackaged: app.isPackaged,
+  isDefaultApp: process.defaultApp,
+  runtimeProfile
+});
 debugLog('내부 모듈 로드 완료');
 
 const log = createLogger('Main');
@@ -243,41 +261,6 @@ app.commandLine.appendSwitch('ignore-gpu-blocklist');
 log.info('비디오 하드웨어 가속 플래그 적용됨');
 
 // ============================================
-// baeframe:// 프로토콜 등록 (Electron 내장)
-// ============================================
-//
-// 중요: 개발 모드에서는 프로토콜을 등록하지 않음
-// - 개발 모드와 빌드된 앱이 프로토콜을 서로 덮어쓰는 문제 방지
-// - 팀원들이 공유 드라이브의 빌드된 exe를 사용할 때 충돌 방지
-//
-// 프로토콜 등록 규칙:
-// - 빌드된 앱(process.defaultApp !== true)에서만 등록
-// - 개발 모드에서는 기존 등록을 유지
-// ============================================
-
-// 개발 모드, 빌드된 앱 모두 프로토콜 등록
-// 개발 모드에서도 Slack 링크 테스트가 가능하도록 함
-// 팀원 배포 시 빌드된 exe 한 번 실행하면 해당 경로로 덮어씌워짐
-if (!skipShellRegistration) {
-  if (process.defaultApp) {
-    // 개발 모드: electron 실행 파일 + 스크립트 경로로 등록
-    app.setAsDefaultProtocolClient('baeframe', process.execPath, [path.resolve(process.argv[1])]);
-    log.info('개발 모드 - 프로토콜 등록됨', {
-      execPath: process.execPath,
-      scriptPath: path.resolve(process.argv[1])
-    });
-    debugLog(`개발 모드 프로토콜 등록됨: ${process.execPath} ${path.resolve(process.argv[1])}`);
-  } else {
-    // 빌드된 exe - 현재 실행 파일로 등록
-    app.setAsDefaultProtocolClient('baeframe');
-    log.info('baeframe:// 프로토콜 등록됨', {
-      execPath: process.execPath,
-      defaultApp: process.defaultApp
-    });
-    debugLog(`프로토콜 등록됨: ${process.execPath}`);
-  }
-}
-
 // 단일 인스턴스 잠금 (개발/프로젝트/시험판 격리 실행에서는 다중 인스턴스 허용)
 if (multiInstanceUserDataPath) {
   log.info('다중 인스턴스 전용 사용자 데이터 폴더 사용', {
@@ -393,8 +376,12 @@ if (!gotTheLock) {
     log.info(`앱 준비 완료: ${Date.now() - appStartTime}ms`, { version: app.getVersion() });
 
     if (!skipShellRegistration) {
+      app.setAsDefaultProtocolClient('baeframe');
+      debugLog('프로토콜 등록됨: ' + process.execPath);
       registerProjectFileAssociations({
         appPath: process.execPath,
+        isPackaged: app.isPackaged,
+        runtimeProfile,
         logger: log
       }).catch((error) => {
         log.warn('프로젝트 파일 연결 자동 등록 예외', { error: error.message });

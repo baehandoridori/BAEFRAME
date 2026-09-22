@@ -38,13 +38,13 @@ function writeMarker(resourcesDir, value) {
   fs.writeFileSync(markerPath(resourcesDir), serialized, 'utf8');
 }
 
-function assertDefaultOff(profile) {
+function assertProductDefaults(profile) {
   assert.deepEqual(profile, DEFAULT_RUNTIME_PROFILE);
   assert.equal(profile.active, false);
-  assert.equal(profile.features.mpvPlaybackPilot, false);
-  assert.equal(profile.features.fabricDrawingPilot, false);
-  assert.equal(profile.features.fabricDrawingV3Shadow, false);
-  assert.equal(profile.features.fabricDrawingPersistence, false);
+  assert.equal(profile.features.mpvPlaybackPilot, true);
+  assert.equal(profile.features.fabricDrawingPilot, true);
+  assert.equal(profile.features.fabricDrawingV3Shadow, true);
+  assert.equal(profile.features.fabricDrawingPersistence, true);
   assert.equal(profile.isolateUserData, false);
   assert.equal(profile.skipShellRegistration, false);
   assert.equal(Object.isFrozen(profile), true);
@@ -64,20 +64,20 @@ const EXPECTED_STABLE_RUNTIME_PROFILE_MARKER = Object.freeze({
   skipShellRegistration: false
 });
 
-test('runtime profile stays off when unpackaged, missing, malformed, or oversized', (t) => {
+test('runtime profile retains product defaults when unpackaged, missing, malformed, or oversized', (t) => {
   const { resourcesDir } = createResourcesSandbox(t);
 
   writeMarker(resourcesDir, TRIAL_RUNTIME_PROFILE_MARKER);
-  assertDefaultOff(loadRuntimeProfile({ isPackaged: false, resourcesPath: resourcesDir }));
+  assertProductDefaults(loadRuntimeProfile({ isPackaged: false, resourcesPath: resourcesDir }));
 
   fs.rmSync(markerPath(resourcesDir), { force: true });
-  assertDefaultOff(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
+  assertProductDefaults(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
 
   writeMarker(resourcesDir, '{"schemaVersion":');
-  assertDefaultOff(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
+  assertProductDefaults(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
 
   writeMarker(resourcesDir, 'x'.repeat(MAX_RUNTIME_PROFILE_BYTES + 1));
-  assertDefaultOff(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
+  assertProductDefaults(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
 });
 
 test('runtime profile rejects unknown or inexact marker contracts atomically', (t) => {
@@ -112,7 +112,7 @@ test('runtime profile rejects unknown or inexact marker contracts atomically', (
 
   for (const invalidMarker of invalidMarkers) {
     writeMarker(resourcesDir, invalidMarker);
-    assertDefaultOff(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
+    assertProductDefaults(loadRuntimeProfile({ isPackaged: true, resourcesPath: resourcesDir }));
   }
 });
 

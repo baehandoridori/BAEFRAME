@@ -94,12 +94,12 @@ test('text inputs, text-only clipboard, and unloaded videos keep existing paste 
 
 test('clipboard utility forwards optional compression settings and retains caller defaults', async () => {
   const source = fs.readFileSync(path.join(root, 'renderer/scripts/modules/image-utils.js'), 'utf8');
-  const match = source.match(/export async function getImageFromClipboard\([\s\S]*?\n\}/);
+  const match = source.match(/function getClipboardImageBlob\([\s\S]*?export async function getImageFromClipboard\([\s\S]*?\n\}/);
   assert.ok(match);
   const seen = [];
-  const context = { compressImage: async (blob, options) => { seen.push({ blob, options }); return { base64: png }; } };
-  vm.runInNewContext(match[0].replace('export ', ''), context);
-  const blob = {};
+  const context = { Blob, compressImage: async (blob, options) => { seen.push({ blob, options }); return { base64: png }; } };
+  vm.runInNewContext(match[0].replace(/export /g, ''), context);
+  const blob = new Blob(['PNG'], { type: 'image/png' });
   const event = { clipboardData: { items: [{ type: 'image/png', getAsFile: () => blob }] } };
   await context.getImageFromClipboard(event, { format: 'image/png' });
   await context.getImageFromClipboard(event);

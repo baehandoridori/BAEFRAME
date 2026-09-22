@@ -455,17 +455,18 @@ test('comment readiness ignores completion from a cancelled then reentered mode'
     state: { currentFile: 'A.mp4', isCommentMode: false, isDrawMode: false },
     commentModePreparationToken: 0, videoLoadIntentGeneration: 1,
     isFabricDrawingPilotControllerEngaged: () => false, isMpvPilotPlaybackActive: () => true,
-    videoPlayer: { pause: noop }, enterHybridReviewEngineIfPossible: () => pending.promise,
+    videoPlayer: { pauseAndSync: async () => true }, endVideoPan: noop,
+    showMpvReviewFreezeFrame: () => pending.promise,
     setCommentModeReadyState: value => ready.push(value), setCommentModePreparingState: noop,
-    showCommentModeGuidance: noop, exitHybridReviewEngineIfNeeded: noop,
-    prepareMpvCommentMode: () => ready.push('freeze')
+    showCommentModeGuidance: noop, exitHybridReviewEngineIfNeeded: noop
   });
+  vm.runInContext(`${declaration('prepareMpvCommentReadiness')}\n${declaration('prepareMpvCommentMode')}`, context);
   const modeChanged = vm.runInContext(listener('commentManager', 'commentModeChanged'), context);
   modeChanged({ detail: { isCommentMode: true } });
   context.commentModePreparationToken += 2;
   pending.resolve(true);
   await Promise.resolve();
-  assert.deepEqual(ready, [false]);
+  assert.deepEqual(ready, [false, false]);
 });
 
 test('aborted mpv restoration keeps ownership for the next comment-mode exit', async () => {

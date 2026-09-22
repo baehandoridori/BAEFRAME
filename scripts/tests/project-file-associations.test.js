@@ -102,16 +102,16 @@ test('manual validation flag and trial profile skip protocol and project file re
 
   assert.match(
     mainIndex,
-    /const skipShellRegistration = process\.argv\.includes\('--skip-shell-registration'\) \|\|\n\s+runtimeProfile\.skipShellRegistration === true;/
+    /const skipShellRegistration = shouldSkipShellRegistration\(\{[\s\S]*?isPackaged: app\.isPackaged,[\s\S]*?runtimeProfile\n\}\);/
   );
 
   const protocolRegistration = mainIndex.match(
-    /if \(!skipShellRegistration\) \{\n([\s\S]*?)\n\}\n\n\/\/ 단일 인스턴스 잠금/
+    /if \(!skipShellRegistration\) \{\n([\s\S]*?)\n    \}/
   );
   assert.ok(protocolRegistration, 'protocol registration must use the shared shell-registration guard');
   assert.equal(
     (protocolRegistration[1].match(/app\.setAsDefaultProtocolClient\(/g) || []).length,
-    2
+    1
   );
 
   const projectFileRegistration = mainIndex.match(

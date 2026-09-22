@@ -9,30 +9,31 @@ const appSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer
 const userSettingsSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/scripts/modules/user-settings.js'), 'utf8'));
 const indexSource = normalizeNewlines(fs.readFileSync(path.join(rootDir, 'renderer/index.html'), 'utf8'));
 
-test('드로잉/댓글 모드 하이브리드 엔진 전환이 배선되어 있다 (작업 4)', () => {
+test('하이브리드 호환 코드는 남아도 새 코멘트 진입은 파일을 다시 열지 않는다', () => {
   assert.match(appSource, /engineSwap = false,/);
   assert.match(appSource, /async function enterHybridReviewEngineIfPossible\(\)/);
   assert.match(appSource, /async function exitHybridReviewEngineIfNeeded\(\)/);
   assert.match(appSource, /enterHybridReviewEngineIfPossible\(\)\.then\(\(swapped\) => \{/);
   assert.match(appSource, /if \(!engineSwap\) \{/);
   assert.match(appSource, /skipReviewTransition = false \} = \{\}/);
-  assert.match(userSettingsSource, /hybridReviewEngine: true,/);
+  assert.match(userSettingsSource, /hybridReviewEngine: false,/);
+  const handler = appSource.slice(appSource.indexOf("commentManager.addEventListener('commentModeChanged'"), appSource.indexOf("commentManager.addEventListener('markerCreationStarted'"));
+  assert.doesNotMatch(handler, /enterHybridReviewEngineIfPossible/);
 });
 
 test('하이브리드 전환의 3중 안전장치가 배선되어 있다 (작업 4)', () => {
   // 코덱 게이트: HTML5 직재생 가능 코덱만 전환
   assert.match(appSource, /async function isHtml5DirectPlayableForReview\(filePath\)/);
   assert.match(appSource, /codecInfo\?\.isSupported === true/);
-  // 설정 토글: 기본 켬, 끄면 기존 freeze
+  // 폐기된 설정값은 재진입을 허용하지 않는다.
   assert.match(appSource, /if \(!userSettings\.getHybridReviewEngine\(\)\) return false;/);
-  assert.match(userSettingsSource, /getHybridReviewEngine\(\) \{[\s\S]*hybridReviewEngine !== false;/);
+  assert.match(userSettingsSource, /getHybridReviewEngine\(\) \{\s*return false;/);
   // 실패 폴백: 스왑 실패 시 기존 freeze 준비
   assert.match(appSource, /void prepareMpvDrawMode\(preparationToken\);/);
   assert.match(appSource, /void prepareMpvCommentMode\(preparationToken\);/);
   // engineSwap의 경량 전환: 리뷰 전이 스킵
   assert.match(appSource, /\}, \{ skipReviewTransition: true \}\);/);
-  // 설정 UI 토글 존재
-  assert.match(indexSource, /id="appSettingsHybridReviewEngine"/);
+  assert.doesNotMatch(indexSource, /id="appSettingsHybridReviewEngine"/);
 });
 
 test('모드 종료 시 mpv 복귀 정리가 배선되어 있다 (작업 4)', () => {

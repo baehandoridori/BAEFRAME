@@ -1561,10 +1561,7 @@ test('mpv 재생 중 B는 소유 실패에도 레거시 그리기로 폴백하�
   );
   const legacyEnableIndex = toggleSource.indexOf('applyDrawModeState(true)');
   assert.ok(pilotGateIndex >= 0, 'mpv 재생 중 파일럿 게이트가 존재해야 한다');
-  assert.ok(
-    pilotGateIndex < legacyEnableIndex,
-    '레거시 진입은 mpv 파일럿 게이트를 통과한 뒤에만 도달해야 한다'
-  );
+  assert.equal(legacyEnableIndex, -1, '어떤 재생/실패 상태에서도 구형 도구를 열지 않는다');
   assert.match(
     toggleSource,
     /const pilotState = fabricDrawingPilotController\.getState\(\);\n\s+if \(pilotState === 'failed'\) \{/

@@ -433,3 +433,226 @@ test('paused external polling holds one-frame seek noise but adopts a real two-f
   assert.equal(movedPlayer.currentFrame, 8, 'N-2 should be treated as a real backward move');
   assert.equal(movedPlayer._pausedSeekHoldFrame, null);
 });
+
+function deferred() {
+  let resolve;
+  let reject;
+  const promise = new Promise((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+test('pauseAndSync waits for the pause ACK and final engine frame before it reports success', async () => {
+  await withFrameScheduler(async callbacks => {
+    const player = createExternalPlayer(60);
+    const pause = deferred();
+    const status = deferred();
+    let statusReads = 0;
+    player.externalControls = {
+      pause: () => pause.promise,
+      getStatus: () => { statusReads++; return status.promise; }
+    };
+    player._startExternalFrameInterpolation(player.currentTime);
+    const pending = player.pauseAndSync();
+    assert.equal(player.isPlaying, false, 'existing immediate pause feedback remains');
+    assert.equal(callbacks.size, 0);
+    await player._syncExternalStatus();
+    assert.equal(statusReads, 0, 'ordinary polling must wait for the pause ACK');
+    pause.resolve({ success: true });
+    await Promise.resolve();
+    assert.equal(statusReads, 1);
+    assert.equal(player.currentFrame, 60, 'the interpolated frame is not confirmed yet');
+    await player._syncExternalStatus();
+    assert.equal(statusReads, 1, 'ordinary polling must not race the final status read');
+    status.resolve(mpvStatus({ paused: true, time: 2.125 }));
+    assert.equal(await pending, true);
+    assert.equal(player.currentFrame, 51);
+    assert.equal(player.currentTime, 2.125);
+    assert.equal(player.lastExternalStatusTime, 2.125);
+    assert.equal(player.isPlaying, false);
+    assert.equal(player._externalPlaybackRequest, null);
+    assert.ok(player.events.some(event => event.name === 'frameUpdate' && event.detail.frame === 51));
+  });
+});
+
+for (const scenario of ['pause rejected', 'pause failed', 'pause unacknowledged', 'status failed', 'status running', 'status stopped', 'status missing time']) {
+  test(`pauseAndSync does not confirm an unavailable engine snapshot: ${scenario}`, async () => {
+    await withFrameScheduler(async () => {
+      const player = createExternalPlayer(60);
+      const status = mpvStatus({ paused: true });
+      if (scenario === 'status failed') status.success = false;
+      if (scenario === 'status running') status.paused = false;
+      if (scenario === 'status stopped') status.stopped = true;
+      if (scenario === 'status missing time') status.time = null;
+      player.externalControls = {
+        pause: async () => {
+          if (scenario === 'pause rejected') throw new Error('pause failed');
+          if (scenario === 'pause unacknowledged') return undefined;
+          return { success: scenario !== 'pause failed' };
+        },
+        getStatus: async () => status,
+        stop: async () => ({ success: true })
+      };
+      assert.equal(await player.pauseAndSync(), false);
+      assert.equal(player.currentFrame, 60);
+      assert.equal(player._externalPlaybackRequest, null);
+    });
+  });
+}
+
+for (const stage of ['pause ACK', 'final status']) {
+  for (const scenario of ['play', 'seek', 'reused controls new media', 'controls replaced']) {
+    test(`pauseAndSync abandons stale ${stage} after ${scenario}`, async () => {
+      await withFrameScheduler(async () => {
+        const player = createExternalPlayer(60);
+        const pause = deferred();
+        const status = deferred();
+        const controls = {
+          pause: () => pause.promise,
+          getStatus: () => status.promise,
+          play: async () => ({ success: true }),
+          seek: async () => ({ success: true })
+        };
+        player.externalControls = controls;
+        const pending = player.pauseAndSync();
+        if (stage === 'final status') {
+          pause.resolve({ success: true });
+          await Promise.resolve();
+        }
+        if (scenario === 'play') await player.play();
+        if (scenario === 'seek') player.seek(5);
+        if (scenario === 'reused controls new media') {
+          player.useExternalEngine({ engineName: 'mpv', controls, filePath: 'new.mp4', duration: 10, currentTime: 6 });
+        }
+        if (scenario === 'controls replaced') player.externalControls = { ...controls };
+        const frame = player.currentFrame;
+        pause.resolve({ success: true });
+        status.resolve(mpvStatus({ paused: true, time: 2 }));
+        try {
+          assert.equal(await pending, false);
+          assert.equal(player.currentFrame, frame);
+          if (scenario === 'play') assert.equal(player.isPlaying, true);
+        } finally {
+          player._stopExternalStatusPolling();
+        }
+      });
+    });
+  }
+}
+
+test('pauseAndSync adopts actual frame zero and does not retain a previous seek hold frame', async () => {
+  await withFrameScheduler(async () => {
+    const player = createExternalPlayer(1);
+    player._pausedSeekHoldFrame = 1;
+    player.externalControls = {
+      pause: async () => ({ success: true }),
+      getStatus: async () => mpvStatus({ paused: true, time: 0 })
+    };
+    assert.equal(await player.pauseAndSync(), true);
+    assert.equal(player.currentFrame, 0);
+    assert.equal(player.currentTime, 0);
+  });
+});
+
+test('pauseAndSync rejects an engine position that has not reached an existing manual seek', async () => {
+  await withFrameScheduler(async () => {
+    const player = createExternalPlayer(120);
+    player._isSeeking = true;
+    player._seekTargetFrame = 120;
+    player.externalControls = {
+      pause: async () => ({ success: true }),
+      getStatus: async () => mpvStatus({ paused: true, time: 2 })
+    };
+    assert.equal(await player.pauseAndSync(), false);
+    assert.equal(player.currentFrame, 120);
+  });
+});
+
+test('a pre-pause status response cannot replace the final pauseAndSync snapshot', async () => {
+  await withFrameScheduler(async () => {
+    const player = createExternalPlayer(60);
+    const oldStatus = deferred();
+    let reads = 0;
+    player.externalControls = {
+      pause: async () => ({ success: true }),
+      getStatus: () => ++reads === 1 ? oldStatus.promise : Promise.resolve(mpvStatus({ paused: true, time: 2.125 }))
+    };
+    const polling = player._syncExternalStatus();
+    assert.equal(await player.pauseAndSync(), true);
+    oldStatus.resolve(mpvStatus({ time: 3 }));
+    await polling;
+    assert.equal(player.currentFrame, 51);
+    assert.equal(player.isPlaying, false);
+  });
+});
+
+test('an older pause request cannot unlock polling or confirm the newer request', async () => {
+  await withFrameScheduler(async () => {
+    const player = createExternalPlayer(60);
+    const firstPause = deferred();
+    const secondPause = deferred();
+    let pauses = 0;
+    let reads = 0;
+    player.externalControls = {
+      pause: () => ++pauses === 1 ? firstPause.promise : secondPause.promise,
+      getStatus: async () => { reads++; return mpvStatus({ paused: true }); }
+    };
+    const first = player.pauseAndSync();
+    const second = player.pauseAndSync();
+    const secondOwner = player._externalPlaybackRequest;
+    firstPause.resolve({ success: true });
+    assert.equal(await first, false);
+    assert.equal(player._externalPlaybackRequest, secondOwner);
+    await player._syncExternalStatus();
+    assert.equal(reads, 0);
+    secondPause.resolve({ success: true });
+    assert.equal(await second, true);
+    assert.equal(reads, 1);
+  });
+});
+
+test('pauseAndSync does not apply a final status after a direct media identity change', async () => {
+  await withFrameScheduler(async () => {
+    const player = createExternalPlayer(60);
+    const status = deferred();
+    player.filePath = 'A.mp4';
+    player.externalControls = { pause: async () => ({ success: true }), getStatus: () => status.promise };
+    const pending = player.pauseAndSync();
+    await Promise.resolve();
+    player.filePath = 'B.mp4';
+    status.resolve(mpvStatus({ paused: true, time: 2 }));
+    assert.equal(await pending, false);
+    assert.equal(player.currentFrame, 60);
+  });
+});
+
+test('pauseAndSync rejects a seek started by its frame notification listener', async () => {
+  await withFrameScheduler(async () => {
+    const player = createExternalPlayer(60);
+    player.externalControls = {
+      pause: async () => ({ success: true }),
+      getStatus: async () => mpvStatus({ paused: true, time: 2 }),
+      seek: async () => ({ success: true })
+    };
+    let changed = false;
+    player._emit = name => {
+      if (name === 'timeupdate' && !changed) {
+        changed = true;
+        player.seek(5);
+      }
+    };
+    assert.equal(await player.pauseAndSync(), false);
+    assert.equal(player.currentFrame, 120);
+  });
+});
+
+for (const seeking of [false, true]) {
+  test(`HTML5 pauseAndSync confirms only a settled frame (seeking=${seeking})`, async () => {
+    await withFrameScheduler(async () => {
+      const player = createExternalPlayer(60);
+      player.engine = 'html5';
+      player.videoElement = { currentTime: 2.125, paused: false, seeking, pause() { this.paused = true; } };
+      assert.equal(await player.pauseAndSync(), !seeking);
+      assert.equal(player.currentFrame, seeking ? 60 : 51);
+    });
+  });
+}

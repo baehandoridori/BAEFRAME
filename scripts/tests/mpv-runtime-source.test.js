@@ -541,7 +541,7 @@ test('mpv teardown gate waiters stay blocked when another teardown is chained', 
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-parent-move.test.js scripts/tests/mpv-native-window.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/keyboard-shortcut-targets.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-collaboration-retry.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs scripts/tests/viewport-pan-message.test.js scripts/tests/mpv-viewport-pan.test.js scripts/tests/drawing-comment-passthrough.test.js'
+    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-parent-move.test.js scripts/tests/mpv-native-window.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/keyboard-shortcut-targets.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-collaboration-retry.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs scripts/tests/viewport-pan-message.test.js scripts/tests/mpv-viewport-pan.test.js scripts/tests/drawing-comment-passthrough.test.js scripts/tests/experiment-flags.test.js scripts/tests/launch-path-policy.test.js scripts/tests/current-drawing-policy.test.js'
   );
 });
 
@@ -693,18 +693,14 @@ test('loadVideo shows Google Drive loading feedback before media preparation', (
   assert.match(loadVideoSource, /if \(driveLoadingFeedbackShown\) \{[\s\S]+hideVideoLoadingOverlay\('drive'\);[\s\S]+\}/);
 });
 
-test('mpv direct playback defaults on and can be opted out from app settings', () => {
+test('current playback stays on and retired per-PC engine switches are not offered', () => {
   assert.match(userSettingsSource, /mpvPlaybackEnabled:\s*true/);
-  assert.match(userSettingsSource, /getMpvPlaybackEnabled\(\) \{[\s\S]+return this\.settings\.mpvPlaybackEnabled !== false;/);
-  assert.match(userSettingsSource, /setMpvPlaybackEnabled\(enabled\) \{[\s\S]+this\.settings\.mpvPlaybackEnabled = enabled === true;[\s\S]+this\._save\(\);[\s\S]+this\._emit\('mpvPlaybackEnabledChanged'/);
+  assert.match(userSettingsSource, /getMpvPlaybackEnabled\(\) \{\s*return true;/);
+  assert.match(userSettingsSource, /_migrateLegacySettings\(\) \{[\s\S]+this\.settings\.mpvPlaybackEnabled = true;/);
 
   assert.match(indexSource, /data-tab="playback">재생<\/button>/);
-  assert.match(indexSource, /id="appSettingsMpvPilotEnabled"[\s\S]*?<span class="toggle-slider"><\/span>/);
-  assert.match(indexSource, /mpv 직접 재생/);
-
-  assert.match(appSource, /const mpvPilotEnabled = document\.getElementById\('appSettingsMpvPilotEnabled'\);/);
-  assert.match(appSource, /mpvPilotEnabled\.checked = userSettings\.getMpvPlaybackEnabled\(\);/);
-  assert.match(appSource, /userSettings\.setMpvPlaybackEnabled\(e\.target\.checked\);/);
+  assert.doesNotMatch(indexSource, /id="appSettingsMpvPilotEnabled"|id="appSettingsHybridReviewEngine"/);
+  assert.doesNotMatch(appSource, /userSettings\.setMpvPlaybackEnabled\(e\.target\.checked\);/);
   assert.match(appSource, /const locallyEnabled = userSettings\.getMpvPlaybackEnabled\(\);/);
   assert.match(appSource, /const runtimeEnabled = await window\.electronAPI\.mpvIsEnabled\(\);/);
   assert.match(appSource, /if \(!locallyEnabled \|\| !runtimeEnabled\) return false;/);
@@ -1053,12 +1049,12 @@ test('mpv drawing overlay snapshot includes floating selection overlay', () => {
 test('mpv external playback preserves frame seek and loop behavior', () => {
   assert.match(videoPlayerSource, /_handleLoopRestartIfNeeded\(\) \{[\s\S]+this\.seek\(this\.loop\.inPoint\);[\s\S]+this\._emit\('loopRestart'\);[\s\S]+return true;/);
   assert.match(videoPlayerSource, /video\.addEventListener\('timeupdate', \(\) => \{[\s\S]+if \(this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}/);
-  assert.match(videoPlayerSource, /const pollingControls = this\.externalControls;[\s\S]+const pollingEngine = this\.engine;[\s\S]+const status = await pollingControls\.getStatus\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls \|\| this\._externalStatusEpoch !== pollingEpoch\) return;/);
+  assert.match(videoPlayerSource, /const pollingControls = this\.externalControls;[\s\S]+const pollingEngine = this\.engine;[\s\S]+const status = await pollingControls\.getStatus\(\);[\s\S]+if \(!isCurrentStatus\(\)\) return false;/);
   assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+const stoppedEngine = this\.engine;[\s\S]+const stoppedFilePath = this\.filePath;[\s\S]+const stoppedTime = this\.currentTime;[\s\S]+const stoppedFrame = this\.currentFrame;[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+this\.useHtml5Engine\(\);[\s\S]+this\.isLoaded = false;[\s\S]+this\._emit\('externalstopped', \{[\s\S]+engine: stoppedEngine,[\s\S]+filePath: stoppedFilePath,[\s\S]+lastTime: stoppedTime,[\s\S]+lastFrame: stoppedFrame,[\s\S]+reason: 'stopped'[\s\S]+\}\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(e\) => \{[\s\S]+elements\.videoWrapper\?\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+document\.body\.classList\.remove\('mpv-pilot-mode'\);[\s\S]+allowMpvPilot: retryMpv[\s\S]+\}\);/);
   assert.match(videoPlayerSource, /const nextWidth = Number\(status\.width\);[\s\S]+const nextHeight = Number\(status\.height\);[\s\S]+if \(Number\.isFinite\(nextWidth\) && nextWidth > 0 && this\.videoWidth !== nextWidth\) \{[\s\S]+this\.videoWidth = nextWidth;[\s\S]+\}[\s\S]+if \(Number\.isFinite\(nextHeight\) && nextHeight > 0 && this\.videoHeight !== nextHeight\) \{[\s\S]+this\.videoHeight = nextHeight;/);
   assert.match(videoPlayerSource, /let metadataChanged = false;[\s\S]+metadataChanged = true;[\s\S]+if \(metadataChanged\) \{[\s\S]+this\._emit\('loadedmetadata', \{[\s\S]+duration: this\.duration,[\s\S]+totalFrames: this\.totalFrames,[\s\S]+fps: this\.fps,[\s\S]+width: this\.videoWidth,[\s\S]+height: this\.videoHeight,[\s\S]+engine: this\.engine/);
-  assert.match(videoPlayerSource, /async _syncExternalStatus\(\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - candidateTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(!nextBuffering && this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
+  assert.match(videoPlayerSource, /async _syncExternalStatus\([^\n]*\) \{[\s\S]+const rawEofReached = status\.eofReached === true;[\s\S]+const hasKnownDuration = this\.duration > 0;[\s\S]+const eofReached = rawEofReached && \(!hasKnownDuration \|\| this\.duration - candidateTime <= 0\.25\);[\s\S]+const externalIsPlaying = status\.paused === false;[\s\S]+const nextIsPlaying = !eofReached && externalIsPlaying;[\s\S]+this\.isPlaying = externalIsPlaying;[\s\S]+if \(!nextBuffering && this\._handleLoopRestartIfNeeded\(\)\) \{[\s\S]+return;[\s\S]+\}[\s\S]+this\.isPlaying = nextIsPlaying;/);
 
   const seekToFrameMatch = videoPlayerSource.match(/seekToFrame\(frame\) \{([\s\S]*?)\n  \}/);
   assert.ok(seekToFrameMatch, 'seekToFrame should exist');
@@ -1078,7 +1074,7 @@ test('mpv external playback interpolates frame UI between status polls', () => {
   assert.doesNotMatch(videoPlayerSource, /targetFrame > this\.currentFrame \? 1 : -1/);
   assert.match(videoPlayerSource, /this\._emit\('frameUpdate', \{[\s\S]+interpolated: true/);
 
-  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
+  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\([^\n]*\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
   assert.ok(externalStatusMatch, 'external status polling should exist');
   assert.match(externalStatusMatch[1], /const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking && !nextBuffering;/);
   assert.match(externalStatusMatch[1], /if \(shouldInterpolateExternalPlayback\) \{[\s\S]+this\.currentTime = candidateTime;[\s\S]+\} else \{[\s\S]+this\._stopExternalFrameInterpolation\(\);/);
@@ -1238,7 +1234,7 @@ test('intentional html5 fallback stop is consumed instead of triggering mpv auto
   assert.ok(fallbackLoadMatch, 'loadVideoWithHtml5Fallback should exist');
   assert.match(fallbackLoadMatch[1], /const expectedStopToken = beginExpectedMpvHtml5FallbackStop\(owner, filePath\);[\s\S]+scheduleExpectedMpvHtml5FallbackStopCleanup\(expectedStopToken\);/);
   assert.match(appSource, /const overlayOwner = await mpvPilotOwnershipGate\.claim\(loadToken, \{ isStaleVideoLoad \}\);[\s\S]+if \(!overlayOwner\) return false;[\s\S]+clearExpectedMpvHtml5FallbackStop\(\);/);
-  assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+if \(this\.engine !== pollingEngine \|\| this\.externalControls !== pollingControls \|\| this\._externalStatusEpoch !== pollingEpoch\) return;[\s\S]+this\.useHtml5Engine\(\);/);
+  assert.match(videoPlayerSource, /if \(status\.stopped === true\) \{[\s\S]+await pollingControls\?\.stop\?\.\(\);[\s\S]+if \(!isCurrentStatus\(\)\) return false;[\s\S]+this\.useHtml5Engine\(\);/);
 });
 
 test('fullscreen controls inset snaps to final size and yields to letterbox gap', () => {
@@ -1366,7 +1362,7 @@ test('외부 엔진 폴링은 수용한 상태 시각만 실측 시각으로 기
     /if \(acceptedStatusTime\) \{\s+this\.lastExternalStatusTime = candidateTime;\s+\}/
   );
   const syncMatch = videoPlayerSource.match(
-    /async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/
+    /async _syncExternalStatus\([^\n]*\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/
   );
   assert.ok(syncMatch, '_syncExternalStatus should exist');
   const statusAssignments = syncMatch[1].match(/this\.lastExternalStatusTime = candidateTime;/g) || [];

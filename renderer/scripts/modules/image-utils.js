@@ -175,6 +175,29 @@ export async function createThumbnail(base64, size = IMAGE_CONFIG.thumbnailSize)
   }
 }
 
+function getClipboardImageBlob(event) {
+  const isImageBlob = (value) => {
+    try {
+      // 다른 창의 File도 허용하되 type/size만 흉내 낸 객체는 거부한다.
+      const type = Object.getOwnPropertyDescriptor(Blob.prototype, 'type').get.call(value);
+      return type.startsWith('image/');
+    } catch {
+      return false;
+    }
+  };
+  for (const item of event.clipboardData?.items || []) {
+    if (!item?.type?.startsWith('image/')) continue;
+    try {
+      const blob = item.getAsFile?.();
+      if (isImageBlob(blob)) return blob;
+    } catch { /* 다음 항목 또는 files 목록에서 실제 이미지를 찾는다. */ }
+  }
+  for (const file of event.clipboardData?.files || []) {
+    if (isImageBlob(file)) return file;
+  }
+  return null;
+}
+
 /**
  * 클립보드 이벤트에 이미지가 포함되어 있는지 동기적으로 확인
  * paste 이벤트 핸들러에서 preventDefault를 즉시 호출하기 위해 사용
@@ -182,12 +205,7 @@ export async function createThumbnail(base64, size = IMAGE_CONFIG.thumbnailSize)
  * @returns {boolean}
  */
 export function hasImageInClipboard(event) {
-  const items = event.clipboardData?.items;
-  if (!items) return false;
-  for (const item of items) {
-    if (item.type.startsWith('image/')) return true;
-  }
-  return false;
+  return getClipboardImageBlob(event) !== null;
 }
 
 /**
@@ -197,19 +215,8 @@ export function hasImageInClipboard(event) {
  * @returns {Promise<{base64: string, width: number, height: number}|null>}
  */
 export async function getImageFromClipboard(event, options = {}) {
-  const items = event.clipboardData?.items;
-  if (!items) return null;
-
-  for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      const blob = item.getAsFile();
-      if (blob) {
-        return await compressImage(blob, options);
-      }
-    }
-  }
-
-  return null;
+  const blob = getClipboardImageBlob(event);
+  return blob ? await compressImage(blob, options) : null;
 }
 
 /**

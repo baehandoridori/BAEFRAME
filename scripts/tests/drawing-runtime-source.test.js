@@ -86,8 +86,8 @@ test('drawing mode makes video comment overlays click-through for uninterrupted 
   assert.match(appSource, /document\.querySelectorAll\('\.comment-marker-tooltip'\)\.forEach\(tooltip => \{/);
   assert.match(appSource, /tooltip\.classList\.remove\('visible', 'pinned'\);/);
   assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
-  assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+setCommentOverlaysDrawingPassthrough\(ready\);/);
-  assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+applyDrawModeState\(true\);[\s\S]+applyDrawModeState\(false\);/);
+  assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+syncCommentInteractionPolicy\(\);/);
+  assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+fabricDrawingPilotController\.toggle\(\);/);
 
   assert.doesNotMatch(singleMarkerMatch[1], /pointer-events:\s*auto;/);
   assert.match(mainCss, /\.comment-marker\s*\{[\s\S]*?pointer-events:\s*auto;/);
@@ -100,8 +100,8 @@ test('non-toggle draw-mode shutdown paths clear drawing overlay state', () => {
   assert.ok(audioModeMatch, 'audio loading path should explicitly disable drawing mode');
 
   assert.match(appSource, /function applyDrawModeState\(enabled\) \{/);
-  assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+setCommentOverlaysDrawingPassthrough\(ready\);/);
-  assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+applyDrawModeState\(true\);[\s\S]+applyDrawModeState\(false\);/);
+  assert.match(appSource, /function setDrawModeReadyState\(ready\) \{[\s\S]+syncCommentInteractionPolicy\(\);/);
+  assert.match(appSource, /function toggleDrawMode\(\) \{[\s\S]+fabricDrawingPilotController\.toggle\(\);/);
   assert.match(audioModeMatch[1], /if \(state\.isDrawMode \|\| isFabricDrawingPilotControllerEngaged\(\)\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
   assert.match(appSource, /function exitDrawModeForSystemPath\(\) \{[\s\S]+fabricDrawingPilotController\.disable\(\)[\s\S]+applyDrawModeState\(false\);/);
   assert.doesNotMatch(audioModeMatch[1], /state\.isDrawMode = false;/);

@@ -527,23 +527,72 @@ export class VideoPlayer extends EventTarget {
    */
   pause() {
     if (this.engine !== 'html5') {
-      this._invalidateExternalStatus();
-      const playbackRequest = {};
-      this._externalPlaybackRequest = playbackRequest;
-      Promise.resolve(this.externalControls?.pause?.()).catch((error) => {
-        log.warn('외부 플레이어 일시정지 실패', { error: error.message });
-      }).finally(() => {
-        if (this._externalPlaybackRequest === playbackRequest) this._externalPlaybackRequest = null;
-      });
-      this._stopExternalFrameInterpolation();
-      this.isPlaying = false;
-      this._setExternalBuffering(false);
-      this._emit('pause');
+      void this._pauseExternal();
       return;
     }
 
     this.videoElement.pause();
     log.debug('일시정지');
+  }
+
+  /**
+   * 정지 명령과 최종 프레임 동기화를 기다린다. 캡처 등 정확한 정지 위치가 필요한 경로용.
+   * 재생/탐색/영상 전환이 끼어들거나 엔진이 정지 시각을 확인하지 못하면 false.
+   * @returns {Promise<boolean>}
+   */
+  async pauseAndSync() {
+    if (!this.isLoaded) return false;
+    if (this.engine !== 'html5') return this._pauseExternal({ syncStatus: true });
+
+    const video = this.videoElement;
+    const filePath = this.filePath;
+    this.pause();
+    if (!video || video.paused !== true || video.seeking || !Number.isFinite(video.currentTime)) return false;
+    this.currentTime = video.currentTime;
+    this.currentFrame = this._timeToFrame(this.currentTime);
+    this.isPlaying = false;
+    this._emit('timeupdate', { currentTime: this.currentTime, currentFrame: this.currentFrame });
+    if (this.currentFrame !== this._lastEmittedFrame) {
+      this._lastEmittedFrame = this.currentFrame;
+      this._emit('frameUpdate', { frame: this.currentFrame, time: this.currentTime });
+    }
+    return this.engine === 'html5' && this.filePath === filePath && this.isLoaded &&
+      video.paused === true && !video.seeking;
+  }
+
+  async _pauseExternal({ syncStatus = false } = {}) {
+    this._invalidateExternalStatus();
+    const controls = this.externalControls;
+    const engine = this.engine;
+    const filePath = this.filePath;
+    const epoch = this._externalStatusEpoch;
+    const seekToken = this._seekToken;
+    const playbackRequest = {};
+    this._externalPlaybackRequest = playbackRequest;
+    const isCurrent = () => this.externalControls === controls && this.engine === engine &&
+      this.filePath === filePath && this._externalStatusEpoch === epoch && this._seekToken === seekToken &&
+      this._externalPlaybackRequest === playbackRequest;
+    try {
+      const pauseResult = controls?.pause?.();
+      // 기존 pause()의 즉시 피드백은 유지하고 엔진 확인만 비동기로 기다린다.
+      this._stopExternalFrameInterpolation();
+      this.isPlaying = false;
+      this._setExternalBuffering(false);
+      this._emit('pause');
+      const result = await pauseResult;
+      if (!isCurrent()) return false;
+      if (result?.success === false) throw new Error(result.error || '외부 플레이어 일시정지 실패');
+      if (!syncStatus) return true;
+      if (result?.success !== true || !controls?.getStatus) return false;
+      // 같은 요청이 최종 status까지 소유하므로 120ms poll이 중간 상태를 다시 적용하지 않는다.
+      const synced = await this._syncExternalStatus({ playbackRequest, requirePaused: true });
+      return synced === true && isCurrent() && this.isLoaded && !this.isPlaying;
+    } catch (error) {
+      log.warn('외부 플레이어 일시정지 실패', { error: error.message });
+      return false;
+    } finally {
+      if (this._externalPlaybackRequest === playbackRequest) this._externalPlaybackRequest = null;
+    }
   }
 
   /**
@@ -1090,21 +1139,30 @@ export class VideoPlayer extends EventTarget {
     this._emit('externalstopped', detail);
   }
 
-  async _syncExternalStatus() {
-    if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending || this._externalPlaybackRequest) return;
+  async _syncExternalStatus({ playbackRequest = null, requirePaused = false } = {}) {
+    if (this.engine === 'html5' || !this.externalControls?.getStatus || this._externalStatusPending ||
+        (this._externalPlaybackRequest && this._externalPlaybackRequest !== playbackRequest) ||
+        (playbackRequest && this._externalPlaybackRequest !== playbackRequest)) return false;
 
     const pollingControls = this.externalControls;
     const pollingEngine = this.engine;
     const pollingEpoch = this._externalStatusEpoch;
+    const pollingFilePath = this.filePath;
+    const isCurrentStatus = () => this.engine === pollingEngine && this.externalControls === pollingControls &&
+      this._externalStatusEpoch === pollingEpoch && this.filePath === pollingFilePath;
     this._externalStatusPending = true;
     try {
       const status = await pollingControls.getStatus();
-      if (this.engine !== pollingEngine || this.externalControls !== pollingControls || this._externalStatusEpoch !== pollingEpoch) return;
+      if (!isCurrentStatus()) return false;
       if (!status?.success) {
         await this._registerExternalStatusFailure(pollingControls);
         return;
       }
       this._externalStatusFailureCount = 0;
+      if (requirePaused && (status.stopped === true || status.paused !== true || status.time === null || status.time === undefined ||
+          !Number.isFinite(Number(status.time)) || Number(status.time) < 0 ||
+          (this._isSeeking && this._seekTargetFrame !== null &&
+            this._timeToFrame(Number(status.time)) !== this._seekTargetFrame))) return false;
       if (status.stopped === true) {
         const stoppedEngine = this.engine;
         const stoppedFilePath = this.filePath;
@@ -1115,7 +1173,7 @@ export class VideoPlayer extends EventTarget {
         } catch (error) {
           log.warn('중지된 외부 플레이어 정리 실패', { error: error.message });
         }
-        if (this.engine !== pollingEngine || this.externalControls !== pollingControls || this._externalStatusEpoch !== pollingEpoch) return;
+        if (!isCurrentStatus()) return false;
         this.useHtml5Engine();
         this.isLoaded = false;
         this._emit('externalstopped', {
@@ -1128,7 +1186,7 @@ export class VideoPlayer extends EventTarget {
         return;
       }
 
-      const nextTime = status.time == null ? NaN : Number(status.time);
+      const nextTime = status.time === null || status.time === undefined ? NaN : Number(status.time);
       const nextDuration = Number(status.duration);
       const nextFps = normalizeFpsValue(status.fps);
       const nextWidth = Number(status.width);
@@ -1188,6 +1246,7 @@ export class VideoPlayer extends EventTarget {
           height: this.videoHeight,
           engine: this.engine
         });
+        if (requirePaused && !isCurrentStatus()) return false;
       }
       const nextFrame = this._timeToFrame(candidateTime);
       const wasPlaying = this.isPlaying;
@@ -1208,7 +1267,7 @@ export class VideoPlayer extends EventTarget {
         this._stopExternalFrameInterpolation();
         const clampedNextFrame = Math.max(0, Math.min(nextFrame, Math.max(0, this.totalFrames - 1)));
         const holdFrame = this._pausedSeekHoldFrame;
-        if (holdFrame !== null && Math.abs(clampedNextFrame - holdFrame) <= 1) {
+        if (!requirePaused && holdFrame !== null && Math.abs(clampedNextFrame - holdFrame) <= 1) {
           // 정지 상태: 폴링이 보고한 프레임이 seek 목표의 ±1 이내면 PTS 양자화 노이즈로 보고
           // 앱이 세팅한 목표 프레임을 유지한다. (피드백 24: -1 되돌림 방지)
           this.currentFrame = this._clampFrame(holdFrame);
@@ -1239,6 +1298,7 @@ export class VideoPlayer extends EventTarget {
       this.isPlaying = nextIsPlaying;
       // 소비자가 전환 이벤트에서 읽는 위치와 재생 의도는 이미 새 상태여야 한다.
       this._setExternalBuffering(nextBuffering, status);
+      if (requirePaused && !isCurrentStatus()) return false;
       if (shouldInterpolateExternalPlayback) {
         this._startExternalFrameInterpolation(candidateTime);
       }
@@ -1247,6 +1307,7 @@ export class VideoPlayer extends EventTarget {
         currentTime: this.currentTime,
         currentFrame: this.currentFrame
       });
+      if (requirePaused && !isCurrentStatus()) return false;
 
       if ((!shouldInterpolateExternalPlayback || wasBuffering) && this.currentFrame !== this._lastEmittedFrame) {
         this._lastEmittedFrame = this.currentFrame;
@@ -1264,9 +1325,10 @@ export class VideoPlayer extends EventTarget {
         this._externalEndedEmitted = true;
         this._emit('ended');
       }
+      return isCurrentStatus() && (!requirePaused || acceptedStatusTime);
     } catch (error) {
       log.debug('외부 플레이어 상태 동기화 실패', { error: error.message });
-      if (this.engine === pollingEngine && this.externalControls === pollingControls && this._externalStatusEpoch === pollingEpoch) {
+      if (isCurrentStatus()) {
         await this._registerExternalStatusFailure(pollingControls);
       }
     } finally {

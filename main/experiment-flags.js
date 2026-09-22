@@ -73,7 +73,7 @@ function resolveMpvPlaybackPilot({
       runtimeProfile.features.mpvPlaybackPilot === true) {
     return Object.freeze({ enabled: true, source: 'marker' });
   }
-  return Object.freeze({ enabled: false, source: 'default' });
+  return Object.freeze({ enabled: true, source: 'default' });
 }
 
 function resolveFabricDrawingPilot({
@@ -97,7 +97,7 @@ function resolveFabricDrawingPilot({
       runtimeProfile.features.fabricDrawingPilot === true) {
     return Object.freeze({ enabled: true, source: 'marker' });
   }
-  return Object.freeze({ enabled: false, source: 'default' });
+  return Object.freeze({ enabled: true, source: 'default' });
 }
 
 function resolveFabricDrawingV3Shadow({
@@ -125,7 +125,7 @@ function resolveFabricDrawingV3Shadow({
       runtimeProfile.features.fabricDrawingV3Shadow === true) {
     return Object.freeze({ enabled: true, source: 'marker' });
   }
-  return Object.freeze({ enabled: false, source: 'default' });
+  return Object.freeze({ enabled: true, source: 'default' });
 }
 
 module.exports = {

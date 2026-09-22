@@ -51,10 +51,10 @@ const DEFAULT_RUNTIME_PROFILE = deepFreeze({
   schemaVersion: null,
   channel: null,
   features: {
-    mpvPlaybackPilot: false,
-    fabricDrawingPilot: false,
-    fabricDrawingV3Shadow: false,
-    fabricDrawingPersistence: false
+    mpvPlaybackPilot: true,
+    fabricDrawingPilot: true,
+    fabricDrawingV3Shadow: true,
+    fabricDrawingPersistence: true
   },
   isolateUserData: false,
   skipShellRegistration: false

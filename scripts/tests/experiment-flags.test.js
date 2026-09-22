@@ -124,7 +124,7 @@ function loadIpcSetupWithHandlerRegistry(options = {}) {
 test('Fabric drawing pilot resolves enable and disable sources by priority', () => {
   const resolveFabricDrawingPilot = loadResolver();
   const cases = [
-    [{ argv: [], env: {} }, { enabled: false, source: 'default' }],
+    [{ argv: [], env: {} }, { enabled: true, source: 'default' }],
     [{ argv: ['--fabric-drawing-pilot'], env: {} }, { enabled: true, source: 'cli' }],
     [{ argv: [], env: { BAEFRAME_FABRIC_DRAWING_PILOT: '1' } }, { enabled: true, source: 'env' }],
     [{ argv: [], env: { BAEFRAME_FABRIC_DRAWING_PILOT: ' 1 ' } }, { enabled: true, source: 'env' }],
@@ -287,12 +287,12 @@ test('kill switches win over the valid trial marker and explicit flags win over 
   );
 });
 
-test('mpv resolver keeps default OFF and supports existing explicit environment activation', () => {
+test('mpv resolver keeps product default ON and supports existing explicit environment activation', () => {
   const resolveMpvPlaybackPilot = loadMpvResolver();
 
   assert.deepEqual(
     resolveMpvPlaybackPilot({ argv: [], env: {}, runtimeProfile: null }),
-    { enabled: false, source: 'default' }
+    { enabled: true, source: 'default' }
   );
   assert.deepEqual(
     resolveMpvPlaybackPilot({
@@ -312,7 +312,7 @@ test('mpv resolver keeps default OFF and supports existing explicit environment 
   );
 });
 
-test('a partial, future, or cross-channel profile cannot enable any runtime feature', () => {
+test('a partial future or cross-channel profile cannot override product defaults or claim marker activation', () => {
   const resolveMpvPlaybackPilot = loadMpvResolver();
   const resolveFabricDrawingPilot = loadResolver();
   const resolveFabricDrawingV3Shadow = loadShadowResolver();
@@ -371,11 +371,11 @@ test('a partial, future, or cross-channel profile cannot enable any runtime feat
       fabricDrawingPilot
     });
 
-    assert.deepEqual(mpvPlaybackPilot, { enabled: false, source: 'default' });
-    assert.deepEqual(fabricDrawingPilot, { enabled: false, source: 'default' });
+    assert.deepEqual(mpvPlaybackPilot, { enabled: true, source: 'default' });
+    assert.deepEqual(fabricDrawingPilot, { enabled: true, source: 'default' });
     assert.deepEqual(
       fabricDrawingV3Shadow,
-      { enabled: false, source: 'fabric-pilot-disabled' }
+      { enabled: true, source: 'default' }
     );
   }
 });
@@ -389,14 +389,14 @@ test('environment flags accept only the trimmed exact value 1', () => {
         argv: [],
         env: { BAEFRAME_FABRIC_DRAWING_PILOT: value }
       }),
-      { enabled: false, source: 'default' }
+      { enabled: true, source: 'default' }
     );
     assert.deepEqual(
       resolveFabricDrawingPilot({
         argv: [],
         env: { BAEFRAME_DISABLE_FABRIC_DRAWING_PILOT: value }
       }),
-      { enabled: false, source: 'default' }
+      { enabled: true, source: 'default' }
     );
     assert.deepEqual(
       resolveFabricDrawingPilot({
@@ -457,7 +457,7 @@ test('Fabric drawing V3 shadow resolves kill, pilot dependency, CLI, env, and de
       argv: [],
       env: {},
       fabricDrawingPilot: enabledPilot
-    }, { enabled: false, source: 'default' }]
+    }, { enabled: true, source: 'default' }]
   ];
 
   for (const [input, expected] of cases) {
@@ -488,7 +488,7 @@ test('Fabric drawing V3 shadow environment flags accept only the trimmed exact v
         env: { BAEFRAME_FABRIC_DRAWING_V3_SHADOW: value },
         fabricDrawingPilot
       }),
-      { enabled: false, source: 'default' }
+      { enabled: true, source: 'default' }
     );
     assert.deepEqual(
       resolveFabricDrawingV3Shadow({

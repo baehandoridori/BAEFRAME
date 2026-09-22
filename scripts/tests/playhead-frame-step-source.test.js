@@ -48,7 +48,7 @@ test('rapid frame stepping accumulates from the last requested frame', () => {
   assert.match(seekToFrameSource, /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.externalControls\.seek\(time\)/);
   assert.doesNotMatch(seekToFrameSource, /if \(this\.engine !== 'html5'\) \{[\s\S]+this\.seek\(time\);/);
 
-  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
+  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\([^\n]*\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
   assert.ok(externalStatusMatch, 'external status polling should exist');
   assert.match(externalStatusMatch[1], /this\._isSeeking && this\._seekTargetFrame !== null/);
   assert.match(externalStatusMatch[1], /candidateFrame === this\._seekTargetFrame/);
@@ -88,10 +88,10 @@ test('time and frame seeks hold the frame immediately after calculating their ta
 });
 
 test('paused polling keeps plus or minus one frame noise and adopts larger external drift', () => {
-  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
+  const externalStatusMatch = videoPlayerSource.match(/async _syncExternalStatus\([^\n]*\) \{([\s\S]*?)\n  \}\n\n  \/\/ ====== 영상 어니언 스킨/);
   assert.ok(externalStatusMatch, 'external status polling should exist');
   const externalStatusSource = externalStatusMatch[1];
 
   assert.match(externalStatusSource, /const nextIsPlaying = !eofReached && externalIsPlaying;\s*const nextBuffering = nextIsPlaying && status\.buffering === true;\s*if \(nextIsPlaying\) \{\s*this\._pausedSeekHoldFrame = null; \/\/ 재생이 시작되면 유지 해제\s*\}\s*const shouldInterpolateExternalPlayback = nextIsPlaying && !this\._isSeeking && !nextBuffering;/);
-  assert.match(externalStatusSource, /this\._stopExternalFrameInterpolation\(\);\s*const clampedNextFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);\s*const holdFrame = this\._pausedSeekHoldFrame;\s*if \(holdFrame !== null && Math\.abs\(clampedNextFrame - holdFrame\) <= 1\) \{[\s\S]*?this\.currentFrame = this\._clampFrame\(holdFrame\);\s*this\.currentTime = this\.currentFrame \/ Math\.max\(1, Number\(this\.fps\) \|\| 24\);\s*\} else \{\s*this\._pausedSeekHoldFrame = null;\s*this\.currentTime = candidateTime;\s*this\.currentFrame = clampedNextFrame;\s*\}/);
+  assert.match(externalStatusSource, /this\._stopExternalFrameInterpolation\(\);\s*const clampedNextFrame = Math\.max\(0, Math\.min\(nextFrame, Math\.max\(0, this\.totalFrames - 1\)\)\);\s*const holdFrame = this\._pausedSeekHoldFrame;\s*if \(!requirePaused && holdFrame !== null && Math\.abs\(clampedNextFrame - holdFrame\) <= 1\) \{[\s\S]*?this\.currentFrame = this\._clampFrame\(holdFrame\);\s*this\.currentTime = this\.currentFrame \/ Math\.max\(1, Number\(this\.fps\) \|\| 24\);\s*\} else \{\s*this\._pausedSeekHoldFrame = null;\s*this\.currentTime = candidateTime;\s*this\.currentFrame = clampedNextFrame;\s*\}/);
 });
