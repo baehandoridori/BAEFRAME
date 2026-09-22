@@ -141,6 +141,25 @@ function assertEnvelope(request) {
   assert.match(request.requestId, /^uuid-\d+$/);
 }
 
+test('the same current drawing tools work over an HTML5 video surface', async () => {
+  const harness = createHarness({ context: { isMpvActive: false, isDrawingSurfaceReady: true } });
+  await preparePassive(harness);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'active');
+  assert.equal(harness.calls.input.at(-1).enabled, true);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.getState(), 'passive');
+});
+
+test('an explicitly unavailable surface cannot be bypassed by mpv playback', async () => {
+  const harness = createHarness({ context: { isMpvActive: true, isDrawingSurfaceReady: false } });
+  await harness.controller.initialize();
+  await harness.controller.adoptOverlayCapability({ passiveReady: true, hostGeneration: 1 });
+  await harness.controller.afterVideoReady({ loadToken: 'load-a' });
+  assert.equal(await harness.controller.toggle(), false);
+  assert.equal(harness.calls.input.filter(request => request.enabled).length, 0);
+});
+
 test('controller exposes the complete public API and initialize reads a boolean once', async () => {
   const harness = createHarness();
   const expectedMethods = [

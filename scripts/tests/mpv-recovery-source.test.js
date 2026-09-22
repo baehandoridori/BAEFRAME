@@ -145,17 +145,21 @@ test('mpv screenshot ipc channel is wired end to end', () => {
   assert.match(preloadSource, /mpvScreenshot: \(\) => ipcRenderer\.invoke\('mpv:screenshot'\),/);
 });
 
-test('comment and draw modes share a decoded mpv review freeze frame', () => {
+test('only comment mode requires a decoded mpv freeze while Fabric owns drawing', () => {
   assert.match(appSource, /function isMpvReviewInteractionActive\(\)/);
   assert.match(appSource, /async function showMpvReviewFreezeFrame\(\)/);
   assert.match(appSource, /async function releaseMpvReviewFreezeFrame\(\)/);
   assert.match(appSource, /function scheduleMpvReviewFreezeRefresh\(\)/);
-  const applyMatch = appSource.match(/function applyDrawModeState\(enabled\) \{([\s\S]*?)\n  \}/);
-  assert.ok(applyMatch, 'applyDrawModeState should exist');
-  assert.match(applyMatch[1], /videoPlayer\.pause\(\);/);
-  assert.match(applyMatch[1], /prepareMpvDrawMode\(preparationToken\)/);
-  assert.match(extractNamedFunction(appSource, 'prepareMpvDrawMode'), /prepareFreeze: \(\) => showMpvReviewFreezeFrame\(\)/);
-  assert.match(applyMatch[1], /releaseMpvReviewFreezeFrame\(\)/);
+  const requiresFreezeSource = extractNamedFunction(appSource, 'requiresMpvReviewFreeze');
+  for (const isCommentMode of [true, false]) {
+    for (const isDrawMode of [true, false]) {
+      const requiresFreeze = Function('state', `return (${requiresFreezeSource});`)({ isCommentMode, isDrawMode });
+      assert.equal(requiresFreeze(), isCommentMode);
+    }
+  }
+  assert.match(extractNamedFunction(appSource, 'prepareMpvCommentMode'), /prepareFreeze: async \(\) => \{[\s\S]+await videoPlayer\.pauseAndSync\(\);[\s\S]+if \(!isStillActive\(\)\) return false;[\s\S]+return showMpvReviewFreezeFrame\(\);/);
+  assert.doesNotMatch(appSource, /function (?:applyDrawModeState|prepareMpvDrawMode|restoreMpvDrawFreezeAfterPlayback)\(/);
+  assert.doesNotMatch(extractNamedFunction(appSource, 'toggleDrawMode'), /showMpvReviewFreezeFrame|enterHybridReviewEngine/);
   assert.match(appSource, /videoPlayer\.addEventListener\('frameUpdate'[\s\S]*?isMpvReviewInteractionActive\(\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/);
   assert.match(videoPlayerSource, /isSeeking\(\) \{/);
   assert.match(mainStyles, /\.mpv-review-freeze-frame \{[\s\S]+z-index:\s*1;[\s\S]+pointer-events:\s*none;[\s\S]+object-fit:\s*fill;/);
@@ -170,7 +174,7 @@ test('mpv review freeze frame is cleared and refreshed across media changes', ()
 
   const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
-  assert.match(loadMpvMatch[1], /if \(isMpvReviewInteractionActive\(\)\) \{[\s\S]*?await prepareMpvDrawMode\(preparationToken\);[\s\S]*?if \(!reviewReady\)/);
+  assert.match(loadMpvMatch[1], /if \(isMpvReviewInteractionActive\(\)\) \{[\s\S]*?await prepareMpvCommentMode\(preparationToken\);[\s\S]*?if \(!reviewReady\)/);
 });
 
 test('mpv review freeze decodes before hiding native video and releases in the reverse order', () => {
@@ -624,15 +628,13 @@ test('late stale host hide completion resynchronizes current native host visibil
   assert.equal(resyncCount, 1, 'stale hide must be followed by current-state visibility sync');
 });
 
-test('shared mpv freeze releases only after the final review mode turns off', () => {
+test('comment exit releases its mpv freeze without a legacy drawing freeze owner', () => {
   const commentHandlerStart = appSource.indexOf("  commentManager.addEventListener('commentModeChanged'");
   const commentHandlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", commentHandlerStart);
   const commentHandler = appSource.slice(commentHandlerStart, commentHandlerEnd);
-  const drawMatch = appSource.match(/function applyDrawModeState\(enabled\) \{([\s\S]*?)\n  \}/);
-  assert.ok(drawMatch, 'draw mode state handler should exist');
-
   assert.match(commentHandler, /state\.isCommentMode = isCommentMode;[\s\S]+if \(!isMpvReviewInteractionActive\(\) && !suppressReviewFreezeReleaseForMediaChange\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
-  assert.match(drawMatch[1], /state\.isDrawMode = enabled;[\s\S]+if \(!isMpvReviewInteractionActive\(\)\) \{[\s\S]+releaseMpvReviewFreezeFrame\(\)/);
+  assert.match(extractNamedFunction(appSource, 'requiresMpvReviewFreeze'), /return state\.isCommentMode;/);
+  assert.doesNotMatch(extractNamedFunction(appSource, 'exitDrawModeForSystemPath'), /ReviewFreeze/);
 });
 
 test('comment and draw handoffs acquire the next mode before releasing the previous mode', () => {
@@ -647,17 +649,21 @@ test('comment and draw handoffs acquire the next mode before releasing the previ
   const drawReleaseIndex = toggleCommentSource.indexOf('exitDrawModeForSystemPath()');
   assert.ok(commentAcquireIndex >= 0, 'comment handoff should acquire comment mode explicitly');
   assert.ok(drawReleaseIndex > commentAcquireIndex, 'comment must own the shared freeze before draw mode turns off');
-  assert.match(systemDrawExitSource, /if \(isFabricDrawingPilotControllerEngaged\(\)\) \{[\s\S]+fabricDrawingPilotController\.disable\(\);[\s\S]+return;[\s\S]+applyDrawModeState\(false\);/);
+  assert.match(systemDrawExitSource, /drawingEntryRevision \+= 1;[\s\S]+state\.isDrawMode = false;/);
+  assert.match(systemDrawExitSource, /if \(isFabricDrawingPilotControllerEngaged\(\)\) void fabricDrawingPilotController\.disable\(\);/);
+  assert.doesNotMatch(systemDrawExitSource, /applyDrawModeState|drawingManager\./);
 });
 
 test('every comment and draw entry path enforces mutual exclusion in the central state handlers', () => {
   const commentHandlerStart = appSource.indexOf("  commentManager.addEventListener('commentModeChanged'");
   const commentHandlerEnd = appSource.indexOf("  commentManager.addEventListener('markerCreationStarted'", commentHandlerStart);
   const commentHandler = appSource.slice(commentHandlerStart, commentHandlerEnd);
-  const drawStateSource = extractNamedFunction(appSource, 'applyDrawModeState');
+  const drawStateSource = extractNamedFunction(appSource, 'toggleDrawMode');
 
-  assert.match(commentHandler, /state\.isCommentMode = isCommentMode;[\s\S]+if \(isCommentMode && \(state\.isDrawMode \|\| isFabricDrawingPilotControllerEngaged\(\)\)\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
-  assert.match(drawStateSource, /state\.isDrawMode = enabled;[\s\S]+if \(enabled && state\.isCommentMode\) \{[\s\S]+commentManager\.setCommentMode\(false\);/);
+  assert.match(commentHandler, /state\.isCommentMode = isCommentMode;[\s\S]+if \(isCommentMode\) \{[\s\S]+exitDrawModeForSystemPath\(\);/);
+  assert.match(drawStateSource, /if \(state\.isCommentMode\) commentManager\.setCommentMode\(false\);/);
+  assert.ok(drawStateSource.indexOf('commentManager.setCommentMode(false)') <
+    drawStateSource.indexOf('fabricDrawingPilotController.toggle()'));
   const sidebarSubmitSource = extractNamedFunction(appSource, 'submitSidebarCommentDraft');
   assert.match(sidebarSubmitSource, /commentManager\.setPendingText\(text \|\| '\(이미지\)'\)/);
 });
@@ -687,20 +693,20 @@ test('frame changes suspend mpv review input until a current trailing capture re
 
   const invalidateSource = extractNamedFunction(appSource, 'invalidateMpvReviewFreezeForFrameChange');
   assert.match(invalidateSource, /mpvReviewFrameTracker\.invalidate\(\)/);
-  assert.match(invalidateSource, /setDrawModeReadyState\(false\)[\s\S]+setDrawModePreparingState\(true\)/);
+  assert.doesNotMatch(invalidateSource, /setDrawModeReadyState|setDrawModePreparingState/);
   assert.match(invalidateSource, /setCommentModeReadyState\(false\)[\s\S]+setCommentModePreparingState\(true\)/);
 
   const refreshSource = extractNamedFunction(appSource, 'refreshMpvReviewFreezeFrameForCurrentFrame');
   assert.match(refreshSource, /runMpvReviewFreezeRefresh\(\{[\s\S]+prepareFreeze: \(\) => showMpvReviewFreezeFrame\(\)/);
   assert.match(refreshSource, /scheduleRetry: scheduleMpvReviewFreezeRefresh/);
-  assert.match(refreshSource, /drawPreparationToken === drawModePreparationToken[\s\S]+setDrawModeReadyState\(true\)/);
+  assert.doesNotMatch(refreshSource, /drawPreparationToken|setDrawModeReadyState/);
   assert.match(refreshSource, /commentPreparationToken === commentModePreparationToken[\s\S]+setCommentModeReadyState\(true\)/);
 });
 
-test('media replacement invalidates the old freeze and requires draw readiness for the new mpv frame', () => {
-  const preserveSource = extractNamedFunction(appSource, 'preserveMpvReviewFreezeFrameForMediaChange');
-  assert.match(preserveSource, /mpvReviewFrameTracker\.invalidate\(\)/);
-  assert.match(preserveSource, /setDrawModeReadyState\(false\)[\s\S]+setDrawModePreparingState\(true\)/);
+test('media replacement invalidates the old freeze and requires comment readiness for the new mpv frame', () => {
+  const releaseSource = extractNamedFunction(appSource, 'releaseMpvReviewFreezeFrame');
+  assert.match(releaseSource, /\+\+mpvReviewFreezeToken;[\s\S]+mpvReviewFreezeCaptureOwner\.cancel\(\);/);
+  assert.match(releaseSource, /mpvReviewFreezeFrameSnapshot = null;[\s\S]+mpvReviewTargetFrameSnapshot = null;/);
 
   const showSource = extractNamedFunction(appSource, 'showMpvReviewFreezeFrame');
   assert.match(showSource, /const captureFrameSnapshot = captureCurrentMpvReviewFrameTarget\(\)/);
@@ -710,12 +716,11 @@ test('media replacement invalidates the old freeze and requires draw readiness f
 
   const loadMpvMatch = appSource.match(/async function loadVideoWithMpvPilot\(filePath, \{([\s\S]*?)\n  \}\n\n  async function resolveMpvThumbnailVideoPath/);
   assert.ok(loadMpvMatch, 'loadVideoWithMpvPilot should exist');
-  assert.match(loadMpvMatch[1], /if \(state\.isDrawMode\) \{[\s\S]+prepareMpvDrawMode\([\s\S]+if \(!reviewReady\) \{[\s\S]+cleanupPendingMpvPilot\(\)[\s\S]+throw new Error/);
+  assert.match(loadMpvMatch[1], /if \(state\.isCommentMode\) \{[\s\S]+prepareMpvCommentMode\([\s\S]+if \(!reviewReady\) \{[\s\S]+cleanupPendingMpvPilot\(\)[\s\S]+throw new Error/);
 });
 
 test('failed superseding video load safely tears down a destructive review transition', () => {
-  const preserveSource = extractNamedFunction(appSource, 'preserveMpvReviewFreezeFrameForMediaChange');
-  assert.doesNotMatch(preserveSource, /pendingMpvReviewFreezeMediaChange/);
+  assert.doesNotMatch(appSource, /function preserveMpvReviewFreezeFrameForMediaChange/);
 
   const beginTransitionSource = extractNamedFunction(appSource, 'beginDestructiveMpvReviewMediaChange');
   assert.match(beginTransitionSource, /if \(activeVideoLoadToken !== loadToken\) return null;/);
@@ -751,21 +756,18 @@ test('failed superseding video load safely tears down a destructive review trans
   assert.match(source, /const ownsActiveLoad = activeVideoLoadToken === loadToken;[\s\S]+await settlePendingMpvReviewFreezeMediaChange\(\{\s+expectedLoadToken: loadToken,\s+loaded: videoLoadCompleted \|\| \(!videoLoadCompletion\.hardInvalidated && loadIntent !== videoLoadIntentGeneration\)\s+\}\);/);
 });
 
-test('leaving draw mode forces a final mpv overlay sync so saved drawings stay visible', () => {
-  const drawStateSource = extractNamedFunction(appSource, 'applyDrawModeState');
-  assert.match(drawStateSource, /if \(!enabled\) \{[\s\S]+drawingManager\.commitActiveSelection\(\);[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+test('Fabric state transitions force an overlay sync and timeline refresh without committing legacy pixels', () => {
+  const drawStateSource = extractNamedFunction(appSource, 'handleFabricDrawingPilotStateChange');
+  assert.match(drawStateSource, /scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+renderActiveDrawingLayers\(\);/);
+  assert.doesNotMatch(drawStateSource, /drawingManager\.commitActiveSelection/);
 });
 
-test('media change preserves an active draw freeze across mpv to mpv replacement', () => {
+test('media change closes comments and releases the old freeze before clearing the review', () => {
   const loadVideoMatch = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  \//);
   assert.ok(loadVideoMatch, 'loadVideo should exist');
   const loadVideoSource = loadVideoMatch[1];
-  const preserveSource = extractNamedFunction(appSource, 'preserveMpvReviewFreezeFrameForMediaChange');
-
-  assert.match(preserveSource, /mpvReviewFreezeElement[\s\S]+classList\.contains\('mpv-review-freeze-ready'\)/);
-  assert.match(preserveSource, /mpvReviewFreezeToken \+= 1;[\s\S]+mpvReviewFreezeCaptureOwner\.cancel\(\);[\s\S]+mpvReviewFreezeRefreshScheduler\.cancel\(\);/);
-  assert.match(loadVideoSource, /const shouldKeepMpvReviewFreeze = isMpvPilotPlaybackActive\(\) &&[\s\S]+state\.isDrawMode &&[\s\S]+useMpvPilot &&[\s\S]+!fileIsAudio &&[\s\S]+preserveMpvReviewFreezeFrameForMediaChange\(\);/);
-  assert.match(loadVideoSource, /if \(isMpvPilotPlaybackActive\(\) && !shouldKeepMpvReviewFreeze\) \{[\s\S]+await releaseMpvReviewFreezeFrame\(\);/);
+  assert.doesNotMatch(loadVideoSource, /shouldKeepMpvReviewFreeze|preserveMpvReviewFreezeFrameForMediaChange/);
+  assert.match(loadVideoSource, /suppressReviewFreezeReleaseForMediaChange = true;[\s\S]+commentManager\.setCommentMode\(false\);[\s\S]+if \(isMpvPilotPlaybackActive\(\)\) \{[\s\S]+await releaseMpvReviewFreezeFrame\(\);[\s\S]+if \(!canContinueVideoLoad\(\)\) return false;[\s\S]+finally \{[\s\S]+suppressReviewFreezeReleaseForMediaChange = false;[\s\S]+commentManager\.clear\(\);/);
 });
 
 test('mpv review mode readiness exposes preparing state and ignores stale completion', async () => {
@@ -798,16 +800,18 @@ test('comment and draw mpv controls become active only after readiness succeeds'
   const commentPreparingSource = extractNamedFunction(appSource, 'setCommentModePreparingState');
   const drawReadySource = extractNamedFunction(appSource, 'setDrawModeReadyState');
   const drawPreparingSource = extractNamedFunction(appSource, 'setDrawModePreparingState');
-  const drawStateSource = extractNamedFunction(appSource, 'applyDrawModeState');
+  const drawStateSource = extractNamedFunction(appSource, 'handleFabricDrawingPilotStateChange');
 
   assert.match(commentReadySource, /btnAddComment\?\.classList\.toggle\('active', ready\)/);
   assert.match(commentPreparingSource, /btnAddComment\?\.classList\.toggle\('preparing', preparing\)/);
   assert.match(commentPreparingSource, /setAttribute\('aria-busy', String\(preparing\)\)/);
   assert.match(drawReadySource, /btnDrawMode\?\.classList\.toggle\('active', ready\)/);
-  assert.match(drawReadySource, /drawingCanvas\?\.classList\.toggle\('active', ready\)/);
+  assert.match(drawReadySource, /ready = false;/);
+  assert.match(drawReadySource, /ready = false;[\s\S]+drawingCanvas\?\.classList\.toggle\('active', ready\)/);
   assert.match(drawPreparingSource, /btnDrawMode\?\.classList\.toggle\('preparing', preparing\)/);
   assert.match(drawPreparingSource, /setAttribute\('aria-busy', String\(preparing\)\)/);
-  assert.match(drawStateSource, /prepareMpvDrawMode\(/);
+  assert.match(drawStateSource, /const active = nextState === 'active';/);
+  assert.match(drawStateSource, /setDrawModePreparingState\(preparing \|\| recoveringForResume\);[\s\S]+setDrawModeReadyState\(false\);[\s\S]+btnDrawMode\?\.classList\.toggle\('active', active\)/);
   assert.doesNotMatch(drawStateSource, /btnDrawMode\?\.classList\.toggle\('active', enabled\)/);
   assert.match(mainStyles, /\.action-btn\.preparing::after\s*\{[\s\S]+animation:\s*review-mode-preparing-spin/);
 });
@@ -837,61 +841,35 @@ test('mpv can be disabled per machine via env for troubleshooting', () => {
   assert.match(availableMatch[1], /isMpvPlaybackDisabledByEnv\(this\.env\)/);
 });
 
-test('draw mode playback uses the shared review freeze only after playback stops', () => {
-  assert.match(mainStyles, /\.drawing-tools\.visible\.playback-hidden \{[\s\S]*?visibility: hidden;[\s\S]*?transition: none;/);
-  const timeUpdateHandler = appSource.match(/videoPlayer\.addEventListener\('timeupdate', \(e\) => \{([\s\S]*?)\n  \}\);/);
-  assert.ok(timeUpdateHandler, 'timeupdate handler should exist');
-  assert.match(
-    timeUpdateHandler[1],
-    /isMpvReviewInteractionActive\(\)[\s\S]*?!elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/
-  );
-  assert.match(
-    appSource,
-    /addEventListener\('frameUpdate'[\s\S]*?isMpvReviewInteractionActive\(\)[\s\S]*?!elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);/
-  );
-  assert.match(
-    appSource,
-    /addEventListener\('play'[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.add\('playback-hidden'\);[\s\S]*?scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]*?releaseMpvReviewFreezeFrame\(\);/
-  );
-  assert.match(
-    appSource,
-    /addEventListener\('pause'[\s\S]*?elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?restoreMpvDrawFreezeAfterPlayback\(\);/
-  );
-  const endedHandler = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
-  assert.ok(endedHandler, 'ended handler should exist');
-  assert.match(endedHandler[1], /elements\.drawingTools\?\.classList\.contains\('playback-hidden'\)[\s\S]*?restoreMpvDrawFreezeAfterPlayback\(\);/);
-  assert.ok(
-    endedHandler[1].indexOf('restoreMpvDrawFreezeAfterPlayback()') < endedHandler[1].indexOf('if (cutlistUIState.active'),
-    'ended restore must precede cutlist navigation'
-  );
+test('Fabric playback updates its own display without the retired drawing freeze panel', () => {
+  assert.doesNotMatch(appSource, /mpvDrawPlaybackTransitionToken|restoreMpvDrawFreezeAfterPlayback|elements\.drawingTools/);
+  assert.doesNotMatch(mainStyles, /\.drawing-tools\.visible\.playback-hidden/);
+  const playHandler = appSource.match(/videoPlayer\.addEventListener\('play', \(\) => \{([\s\S]*?)\n  \}\);/)?.[1];
+  assert.ok(playHandler);
+  assert.match(playHandler, /syncCurrentFabricDrawingDisplayFrame\(\{ force: true \}\)/);
+  assert.doesNotMatch(playHandler, /showMpvReviewFreezeFrame|prepareMpvDrawMode/);
+  const syncSource = extractNamedFunction(appSource, 'syncCurrentFabricDrawingDisplayFrame');
+  assert.match(syncSource, /fabricDrawingPilotController\.syncDisplayFrame\(currentFrame, options\)/);
+  assert.doesNotMatch(syncSource, /engine|isMpvPilotPlaybackActive/);
 });
 
-test('latest draw playback transition alone may reveal the restored drawing panel', () => {
-  const restoreSource = extractNamedFunction(appSource, 'restoreMpvDrawFreezeAfterPlayback');
-
-  assert.match(restoreSource, /const restoreToken = \+\+mpvDrawPlaybackTransitionToken;/);
-  assert.match(restoreSource, /const freezePrepared = await showMpvReviewFreezeFrame\(\);/);
-  assert.match(restoreSource, /if \([\s\S]*?restoreToken !== mpvDrawPlaybackTransitionToken[\s\S]*?!state\.isDrawMode \|\|[\s\S]*?videoPlayer\.isPlaying[\s\S]*?\) return;/);
-  assert.match(
-    restoreSource,
-    /if \(!freezePrepared\) \{[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?scheduleMpvReviewFreezeRefresh\(\);[\s\S]*?forceMpvHostVisibilitySync\(\);[\s\S]*?return false;/
-  );
-  assert.match(restoreSource, /classList\.remove\('playback-hidden'\);[\s\S]*?forceMpvHostVisibilitySync\(\);/);
+test('only the latest drawing entry may activate the current Fabric surface', () => {
+  const entrySource = extractNamedFunction(appSource, 'toggleDrawMode');
+  assert.match(entrySource, /const revision = \+\+drawingEntryRevision;/);
+  assert.match(entrySource, /revision === drawingEntryRevision[\s\S]+filePath === state\.currentFile && intent === videoLoadIntentGeneration/);
+  assert.match(entrySource, /await initializeCurrentDrawing\(\)[\s\S]+!isCurrent\(\)/);
+  assert.match(entrySource, /await ensureHtml5DrawingSurface\(latestVideoLoadToken, isCurrent\)[\s\S]+!isCurrent\(\)/);
+  assert.match(entrySource, /if \(!isCurrent\(\) \|\| !isCurrentDrawingSurfaceReady\(\)\) return false;/);
+  assert.match(entrySource, /return await fabricDrawingPilotController\.toggle\(\);/);
 });
 
-test('draw playback state is cancelled before mode exit or media replacement', () => {
-  const drawStateSource = extractNamedFunction(appSource, 'applyDrawModeState');
-  assert.match(
-    drawStateSource,
-    /if \(!enabled\) \{[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?releaseMpvReviewFreezeFrame\(\);/
-  );
-
-  const loadVideoSource = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  async function handleImportFeedbackFromVersion/);
-  assert.ok(loadVideoSource, 'loadVideo should exist');
-  assert.match(
-    loadVideoSource[1],
-    /activeVideoLoadPath = filePath;[\s\S]*?mpvDrawPlaybackTransitionToken \+= 1;[\s\S]*?classList\.remove\('playback-hidden'\);[\s\S]*?let videoLoadCompleted = false;/
-  );
+test('drawing entry and persistence ownership are fenced before exit or media replacement', () => {
+  const exitSource = extractNamedFunction(appSource, 'exitDrawModeForSystemPath');
+  assert.match(exitSource, /drawingEntryRevision \+= 1;[\s\S]+state\.isDrawMode = false;[\s\S]+fabricDrawingPilotController\.disable\(\);/);
+  const loadSource = appSource.match(/async function loadVideo\(filePath, options = \{\}\) \{([\s\S]*?)\n  \}\n\n  async function handleImportFeedbackFromVersion/)?.[1] || '';
+  assert.match(loadSource, /await fabricDrawingPilotController\.beforeVideoChange\(loadToken\);[\s\S]+if \(!fabricReadyForVideoChange \|\| !canContinueVideoLoad\(\)\) return false;/);
+  assert.match(loadSource, /await fabricDrawingPilotController\.afterVideoReady\(/);
+  assert.doesNotMatch(loadSource, /mpvDrawPlaybackTransitionToken|restoreMpvDrawFreezeAfterPlayback/);
 });
 
 test('failed video loads clear the drive loading overlay in the finally block', () => {

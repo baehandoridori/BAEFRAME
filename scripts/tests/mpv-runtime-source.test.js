@@ -541,7 +541,7 @@ test('mpv teardown gate waiters stay blocked when another teardown is chained', 
 test('package exposes an mpv pilot test command', () => {
   assert.equal(
     packageJson.scripts['test:mpv'],
-    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-parent-move.test.js scripts/tests/mpv-native-window.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/keyboard-shortcut-targets.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-collaboration-retry.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs scripts/tests/viewport-pan-message.test.js scripts/tests/mpv-viewport-pan.test.js scripts/tests/drawing-comment-passthrough.test.js scripts/tests/experiment-flags.test.js scripts/tests/launch-path-policy.test.js scripts/tests/current-drawing-policy.test.js'
+    'node --test scripts/tests/runtime-profile.test.js scripts/tests/mpv-runtime-provision.test.js scripts/tests/mpv-manager.test.js scripts/tests/mpv-embed-host.test.js scripts/tests/mpv-parent-move.test.js scripts/tests/mpv-native-window.test.js scripts/tests/mpv-overlay-preload.test.js scripts/tests/mpv-overlay-host.test.js scripts/tests/mpv-overlay-keyboard-relay.test.js scripts/tests/keyboard-shortcut-targets.test.js scripts/tests/mpv-overlay-collaboration-action-relay.test.js scripts/tests/mpv-collaboration-retry.test.js scripts/tests/mpv-liveblocks-visibility.test.js scripts/tests/mpv-surface-policy.test.js scripts/tests/mpv-collaboration-mirror.test.js scripts/tests/mpv-runtime-source.test.js scripts/tests/mpv-recovery-source.test.js scripts/tests/mpv-fabric-overlay-toolbar-layout.test.js scripts/tests/external-frame-interpolation.test.mjs scripts/tests/viewport-pan-message.test.js scripts/tests/mpv-viewport-pan.test.js scripts/tests/drawing-comment-passthrough.test.js scripts/tests/experiment-flags.test.js scripts/tests/launch-path-policy.test.js scripts/tests/current-drawing-policy.test.js scripts/tests/mpv-overlay-visibility-ipc.test.js'
   );
 });
 
@@ -718,7 +718,7 @@ test('mpv pilot embeds into the BAEFRAME viewer before loading media', () => {
   assert.match(mainStyles, /body\.app-fullscreen\.mpv-pilot-mode\.show-controls \.video-wrapper \{[\s\S]+height: calc\(100vh - var\(--mpv-fullscreen-controls-inset, 0px\)\);/);
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareEmbed\(bounds\)/);
   assert.match(appSource, /async function syncMpvEmbedBounds\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateEmbedBounds\(bounds\)/);
-  assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+window\.electronAPI\.mpvPrepareOverlay\(bounds\)/);
+  assert.match(appSource, /async function prepareMpvOverlayHost\(\{ adoptCapability = true \} = \{\}\) \{[\s\S]+window\.electronAPI\.mpvPrepareOverlay\(bounds\)/);
   assert.match(appSource, /async function syncMpvOverlayState\(\) \{[\s\S]+window\.electronAPI\.mpvUpdateOverlayState\(filterUnchangedMpvOverlayFields\(state, overlayOwner\)\)/);
   assert.match(appSource, /let embedHost = null;[\s\S]+embedHost = await prepareMpvEmbedHost\(\);/);
   assert.match(appSource, /await prepareMpvOverlayHost\(\);/);
@@ -831,13 +831,13 @@ test('mpv pilot hides native host while DOM blocking overlays are open', () => {
   assert.match(appSource, /function didMpvHostVisibilityApply\(result, shouldShowMpvHost\) \{[\s\S]+if \(!result\?\.success \|\| result\?\.stale\) return false;[\s\S]+if \(shouldShowMpvHost\) return true;[\s\S]+return result\.embed\?\.ready === true && result\.overlay\?\.ready === true;/);
   assert.match(appSource, /function forceMpvHostVisibilitySync\(\) \{[\s\S]+mpvHostLastRequestedVisible = null;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}/);
   assert.match(appSource, /function shouldShowMpvHostForCurrentState\(\) \{[\s\S]+!mpvPilotHostPreparing[\s\S]+mpvReviewFreezeHostHideOwner === null[\s\S]+!hasBlockingOverlayForMpv\(\)/);
-  assert.match(appSource, /function syncMpvHostVisibilityWithDom\(\) \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+const shouldShowMpvHost = shouldShowMpvHostForCurrentState\(\);[\s\S]+applyMpvHostVisibility\(shouldShowMpvHost\);[\s\S]+didMpvHostVisibilityApply\(result, shouldShowMpvHost\)/);
-  assert.match(appSource, /function installMpvBlockingOverlayObserver\(\) \{[\s\S]+new MutationObserver\(\(mutations\) => \{[\s\S]+if \(!mpvPilotHostPreparing && !document\.body\.classList\.contains\('mpv-pilot-mode'\)\) return;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}\);[\s\S]+attributeFilter: \['class', 'style', 'hidden'\]/);
+  assert.match(appSource, /function syncMpvHostVisibilityWithDom\(\) \{[\s\S]+if \(!mpvPilotHostPreparing && !isCurrentDrawingSurfaceReady\(\)\) return;[\s\S]+const shouldShowMpvHost = shouldShowMpvHostForCurrentState\(\);[\s\S]+applyMpvHostVisibility\(shouldShowMpvHost\);[\s\S]+didMpvHostVisibilityApply\(result, shouldShowMpvHost\)/);
+  assert.match(appSource, /function installMpvBlockingOverlayObserver\(\) \{[\s\S]+new MutationObserver\(\(mutations\) => \{[\s\S]+if \(!mpvPilotHostPreparing && !isCurrentDrawingSurfaceReady\(\)\) return;[\s\S]+syncMpvHostVisibilityWithDom\(\);[\s\S]+\}\);[\s\S]+attributeFilter: \['class', 'style', 'hidden'\]/);
   assert.match(appSource, /installMpvBlockingOverlayObserver\(\);/);
   assert.match(appSource, /function recheckMpvBlockingSurfaceDuringMotion\(\)/);
   assert.match(appSource, /\['transitionrun', 'transitionstart', 'animationstart'\]\.forEach/);
   assert.match(appSource, /async function prepareMpvEmbedHost\(\) \{[\s\S]+if \(result\?\.success && result\.wid\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
-  assert.match(appSource, /async function prepareMpvOverlayHost\(\) \{[\s\S]+if \(result\?\.success\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
+  assert.match(appSource, /async function prepareMpvOverlayHost\(\{ adoptCapability = true \} = \{\}\) \{[\s\S]+if \(result\?\.success\) \{[\s\S]+forceMpvHostVisibilitySync\(\);[\s\S]+return result;/);
   assert.match(appSource, /videoPlayer\.addEventListener\('externalstopped', \(e\) => \{[\s\S]+mpvHostLastRequestedVisible = null;[\s\S]+if \(isAppShuttingDown\) return;[\s\S]+allowMpvPilot: retryMpv/);
   assert.match(appSource, /async function stopMpvPilotEngine\(overlayOwner = null\) \{[\s\S]+finally \{[\s\S]+mpvHostLastRequestedVisible = null;/);
 });
@@ -939,7 +939,7 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /function serializeMpvOverlayTooltipHtml\(\) \{[\s\S]+if \(!isMpvMarkerOverlayVisible\(\)\) return '';/);
   assert.match(appSource, /function copyComputedMpvOverlayStyles\(source, target\) \{/);
   assert.match(appSource, /function serializeMpvOverlayToastHtml\(\) \{/);
-  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+toastHtml: serializeMpvOverlayToastHtml\(\)/);
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+toastHtml: overlayOnly \? '' : serializeMpvOverlayToastHtml\(\)/);
   assert.match(appSource, /function serializeMpvOverlayRemoteCursorHtml\(\) \{[\s\S]+remoteCursorsContainer\.cloneNode\(true\)[\s\S]+return clone\.innerHTML;/);
   const overlayStateSource = appSource.match(/function getMpvOverlayState\(\) \{([\s\S]*?)\n  \}\n\n  \/\/ 32 잔존/)?.[1] || '';
   assert.doesNotMatch(overlayStateSource, /remoteCursorHtml/);
@@ -965,7 +965,7 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   ].forEach((selector) => assert.match(mpvSurfacePolicySource, new RegExp(
     `'${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}'`
   )));
-  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: serializeMpvOverlayTooltipHtml\(\)[\s\S]+htmlOverlayHtml: serializeMpvOverlayHtml\(\)/);
+  assert.match(appSource, /function getMpvOverlayState\(\) \{[\s\S]+drawingDataUrl[\s\S]+onionDataUrl[\s\S]+markerHtml: overlayOnly \? '' : serializeMpvOverlayMarkerHtml\(\)[\s\S]+tooltipHtml: overlayOnly \? '' : serializeMpvOverlayTooltipHtml\(\)[\s\S]+htmlOverlayHtml: overlayOnly \? '' : serializeMpvOverlayHtml\(\)/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{[\s\S]+syncMpvOverlayState\(\);/);
   assert.match(mpvSurfacePolicySource, /export const MPV_MIRRORED_OVERLAY_SELECTOR = joinMpvSurfaceObservationSelectors/);
   assert.match(mpvSurfacePolicySource, /'\.comment-markers-container'[\s\S]+'\.comment-marker-tooltip'/);
@@ -975,7 +975,7 @@ test('mpv pilot mirrors DOM overlays into a click-through native overlay window'
   assert.match(appSource, /const MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS = 350;/);
   assert.match(appSource, /function showZoomIndicator\(zoom\) \{[\s\S]+elements\.zoomIndicatorOverlay\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!elements\.zoomIndicatorOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
   assert.match(appSource, /function hideFullscreenScrubOverlay\(\) \{[\s\S]+fullscreenScrubOverlay\?\.classList\.remove\('visible'\);[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+setTimeout\(\(\) => \{[\s\S]+if \(!fullscreenScrubOverlay\?\.classList\.contains\('visible'\)\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}[\s\S]+\}, MPV_OVERLAY_FADE_OUT_SYNC_DELAY_MS\);/);
-  assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
+  assert.doesNotMatch(appSource, /drawingManager\.addEventListener\('(?:drawmove|drawend|selectionoverlaychanged)'/);
   assert.match(appSource, /drawingManager\.addEventListener\('frameRendered', \(e\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\);[\s\S]+\}\);/);
   assert.match(appSource, /function renderVideoMarkers\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);/);
   assert.match(appSource, /function updateVideoMarkersVisibility\(\) \{[\s\S]+scheduleMpvOverlayStateSync\(\);/);
@@ -1028,16 +1028,16 @@ test('mpv pilot keeps toast notifications visible above the native video host', 
   assert.match(appSource, /function _applyToastPosition\(pos\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
 });
 
-test('mpv overlay throttles live drawing snapshots but forces final drawing sync', () => {
+test('mpv overlay throttles remote legacy snapshots and forces Fabric state transitions', () => {
   assert.match(appSource, /const MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS = 48;/);
   assert.match(appSource, /let mpvOverlayStateSyncTimer = null;/);
   assert.match(appSource, /function scheduleMpvOverlayStateSync\(options = \{\}\) \{/);
   assert.match(appSource, /if \(options\.force === true\) \{[\s\S]+if \(mpvOverlayStateSyncTimer\) \{[\s\S]+clearTimeout\(mpvOverlayStateSyncTimer\);[\s\S]+mpvOverlayStateSyncTimer = null;[\s\S]+syncMpvOverlayState\(\);[\s\S]+return;[\s\S]+\}/);
   assert.match(appSource, /if \(options\.liveDrawing === true\) \{[\s\S]+const elapsed = now - mpvOverlayLastLiveDrawSyncAt;[\s\S]+if \(elapsed < MPV_OVERLAY_LIVE_DRAW_SYNC_INTERVAL_MS\) \{/);
   assert.match(appSource, /mpvOverlayStateSyncTimer = setTimeout\(\(\) => \{[\s\S]+mpvOverlayLastLiveDrawSyncAt = Date\.now\(\);[\s\S]+syncMpvOverlayState\(\);/);
-  assert.match(appSource, /drawingManager\.addEventListener\('drawmove', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ liveDrawing: true \}\);[\s\S]+\}\);/);
-  assert.match(appSource, /drawingManager\.addEventListener\('selectionoverlaychanged', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ liveDrawing: true \}\);[\s\S]+\}\);/);
-  assert.match(appSource, /drawingManager\.addEventListener\('drawend', \(\) => \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);[\s\S]+\}\);/);
+  assert.match(appSource, /onRemoteStrokeOverlayChange:[\s\S]+scheduleMpvOverlayStateSync\(\{ liveDrawing: true \}\)/);
+  assert.doesNotMatch(appSource, /drawingManager\.addEventListener\('(?:drawmove|drawend|selectionoverlaychanged)'/);
+  assert.match(appSource, /function handleFabricDrawingPilotStateChange\(nextState, snapshot\) \{[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
 });
 
 test('mpv drawing overlay snapshot includes floating selection overlay', () => {
@@ -1168,7 +1168,7 @@ test('current overlay owner gets one serialized host reprepare after sync IPC fa
   assert.match(recoveryMatch[1], /if \(mpvOverlayRecoveryOwner === owner\) \{[\s\S]+if \(mpvOverlayRecoveryInFlightOwner !== owner\) \{[\s\S]+fallbackFromMpvOverlayRecoveryFailureOnce/);
   assert.match(recoveryMatch[1], /mpvOverlayRecoveryOwner = owner;/);
   assert.match(recoveryMatch[1], /mpvOverlayRecoveryInFlightOwner = owner;[\s\S]+mpvOverlaySyncEpoch \+= 1;/);
-  assert.match(recoveryMatch[1], /mpvTeardownGate\.run\(async \(\) => \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(owner\)\) return \{ success: false, stale: true \};[\s\S]+mpvDestroyOverlay[\s\S]+prepareMpvOverlayHost\(\)[\s\S]+mpvOverlayLifecycle\.markReady\(owner\)[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
+  assert.match(recoveryMatch[1], /mpvTeardownGate\.run\(async \(\) => \{[\s\S]+if \(!mpvOverlayLifecycle\.owns\(owner\)\) return \{ success: false, stale: true \};[\s\S]+mpvDestroyOverlay[\s\S]+prepareMpvOverlayHost\(\{ adoptCapability: !html5Surface \}\)[\s\S]+mpvOverlayLifecycle\.markReady\(owner\)[\s\S]+scheduleMpvOverlayStateSync\(\{ force: true \}\);/);
   assert.match(recoveryMatch[1], /const recoveryState = getMpvOverlayState\(\);[\s\S]+mpvUpdateOverlayState\?\.\(recoveryState\)[\s\S]+if \(!recoverySyncResult\?\.success\) \{[\s\S]+throw new Error/);
   assert.match(recoveryMatch[1], /if \(result\?\.success \|\| result\?\.stale \|\| !mpvOverlayLifecycle\.owns\(owner\)\) return;[\s\S]+fallbackFromMpvOverlayRecoveryFailureOnce\(owner, recoveryFilePath, result\?\.error \|\| error\);/);
 
@@ -1213,8 +1213,8 @@ test('overlay fallback is blocked only while a newer video load is actively in f
 });
 
 test('html5 overlay fallback settles pending draw readiness without leaving a spinner', () => {
-  assert.match(appSource, /function beginMpvHtml5FallbackReviewTransition\(\) \{[\s\S]+const drawModeWasActive = state\.isDrawMode;[\s\S]+const drawPreparationToken = drawModeWasActive \? \+\+drawModePreparationToken : null;[\s\S]+setDrawModePreparingState\(false\);[\s\S]+setDrawModeReadyState\(false\);/);
-  assert.match(appSource, /function finishMpvHtml5FallbackReviewTransition\(transition, \{ filePath, loaded \}\) \{[\s\S]+drawModePreparationToken !== transition\.drawPreparationToken[\s\S]+loaded[\s\S]+videoPlayer\.engine === 'html5'[\s\S]+isSameFilePath\(filePath, state\.currentFile\)[\s\S]+setDrawModePreparingState\(false\);[\s\S]+setDrawModeReadyState\(true\);[\s\S]+applyDrawModeState\(false\);/);
+  assert.match(appSource, /function beginMpvHtml5FallbackReviewTransition\(\) \{[\s\S]+const drawModeWasActive = state\.isDrawMode;[\s\S]+exitDrawModeForSystemPath\(\);[\s\S]+return Object\.freeze\(\{ drawModeWasActive, revision: drawingEntryRevision \}\);/);
+  assert.match(appSource, /function finishMpvHtml5FallbackReviewTransition\(transition, \{ filePath, loaded \}\) \{[\s\S]+!transition\?\.drawModeWasActive \|\| transition\.revision !== drawingEntryRevision[\s\S]+loaded[\s\S]+videoPlayer\.engine === 'html5'[\s\S]+isSameFilePath\(filePath, state\.currentFile\)[\s\S]+!hasActiveVideoLoadForDifferentFile\(filePath\)[\s\S]+toggleDrawMode\(\);/);
 
   const fallbackLoadMatch = appSource.match(/async function loadVideoWithHtml5Fallback\(filePath, options = \{\}, \{ owner = null, skipReviewTransition = false \} = \{\}\) \{([\s\S]*?)\n  \}/);
   assert.ok(fallbackLoadMatch, 'loadVideoWithHtml5Fallback should exist');
@@ -1308,7 +1308,7 @@ test('mpv to mpv transitions keep the native host visible for seamless playback'
   assert.match(appSource, /const mpvPilotSeamlessTransitionGate = createMpvPilotSeamlessTransitionGate\(\);/);
   assert.match(
     appSource,
-    /function shouldShowMpvHostForCurrentState\(\) \{\s+return \(!mpvPilotHostPreparing \|\| mpvPilotSeamlessTransitionGate\.isActive\(\)\) &&/
+    /function shouldShowMpvHostForCurrentState\(\) \{[\s\S]+return \(!mpvPilotHostPreparing \|\| mpvPilotSeamlessTransitionGate\.isActive\(\)\) &&/
   );
   assert.match(
     appSource,

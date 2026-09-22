@@ -2002,6 +2002,32 @@ function setupIpcHandlers({
     }
   });
 
+  ipcMain.handle('mpv:set-overlay-visible', async (event, visible) => {
+    try {
+      if (!isCurrentMainRendererSender(event)) {
+        return { success: false, error: 'mpv overlay visibility IPC sender is not allowed' };
+      }
+      if (typeof visible !== 'boolean') {
+        return { success: false, error: 'invalid mpv overlay visibility' };
+      }
+      if (visible && mpvOverlayHost.getDrawingCapability()?.passiveReady !== true) {
+        return {
+          success: false,
+          visible: false,
+          ready: false,
+          reason: 'overlay-not-ready',
+          error: 'Drawing overlay is not ready'
+        };
+      }
+      // Hiding also cancels requested visibility while the overlay is being prepared.
+      // The HTML5 drawing surface must never change the native playback host.
+      return mpvOverlayHost.setVisible(visible);
+    } catch (error) {
+      log.debug('드로잉 오버레이 표시 상태 변경 실패', { error: error.message });
+      return { success: false, error: error.message };
+    }
+  });
+
   ipcMain.handle('mpv:destroy-embed', async () => {
     try {
       return mpvEmbedHost.destroy();

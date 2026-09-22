@@ -1890,6 +1890,7 @@ function createActualLoadRaceHarness(dependencies, {
       ${extractAppFunctionSource('resetContinuousPlaybackRuntimeState')}
       ${extractAppFunctionSource('restartContinuousPlaybackSessionForManualSeek')}
       ${extractAppFunctionSource('stopContinuousPlayback')}
+      ${extractAppFunctionSource('initializeCurrentDrawing')}
       ${extractAppFunctionSource('loadVideoWithHtml5Fallback')}
       ${extractAppFunctionSource('loadVideo')}
       ${extractAppFunctionSource('loadVideoFromPlaylist')}
@@ -2058,6 +2059,7 @@ function createActualLoadRaceScenario({
     pause: () => { videoPlayer.isPlaying = false; },
     togglePlay: () => { videoPlayer.isPlaying = !videoPlayer.isPlaying; },
     load: async filePath => {
+      videoPlayer.engine = 'html5';
       effects.mediaLoads.push(filePath);
       mediaLoadCalls += 1;
       if (holdFirstMediaLoad && mediaLoadCalls === 1) {
@@ -2096,6 +2098,7 @@ function createActualLoadRaceScenario({
     getManualVersions: () => []
   };
   const fabricDrawingPilotController = {
+    initialize: async () => fabricPilotOwnsDrawing,
     flushPersistenceBeforeLeave: async () => {
       effects.fabricFlushes += 1;
       return queuedFabricFlushResults?.length
@@ -2132,8 +2135,16 @@ function createActualLoadRaceScenario({
     finishCommentEdit() {},
     createTransitionMetrics: () => ({ mark() {}, finish() {} }),
     playlistResolutionQueue: { lockPaths: () => () => {}, drainPaths: async () => {} },
-    fabricDrawingPilotInitialization: Promise.resolve(true),
     fabricDrawingPilotController,
+    // Surface preparation is an IPC boundary; the controller's afterVideoReady
+    // remains the readiness gate exercised by the actual production load below.
+    ensureHtml5DrawingSurface: async (_loadToken, isCurrent) => {
+      if (!isCurrent() || fileIsAudio) return false;
+      state.html5DrawingSurface = { ready: true, hydrated: false };
+      return true;
+    },
+    isHtml5DrawingSurfaceReady: () => state.html5DrawingSurface?.ready === true,
+    forceMpvHostVisibilitySync: () => {},
     confirm: () => false,
     bypassContinuousPersistenceGate: stage => {
       effects.persistenceBypassStages.push(stage);
@@ -2237,7 +2248,10 @@ function createActualLoadRaceScenario({
       return options.loaded === true;
     },
     retryDeferredMpvOverlayFallback: () => { effects.fallbacks += 1; }, resolveMpvThumbnailVideoPath: async filePath => filePath,
-    loadVideoWithMpvPilot: async () => mpvLoadSucceeds,
+    loadVideoWithMpvPilot: async () => {
+      if (mpvLoadSucceeds) videoPlayer.engine = 'mpv';
+      return mpvLoadSucceeds;
+    },
     beginMpvHtml5FallbackReviewTransition: () => null,
     beginExpectedMpvHtml5FallbackStop: () => 1,
     finishMpvHtml5FallbackReviewTransition: () => {},
@@ -2422,11 +2436,6 @@ test('non-applicable Fabric readiness rejection preserves existing autoplay rout
       loadOptions: {}
     },
     {
-      name: 'engine swap',
-      scenario: { useMpvPilot: true, mpvLoadSucceeds: true },
-      loadOptions: { engineSwap: true }
-    },
-    {
       name: 'mpv without Fabric ownership',
       scenario: {
         useMpvPilot: true,
@@ -2453,7 +2462,25 @@ test('non-applicable Fabric readiness rejection preserves existing autoplay rout
 
       assert.equal(loaded, true);
       assert.equal(scenario.effects.playAfterLoad, 1);
-      assert.equal(scenario.effects.fabricAfterVideoReady, testCase.loadOptions.engineSwap ? 0 : 1);
+      assert.equal(scenario.effects.fabricAfterVideoReady, 1);
+    });
+  }
+});
+
+test('engine swaps reconcile current drawing readiness before allowing autoplay', async t => {
+  for (const ready of [true, false]) {
+    await t.test(`drawing ready: ${ready}`, async () => {
+      const scenario = createActualLoadRaceScenario({
+        useMpvPilot: true, mpvLoadSucceeds: true, afterVideoReadyResult: ready
+      });
+      scenario.releaseOldTail();
+      const loaded = await scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+        allowMpvPilot: true, engineSwap: true, playWhenMediaReady: true
+      });
+      assert.equal(loaded, ready);
+      assert.equal(scenario.effects.fabricBeforeChanges, 1);
+      assert.equal(scenario.effects.fabricAfterVideoReady, 1);
+      assert.equal(scenario.effects.playAfterLoad, ready ? 1 : 0);
     });
   }
 });

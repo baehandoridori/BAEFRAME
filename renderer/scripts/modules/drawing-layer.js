@@ -130,7 +130,7 @@ export class DrawingLayer {
     this.visible = options.visible !== false;
     this.locked = options.locked || false;
     this.color = options.color || this._generateColor();
-    this.opacity = options.opacity || 1;
+    this.opacity = options.opacity ?? 1;
 
     // 키프레임 배열 (프레임 번호 순으로 정렬 유지)
     this.keyframes = [];

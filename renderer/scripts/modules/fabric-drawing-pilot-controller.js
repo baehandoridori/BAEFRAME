@@ -1246,7 +1246,10 @@ export function createFabricDrawingPilotController(options = {}) {
   }
 
   function validPilotContext(context) {
-    return context.isMpvActive === true && context.isAudio !== true;
+    // Drawing belongs to its surface, not the video decoder. Older callers/tests
+    // may still supply isMpvActive while the app uses the explicit surface state.
+    return (context.isDrawingSurfaceReady ?? context.isMpvActive) === true &&
+      context.isAudio !== true;
   }
 
   function normalizeLoadToken(value) {
@@ -2518,11 +2521,18 @@ export function createFabricDrawingPilotController(options = {}) {
     if (initializePromise) return initializePromise;
     initializePromise = (async () => {
       let enabled = false;
+      lastError = null;
       try {
         const value = await electronAPI.getFabricDrawingPilotState?.();
         enabled = typeof value === 'boolean' ? value : false;
-      } catch {
+        if (!enabled) {
+          lastError = value === false
+            ? 'drawing is disabled by runtime configuration'
+            : 'drawing capability bridge is unavailable';
+        }
+      } catch (error) {
         enabled = false;
+        lastError = error?.message || 'drawing capability request failed';
       }
       if (enabled && persistenceStore) {
         const hasPersistenceApi =
@@ -2561,9 +2571,16 @@ export function createFabricDrawingPilotController(options = {}) {
           subscribePointerdownFrame(handlePointerdownFrameRequest);
         } catch { /* optional pointerdown frame bridge */ }
       }
-      setState(enabled ? 'passive' : 'disabled');
+      const initializedState = enabled ? 'passive' : 'disabled';
+      if (state === initializedState) notifyStateChange();
+      else setState(initializedState);
       return enabled;
-    })();
+    })().finally(() => {
+      // A failed startup attempt must not permanently disable drawing for this
+      // app session. Successful initialization stays cached to avoid duplicate
+      // persistence/pointer listeners; simultaneous retries share this promise.
+      if (!pilotEnabled) initializePromise = null;
+    });
     return initializePromise;
   }
 
