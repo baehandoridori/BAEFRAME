@@ -16103,6 +16103,50 @@ test('text entry ends whenever the field stops being where the user types', asyn
   }
 });
 
+function dispatchSpaceKeydown(harness, target) {
+  const event = new harness.environment.window.Event('keydown', { bubbles: true, cancelable: true });
+  Object.defineProperty(event, 'key', { value: ' ' });
+  Object.defineProperty(event, 'code', { value: 'Space' });
+  target.dispatchEvent(event);
+  return event.defaultPrevented;
+}
+
+test('a relayed Space press reaching the overlay document does not act on the palette', async () => {
+  // 호스트는 그리기 중 Space 누름을 메인 창으로 넘기되 삼키지 않는다 — 삼키면 Chromium 이
+  // 짝이 되는 뗌을 버려 메인 창이 Space 를 누른 채로 남는다(재생 안 됨·다음 획 막힘).
+  // 그 대가로 누름이 이 문서까지 오므로, 방금 누른 팔레트 버튼이 다시 눌리면 안 된다.
+  const hosted = createRealFabricHarness({ textEntryBridge: { set() {} } });
+  try {
+    const controls = getBrushControls(hosted.root);
+    const brushButton = paletteButton(hosted.root, 'brush');
+    assert.equal(dispatchSpaceKeydown(hosted, brushButton), true);
+    assert.equal(dispatchSpaceKeydown(hosted, hosted.environment.document.body), true);
+
+    // 색상 코드를 입력하는 동안에는 호스트가 키를 넘기지 않는다. 입력칸의 키는 그대로 둔다.
+    realClick(hosted, controls.pickerToggle);
+    controls.hexInput.focus();
+    assert.equal(dispatchSpaceKeydown(hosted, controls.hexInput), false);
+    controls.hexInput.blur();
+    assert.equal(dispatchSpaceKeydown(hosted, brushButton), true);
+
+    // 그리기 입력이 꺼지면 호스트도 키를 넘기지 않는다.
+    hosted.runtime.setDrawingInput({
+      hostGeneration: 1, videoGeneration: 1, inputRevision: 2, enabled: false
+    });
+    assert.equal(dispatchSpaceKeydown(hosted, brushButton), false);
+  } finally {
+    await hosted.destroy();
+  }
+
+  // 편집창에는 키를 넘기는 호스트가 없다. Space 는 평소처럼 그 문서의 것이다.
+  const standalone = createRealFabricHarness();
+  try {
+    assert.equal(dispatchSpaceKeydown(standalone, paletteButton(standalone.root, 'brush')), false);
+  } finally {
+    await standalone.destroy();
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 코덱스 1차 리뷰 회귀 방지
 // ---------------------------------------------------------------------------

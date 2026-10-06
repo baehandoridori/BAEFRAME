@@ -2423,7 +2423,7 @@ test('V Delete Space and repeat relay keep the active drawing overlay focused', 
   mainWindow.focused = false;
   events.length = 0;
 
-  const emit = input => {
+  const emit = (input, swallowed = true) => {
     let prevented = false;
     windows[0].webContents.emit('before-input-event', {
       preventDefault() {
@@ -2440,20 +2440,23 @@ test('V Delete Space and repeat relay keep the active drawing overlay focused', 
       isAutoRepeat: false,
       ...input
     });
-    assert.equal(prevented, true);
+    assert.equal(prevented, swallowed);
   };
 
   emit({ key: 'v', code: 'KeyV' });
   emit({ key: 'v', code: 'KeyV', isAutoRepeat: true });
   emit({ key: 'Delete', code: 'Delete' });
-  emit({ key: ' ', code: 'Space' });
+  // Space 누름은 넘기기만 하고 삼키지 않는다(뗌을 받기 위해).
+  emit({ key: ' ', code: 'Space' }, false);
   emit({ type: 'keyUp', key: 'v', code: 'KeyV' });
   emit({ key: 'b', code: 'KeyB', isAutoRepeat: true });
   emit({ type: 'keyUp', key: 'b', code: 'KeyB' });
 
+  // 키 7개 + Space 의 뗌 1개. Space 를 떼기 전에 B 누름을 삼키므로, 그 직전에
+  // 호스트가 Space 의 뗌을 먼저 넘긴다(삼킨 뒤에는 실제 뗌이 오지 않는다).
   assert.equal(
     events.filter(([name]) => name === 'mainWindow.send').length,
-    7
+    8
   );
   assert.equal(
     events.some(([name]) => name === 'mainWindow.focus'),
@@ -2585,7 +2588,8 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
     return prevented;
   };
 
-  assert.equal(emitKey({ key: ' ', code: 'Space' }), true);
+  // Space 누름은 메인 창으로 넘어가지만 삼켜지지는 않는다(뗌을 받기 위해).
+  assert.equal(emitKey({ key: ' ', code: 'Space' }), false);
   assert.equal(emitKey({ key: 'ArrowLeft', code: 'ArrowLeft' }), true);
   const eventCountBeforeComposition = events.length;
   assert.equal(emitKey({ key: 'Process', code: 'KeyR', isComposing: true }), false);
@@ -2594,6 +2598,17 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
   assert.deepEqual(events.filter(([name]) => name === 'mainWindow.send'), [
     ['mainWindow.send', 'mpv-overlay:keyboard-input', {
       type: 'keyDown',
+      key: ' ',
+      code: 'Space',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }],
+    // ArrowLeft 누름을 삼키기 전에 Space 의 뗌을 먼저 넘긴다.
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyUp',
       key: ' ',
       code: 'Space',
       shiftKey: false,
@@ -3068,6 +3083,90 @@ test('overlay keeps forwarding B V Delete and Space through the main renderer ro
     .filter(([name, channel]) =>
       name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
     .map(([, , input]) => input.code), ['KeyB', 'KeyV', 'Delete', 'Space']);
+});
+
+test('a relayed Space press always gets its release to the main renderer', async () => {
+  // Chromium 은 브라우저 쪽이 삼킨 누름 뒤의 뗌을 내보내지 않는다. 메인 창은 Space 의 뗌으로
+  // 탭(재생)·누른 채 끌기(화면 이동)를 끝내므로, 뗌이 없으면 Space 를 누른 채로 남는다.
+  // 실제 Chromium 동작은 mpv-overlay-space-release.test.js 가 확인한다.
+  const harness = createDrawingHostHarness();
+  await activateDrawingHost(harness, {
+    videoGeneration: 17,
+    sessionId: 'session-overlay-space-release'
+  });
+  const overlay = harness.windows[0];
+  const emit = input => {
+    let prevented = false;
+    harness.events.length = 0;
+    overlay.webContents.emit('before-input-event', { preventDefault() { prevented = true; } }, {
+      type: 'keyDown',
+      key: ' ',
+      code: 'Space',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...input
+    });
+    const relayed = harness.events
+      .filter(([name, channel]) =>
+        name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+      .map(([, , relay]) => `${relay.type}:${relay.code}${relay.repeat ? ':repeat' : ''}`);
+    return { prevented, relayed };
+  };
+  const releaseSpace = () => emit({ type: 'keyUp' });
+
+  // 누름: 넘기되 삼키지 않는다. 그래야 Chromium 이 뗌을 이 핸들러까지 가져온다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ isAutoRepeat: true }), { prevented: false, relayed: ['keyDown:Space:repeat'] });
+  // 뗌: 넘기고 삼킨다. 오버레이 문서는 Space 뗌으로 팔레트 버튼을 누르지 못한다.
+  assert.deepEqual(releaseSpace(), { prevented: true, relayed: ['keyUp:Space'] });
+  // Ctrl·Shift 조합도 같은 길이다.
+  assert.deepEqual(emit({ control: true }), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ type: 'keyUp', control: true }), { prevented: true, relayed: ['keyUp:Space'] });
+  assert.deepEqual(emit({ shift: true }), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ type: 'keyUp', shift: true }), { prevented: true, relayed: ['keyUp:Space'] });
+
+  // Alt·Meta 조합은 OS 동작으로 넘어가지 않게 계속 삼킨다. 그 뗌은 영영 오지 않으므로
+  // 호스트가 짝이 되는 뗌을 곧바로 만들어 보낸다.
+  assert.deepEqual(emit({ alt: true }), { prevented: true, relayed: ['keyDown:Space', 'keyUp:Space'] });
+  assert.deepEqual(emit({ meta: true }), { prevented: true, relayed: ['keyDown:Space', 'keyUp:Space'] });
+  assert.deepEqual(emit({ alt: true, isAutoRepeat: true }), { prevented: true, relayed: ['keyDown:Space:repeat'] });
+
+  // 다른 키는 그대로다: 누름을 삼키고, 뗌을 지어내지 않는다.
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
+  assert.deepEqual(emit({ key: 'ArrowLeft', code: 'ArrowLeft', alt: true }), { prevented: true, relayed: ['keyDown:ArrowLeft'] });
+
+  // Space 를 누른 채 다른 키를 누른다. Chromium 은 누름 하나를 삼키면 다음 누름까지 **모든**
+  // 뗌을 버리므로 Space 의 실제 뗌도 오지 않는다. 그 키를 삼키기 전에 Space 의 뗌부터 넘긴다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyUp:Space', 'keyDown:KeyV'] });
+  // 이미 짝을 맞췄다. 다음 키에서 뗌을 또 만들지 않는다.
+  assert.deepEqual(emit({ key: 'Delete', code: 'Delete' }), { prevented: true, relayed: ['keyDown:Delete'] });
+  // 아직 누르고 있는 Space 의 자동 반복은 새 누름으로 세지 않는다.
+  assert.deepEqual(emit({ isAutoRepeat: true }), { prevented: false, relayed: ['keyDown:Space:repeat'] });
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
+
+  // 실행 취소(Ctrl+Z)처럼 다른 길로 삼키는 누름도 같다. 자동 반복은 넘기지 않고 삼키기만 한다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true }), { prevented: true, relayed: ['keyUp:Space', 'keyDown:KeyZ'] });
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true, isAutoRepeat: true }), { prevented: true, relayed: ['keyUp:Space'] });
+
+  // 색상 코드 입력이 시작되면 키를 넘기지 않게 되므로, 그 전에 누르고 있던 Space 를 놓아 준다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  harness.events.length = 0;
+  assert.equal(harness.host.setTextEntryActive({ sender: overlay.webContents }, true), true);
+  assert.deepEqual(harness.events
+    .filter(([name, channel]) => name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , relay]) => `${relay.type}:${relay.code}`), ['keyUp:Space']);
+  assert.equal(harness.host.setTextEntryActive({ sender: overlay.webContents }, false), false);
+
+  // 오버레이 창이 포커스를 잃으면 메인 창이 스스로 상태를 푼다. 호스트는 기억만 지운다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  overlay.listeners.get('blur')();
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
 });
 
 test('overlay history keyup suppression is cleared when drawing input is disabled', async () => {

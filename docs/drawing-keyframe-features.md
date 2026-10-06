@@ -6,6 +6,19 @@
 >
 > 작업 전 [드로잉 작업 규칙](drawing-work-guide.md)을 읽는다. 기능 변경 시 관련 상태·데이터 출처·검증 기준을 함께 갱신한다.
 
+## 그리기 중 Space (2026-10-06, v2.13.1-beta)
+
+| 항목 | 현재 구현 |
+|---|---|
+| 증상과 원인 | 획을 그은 뒤(오버레이 창이 키보드 포커스를 가진 상태) Space 를 누르면 재생되지 않고 다음 획도 막혔다. 호스트가 `before-input-event` 에서 Space 누름을 삼키면 Chromium 이 짝이 되는 뗌을 내보내지 않아, 메인 창이 Space 를 누른 채로 남았다 |
+| Space 누름 | 호스트가 메인 창으로 넘기되 삼키지 않는다(`forwardedSpaceKeyDownKeepsRelease`). 뗌은 넘기고 삼킨다. 메인 창의 탭(재생)·누른 채 끌기(화면 이동) 판정은 그대로다 |
+| 오버레이 문서 | 내려온 Space 누름의 기본 동작을 런타임이 막는다(포커스가 남은 팔레트 버튼 누름·스크롤 방지). 키를 넘기는 호스트 안에서, 그리기 입력이 켜져 있고 색상 코드 입력 중이 아닐 때만이다. 편집창은 해당 없음 |
+| Alt·Meta+Space | OS 동작으로 넘어가지 않게 계속 삼킨다. 그 뗌은 오지 않으므로 호스트가 짝이 되는 뗌을 곧바로 보낸다. 오버레이에서는 눌렀다 뗀 것으로만 동작한다 |
+| Space 를 누른 채 다른 키 | Chromium 은 누름 하나를 삼키면 다음 누름까지 모든 뗌을 버린다. 호스트가 뗌을 못 넘긴 Space 를 기억했다가(`overlaySpaceReleasePending`) 다른 키를 삼키기 직전과 색상 코드 입력 시작 시 그 뗌을 먼저 넘긴다. 그 시점에 Space 누름이 끝난 것으로 처리된다(끌지 않았으면 재생 전환) |
+| 다른 키 | 변함없이 누름을 삼킨다. 그 키들의 뗌은 메인 창에 오지 않는다(메인 창은 Space 외의 뗌을 쓰지 않는다) |
+
+실제 Chromium(숨김 Electron)과 격리 프로필로 띄운 실제 앱에서 DevTools 프로토콜 키 입력으로 확인했다. 실물 키보드·펜 태블릿으로 직접 누르는 확인은 미수행이다. 근거는 [작업 기록](../DEVLOG/2026-10-06-draw-mode-space-release.md).
+
 ## 팔레트 화면 정리 (2026-10-06, v2.13.0-beta)
 
 | 항목 | 현재 구현 |
@@ -36,7 +49,7 @@
 | 그리기 중 댓글 포인트 | 메인과 native Fabric 오버레이에서 점·답글 배지·툴팁 입력 차단. 종료 시 복원. 자동 검사 완료 |
 | 화면 이동 | primary mouse/pen/touch PointerEvent와 CSS 좌표 사용. 가운데 고정 ON·100% 이하의 기존 제한 유지 |
 | Space 임시 이동 | 실제 native overlay down을 메인 키 상태로 판정. 3 CSS px 이상 이동하면 재생 tap 소비. 프레임·레이어 확인 전에 pan 소유권 확정 |
-| Space 전달 | sender와 host/video/persistence session·gesture sequence 검증. keyup flush·timeout·blur·취소 시 정리. 재생 단축키 재지정과 별도로 물리 Space를 임시 이동에 사용 |
+| Space 전달 | sender와 host/video/persistence session·gesture sequence 검증. keyup flush·timeout·blur·취소 시 정리. 재생 단축키 재지정과 별도로 물리 Space를 임시 이동에 사용. 오버레이 포커스에서 keyup이 오지 않던 결함은 v2.13.1-beta에서 수정(위 "그리기 중 Space") |
 | 프레임바 release | 최종 포인터 좌표를 정수 프레임으로 확정. 혼합 FPS·cutlist 정체 유지. native 테스트 영상 A의 burned-in 58, UI 58, 저장 그림 58 대조 완료 |
 | 현재 댓글 강조 | 양끝 포함 범위만 강조. DOM 전체 재생성·자동 스크롤·포커스 이동 없음 |
 

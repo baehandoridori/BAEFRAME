@@ -17111,6 +17111,7 @@ void main() {
         let pickerDrag = null;
         const palettePrefsBridge = options.palettePrefsBridge || windowRef?.mpvOverlayPalettePrefs;
         const textEntryBridge = options.textEntryBridge || windowRef?.mpvOverlayTextEntry;
+        const hostRelaysKeys = typeof textEntryBridge?.set === "function";
         let palettePrefsTouched = false;
         let lastNotifiedPalettePrefsKey = null;
         let textEntryActive = false;
@@ -20474,6 +20475,9 @@ void main() {
             overlayModifierState.ctrl = true;
             gestureProbe.overlayCtrlKeyDownCount += 1;
             syncTempErase();
+          }
+          if (event?.code === "Space" && hostRelaysKeys && inputEnabled && !textEntryActive) {
+            event.preventDefault?.();
           }
         }
         function onOverlayKeyUp(event) {
