@@ -8040,6 +8040,18 @@ async function initApp() {
     return true;
   }
 
+  // 드로잉 팔레트 값(마지막 색·굵기·불투명도·내 색)은 오버레이가 원본이고, 여기서는
+  // 앱을 껐다 켜도 남도록 사용자 설정에 보존한다. 그리기를 켤 때 보존해 둔 값을
+  // 심는데, 사용자가 그 사이 팔레트를 만졌다면 오버레이가 스스로 거절한다.
+  function pushFabricPilotPalettePrefs() {
+    const apply = window.electronAPI?.mpvApplyOverlayDrawingPalettePrefs;
+    if (typeof apply !== 'function') return;
+    Promise.resolve(apply(userSettings.getFabricPalettePrefs())).catch(() => {});
+  }
+  window.electronAPI?.onFabricDrawingPalettePrefs?.(prefs => {
+    userSettings.setFabricPalettePrefs(prefs);
+  });
+
   let fabricPilotTimelineRenderQueued = false;
   fabricDrawingPersistenceStore.subscribe(() => {
     if (state.isCommentMode && isMpvPilotPlaybackActive()) invalidateMpvReviewFreezeContent();
@@ -11062,6 +11074,8 @@ async function initApp() {
       // 오버레이의 집합은 세션과 함께 비워졌다. 다시 밀어 넣지 않으면 숨긴
       // 레이어가 그리기 모드를 껐다 켤 때마다 되살아난다.
       pushFabricPilotLayerView();
+      // 오버레이 창이 새로 만들어졌다면 팔레트가 기본값으로 돌아가 있다.
+      pushFabricPilotPalettePrefs();
     }
     if (nextState === 'passive') {
       // 그리기 모드를 끄면 오버레이가 투영으로 넘어간다. 그때 집합을 다시 심지

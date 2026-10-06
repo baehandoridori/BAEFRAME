@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require('../shared/viewport-pan-message');
+const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
 contextBridge.exposeInMainWorld('mpvOverlayViewportPan', {
   send(value) {
     const normalized = normalizeViewportPanMessage(value);
@@ -20,6 +21,8 @@ const COLLABORATION_ACTION_CHANNEL = 'mpv-overlay:collaboration-action';
 const COLLABORATION_DRAG_RESET_CHANNEL = 'mpv-overlay:collaboration-drag-reset';
 const DRAWING_POINTERDOWN_FRAME_REQUEST_CHANNEL =
   'mpv-overlay:drawing-pointerdown-frame-request';
+const PALETTE_PREFS_CHANNEL = 'mpv-overlay:palette-prefs';
+const TEXT_ENTRY_CHANNEL = 'mpv-overlay:text-entry';
 const DRAWING_POINTERDOWN_FRAME_REQUEST_KEYS = Object.freeze([
   'hostGeneration',
   'videoGeneration',
@@ -590,6 +593,33 @@ contextBridge.exposeInMainWorld('mpvOverlayCollaborationActions', Object.freeze(
   },
   cancelActiveDrag() {
     return cancelActiveCollaborationDrag();
+  }
+}));
+
+// 팔레트 값(마지막 색·굵기·불투명도·내 색)이 바뀌면 메인 창의 사용자 설정이 보존한다.
+// 오버레이 문서는 data: URL 오리진이라 자기 저장소를 쓸 수 없다.
+contextBridge.exposeInMainWorld('mpvOverlayPalettePrefs', Object.freeze({
+  notify(value) {
+    const prefs = normalizeFabricPalettePrefs(value);
+    if (!prefs) return false;
+    try {
+      ipcRenderer.send(PALETTE_PREFS_CHANNEL, prefs);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+}));
+
+// 팔레트의 색상 코드 입력칸에 글자를 넣는 동안 호스트가 키를 메인 창으로 넘기지 않게 한다.
+contextBridge.exposeInMainWorld('mpvOverlayTextEntry', Object.freeze({
+  set(active) {
+    try {
+      ipcRenderer.send(TEXT_ENTRY_CHANNEL, active === true);
+      return true;
+    } catch (_error) {
+      return false;
+    }
   }
 }));
 

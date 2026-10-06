@@ -130,6 +130,8 @@ export function createEditorDrawing(options = {}) {
     if (mode === 'resync' && result.changed) notify(target);
   }
   const runtime = createFabricOverlayRuntime({ window: windowRef, document: documentRef, fabric,
+    // 편집창의 팔레트는 가로 한 줄 도크다. 색·굵기는 버튼을 눌렀을 때만 뜨는 패널로 둔다.
+    paletteLayout: 'dock',
     persistenceCommitObserver(event) {
       const target = owner;
       if (!target || event.stableVideoIdentity !== target.envelope.stableVideoIdentity ||

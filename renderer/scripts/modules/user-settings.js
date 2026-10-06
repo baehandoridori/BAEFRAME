@@ -12,6 +12,26 @@ const log = createLogger('UserSettings');
 // 로컬 스토리지 키
 const STORAGE_KEY = 'baeframe_user_settings';
 
+// 드로잉 팔레트 "내 색" 칸 수. shared/fabric-palette-prefs.js 의
+// FABRIC_PALETTE_SAVED_COLOR_LIMIT 와 같아야 한다(이 파일은 ES 모듈이라 CommonJS 를
+// import 할 수 없다 — scripts/tests/fabric-palette-prefs.test.js 가 값이 같음을 강제한다).
+const PALETTE_SAVED_COLOR_LIMIT = 7;
+
+function normalizePaletteColor(value) {
+  return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
+}
+
+function normalizeSavedPaletteColors(value) {
+  const colors = [];
+  if (!Array.isArray(value)) return colors;
+  for (const entry of value) {
+    if (colors.length >= PALETTE_SAVED_COLOR_LIMIT) break;
+    const color = normalizePaletteColor(entry);
+    if (color && !colors.includes(color)) colors.push(color);
+  }
+  return colors;
+}
+
 // 기본 단축키 매핑
 const DEFAULT_SHORTCUTS = {
   // 재생 관련
@@ -243,6 +263,15 @@ export class UserSettings extends EventTarget {
         strokeEnabled: false,
         strokeWidth: 3,
         strokeColor: '#ffffff'
+      },
+      // 이 PC의 드로잉 팔레트 값(마지막 색·굵기·불투명도, 담아 둔 "내 색" — 최신이 앞).
+      // 위의 brushSettings 는 지금은 없는 구형 도구의 값이라 섞지 않는다. 몇 달 전에
+      // 쓰던 굵기와 색이 새 팔레트의 첫 화면이 되면 안 된다.
+      drawingPalette: {
+        color: '#ff4757',
+        size: 3,
+        opacity: 100,
+        savedColors: []
       }
     };
 
@@ -730,6 +759,39 @@ export class UserSettings extends EventTarget {
     this._save();
     this._emit('brushSettingsChanged', { brushSettings: this.settings.brushSettings });
     log.info('브러시 설정 변경됨', partial);
+  }
+
+  /**
+   * 드로잉 팔레트에 다시 심을 값(마지막 색·굵기·불투명도·내 색).
+   * 오버레이로 넘기는 형식은 shared/fabric-palette-prefs.js 의 검증기와 같다.
+   */
+  getFabricPalettePrefs() {
+    // 손으로 고친 설정 파일이나 일부만 남은 값이 들어 있어도, 꺼내 줄 때는 오버레이가
+    // 받는 형식이어야 한다. 하나라도 어긋나면 통째로 거절돼 아무것도 심기지 않는다.
+    const stored = this.settings.drawingPalette || {};
+    const size = parseInt(stored.size);
+    const opacity = parseInt(stored.opacity);
+    return {
+      color: normalizePaletteColor(stored.color) || '#ff4757',
+      size: Math.min(50, Math.max(1, Number.isFinite(size) ? size : 3)),
+      opacity: Math.min(100, Math.max(10, Number.isFinite(opacity) ? opacity : 100)),
+      savedColors: normalizeSavedPaletteColors(stored.savedColors)
+    };
+  }
+
+  /**
+   * 오버레이 팔레트에서 바뀐 값을 보존한다. 값은 preload 가 이미 검증했다.
+   */
+  setFabricPalettePrefs(prefs) {
+    this.settings.drawingPalette = {
+      color: prefs?.color,
+      size: prefs?.size,
+      opacity: prefs?.opacity,
+      savedColors: prefs?.savedColors
+    };
+    this.settings.drawingPalette = this.getFabricPalettePrefs();
+    this._save();
+    this._emit('drawingPaletteChanged', { drawingPalette: this.settings.drawingPalette });
   }
 
   getLightMode() {

@@ -1685,22 +1685,34 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
     /paletteShell = createFabricDrawingPalette\(\{\n\s+documentRef,\n\s+windowRef,\n\s+element: toolbar,\n\s+setStyles,\n\s+addDomListener,\n[\s\S]{0,400}?\n\s+sections: \[/
   );
   // 도구 줄은 아이콘 5개 한 줄이고 도형 4종은 드롭다운으로 접힌다(목업 확정).
-  // 섹션이 존재하고 도구 버튼을 담는다는 계약은 그대로다.
+  // 섹션이 존재하고 도구 버튼을 담는다는 계약은 그대로다. 아이콘만으로 읽히는
+  // 줄이라 라벨 없이 래퍼만 둔다.
   assert.match(
     fabricRuntimeSource,
-    /id: 'tools',\n\s+label: '도구',\n\s+layout: 'grid',\n\s+columns: 5,\n\s+gap: '3px',\n\s+items: \[\n\s+brushButton, penButton, eraserButton, shapeMenuControls\.button, selectButton\n\s+\],\n\s+appended: \[shapeMenuControls\.flyout\]/
+    /id: 'tools',\n\s+wrap: true,\n\s+layout: 'grid',\n\s+columns: 5,\n\s+gap: '4px',\n\s+items: \[\n\s+brushButton, penButton, eraserButton, shapeMenuControls\.button, selectButton\n\s+\],\n\s+appended: \[shapeMenuControls\.flyout\]/
   );
   assert.match(
     fabricRuntimeSource,
     /\{ id: 'selection', items: \[selectionControls\.group\] \}/
   );
+  // 팔레트가 놓이는 꼴에 따라 색·굵기 묶음이 둘로 갈린다. 편집창의 가로 도크는
+  // 여닫는 버튼 + 패널, 리뷰 화면의 세로 팔레트는 항상 펼친 패널이다.
+  assert.match(fabricRuntimeSource, /const paletteDocked = options\.paletteLayout === 'dock';/);
   assert.match(
     fabricRuntimeSource,
     /id: 'brush',\n\s+label: '브러시 설정',\n\s+items: \[brushControls\.settingsButton\],\n\s+appended: \[brushControls\.panel\]/
   );
   assert.match(
     fabricRuntimeSource,
-    /id: 'actions',\n\s+label: '편집',\n\s+items: \[undoButton, redoButton, deleteButton, clearButton\]/
+    /id: 'brush',\n\s+label: '색',\n\s+labelAccessory: colorControls\.current,\n\s+appended: \[brushControls\.panel\]/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /\{ id: 'actions', wrap: true, items: \[undoButton, redoButton, deleteButton, clearButton\] \}/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /id: 'actions',\n\s+wrap: true,\n\s+layout: 'grid',[\s\S]{0,200}?gridTemplateColumns: 'repeat\(3, 30px\) minmax\(0, 1fr\)',\n\s+gap: '4px',\n\s+items: \[undoButton, redoButton, deleteButton, clearButton\]/
   );
   assert.match(fabricRuntimeSource, /\{ id: 'status', items: \[badge\] \}/);
   assert.match(fabricRuntimeSource, /root\.appendChild\(container\);\n\s+paletteShell\.restore\(\);/);
@@ -1711,10 +1723,28 @@ test('오버레이 드로잉 UI는 상단 탭이 아니라 드래그형 팔레�
   // 접근성 라벨은 한글 그대로 유지된다 — 이름이 title/aria-label 로 옮겨갔을 뿐이다.
   assert.match(fabricRuntimeSource, /createButton\('', 'brush'\), '브러시 도구 \(B\)', TOOL_ICON_SVG\.brush/);
   assert.match(fabricRuntimeSource, /createButton\('', 'select'\), '선택 도구 \(V\)', TOOL_ICON_SVG\.select/);
-  assert.match(fabricRuntimeSource, /createButton\('실행 취소', 'undo'\), '실행 취소 \(Ctrl\+Z\)'/);
-  assert.match(fabricRuntimeSource, /createButton\('다시 실행', 'redo'\), '다시 실행 \(Ctrl\+Y\)'/);
-  assert.match(fabricRuntimeSource, /createButton\('선택 삭제', 'delete-selection'\)/);
-  assert.match(fabricRuntimeSource, /createButton\('전체 지우기', 'clear-session'\)/);
+  // 편집 줄도 세로 팔레트에서는 아이콘이다. 도크에서는 글자 그대로 둔다.
+  assert.match(
+    fabricRuntimeSource,
+    /labelToolbarButton\(createButton\(paletteDocked \? text : '', action\), label\)/
+  );
+  assert.match(fabricRuntimeSource, /actionButton\('undo', '실행 취소', '실행 취소 \(Ctrl\+Z\)'\)/);
+  assert.match(fabricRuntimeSource, /actionButton\('redo', '다시 실행', '다시 실행 \(Ctrl\+Y\)'\)/);
+  assert.match(
+    fabricRuntimeSource,
+    /actionButton\('delete-selection', '선택 삭제', '선택한 획 삭제 \(Delete\)'\)/
+  );
+  assert.match(
+    fabricRuntimeSource,
+    /actionButton\('clear-session', '전체 지우기', '현재 프레임 드로잉 전체 삭제'\)/
+  );
+  // 아이콘은 이모지가 아니라 도구 줄과 같은 선 굵기의 SVG 다.
+  for (const action of ['undo', 'redo', 'delete-selection', 'clear-session']) {
+    assert.match(
+      fabricRuntimeSource,
+      new RegExp(`'?${action}'?: '<svg viewBox="0 0 24 24"[^']+stroke="currentColor"[^']+aria-hidden="true">`)
+    );
+  }
 
   // setSurfaceInput 계약은 그대로다
   assert.match(
@@ -2247,12 +2277,16 @@ test('section labels do not advertise keyboard activation the overlay cannot del
   assert.match(fabricPaletteSource, /label\.setAttribute\?\.\('title', `\$\{section\.label\} 접기\/펴기`\);/);
 });
 
-test('the outline section sits under the colour palette in the brush panel', () => {
-  // 목업이 "색상 아래 자리를 비워 둔다"고 한 그 자리다.
+test('the brush panel runs colour, size, opacity and then the outline', () => {
+  // 색(기본 8색 → 내 색 → 색 고르기 판) 다음에 자주 쓰는 크기·불투명도가 오고,
+  // 외곽선은 맨 아래다. 외곽선은 켜면 색·굵기 줄이 펼쳐지므로 위에 두면 그때마다
+  // 크기·불투명도 막대가 밀린다.
   assert.match(
     fabricRuntimeSource,
-    /panel\.appendChild\(previewRow\);\n\s+panel\.appendChild\(palette\);\n\s+panel\.appendChild\(recentColors\.row\);\n\s+panel\.appendChild\(outlineGroup\);/
+    /panel\.appendChild\(palette\);\n\s+panel\.appendChild\(color\.savedRow\);\n\s+panel\.appendChild\(color\.panel\);\n\s+panel\.appendChild\(sizeRow\.row\);\n\s+panel\.appendChild\(opacityRow\.row\);\n[\s\S]{0,200}?panel\.appendChild\(outlineGroup\);/
   );
+  // 굵기 견본 줄은 눌러서 띄우는 배치(편집창 도크)에만 남는다.
+  assert.match(fabricRuntimeSource, /if \(!brushPanelInline\) panel\.appendChild\(previewRow\);/);
   // 외곽선은 본체에서 파생된 짝 레코드다 — id 규약으로 관계를 표현해 스키마를 지킨다.
   assert.match(fabricRuntimeSource, /const OUTLINE_ID_SUFFIX = '~outline';/);
   assert.match(fabricRuntimeSource, /function deriveOutlineRecord\(record, outline, geometryOptions = null\) \{/);

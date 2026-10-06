@@ -8,6 +8,8 @@ const PROBE_PREFIX = '__BAEFRAME_FABRIC_TOOLBAR_LAYOUT__';
 const rootDir = path.resolve(__dirname, '../..');
 
 const TOOL_ROW_ACTIONS = new Set(['brush', 'pen', 'eraser', 'shape-menu', 'select']);
+// 편집 줄의 아이콘 버튼. 도구 줄과 같은 정사각 크기다("전체 지우기"만 글자가 있어 넓다).
+const ICON_ACTIONS = new Set(['undo', 'redo', 'delete-selection']);
 
 function boxesOverlap(a, b, tolerance = 0.5) {
   return a.left < b.right - tolerance &&
@@ -283,10 +285,10 @@ async function runElectronProbe() {
       })();
     `, true);
 
-    // 브러시 설정 패널은 팔레트 스크롤 **안에 또** 스크롤을 만들면 안 되고,
-    // 슬라이더 줄은 한 줄에 앉아야 한다. 둘 다 눈으로만 보이던 결함이라
-    // 실제 렌더에서 재어야 잡힌다.
-    // 좁은 폭(≤800px, 팔레트 190px)과 넓은 폭(팔레트 220px)을 **둘 다** 잰다.
+    // 색·굵기 묶음은 팔레트 스크롤 **안에 또** 스크롤을 만들면 안 되고, 색 견본과
+    // 편집 줄은 각각 한 줄에 앉아야 한다. 눈으로만 보이던 결함이라 실제 렌더에서
+    // 재어야 잡힌다.
+    // 좁은 폭(≤800px, 팔레트 190px)과 넓은 폭(팔레트 212px)을 **둘 다** 잰다.
     // 801px 에서만 재면 미디어 쿼리가 바꾸는 치수를 통째로 놓친다.
     const panels = {};
     for (const [key, width] of [['narrow', 800], ['wide', 801]]) {
@@ -302,39 +304,80 @@ async function runElectronProbe() {
       (async () => {
         const settle = () => new Promise(resolve =>
           requestAnimationFrame(() => requestAnimationFrame(resolve)));
-        document.querySelector('[data-fabric-pilot-action="brush"]').click();
+        const action = name => document.querySelector('[data-fabric-pilot-action="' + name + '"]');
+        const sameLine = (nodes, tolerance = 2) => {
+          const top = nodes[0].getBoundingClientRect().top;
+          return nodes.filter(node => Math.abs(node.getBoundingClientRect().top - top) < tolerance).length;
+        };
+        action('brush').click();
         await settle();
-        const settingsButton = document.querySelector('[data-fabric-pilot-action="brush-settings"]');
-        // 두 폭을 연달아 재므로 이미 열려 있으면 다시 누르지 않는다.
-        if (settingsButton.getAttribute('aria-expanded') !== 'true') {
-          settingsButton.click();
-          await settle();
-        }
+        const toolbar = document.querySelector('.mpv-fabric-pilot-toolbar');
         const node = document.querySelector('[data-fabric-pilot-panel="brush-settings"]');
         const style = getComputedStyle(node);
         const colors = [...document.querySelectorAll('[data-fabric-pilot-color]')];
-        const firstTop = colors[0].getBoundingClientRect().top;
         const sizeInput = document.querySelector('[data-fabric-pilot-setting="size"]');
         const sizeRow = sizeInput.parentElement;
         const controls = [...sizeRow.children].filter(child =>
           child.tagName === 'BUTTON' || child.tagName === 'INPUT' ||
           child.dataset.fabricPilotOutput);
         const inputTop = sizeInput.getBoundingClientRect().top;
-        const status = document.querySelector('.mpv-fabric-pilot-brush-status');
-        const statusStyle = getComputedStyle(status);
+        const actions = ['undo', 'redo', 'delete-selection', 'clear-session'].map(action);
+        const clear = action('clear-session');
+
+        // 색 고르기 판을 펼친 상태도 잰다. 두 폭을 연달아 재므로 이미 열려 있으면 다시 누르지 않는다.
+        // 아래 치수 읽기가 레이아웃을 강제하므로 프레임을 기다릴 필요가 없다
+        // (숨은 창에서는 프레임 하나가 길다).
+        const toggle = action('color-picker-toggle');
+        if (toggle.getAttribute('aria-expanded') !== 'true') toggle.click();
+        const picker = document.querySelector('[data-fabric-pilot-panel="color-picker"]');
+        const field = document.querySelector('[data-fabric-pilot-picker="field"]');
+        const hexInput = document.querySelector('[data-fabric-pilot-setting="hex"]');
+        const save = action('save-color');
+        const toolbarBox = toolbar.getBoundingClientRect();
+        const pickerMeasure = {
+          display: getComputedStyle(picker).display,
+          fieldWidth: field.getBoundingClientRect().width,
+          fieldHeight: field.getBoundingClientRect().height,
+          hexRowOnOneLine: sameLine([hexInput, save], 4),
+          hexInputWidth: hexInput.getBoundingClientRect().width,
+          saveClipped: save.scrollWidth > save.clientWidth + 1,
+          insideToolbar: [field, hexInput, save].every(element => {
+            const box = element.getBoundingClientRect();
+            return box.left >= toolbarBox.left && box.right <= toolbarBox.right;
+          })
+        };
+
+        // Ctrl 을 누르고 있는 동안의 커서. 데이터 URL 커서를 Chromium 이 거절하면
+        // 계산된 값에 남지 않으므로, 여기서 재야 "고리 커서가 실제로 적용된다"가 확인된다.
+        const canvas = document.querySelector('.upper-canvas');
+        const cursorBefore = getComputedStyle(canvas).cursor;
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Control', bubbles: true }));
+        const cursorArmed = getComputedStyle(canvas).cursor;
+        const armedDataset = toolbar.dataset.tempErase;
+        document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Control', bubbles: true }));
+        const cursorAfter = getComputedStyle(canvas).cursor;
+
         return {
           display: style.display,
           maxHeight: style.maxHeight,
           overflowY: style.overflowY,
           scrollHeight: node.scrollHeight,
           clientHeight: node.clientHeight,
-          colorsPerRow: colors.filter(color =>
-            Math.abs(color.getBoundingClientRect().top - firstTop) < 2).length,
+          colorCount: colors.length,
+          colorsPerRow: sameLine(colors),
+          swatchWidth: colors[0].getBoundingClientRect().width,
+          swatchHeight: colors[0].getBoundingClientRect().height,
           controlCount: controls.length,
           controlsOnInputLine: controls.filter(child =>
             Math.abs(child.getBoundingClientRect().top - inputTop) < 12).length,
-          statusDisplay: statusStyle.display,
-          statusFontSize: statusStyle.fontSize
+          settingsButtonPresent: action('brush-settings') !== null,
+          actionsOnOneLine: sameLine(actions),
+          clearClipped: clear.scrollWidth > clear.clientWidth + 1,
+          picker: pickerMeasure,
+          cursorBefore,
+          cursorArmed,
+          cursorAfter,
+          armedDataset
         };
       })();
     `, true);
@@ -445,10 +488,10 @@ if (process.versions.electron) {
 
       for (const control of controls) {
         // 도구 줄은 아이콘 5열 그리드라 텍스트 버튼보다 좁다 —
-        // 212px 팔레트에서 약 36px, 190px 에서 약 31px.
+        // 212px 팔레트에서 약 36px, 190px 에서 약 31px. 편집 줄의 아이콘 셋은 30px 이다.
         const minimumWidth = control.action === 'toggle-collapse'
           ? 23.5
-          : (TOOL_ROW_ACTIONS.has(control.action) ? 28.5 : 39.5);
+          : (TOOL_ROW_ACTIONS.has(control.action) || ICON_ACTIONS.has(control.action) ? 28.5 : 39.5);
         const minimumHeight = control.action === 'toggle-collapse'
           ? 23.5
           : (control.action.startsWith('select-') ? 27.5 : 29.5);
@@ -495,36 +538,57 @@ if (process.versions.electron) {
       'dragging never creates overlay scroll'
     );
 
-    // 브러시 설정 패널 — 눈으로만 보이던 깨짐을 실제 렌더 치수로 못박는다.
+    // 색·굵기 묶음 — 눈으로만 보이던 깨짐을 실제 렌더 치수로 못박는다.
     // 좁은 폭(≤800px)과 넓은 폭을 둘 다 본다. 미디어 쿼리가 팔레트를 190px 로
-    // 줄이면 패널 안쪽도 함께 좁아져, 한쪽만 재면 다른 쪽 깨짐을 놓친다.
+    // 줄이면 묶음 안쪽도 함께 좁아져, 한쪽만 재면 다른 쪽 깨짐을 놓친다.
     for (const [key, panel] of Object.entries(probe.panels)) {
-      assert.equal(panel.display, 'flex', `${key}: 브러시 설정 패널이 열린다`);
-      // 패널이 스스로 잘리면 팔레트 스크롤 안에 스크롤이 또 생기고, 맨 아래
+      // 세로 팔레트는 색·굵기를 항상 펼쳐 둔다. 여닫는 버튼이 없어야 한다.
+      assert.equal(panel.display, 'flex', `${key}: 색·굵기 묶음이 펼쳐져 있다`);
+      assert.equal(panel.settingsButtonPresent, false, `${key}: 여닫는 버튼이 없다`);
+      // 묶음이 스스로 잘리면 팔레트 스크롤 안에 스크롤이 또 생기고, 맨 아래
       // 외곽선 설정은 안쪽 막대를 따로 내려야만 닿는다.
-      assert.equal(panel.maxHeight, 'none', `${key}: 패널은 높이를 자르지 않는다`);
+      assert.equal(panel.maxHeight, 'none', `${key}: 묶음은 높이를 자르지 않는다`);
       assert.ok(
         panel.overflowY !== 'auto' && panel.overflowY !== 'scroll',
-        `${key}: 패널이 스스로 스크롤한다 overflowY=${panel.overflowY}`
+        `${key}: 묶음이 스스로 스크롤한다 overflowY=${panel.overflowY}`
       );
       assert.ok(
         panel.scrollHeight <= panel.clientHeight + 1,
-        `${key}: 패널 안에 스크롤이 생겼다 ${panel.scrollHeight} > ${panel.clientHeight}`
+        `${key}: 묶음 안에 스크롤이 생겼다 ${panel.scrollHeight} > ${panel.clientHeight}`
       );
-      // 색 버튼이 패딩 때문에 46px 이 되면 한 줄에 둘밖에 못 들어가 네 줄을 잡아먹는다.
-      assert.ok(
-        panel.colorsPerRow >= 4,
+      // 기본 8색은 한 줄이다. 칸 치수를 고정하면 좁은 팔레트에서 둘째 줄로 흘러넘친다.
+      assert.equal(panel.colorCount, 8, `${key}: 기본 색은 여덟 개다`);
+      assert.equal(
+        panel.colorsPerRow,
+        8,
         `${key}: 색 견본이 한 줄에 ${panel.colorsPerRow}개뿐이다`
       );
-      // −·슬라이더·+·수치는 한 줄이다. range 입력의 기본 폭을 basis 로 두면 세 줄로 쪼개진다.
+      assert.ok(
+        panel.swatchWidth >= 16 && Math.abs(panel.swatchWidth - panel.swatchHeight) < 0.6,
+        `${key}: 색 견본은 누를 만한 크기의 원이어야 한다 ${panel.swatchWidth}x${panel.swatchHeight}`
+      );
+      // 슬라이더와 수치는 한 줄이다. range 입력의 기본 폭을 basis 로 두면 쪼개진다.
       assert.equal(
         panel.controlsOnInputLine,
         panel.controlCount,
         `${key}: 크기 조절 줄이 ${panel.controlCount}개 중 ${panel.controlsOnInputLine}개만 같은 줄에 있다`
       );
-      // 상태 줄에 CSS 규칙이 없으면 display:block·16px 로 떨어져 팔레트에서 가장 큰 글자가 된다.
-      assert.equal(panel.statusDisplay, 'flex', `${key}: 상태 줄은 가로 배치다`);
-      assert.equal(panel.statusFontSize, '11px', `${key}: 상태 줄은 보조 글자 크기다`);
+      // 편집 줄은 아이콘 셋과 "전체 지우기"가 한 줄이고, 글자가 잘리지 않는다.
+      assert.equal(panel.actionsOnOneLine, 4, `${key}: 편집 버튼 넷이 한 줄에 있어야 한다`);
+      assert.equal(panel.clearClipped, false, `${key}: "전체 지우기" 글자가 잘린다`);
+      // 색 고르기 판은 팔레트 폭 안에서 펼쳐지고 코드 입력칸과 담기 버튼이 한 줄이다.
+      assert.equal(panel.picker.display, 'flex', `${key}: 색 고르기 판이 펼쳐진다`);
+      assert.ok(panel.picker.fieldWidth >= 120, `${key}: 색 고르기 판 폭 ${panel.picker.fieldWidth}`);
+      assert.ok(panel.picker.fieldHeight >= 60, `${key}: 색 고르기 판 높이 ${panel.picker.fieldHeight}`);
+      assert.equal(panel.picker.hexRowOnOneLine, 2, `${key}: 코드 입력칸과 담기 버튼이 한 줄이다`);
+      assert.ok(panel.picker.hexInputWidth >= 56, `${key}: 코드 입력칸 폭 ${panel.picker.hexInputWidth}`);
+      assert.equal(panel.picker.saveClipped, false, `${key}: 담기 버튼 글자가 잘린다`);
+      assert.equal(panel.picker.insideToolbar, true, `${key}: 색 고르기 판이 팔레트를 넘친다`);
+      // Ctrl 을 누르는 동안에만 지우개 고리 커서가 실제로 적용된다.
+      assert.equal(panel.cursorBefore, 'crosshair', `${key}: 평소 커서`);
+      assert.match(panel.cursorArmed, /^url\("data:image\/svg\+xml,/, `${key}: Ctrl 커서`);
+      assert.equal(panel.armedDataset, 'true', `${key}: Ctrl 표시`);
+      assert.equal(panel.cursorAfter, 'crosshair', `${key}: Ctrl 을 떼면 돌아온다`);
     }
   });
 

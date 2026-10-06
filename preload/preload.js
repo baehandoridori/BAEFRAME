@@ -5,6 +5,7 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require('../shared/viewport-pan-message');
+const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
 
 const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
 const MPV_OVERLAY_POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
@@ -440,6 +441,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const listener = (event, message) => callback(message);
     ipcRenderer.on('fabric-drawing:persistence-event', listener);
     return () => ipcRenderer.removeListener('fabric-drawing:persistence-event', listener);
+  },
+  // 드로잉 팔레트 값(마지막 색·굵기·불투명도·내 색). 오버레이에서 바뀌면 받아 사용자
+  // 설정에 보존하고, 그리기를 켤 때 보존해 둔 값을 오버레이에 다시 심는다.
+  onFabricDrawingPalettePrefs: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, value) => {
+      const prefs = normalizeFabricPalettePrefs(value);
+      if (prefs) callback(prefs);
+    };
+    ipcRenderer.on('fabric-drawing:palette-prefs', listener);
+    return () => ipcRenderer.removeListener('fabric-drawing:palette-prefs', listener);
+  },
+  mpvApplyOverlayDrawingPalettePrefs: (value) => {
+    const prefs = normalizeFabricPalettePrefs(value);
+    if (!prefs) return Promise.resolve({ success: false, accepted: false, error: 'invalid drawing palette prefs' });
+    return ipcRenderer.invoke('mpv:apply-overlay-drawing-palette-prefs', prefs);
   },
   mpvDestroyOverlay: () => ipcRenderer.invoke('mpv:destroy-overlay'),
 

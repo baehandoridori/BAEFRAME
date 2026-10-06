@@ -172,7 +172,7 @@ function createFabricDrawingPalette(options = {}) {
   for (const section of sections) {
     const items = Array.isArray(section?.items) ? section.items : [];
     const appended = Array.isArray(section?.appended) ? section.appended : [];
-    if (!section?.label) {
+    if (!section?.label && section?.wrap !== true) {
       // 라벨이 없는 묶음(선택 설정 그룹·상태 배지)은 표시 여부를 스스로 관리하므로
       // 래퍼 없이 바로 붙여 접힘/펼침 시 빈 줄이 남지 않게 한다
       for (const item of items) content.appendChild(item);
@@ -181,10 +181,8 @@ function createFabricDrawingPalette(options = {}) {
     }
     const sectionElement = documentRef.createElement('div');
     sectionElement.className = 'mpv-fabric-pilot-section';
-    sectionElement.dataset.fabricPilotSection = String(section.id || section.label);
-    const label = documentRef.createElement('div');
-    label.className = 'mpv-fabric-pilot-section-label';
-    label.textContent = section.label;
+    const sectionId = String(section.id || section.label);
+    sectionElement.dataset.fabricPilotSection = sectionId;
     const row = documentRef.createElement('div');
     row.className = 'mpv-fabric-pilot-section-row';
     // 항목이 많은 섹션(도구 줄)은 한 줄로 늘어놓으면 팔레트를 넘친다.
@@ -197,7 +195,10 @@ function createFabricDrawingPalette(options = {}) {
       row.dataset.layout = 'grid';
       applyStyles(row, {
         display: 'grid',
-        gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+        // 폭이 서로 다른 칸(아이콘 셋 + 글자 버튼 하나)은 호출 쪽이 트랙을 직접 준다.
+        gridTemplateColumns: typeof section.gridTemplateColumns === 'string'
+          ? section.gridTemplateColumns
+          : `repeat(${columns}, minmax(0, 1fr))`,
         gap
       });
       for (const item of items) {
@@ -205,6 +206,22 @@ function createFabricDrawingPalette(options = {}) {
       }
     }
     for (const item of items) row.appendChild(item);
+    if (!section.label) {
+      // 라벨 없이 래퍼만 두는 묶음(도구 줄·편집 줄). 접을 손잡이가 없으므로 항상
+      // 펼쳐져 있고, 도구에 따라 통째로 숨기는 setSectionVisible 만 받는다.
+      sectionElement.appendChild(row);
+      for (const item of appended) sectionElement.appendChild(item);
+      sectionElements.set(sectionId, sectionElement);
+      content.appendChild(sectionElement);
+      continue;
+    }
+    const label = documentRef.createElement('div');
+    label.className = 'mpv-fabric-pilot-section-label';
+    const labelText = documentRef.createElement('span');
+    labelText.textContent = section.label;
+    label.appendChild(labelText);
+    // 라벨 오른쪽에 붙는 현재 값 표시(색 견본·코드 등). 라벨과 함께 접기 손잡이가 된다.
+    if (section.labelAccessory) label.appendChild(section.labelAccessory);
     // 섹션 라벨을 눌러 그 섹션만 접는다. 팔레트 전체 접기와는 별개다.
     //
     // 키보드 활성화는 배선하지 않는다. 그리기 입력이 켜져 있는 동안 오버레이
@@ -215,7 +232,6 @@ function createFabricDrawingPalette(options = {}) {
     // 오버레이가 포커스 상태를 호스트에 알리는 경로가 생기면 그때 배선한다.
     label.setAttribute?.('title', `${section.label} 접기/펴기`);
     label.dataset.collapsed = 'false';
-    const sectionId = String(section.id || section.label);
     const toggleSection = () => {
       const collapsed = label.dataset.collapsed !== 'true';
       label.dataset.collapsed = String(collapsed);

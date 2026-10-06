@@ -6260,17 +6260,15 @@
         for (const section of sections) {
           const items = Array.isArray(section?.items) ? section.items : [];
           const appended = Array.isArray(section?.appended) ? section.appended : [];
-          if (!section?.label) {
+          if (!section?.label && section?.wrap !== true) {
             for (const item of items) content.appendChild(item);
             for (const item of appended) content.appendChild(item);
             continue;
           }
           const sectionElement = documentRef.createElement("div");
           sectionElement.className = "mpv-fabric-pilot-section";
-          sectionElement.dataset.fabricPilotSection = String(section.id || section.label);
-          const label = documentRef.createElement("div");
-          label.className = "mpv-fabric-pilot-section-label";
-          label.textContent = section.label;
+          const sectionId = String(section.id || section.label);
+          sectionElement.dataset.fabricPilotSection = sectionId;
           const row = documentRef.createElement("div");
           row.className = "mpv-fabric-pilot-section-row";
           if (section.layout === "grid") {
@@ -6279,7 +6277,8 @@
             row.dataset.layout = "grid";
             applyStyles(row, {
               display: "grid",
-              gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
+              // 폭이 서로 다른 칸(아이콘 셋 + 글자 버튼 하나)은 호출 쪽이 트랙을 직접 준다.
+              gridTemplateColumns: typeof section.gridTemplateColumns === "string" ? section.gridTemplateColumns : `repeat(${columns}, minmax(0, 1fr))`,
               gap
             });
             for (const item of items) {
@@ -6287,9 +6286,21 @@
             }
           }
           for (const item of items) row.appendChild(item);
+          if (!section.label) {
+            sectionElement.appendChild(row);
+            for (const item of appended) sectionElement.appendChild(item);
+            sectionElements.set(sectionId, sectionElement);
+            content.appendChild(sectionElement);
+            continue;
+          }
+          const label = documentRef.createElement("div");
+          label.className = "mpv-fabric-pilot-section-label";
+          const labelText = documentRef.createElement("span");
+          labelText.textContent = section.label;
+          label.appendChild(labelText);
+          if (section.labelAccessory) label.appendChild(section.labelAccessory);
           label.setAttribute?.("title", `${section.label} \uC811\uAE30/\uD3B4\uAE30`);
           label.dataset.collapsed = "false";
-          const sectionId = String(section.id || section.label);
           const toggleSection = () => {
             const collapsed = label.dataset.collapsed !== "true";
             label.dataset.collapsed = String(collapsed);
@@ -6500,6 +6511,59 @@
         FABRIC_SHAPE_TOOLS,
         isFabricDrawingTool,
         normalizeFabricDrawingTool
+      };
+    }
+  });
+
+  // shared/fabric-palette-prefs.js
+  var require_fabric_palette_prefs = __commonJS({
+    "shared/fabric-palette-prefs.js"(exports, module) {
+      "use strict";
+      var FABRIC_PALETTE_SAVED_COLOR_LIMIT = 7;
+      var FABRIC_PALETTE_MIN_BRUSH_SIZE = 1;
+      var FABRIC_PALETTE_MAX_BRUSH_SIZE = 50;
+      var FABRIC_PALETTE_MIN_OPACITY_PERCENT = 10;
+      var FABRIC_PALETTE_MAX_OPACITY_PERCENT = 100;
+      var FABRIC_PALETTE_PREFS_KEYS = Object.freeze(["color", "size", "opacity", "savedColors"]);
+      var FABRIC_PALETTE_HEX_COLOR = /^#[0-9a-f]{6}$/;
+      function isIntegerInRange(value, min, max) {
+        return Number.isInteger(value) && value >= min && value <= max;
+      }
+      function normalizeFabricPalettePrefs(value) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+        try {
+          if (Object.getPrototypeOf(value) !== Object.prototype) return null;
+          const keys = Object.keys(value);
+          if (keys.length !== FABRIC_PALETTE_PREFS_KEYS.length || !FABRIC_PALETTE_PREFS_KEYS.every((key) => keys.includes(key))) {
+            return null;
+          }
+          const { color, size, opacity, savedColors } = value;
+          if (typeof color !== "string" || !FABRIC_PALETTE_HEX_COLOR.test(color) || !isIntegerInRange(size, FABRIC_PALETTE_MIN_BRUSH_SIZE, FABRIC_PALETTE_MAX_BRUSH_SIZE) || !isIntegerInRange(
+            opacity,
+            FABRIC_PALETTE_MIN_OPACITY_PERCENT,
+            FABRIC_PALETTE_MAX_OPACITY_PERCENT
+          ) || !Array.isArray(savedColors) || savedColors.length > FABRIC_PALETTE_SAVED_COLOR_LIMIT) {
+            return null;
+          }
+          const colors = [];
+          for (const entry of savedColors) {
+            if (typeof entry !== "string" || !FABRIC_PALETTE_HEX_COLOR.test(entry) || colors.includes(entry)) {
+              return null;
+            }
+            colors.push(entry);
+          }
+          return { color, size, opacity, savedColors: colors };
+        } catch (_error) {
+          return null;
+        }
+      }
+      module.exports = {
+        FABRIC_PALETTE_SAVED_COLOR_LIMIT,
+        FABRIC_PALETTE_MIN_BRUSH_SIZE,
+        FABRIC_PALETTE_MAX_BRUSH_SIZE,
+        FABRIC_PALETTE_MIN_OPACITY_PERCENT,
+        FABRIC_PALETTE_MAX_OPACITY_PERCENT,
+        normalizeFabricPalettePrefs
       };
     }
   });
@@ -13916,6 +13980,13 @@ void main() {
         isFabricDrawingTool,
         normalizeFabricDrawingTool
       } = require_fabric_drawing_tools();
+      var {
+        FABRIC_PALETTE_SAVED_COLOR_LIMIT: SAVED_COLOR_LIMIT,
+        FABRIC_PALETTE_MIN_BRUSH_SIZE: MIN_BRUSH_SIZE,
+        FABRIC_PALETTE_MAX_BRUSH_SIZE: MAX_BRUSH_SIZE,
+        FABRIC_PALETTE_MIN_OPACITY_PERCENT: MIN_BRUSH_OPACITY_PERCENT,
+        FABRIC_PALETTE_MAX_OPACITY_PERCENT: MAX_BRUSH_OPACITY_PERCENT
+      } = require_fabric_palette_prefs();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -13961,7 +14032,18 @@ void main() {
         arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
         select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>'
       });
+      var ACTION_ICON_SVG = Object.freeze({
+        undo: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>',
+        redo: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>',
+        "delete-selection": '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+        "clear-session": '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/></svg>',
+        "color-picker-toggle": '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>'
+      });
       var SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
+      var ERASER_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#000" stroke-opacity="0.65" stroke-width="3.5"/><circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.5"/><circle cx="12" cy="12" r="1.6" fill="#000" fill-opacity="0.65"/><circle cx="12" cy="12" r="0.9" fill="#fff"/></svg>'
+      )}") 12 12, crosshair`;
+      var TEMP_ERASE_TOOL_LABEL = "\uC9C0\uC6B0\uAC1C \xB7 Ctrl";
       var TOOL_STATUS_LABELS = Object.freeze({
         brush: "\uBE0C\uB7EC\uC2DC",
         pen: "\uD39C",
@@ -13978,16 +14060,12 @@ void main() {
         circle: "\uC6D0",
         arrow: "\uD654\uC0B4\uD45C"
       });
-      var RECENT_COLOR_LIMIT = 4;
-      var MIN_BRUSH_SIZE = 1;
-      var MAX_BRUSH_SIZE = 50;
+      var PALETTE_PREFS_NOTIFY_DELAY_MS = 400;
       var MIN_OUTLINE_WIDTH = 1;
       var MAX_OUTLINE_WIDTH = 20;
       var DEFAULT_OUTLINE_WIDTH = 2;
       var DEFAULT_OUTLINE_COLOR = "#000000";
       var SIZE_ADJUST_HUD_FLASH_MS = 700;
-      var MIN_BRUSH_OPACITY_PERCENT = 10;
-      var MAX_BRUSH_OPACITY_PERCENT = 100;
       var SIZE_ADJUST_PIXELS_PER_STEP = 4;
       var FABRIC_PERSISTENCE_BADGE_PREFIX = "\uC0C8 \uB4DC\uB85C\uC789 \xB7 \uB9AC\uBDF0 \uC790\uB3D9 \uC800\uC7A5";
       var SELECTION_HIT_MARGIN_CSS_PX = 6;
@@ -14174,6 +14252,50 @@ void main() {
         const parsed = Number.parseInt(value, 10);
         if (!Number.isFinite(parsed)) return fallback;
         return Math.min(max, Math.max(min, parsed));
+      }
+      function normalizeHexColor(value) {
+        if (typeof value !== "string") return null;
+        const match = /^#?([0-9a-f]{6})$/i.exec(value.trim());
+        return match ? `#${match[1].toLowerCase()}` : null;
+      }
+      function hexToHsv(hex) {
+        const normalized = normalizeHexColor(hex);
+        if (!normalized) return null;
+        const red = Number.parseInt(normalized.slice(1, 3), 16) / 255;
+        const green = Number.parseInt(normalized.slice(3, 5), 16) / 255;
+        const blue = Number.parseInt(normalized.slice(5, 7), 16) / 255;
+        const max = Math.max(red, green, blue);
+        const delta = max - Math.min(red, green, blue);
+        let hue = 0;
+        if (delta > 0) {
+          if (max === red) hue = (green - blue) / delta % 6;
+          else if (max === green) hue = (blue - red) / delta + 2;
+          else hue = (red - green) / delta + 4;
+          hue *= 60;
+          if (hue < 0) hue += 360;
+        }
+        return { h: hue, s: max > 0 ? delta / max : 0, v: max };
+      }
+      function hsvToHex(hue, saturation, value) {
+        const h = (finiteNumber(hue) % 360 + 360) % 360;
+        const s = Math.min(1, Math.max(0, finiteNumber(saturation)));
+        const v = Math.min(1, Math.max(0, finiteNumber(value)));
+        const channel = (offset) => {
+          const k = (offset + h / 60) % 6;
+          const level = v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+          return Math.round(level * 255).toString(16).padStart(2, "0");
+        };
+        return `#${channel(5)}${channel(3)}${channel(1)}`;
+      }
+      function normalizeSavedColors(value, limit = SAVED_COLOR_LIMIT) {
+        const colors = [];
+        if (!Array.isArray(value)) return colors;
+        for (const entry of value) {
+          if (colors.length >= limit) break;
+          const color = normalizeHexColor(entry);
+          if (color && !colors.includes(color)) colors.push(color);
+        }
+        return colors;
       }
       function normalizePathOpacity(value) {
         if (value === null || value === void 0 || value === "") return 1;
@@ -16970,7 +17092,9 @@ void main() {
         };
         let outlineControls = null;
         let brushControls = null;
-        let brushPanelOpen = false;
+        const paletteDocked = options.paletteLayout === "dock";
+        const brushPanelInline = !paletteDocked;
+        let brushPanelOpen = brushPanelInline;
         let selectionTarget = "stroke";
         let selectionShape = "rectangle";
         let selectionControlEventCount = 0;
@@ -16981,9 +17105,17 @@ void main() {
         let shapeMenuControls = null;
         let shapeMenuOpen = false;
         let lastShapeTool = "rect";
-        let brushStatusRow = null;
-        const recentColors = [];
-        let recentColorControls = null;
+        let savedColors = [];
+        let colorControls = null;
+        let colorPickerOpen = false;
+        let pickerHsv = hexToHsv(DEFAULT_BRUSH_STYLE.color);
+        let pickerDrag = null;
+        const palettePrefsBridge = options.palettePrefsBridge || windowRef?.mpvOverlayPalettePrefs;
+        const textEntryBridge = options.textEntryBridge || windowRef?.mpvOverlayTextEntry;
+        let palettePrefsTimer = null;
+        let palettePrefsTouched = false;
+        let textEntryActive = false;
+        let tempEraseArmed = false;
         let transformStart = null;
         let selectGesture = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
@@ -17057,73 +17189,387 @@ void main() {
           }
           selectionControls.summary.textContent = selectionTarget === "partial" ? `\uD604\uC7AC: \uBD80\uBD84 \uC790\uB974\uAE30 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}` : `\uD604\uC7AC: \uD68D \uC804\uCCB4 \xB7 ${selectionShape === "lasso" ? "\uB77C\uC3D8 \uC601\uC5ED" : "\uC0AC\uAC01 \uC601\uC5ED"}`;
         }
-        function createBrushStatusRow() {
-          const row = documentRef.createElement("div");
-          row.className = "mpv-fabric-pilot-brush-status";
-          const swatch = documentRef.createElement("span");
-          swatch.dataset.fabricPilotOutput = "brush-status-swatch";
-          const text = documentRef.createElement("span");
-          text.dataset.fabricPilotOutput = "brush-status-text";
-          text.setAttribute?.("role", "status");
-          text.setAttribute?.("aria-live", "polite");
-          row.appendChild(swatch);
-          row.appendChild(text);
-          return { row, swatch, text };
-        }
-        function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
-          if (!brushStatusRow) return;
-          const diameter = Math.min(22, Math.max(4, brushStyle.size));
-          setStyles(brushStatusRow.swatch, {
-            display: "inline-block",
-            width: `${diameter}px`,
-            height: `${diameter}px`,
-            borderRadius: "50%",
-            background: brushStyle.color,
-            opacity: String(brushStyle.opacity)
-          });
-          const toolName = TOOL_STATUS_LABELS[tool] || "";
-          const outlineSuffix = outlineStyle.enabled ? ` \xB7 \uC678\uACFD\uC120 ${outlineStyle.width}px` : "";
-          brushStatusRow.text.textContent = toolName ? `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}% \xB7 ${toolName}${outlineSuffix}` : `${brushStyle.size}px \xB7 ${Math.round(brushStyle.opacity * 100)}%${outlineSuffix}`;
-        }
-        function createRecentColorControls() {
-          const row = documentRef.createElement("div");
-          row.className = "mpv-fabric-pilot-recent-colors";
-          row.setAttribute?.("role", "group");
-          row.setAttribute?.("aria-label", "\uCD5C\uADFC \uC0AC\uC6A9 \uC0C9");
-          const buttons = [];
-          for (let index = 0; index < RECENT_COLOR_LIMIT; index += 1) {
-            const button = createButton("", `recent-color-${index}`);
-            button.dataset.fabricPilotRecentColor = "";
-            setStyles(button, { display: "none", minWidth: "20px", minHeight: "20px", padding: "0" });
+        function createColorControls() {
+          const savedRow = documentRef.createElement("div");
+          savedRow.className = "mpv-fabric-pilot-saved-colors";
+          savedRow.setAttribute?.("role", "group");
+          savedRow.setAttribute?.("aria-label", "\uB0B4 \uC0C9");
+          const savedButtons = [];
+          const savedDots = [];
+          for (let index = 0; index < SAVED_COLOR_LIMIT; index += 1) {
+            const button = createButton("", `saved-color-${index}`);
+            button.dataset.fabricPilotSavedColor = "";
+            button.setAttribute?.("aria-pressed", "false");
+            setStyles(button, { display: "none", alignItems: "center", justifyContent: "center" });
+            const dot = documentRef.createElement("span");
+            setStyles(dot, { borderRadius: "50%" });
+            if (!brushPanelInline) setStyles(dot, { width: "20px", height: "20px" });
+            button.appendChild(dot);
+            savedDots.push(dot);
             addDomListener(button, "click", () => {
-              const color = button.dataset.fabricPilotRecentColor;
+              const color = button.dataset.fabricPilotSavedColor;
               if (color) setBrushColor(color);
             });
-            row.appendChild(button);
-            buttons.push(button);
-          }
-          return { row, buttons };
-        }
-        function syncRecentColorControls() {
-          if (!recentColorControls) return;
-          recentColorControls.buttons.forEach((button, index) => {
-            const color = recentColors[index];
-            button.dataset.fabricPilotRecentColor = color || "";
-            setStyles(button, {
-              display: color ? "inline-block" : "none",
-              background: color || "transparent"
+            addDomListener(button, "contextmenu", (event) => {
+              event?.preventDefault?.();
+              removeSavedColor(button.dataset.fabricPilotSavedColor);
             });
-            button.setAttribute?.("aria-label", color ? `\uCD5C\uADFC \uC0C9 ${color}` : "");
-            button.setAttribute?.("title", color ? `\uCD5C\uADFC \uC0C9 ${color}` : "");
+            savedRow.appendChild(button);
+            savedButtons.push(button);
+          }
+          const toggle = iconToolbarButton(
+            createButton("", "color-picker-toggle"),
+            "\uC0C9 \uC9C1\uC811 \uACE0\uB974\uAE30",
+            ACTION_ICON_SVG["color-picker-toggle"]
+          );
+          toggle.dataset.active = "false";
+          toggle.setAttribute?.("aria-expanded", "false");
+          savedRow.appendChild(toggle);
+          const hint = documentRef.createElement("span");
+          hint.className = "mpv-fabric-pilot-saved-hint";
+          hint.dataset.fabricPilotOutput = "saved-hint";
+          hint.setAttribute?.("aria-hidden", "true");
+          hint.textContent = "\uC0C9 \uC9C1\uC811 \uACE0\uB974\uAE30";
+          savedRow.appendChild(hint);
+          const panel = documentRef.createElement("div");
+          panel.className = "mpv-fabric-pilot-color-picker";
+          panel.dataset.fabricPilotPanel = "color-picker";
+          panel.setAttribute?.("role", "group");
+          panel.setAttribute?.("aria-label", "\uC0C9 \uC9C1\uC811 \uACE0\uB974\uAE30");
+          setStyles(panel, { display: "none" });
+          const field = documentRef.createElement("div");
+          field.className = "mpv-fabric-pilot-color-field";
+          field.dataset.fabricPilotPicker = "field";
+          const knob = documentRef.createElement("span");
+          knob.dataset.fabricPilotPicker = "knob";
+          field.appendChild(knob);
+          const hueInput = documentRef.createElement("input");
+          hueInput.type = "range";
+          hueInput.tabIndex = -1;
+          hueInput.min = "0";
+          hueInput.max = "359";
+          hueInput.step = "1";
+          hueInput.dataset.fabricPilotSetting = "hue";
+          hueInput.setAttribute?.("aria-label", "\uC0C9\uC870");
+          const hexRow = documentRef.createElement("div");
+          hexRow.className = "mpv-fabric-pilot-hex-row";
+          const hexInput = documentRef.createElement("input");
+          hexInput.type = "text";
+          hexInput.maxLength = 7;
+          hexInput.spellcheck = false;
+          hexInput.autocomplete = "off";
+          hexInput.dataset.fabricPilotSetting = "hex";
+          hexInput.setAttribute?.("aria-label", "\uC0C9\uC0C1 \uCF54\uB4DC");
+          const saveButton = labelToolbarButton(
+            createButton("\uB0B4 \uC0C9\uC5D0 \uB2F4\uAE30", "save-color"),
+            "\uC9C0\uAE08 \uC0C9\uC744 \uB0B4 \uC0C9\uC5D0 \uB2F4\uAE30"
+          );
+          hexRow.appendChild(hexInput);
+          hexRow.appendChild(saveButton);
+          const hexError = documentRef.createElement("div");
+          hexError.className = "mpv-fabric-pilot-hex-error";
+          hexError.dataset.fabricPilotOutput = "hex-error";
+          hexError.setAttribute?.("role", "alert");
+          panel.appendChild(field);
+          panel.appendChild(hueInput);
+          panel.appendChild(hexRow);
+          panel.appendChild(hexError);
+          const current = documentRef.createElement("span");
+          current.className = "mpv-fabric-pilot-current-color";
+          const chip = documentRef.createElement("span");
+          chip.dataset.fabricPilotOutput = "color-chip";
+          const code = documentRef.createElement("span");
+          code.dataset.fabricPilotOutput = "color-code";
+          current.appendChild(chip);
+          current.appendChild(code);
+          addDomListener(toggle, "click", () => setColorPickerOpen(!colorPickerOpen));
+          addDomListener(hint, "click", () => setColorPickerOpen(!colorPickerOpen));
+          addDomListener(field, "pointerdown", onColorFieldPointerDown);
+          addDomListener(field, "pointermove", onColorFieldPointerMove);
+          addDomListener(field, "pointerup", onColorFieldPointerEnd);
+          addDomListener(field, "pointercancel", onColorFieldPointerEnd);
+          addDomListener(field, "lostpointercapture", onColorFieldPointerEnd);
+          addDomListener(hueInput, "input", () => {
+            pickerHsv = {
+              ...pickerHsv,
+              h: boundedInteger(hueInput.value, 0, 359, Math.round(pickerHsv.h) % 360)
+            };
+            applyPickerColor();
           });
+          addDomListener(hexInput, "focus", () => setTextEntryActive(true));
+          addDomListener(hexInput, "blur", () => {
+            setTextEntryActive(false);
+            showHexError("");
+            syncColorControls();
+          });
+          addDomListener(hexInput, "input", onHexInput);
+          addDomListener(hexInput, "keydown", onHexKeyDown);
+          addDomListener(saveButton, "click", () => saveCurrentColor());
+          return {
+            savedRow,
+            savedButtons,
+            savedDots,
+            toggle,
+            hint,
+            panel,
+            field,
+            knob,
+            hueInput,
+            hexInput,
+            hexError,
+            saveButton,
+            current,
+            chip,
+            code
+          };
         }
-        function noteRecentColor(color) {
-          if (typeof color !== "string" || color.length === 0) return;
-          const index = recentColors.indexOf(color);
-          if (index >= 0) recentColors.splice(index, 1);
-          recentColors.unshift(color);
-          while (recentColors.length > RECENT_COLOR_LIMIT) recentColors.pop();
-          syncRecentColorControls();
+        function syncColorControls() {
+          if (!colorControls) return;
+          const color = brushStyle.color;
+          colorControls.savedButtons.forEach((button, index) => {
+            const saved = savedColors[index] || "";
+            button.dataset.fabricPilotSavedColor = saved;
+            setStyles(button, { display: saved ? "inline-flex" : "none" });
+            setStyles(colorControls.savedDots[index], { background: saved || "transparent" });
+            button.setAttribute?.("aria-pressed", String(saved !== "" && saved === color));
+            button.setAttribute?.("aria-label", saved ? `\uB0B4 \uC0C9 ${saved.toUpperCase()}` : "");
+            button.setAttribute?.(
+              "title",
+              saved ? `\uB0B4 \uC0C9 ${saved.toUpperCase()} \xB7 \uC6B0\uD074\uB9AD\uC73C\uB85C \uBE7C\uAE30` : ""
+            );
+          });
+          setStyles(colorControls.hint, { display: savedColors.length === 0 ? "" : "none" });
+          colorControls.toggle.dataset.active = String(colorPickerOpen);
+          colorControls.toggle.setAttribute?.("aria-expanded", String(colorPickerOpen));
+          setStyles(colorControls.panel, { display: colorPickerOpen ? "flex" : "none" });
+          const hue = Math.round(pickerHsv.h) % 360;
+          colorControls.field.style.setProperty?.("--fabric-picker-hue", String(hue));
+          setStyles(colorControls.knob, {
+            left: `${Math.round(pickerHsv.s * 1e3) / 10}%`,
+            top: `${Math.round((1 - pickerHsv.v) * 1e3) / 10}%`,
+            background: color
+          });
+          colorControls.hueInput.value = String(hue);
+          if (!textEntryActive) colorControls.hexInput.value = color;
+          setStyles(colorControls.chip, { background: color });
+          colorControls.code.textContent = color.toUpperCase();
+          const savable = !BRUSH_COLORS.includes(color) && !savedColors.includes(color);
+          colorControls.saveButton.textContent = savable ? "\uB0B4 \uC0C9\uC5D0 \uB2F4\uAE30" : "\uC774\uBBF8 \uC788\uB294 \uC0C9";
+          colorControls.saveButton.setAttribute?.("aria-disabled", String(!savable));
+          const saveHint = savable && savedColors.length >= SAVED_COLOR_LIMIT ? "\uC9C0\uAE08 \uC0C9\uC744 \uB0B4 \uC0C9\uC5D0 \uB2F4\uAE30 (\uCE78\uC774 \uAC00\uB4DD \uCC28 \uAC00\uC7A5 \uC624\uB798\uB41C \uC0C9\uC774 \uBE60\uC9D1\uB2C8\uB2E4)" : "\uC9C0\uAE08 \uC0C9\uC744 \uB0B4 \uC0C9\uC5D0 \uB2F4\uAE30";
+          colorControls.saveButton.setAttribute?.("aria-label", saveHint);
+          colorControls.saveButton.setAttribute?.("title", saveHint);
+        }
+        function setColorPickerOpen(open) {
+          colorPickerOpen = open === true;
+          if (!colorPickerOpen) colorControls?.hexInput?.blur?.();
+          syncColorControls();
+          paletteShell?.restore?.();
+          return colorPickerOpen;
+        }
+        function readColorFieldPosition(event) {
+          const rect = colorControls?.field?.getBoundingClientRect?.();
+          if (!rect || !(rect.width > 0) || !(rect.height > 0)) return null;
+          return {
+            s: Math.min(1, Math.max(0, (finiteNumber(event?.clientX) - rect.left) / rect.width)),
+            v: 1 - Math.min(1, Math.max(0, (finiteNumber(event?.clientY) - rect.top) / rect.height))
+          };
+        }
+        function applyPickerColor() {
+          setBrushColor(hsvToHex(pickerHsv.h, pickerHsv.s, pickerHsv.v), { fromPicker: true });
+        }
+        function onColorFieldPointerDown(event) {
+          if (event?.button !== void 0 && event.button !== 0) return;
+          const position = readColorFieldPosition(event);
+          if (!position) return;
+          endTextEntry();
+          pickerDrag = { pointerId: event?.pointerId };
+          try {
+            colorControls.field.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
+          pickerHsv = { ...pickerHsv, ...position };
+          applyPickerColor();
+          event?.preventDefault?.();
+        }
+        function onColorFieldPointerMove(event) {
+          if (!pickerDrag) return;
+          if (pickerDrag.pointerId !== void 0 && event?.pointerId !== pickerDrag.pointerId) return;
+          const position = readColorFieldPosition(event);
+          if (!position) return;
+          pickerHsv = { ...pickerHsv, ...position };
+          applyPickerColor();
+        }
+        function onColorFieldPointerEnd(event) {
+          if (!pickerDrag) return;
+          if (pickerDrag.pointerId !== void 0 && event?.pointerId !== void 0 && event.pointerId !== pickerDrag.pointerId) return;
+          const pointerId = pickerDrag.pointerId;
+          pickerDrag = null;
+          try {
+            colorControls?.field?.releasePointerCapture?.(pointerId);
+          } catch (_error) {
+          }
+        }
+        function showHexError(message) {
+          if (!colorControls) return;
+          colorControls.hexError.textContent = message || "";
+          colorControls.hexInput.setAttribute?.("aria-invalid", String(!!message));
+        }
+        function hexDraftProblem(text) {
+          const draft = String(text ?? "").trim();
+          if (draft === "") return "";
+          if (!/^#?[0-9a-f]*$/i.test(draft)) return "0\u20139\uC640 A\u2013F\uB9CC \uC4F8 \uC218 \uC788\uC2B5\uB2C8\uB2E4";
+          if (draft.replace("#", "").length > 6) return "\uC5EC\uC12F \uC790\uB9AC\uAE4C\uC9C0\uB9CC \uC785\uB825\uD558\uC138\uC694";
+          return "";
+        }
+        function onHexInput() {
+          if (!colorControls) return;
+          const text = colorControls.hexInput.value;
+          const color = normalizeHexColor(text);
+          if (color) {
+            showHexError("");
+            setBrushColor(color);
+            return;
+          }
+          showHexError(hexDraftProblem(text));
+        }
+        function onHexKeyDown(event) {
+          if (!colorControls) return;
+          if (event?.key === "Enter") {
+            event.preventDefault?.();
+            if (normalizeHexColor(colorControls.hexInput.value)) {
+              colorControls.hexInput.blur?.();
+            } else {
+              showHexError(
+                hexDraftProblem(colorControls.hexInput.value) || "# \uB4A4\uC5D0 \uC5EC\uC12F \uC790\uB9AC\uB97C \uC785\uB825\uD558\uC138\uC694"
+              );
+            }
+            return;
+          }
+          if (event?.key === "Escape") {
+            event.preventDefault?.();
+            colorControls.hexInput.blur?.();
+          }
+        }
+        function setTextEntryActive(active) {
+          const next = active === true;
+          if (next === textEntryActive) return;
+          textEntryActive = next;
+          try {
+            textEntryBridge?.set?.(next);
+          } catch (_error) {
+          }
+        }
+        function endTextEntry() {
+          const input = colorControls?.hexInput;
+          const holdsFocus = !!input && documentRef?.activeElement === input;
+          if (!textEntryActive && !holdsFocus) return;
+          input?.blur?.();
+          setTextEntryActive(false);
+          showHexError("");
+          syncColorControls();
+        }
+        function saveCurrentColor() {
+          const color = brushStyle.color;
+          if (BRUSH_COLORS.includes(color) || savedColors.includes(color)) return false;
+          savedColors = [color, ...savedColors].slice(0, SAVED_COLOR_LIMIT);
+          syncColorControls();
+          schedulePalettePrefsNotify();
+          return true;
+        }
+        function removeSavedColor(color) {
+          if (!color || !savedColors.includes(color)) return false;
+          savedColors = savedColors.filter((entry) => entry !== color);
+          syncColorControls();
+          schedulePalettePrefsNotify();
+          return true;
+        }
+        function getPalettePrefs() {
+          return {
+            color: brushStyle.color,
+            size: brushStyle.size,
+            opacity: Math.round(brushStyle.opacity * 100),
+            savedColors: [...savedColors]
+          };
+        }
+        function cancelPalettePrefsNotify() {
+          if (palettePrefsTimer === null) return;
+          clearTimeoutRef?.(palettePrefsTimer);
+          palettePrefsTimer = null;
+        }
+        function notifyPalettePrefs() {
+          try {
+            palettePrefsBridge.notify(getPalettePrefs());
+          } catch (_error) {
+          }
+        }
+        function schedulePalettePrefsNotify() {
+          palettePrefsTouched = true;
+          if (typeof palettePrefsBridge?.notify !== "function" || typeof setTimeoutRef !== "function") return;
+          cancelPalettePrefsNotify();
+          palettePrefsTimer = setTimeoutRef(() => {
+            palettePrefsTimer = null;
+            notifyPalettePrefs();
+          }, PALETTE_PREFS_NOTIFY_DELAY_MS);
+        }
+        function flushPalettePrefsNotify() {
+          if (palettePrefsTimer === null) return;
+          cancelPalettePrefsNotify();
+          notifyPalettePrefs();
+        }
+        function applyPalettePrefs(prefs = {}) {
+          if (destroyed) return { accepted: false, reason: "destroyed" };
+          if (palettePrefsTouched) return { accepted: false, reason: "local-changes" };
+          brushStyle = {
+            color: normalizeHexColor(prefs?.color) || brushStyle.color,
+            size: boundedInteger(prefs?.size, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size),
+            opacity: boundedInteger(
+              prefs?.opacity,
+              MIN_BRUSH_OPACITY_PERCENT,
+              MAX_BRUSH_OPACITY_PERCENT,
+              Math.round(brushStyle.opacity * 100)
+            ) / 100
+          };
+          savedColors = normalizeSavedColors(prefs?.savedColors).filter((color) => !BRUSH_COLORS.includes(color));
+          pickerHsv = hexToHsv(brushStyle.color) || pickerHsv;
+          syncBrushControls();
+          return { accepted: true, ...getPalettePrefs() };
+        }
+        function resolveTempEraseArmed(event, tool = currentSession?.tool) {
+          if (!inputEnabled) return false;
+          if (strokeEraseGesture) return strokeEraseGesture.temporary === true;
+          if (activeStroke || activeLasso || shapeGesture || sizeAdjustGesture || selectGesture) {
+            return false;
+          }
+          if (tool !== "brush" && tool !== "pen") return false;
+          if (!activeLayerDrawable) return false;
+          const pointerEvent = typeof event?.pointerType === "string" ? event : null;
+          if (pointerEvent ? isAltActive(pointerEvent) : overlayModifierState.alt === true) return false;
+          return pointerEvent ? isCtrlActive(pointerEvent) : overlayModifierState.ctrl === true;
+        }
+        function resolveCanvasCursor(tool) {
+          if (tool === "select") return usesNativeRectangleSelection(tool) ? "default" : "crosshair";
+          return tool === "eraser" || tempEraseArmed ? ERASER_CURSOR : "crosshair";
+        }
+        function applyTempErasePresentation(tool = currentSession?.tool) {
+          if (toolbar) toolbar.dataset.tempErase = String(tempEraseArmed);
+          for (const [buttonTool, button] of toolButtons) {
+            button.dataset.tempActive = String(tempEraseArmed && buttonTool === "eraser");
+            button.dataset.returnTool = String(tempEraseArmed && buttonTool === tool);
+          }
+          paletteShell?.setActiveToolLabel?.(
+            tempEraseArmed ? TEMP_ERASE_TOOL_LABEL : TOOL_STATUS_LABELS[tool] || ""
+          );
+          if (fabricCanvas) {
+            fabricCanvas.defaultCursor = resolveCanvasCursor(tool);
+            fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
+          }
+        }
+        function syncTempErase(event) {
+          const armed = resolveTempEraseArmed(event);
+          if (armed === tempEraseArmed) return;
+          tempEraseArmed = armed;
+          applyTempErasePresentation();
         }
         function createShapeMenuControls() {
           const button = labelToolbarButton(createButton("", "shape-menu"), "\uB3C4\uD615 \uB3C4\uAD6C");
@@ -17435,11 +17881,16 @@ void main() {
           syncBrushControls();
           return outlineStyle.width;
         }
-        function setBrushColor(color) {
-          if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
-          brushStyle = { ...brushStyle, color };
+        function setBrushColor(color, { fromPicker = false } = {}) {
+          const normalized = normalizeHexColor(color);
+          if (!normalized) return brushStyle.color;
+          brushStyle = { ...brushStyle, color: normalized };
+          if (!fromPicker) {
+            const next = hexToHsv(normalized);
+            pickerHsv = next.s === 0 || next.v === 0 ? { ...next, h: pickerHsv.h } : next;
+          }
           syncBrushControls();
-          noteRecentColor(brushStyle.color);
+          schedulePalettePrefsNotify();
           return brushStyle.color;
         }
         function setBrushSize(value) {
@@ -17448,6 +17899,7 @@ void main() {
             size: boundedInteger(value, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size)
           };
           syncBrushControls();
+          schedulePalettePrefsNotify();
           return brushStyle.size;
         }
         function setBrushOpacityPercent(value) {
@@ -17460,10 +17912,10 @@ void main() {
           );
           brushStyle = { ...brushStyle, opacity: percent / 100 };
           syncBrushControls();
+          schedulePalettePrefsNotify();
           return percent;
         }
         function syncBrushControls() {
-          syncBrushStatusRow();
           if (!brushControls) return;
           const opacityPercent = Math.round(brushStyle.opacity * 100);
           brushControls.settingsButton.setAttribute?.("aria-expanded", String(brushPanelOpen));
@@ -17492,14 +17944,13 @@ void main() {
             for (const button of outlineControls.colorButtons) {
               const active = button.dataset.fabricPilotOutlineColor === outlineStyle.color;
               button.setAttribute?.("aria-pressed", String(active));
-              button.style.boxShadow = active ? "0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)" : "none";
             }
           }
           for (const button of brushControls.colorButtons) {
             const active = button.dataset.fabricPilotColor === brushStyle.color;
             button.setAttribute?.("aria-pressed", String(active));
-            button.style.boxShadow = active ? "0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)" : "none";
           }
+          syncColorControls();
         }
         function createBrushSettingsControls() {
           const settingsButton = labelToolbarButton(
@@ -17532,19 +17983,24 @@ void main() {
           panel.dataset.fabricPilotPanel = "brush-settings";
           panel.setAttribute?.("role", "group");
           panel.setAttribute?.("aria-label", "\uBE0C\uB7EC\uC2DC \uC124\uC815");
+          panel.dataset.presentation = brushPanelInline ? "inline" : "popover";
           setStyles(panel, {
             display: "none",
             position: "static",
             width: "100%",
             flexDirection: "column",
             gap: "10px",
-            marginTop: "6px",
-            padding: "8px",
-            boxSizing: "border-box",
-            borderRadius: "8px",
-            background: "rgba(255, 255, 255, 0.05)",
-            color: "#fff"
+            boxSizing: "border-box"
           });
+          if (!brushPanelInline) {
+            setStyles(panel, {
+              marginTop: "6px",
+              padding: "8px",
+              borderRadius: "8px",
+              background: "rgba(255, 255, 255, 0.05)",
+              color: "#fff"
+            });
+          }
           const previewRow = documentRef.createElement("div");
           setStyles(previewRow, {
             display: "flex",
@@ -17560,16 +18016,22 @@ void main() {
           });
           previewRow.appendChild(sizePreview);
           const palette = documentRef.createElement("div");
-          setStyles(palette, {
-            display: "flex",
-            flexWrap: "wrap",
-            // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
-            gap: "var(--fabric-palette-gap)"
-          });
-          const colorButtons = BRUSH_COLORS.map((color) => {
+          palette.className = "mpv-fabric-pilot-swatches";
+          palette.setAttribute?.("role", "group");
+          palette.setAttribute?.("aria-label", "\uAE30\uBCF8 \uC0C9");
+          if (!brushPanelInline) {
+            setStyles(palette, {
+              display: "flex",
+              flexWrap: "wrap",
+              // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
+              gap: "var(--fabric-palette-gap)"
+            });
+          }
+          const colorButtons = BRUSH_COLORS.map((color2) => {
             const button = createButton("", "brush-color");
-            button.dataset.fabricPilotColor = color;
-            button.setAttribute?.("aria-label", `\uBE0C\uB7EC\uC2DC \uC0C9\uC0C1 ${BRUSH_COLOR_LABELS[color]}`);
+            button.dataset.fabricPilotColor = color2;
+            button.setAttribute?.("aria-label", `\uBE0C\uB7EC\uC2DC \uC0C9\uC0C1 ${BRUSH_COLOR_LABELS[color2]}`);
+            button.setAttribute?.("title", BRUSH_COLOR_LABELS[color2]);
             button.setAttribute?.("aria-pressed", "false");
             setStyles(button, {
               display: "inline-flex",
@@ -17577,13 +18039,14 @@ void main() {
               justifyContent: "center"
             });
             const dot = documentRef.createElement("span");
-            setStyles(dot, {
-              width: "20px",
-              height: "20px",
-              borderRadius: "50%",
-              background: color,
-              border: color === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
-            });
+            setStyles(dot, { borderRadius: "50%", background: color2 });
+            if (!brushPanelInline) {
+              setStyles(dot, {
+                width: "20px",
+                height: "20px",
+                border: color2 === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
+              });
+            }
             button.appendChild(dot);
             palette.appendChild(button);
             return button;
@@ -17648,18 +18111,19 @@ void main() {
           setStyles(outlineToggle, { flex: "1 1 100%" });
           outlineGroup.appendChild(outlineToggle);
           const outlinePalette = documentRef.createElement("div");
+          outlinePalette.className = "mpv-fabric-pilot-outline-swatches";
           setStyles(outlinePalette, { display: "flex", flexFlow: "row wrap", gap: "4px", flex: "1 1 100%" });
-          const outlineColorButtons = BRUSH_COLORS.map((color) => {
-            const button = createButton("", `outline-color-${color.replace("#", "")}`);
-            button.dataset.fabricPilotOutlineColor = color;
-            button.setAttribute?.("aria-label", `\uC678\uACFD\uC120 \uC0C9 ${color}`);
-            button.setAttribute?.("title", `\uC678\uACFD\uC120 \uC0C9 ${color}`);
+          const outlineColorButtons = BRUSH_COLORS.map((color2) => {
+            const button = createButton("", `outline-color-${color2.replace("#", "")}`);
+            button.dataset.fabricPilotOutlineColor = color2;
+            button.setAttribute?.("aria-label", `\uC678\uACFD\uC120 \uC0C9 ${color2}`);
+            button.setAttribute?.("title", `\uC678\uACFD\uC120 \uC0C9 ${color2}`);
             setStyles(button, {
               minWidth: "20px",
               minHeight: "20px",
               padding: "0",
-              background: color,
-              border: color === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
+              background: color2,
+              border: color2 === "#ffffff" ? "1px solid rgba(0, 0, 0, 0.7)" : "none"
             });
             outlinePalette.appendChild(button);
             return button;
@@ -17674,14 +18138,16 @@ void main() {
           });
           setStyles(outlineWidthRow.row, { flex: "1 1 100%" });
           outlineGroup.appendChild(outlineWidthRow.row);
-          const recentColors2 = createRecentColorControls();
-          panel.appendChild(previewRow);
+          const color = createColorControls();
+          if (!brushPanelInline) panel.appendChild(previewRow);
           panel.appendChild(palette);
-          panel.appendChild(recentColors2.row);
-          panel.appendChild(outlineGroup);
+          panel.appendChild(color.savedRow);
+          panel.appendChild(color.panel);
           panel.appendChild(sizeRow.row);
           panel.appendChild(opacityRow.row);
+          panel.appendChild(outlineGroup);
           addDomListener(settingsButton, "click", () => {
+            if (brushPanelInline) return;
             brushPanelOpen = !brushPanelOpen;
             syncBrushControls();
           });
@@ -17714,7 +18180,7 @@ void main() {
             summary,
             colorPreview,
             sizePreview,
-            recentColors: recentColors2,
+            color,
             outline: {
               group: outlineGroup,
               toggle: outlineToggle,
@@ -18140,7 +18606,6 @@ void main() {
         }
         function setToolMode(tool) {
           if (!fabricCanvas) return;
-          paletteShell?.setActiveToolLabel?.(TOOL_STATUS_LABELS[tool] || "");
           if (tool !== "select") abortPendingLassoSelection();
           const selectMode = tool === "select";
           const nativeSelectMode = usesNativeRectangleSelection(tool);
@@ -18151,7 +18616,8 @@ void main() {
           }
           fabricCanvas.isDrawingMode = false;
           fabricCanvas.selection = nativeSelectMode;
-          fabricCanvas.defaultCursor = selectMode ? nativeSelectMode ? "default" : "crosshair" : "crosshair";
+          tempEraseArmed = resolveTempEraseArmed(null, tool);
+          applyTempErasePresentation(tool);
           fabricCanvas.hoverCursor = "grab";
           fabricCanvas.moveCursor = "grabbing";
           fabricCanvas.freeDrawingCursor = "crosshair";
@@ -18169,7 +18635,6 @@ void main() {
           syncSelectionControls(tool);
           syncEraserModeControls(tool);
           syncShapeMenuControls(tool);
-          syncBrushStatusRow(tool);
           syncToolSectionVisibility(tool);
           refreshSelectionInteractionPolicy();
           fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
@@ -18184,6 +18649,14 @@ void main() {
             visibility: enabled ? "visible" : "hidden",
             opacity: enabled ? "1" : "0"
           });
+          if (!enabled) {
+            endTextEntry();
+            pickerDrag = null;
+            if (tempEraseArmed) {
+              tempEraseArmed = false;
+              applyTempErasePresentation();
+            }
+          }
         }
         function toSourceSample(event) {
           if (!currentSession) return null;
@@ -20008,19 +20481,32 @@ void main() {
           if (event?.key === "Alt") {
             overlayModifierState.alt = true;
             gestureProbe.overlayAltKeyDownCount += 1;
+            syncTempErase();
           }
           if (event?.key === "Control") {
             overlayModifierState.ctrl = true;
             gestureProbe.overlayCtrlKeyDownCount += 1;
+            syncTempErase();
           }
         }
         function onOverlayKeyUp(event) {
-          if (event?.key === "Alt") overlayModifierState.alt = false;
-          if (event?.key === "Control") overlayModifierState.ctrl = false;
+          if (event?.key === "Alt") {
+            overlayModifierState.alt = false;
+            syncTempErase();
+          }
+          if (event?.key === "Control") {
+            overlayModifierState.ctrl = false;
+            syncTempErase();
+          }
+        }
+        function onCanvasPointerLeave() {
+          syncTempErase();
         }
         function onOverlayWindowBlur(event) {
           viewportPanInput?.reset();
           resetOverlayModifierState();
+          endTextEntry();
+          syncTempErase();
           endSizeAdjustGesture(event);
           cancelStrokeEraseGesture(event);
           cancelShapeGesture();
@@ -20376,6 +20862,7 @@ void main() {
             event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
             gesture.pointerId
           );
+          syncTempErase(event);
           return true;
         }
         function offsetRibbonFromSpine(spine, radius) {
@@ -20688,9 +21175,12 @@ void main() {
               // Ctrl 임시 지우개는 항상 'stroke' 다 — 레거시 동작과 같고, modifier 제스처가
               // 팔레트 상태에 따라 달라지면 사용자가 예측할 수 없다.
               mode: tool === "eraser" ? eraserMode : "stroke",
+              // Ctrl 로 잠깐 연 지우개인가. 표시(커서·팔레트)가 제스처 끝까지 이 값을 따른다.
+              temporary: tool !== "eraser",
               // 픽셀 모드에서 리본 폴리곤을 만들기 위한 지나간 경로. stroke 모드에서는 쓰지 않는다.
               pathPoints: []
             };
+            syncTempErase(event);
             try {
               event.currentTarget?.setPointerCapture?.(event.pointerId);
             } catch (_error) {
@@ -20886,6 +21376,7 @@ void main() {
           return false;
         }
         function onPointerDown(event) {
+          endTextEntry();
           recordPointerdownProbe(event);
           syncOverlayModifierStateFromPointer(event);
           if (event?.[REPLAYED_POINTERDOWN] === true) {
@@ -21011,6 +21502,7 @@ void main() {
         }
         function onPointerMove(event) {
           if (!event?.[REPLAYED_POINTERDOWN] && viewportPanInput?.event(event)) return;
+          syncTempErase(event);
           if (sizeAdjustGesture) {
             if (event.pointerId !== sizeAdjustGesture.pointerId) return;
             updateSizeAdjustGesture(event);
@@ -21068,6 +21560,7 @@ void main() {
             if (eraseContext && eraseContext.hidden > 0) fabricCanvas.requestRenderAll();
             finalizeStrokeEraseGesture();
             releasePointerCapture(event.currentTarget, event.pointerId);
+            syncTempErase(event);
             event.preventDefault?.();
             return;
           }
@@ -21394,6 +21887,7 @@ void main() {
           addDomListener(pointerTarget, "pointerup", onPointerUp, true);
           addDomListener(pointerTarget, "pointercancel", onPointerCancel, true);
           addDomListener(pointerTarget, "lostpointercapture", onPointerCancel, true);
+          addDomListener(pointerTarget, "pointerleave", onCanvasPointerLeave, true);
           addDomListener(pointerTarget, "contextmenu", onCanvasContextMenu, true);
           addDomListener(documentRef, "pointerup", onDocumentPointerUp);
           addDomListener(documentRef, "pointercancel", onDocumentPointerCancel);
@@ -21625,8 +22119,11 @@ void main() {
           selectionControls = null;
           eraserModeControls = null;
           shapeMenuControls = null;
-          brushStatusRow = null;
-          recentColorControls = null;
+          setTextEntryActive(false);
+          colorControls = null;
+          pickerDrag = null;
+          tempEraseArmed = false;
+          flushPalettePrefsNotify();
           outlineControls = null;
           badge = null;
           sizeAdjustHud = null;
@@ -21685,19 +22182,28 @@ void main() {
               TOOL_ICON_SVG.select
             );
             shapeMenuControls = createShapeMenuControls();
-            const undoButton = labelToolbarButton(createButton("\uC2E4\uD589 \uCDE8\uC18C", "undo"), "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
-            const redoButton = labelToolbarButton(createButton("\uB2E4\uC2DC \uC2E4\uD589", "redo"), "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
-            const deleteButton = labelToolbarButton(
-              createButton("\uC120\uD0DD \uC0AD\uC81C", "delete-selection"),
-              "\uC120\uD0DD\uD55C \uD68D \uC0AD\uC81C (Delete)"
-            );
-            const clearButton = labelToolbarButton(
-              createButton("\uC804\uCCB4 \uC9C0\uC6B0\uAE30", "clear-session"),
-              "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C"
-            );
+            const actionButton = (action, text, label) => {
+              const button = labelToolbarButton(createButton(paletteDocked ? text : "", action), label);
+              if (paletteDocked) return button;
+              const icon = documentRef.createElement("span");
+              icon.dataset.fabricPilotIcon = action;
+              icon.setAttribute?.("aria-hidden", "true");
+              icon.innerHTML = ACTION_ICON_SVG[action] || "";
+              button.appendChild(icon);
+              return button;
+            };
+            const undoButton = actionButton("undo", "\uC2E4\uD589 \uCDE8\uC18C", "\uC2E4\uD589 \uCDE8\uC18C (Ctrl+Z)");
+            const redoButton = actionButton("redo", "\uB2E4\uC2DC \uC2E4\uD589", "\uB2E4\uC2DC \uC2E4\uD589 (Ctrl+Y)");
+            const deleteButton = actionButton("delete-selection", "\uC120\uD0DD \uC0AD\uC81C", "\uC120\uD0DD\uD55C \uD68D \uC0AD\uC81C (Delete)");
+            const clearButton = actionButton("clear-session", "\uC804\uCCB4 \uC9C0\uC6B0\uAE30", "\uD604\uC7AC \uD504\uB808\uC784 \uB4DC\uB85C\uC789 \uC804\uCCB4 \uC0AD\uC81C");
+            clearButton.dataset.tone = "danger";
+            if (!paletteDocked) {
+              const clearText = documentRef.createElement("span");
+              clearText.textContent = "\uC804\uCCB4 \uC9C0\uC6B0\uAE30";
+              clearButton.appendChild(clearText);
+            }
             brushControls = createBrushSettingsControls();
-            brushStatusRow = createBrushStatusRow();
-            recentColorControls = brushControls.recentColors;
+            colorControls = brushControls.color;
             outlineControls = brushControls.outline;
             selectionControls = createSelectionControls();
             eraserModeControls = createEraserModeControls();
@@ -21722,11 +22228,12 @@ void main() {
               },
               sections: [
                 {
+                  // 도구 줄과 편집 줄은 아이콘만으로 읽히므로 라벨을 두지 않는다.
                   id: "tools",
-                  label: "\uB3C4\uAD6C",
+                  wrap: true,
                   layout: "grid",
                   columns: 5,
-                  gap: "3px",
+                  gap: "4px",
                   items: [
                     brushButton,
                     penButton,
@@ -21736,18 +22243,26 @@ void main() {
                   ],
                   appended: [shapeMenuControls.flyout]
                 },
-                { id: "brush-status", items: [brushStatusRow.row] },
                 { id: "selection", items: [selectionControls.group] },
                 { id: "eraser", label: "\uC9C0\uC6B0\uAC1C \uBC29\uC2DD", items: [eraserModeControls.group] },
-                {
+                paletteDocked ? {
                   id: "brush",
                   label: "\uBE0C\uB7EC\uC2DC \uC124\uC815",
                   items: [brushControls.settingsButton],
                   appended: [brushControls.panel]
+                } : {
+                  id: "brush",
+                  label: "\uC0C9",
+                  labelAccessory: colorControls.current,
+                  appended: [brushControls.panel]
                 },
-                {
+                paletteDocked ? { id: "actions", wrap: true, items: [undoButton, redoButton, deleteButton, clearButton] } : {
                   id: "actions",
-                  label: "\uD3B8\uC9D1",
+                  wrap: true,
+                  layout: "grid",
+                  // 아이콘 셋은 정사각, 글자가 붙은 "전체 지우기"가 남은 폭을 쓴다.
+                  gridTemplateColumns: "repeat(3, 30px) minmax(0, 1fr)",
+                  gap: "4px",
                   items: [undoButton, redoButton, deleteButton, clearButton]
                 },
                 { id: "status", items: [badge] }
@@ -22163,6 +22678,7 @@ void main() {
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
           layerHistoryBusy = command.layerHistoryBusy === true;
+          syncTempErase();
           if (command.objectRanks !== void 0) {
             sceneStore.setObjectRanks?.({
               objectRanks: command.objectRanks,
@@ -22383,6 +22899,8 @@ void main() {
             gestures: {
               altSizeAdjustActive: !!sizeAdjustGesture,
               ctrlStrokeEraseActive: !!strokeEraseGesture,
+              // 누르기 전에 보여 주는 Ctrl 임시 지우개 표시가 켜져 있는가.
+              tempEraseArmed,
               strokeEraseCandidateCount: strokeEraseGesture ? strokeEraseGesture.erasedIds.size : 0,
               modifierAlt: overlayModifierState.alt,
               modifierCtrl: overlayModifierState.ctrl,
@@ -22407,6 +22925,7 @@ void main() {
             selectionTarget,
             selectionShape,
             eraserMode,
+            palette: getPalettePrefs(),
             // 진행 중 지우기 제스처가 시작 시점에 래치한 모드. 드래그 도중 팔레트를 눌러도
             // 이 값은 바뀌지 않는다.
             activeEraseMode: strokeEraseGesture ? strokeEraseGesture.mode : null,
@@ -22472,6 +22991,7 @@ void main() {
           exportDrawingVideo,
           updateDrawingTool,
           updateDrawingBrush,
+          applyPalettePrefs,
           updateDrawingLayerView,
           updateViewport,
           applyDrawingAction,
@@ -22532,7 +23052,10 @@ void main() {
         resolveEffectiveCanvasRect,
         resolveSelectionHitTolerance,
         mapClientPointToSource,
-        splitStrokePointsByPolygon
+        splitStrokePointsByPolygon,
+        normalizeHexColor,
+        hexToHsv,
+        hsvToHex
       };
     }
   });

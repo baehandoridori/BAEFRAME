@@ -19,8 +19,14 @@ const {
   resolveEffectiveCanvasRect,
   resolveSelectionHitTolerance,
   mapClientPointToSource,
-  splitStrokePointsByPolygon
+  splitStrokePointsByPolygon,
+  normalizeHexColor,
+  hexToHsv,
+  hsvToHex
 } = require(runtimePath);
+const {
+  createFabricDrawingPalette
+} = require(path.join(rootDir, 'renderer/scripts/modules/mpv-fabric-toolbar.js'));
 const {
   FABRIC_DRAWING_TOOLS
 } = require(path.join(rootDir, 'shared/fabric-drawing-tools.js'));
@@ -400,26 +406,41 @@ function selectPartialRectangle(root) {
   clickSelectionControl(root, 'select-shape-rectangle');
 }
 
+// 가짜 DOM 과 실제 Fabric 하네스(jsdom) 양쪽에서 쓴다. jsdom 쪽은 아이콘 SVG 까지
+// 훑으므로 dataset 이 없는 노드를 만나도 넘어가야 한다.
 function getBrushControls(root) {
-  const toolbar = root.querySelectorAllByClass('mpv-fabric-pilot-toolbar')[0];
+  const byClass = className => findOne(root, node =>
+    typeof node.className === 'string' && node.className.split(/\s+/).includes(className));
+  const data = (scope, key, value) => findOne(scope, node => node.dataset?.[key] === value);
+  const toolbar = byClass('mpv-fabric-pilot-toolbar');
+  const surface = byClass('mpv-fabric-overlay-surface');
   return {
     toolbar,
-    sizeHud: findOne(root.querySelectorAllByClass('mpv-fabric-overlay-surface')[0],
-      node => node.dataset.fabricPilotOutput === 'size-adjust'),
-    sizeHudLabel: findOne(root.querySelectorAllByClass('mpv-fabric-overlay-surface')[0],
-      node => node.dataset.fabricPilotOutput === 'size-adjust-label'),
-    undoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'undo'),
-    redoButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'redo'),
-    settingsButton: findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush-settings'),
-    panel: findOne(toolbar, node => node.dataset.fabricPilotPanel === 'brush-settings'),
-    colorButtons: findAll(toolbar, node => typeof node.dataset.fabricPilotColor === 'string'),
-    sizeInput: findOne(toolbar, node => node.dataset.fabricPilotSetting === 'size'),
-    opacityInput: findOne(toolbar, node => node.dataset.fabricPilotSetting === 'opacity'),
-    sizeOutput: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'size'),
-    opacityOutput: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'opacity'),
-    summary: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'summary'),
-    colorPreview: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'color-preview'),
-    sizePreview: findOne(toolbar, node => node.dataset.fabricPilotOutput === 'size-preview'),
+    sizeHud: data(surface, 'fabricPilotOutput', 'size-adjust'),
+    sizeHudLabel: data(surface, 'fabricPilotOutput', 'size-adjust-label'),
+    undoButton: data(toolbar, 'fabricPilotAction', 'undo'),
+    redoButton: data(toolbar, 'fabricPilotAction', 'redo'),
+    settingsButton: data(toolbar, 'fabricPilotAction', 'brush-settings'),
+    panel: data(toolbar, 'fabricPilotPanel', 'brush-settings'),
+    colorButtons: findAll(toolbar, node => typeof node.dataset?.fabricPilotColor === 'string'),
+    sizeInput: data(toolbar, 'fabricPilotSetting', 'size'),
+    opacityInput: data(toolbar, 'fabricPilotSetting', 'opacity'),
+    sizeOutput: data(toolbar, 'fabricPilotOutput', 'size'),
+    opacityOutput: data(toolbar, 'fabricPilotOutput', 'opacity'),
+    summary: data(toolbar, 'fabricPilotOutput', 'summary'),
+    colorPreview: data(toolbar, 'fabricPilotOutput', 'color-preview'),
+    sizePreview: data(toolbar, 'fabricPilotOutput', 'size-preview'),
+    savedButtons: findAll(toolbar, node => typeof node.dataset?.fabricPilotSavedColor === 'string'),
+    pickerToggle: data(toolbar, 'fabricPilotAction', 'color-picker-toggle'),
+    pickerPanel: data(toolbar, 'fabricPilotPanel', 'color-picker'),
+    pickerField: data(toolbar, 'fabricPilotPicker', 'field'),
+    pickerKnob: data(toolbar, 'fabricPilotPicker', 'knob'),
+    hueInput: data(toolbar, 'fabricPilotSetting', 'hue'),
+    hexInput: data(toolbar, 'fabricPilotSetting', 'hex'),
+    hexError: data(toolbar, 'fabricPilotOutput', 'hex-error'),
+    saveColorButton: data(toolbar, 'fabricPilotAction', 'save-color'),
+    colorCode: data(toolbar, 'fabricPilotOutput', 'color-code'),
+    colorChip: data(toolbar, 'fabricPilotOutput', 'color-chip'),
     sizeField: findOne(toolbar, node =>
       node.className === 'mpv-fabric-pilot-field' &&
       findOne(node, child => child.dataset?.fabricPilotSetting === 'size') !== null)
@@ -8304,6 +8325,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
 
   assert.deepEqual(Object.keys(runtime).sort(), [
     'applyDrawingAction',
+    'applyPalettePrefs',
     'confirmDrawingPointerdownFrame',
     'destroy',
     'exportDrawingVideo',
@@ -8387,7 +8409,8 @@ test('responsive toolbar keeps one accessible DOM and a compact persistence badg
     ['redo', '다시 실행 (Ctrl+Y)'],
     ['delete-selection', '선택한 획 삭제 (Delete)'],
     ['clear-session', '현재 프레임 드로잉 전체 삭제'],
-    ['brush-settings', '브러시 설정'],
+    ['color-picker-toggle', '색 직접 고르기'],
+    ['save-color', '지금 색을 내 색에 담기'],
     ['select-target-stroke', '획 전체 선택'],
     ['select-target-partial', '획 일부 선택'],
     ['select-shape-rectangle', '사각형 선택'],
@@ -8413,6 +8436,35 @@ test('responsive toolbar keeps one accessible DOM and a compact persistence badg
     assert.equal(button.getAttribute('aria-label'), label);
     assert.equal(button.getAttribute('title'), label);
   }
+  // 세로 팔레트는 색·굵기를 항상 펼쳐 둔다. 여닫는 버튼이 화면에 없어야 닫힌 채
+  // 남는 일이 없다.
+  assert.equal(panel.dataset.presentation, 'inline');
+  assert.equal(panel.style.display, 'flex');
+  assert.equal(
+    findOne(toolbar, node => node.dataset.fabricPilotAction === 'brush-settings'),
+    null
+  );
+  // 편집 줄은 아이콘이다. 이름은 위에서 본 title/aria-label 로만 남는다.
+  for (const action of ['undo', 'redo', 'delete-selection']) {
+    const button = findOne(toolbar, node => node.dataset.fabricPilotAction === action);
+    assert.equal(button.textContent, '', `${action} 버튼에는 글자가 없다`);
+    assert.equal(button.children.length, 1);
+    assert.equal(button.children[0].dataset.fabricPilotIcon, action);
+    assert.match(button.children[0].innerHTML, /^<svg /);
+    assert.equal(button.children[0].getAttribute('aria-hidden'), 'true');
+  }
+  // 되돌릴 수 없는 범위가 가장 넓은 전체 지우기만 글자를 함께 둔다.
+  const clearButton = findOne(toolbar, node => node.dataset.fabricPilotAction === 'clear-session');
+  assert.equal(clearButton.dataset.tone, 'danger');
+  assert.deepEqual(clearButton.children.map(child => child.textContent), ['', '전체 지우기']);
+  const actionsRow = findOne(toolbar, node => node.dataset.fabricPilotSection === 'actions').children[0];
+  assert.equal(actionsRow.style.gridTemplateColumns, 'repeat(3, 30px) minmax(0, 1fr)');
+  // 도구 줄과 편집 줄에는 라벨이 없다. 라벨은 접을 수 있는 묶음에만 둔다.
+  assert.deepEqual(
+    findAll(toolbar, node => node.className === 'mpv-fabric-pilot-section-label')
+      .map(label => label.children[0].textContent),
+    ['지우개 방식', '색']
+  );
   assert.equal(badge.getAttribute('role'), 'status');
   assert.equal(badge.getAttribute('aria-live'), 'polite');
   assert.equal(badge.textContent, '자동 저장 · F-');
@@ -8489,7 +8541,8 @@ test('a failed partial prepare rolls back its surface and retries without duplic
     .every(listeners => listeners.size === 1), true);
   assert.deepEqual(
     [...recoveredCanvas.upperCanvasEl.listeners.keys()].sort(),
-    ['contextmenu', 'lostpointercapture', 'pointercancel', 'pointerdown', 'pointermove', 'pointerup']
+    // pointerleave 는 Ctrl 임시 지우개 표시를 포인터가 캔버스를 떠날 때 다시 맞춘다.
+    ['contextmenu', 'lostpointercapture', 'pointercancel', 'pointerdown', 'pointerleave', 'pointermove', 'pointerup']
   );
 
   assert.equal(runtime.setDrawingInput(makeInput()).accepted, true);
@@ -8853,9 +8906,11 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   FakeCanvas.instances = [];
   const document = new FakeDocument();
   const root = document.createElement('div');
+  // 편집창의 가로 도크 배치. 색·굵기는 버튼을 눌렀을 때만 뜨는 패널이다.
   const runtime = createFabricOverlayRuntime({
     fabric: { Canvas: FakeCanvas, Path: FakePath },
-    document
+    document,
+    paletteLayout: 'dock'
   });
   runtime.prepare(root);
   runtime.setDrawingInput(makeInput());
@@ -8863,6 +8918,10 @@ test('brush settings expose the familiar bounded palette without mutating the sc
   const controls = getBrushControls(root);
   const before = runtime.getDiagnostics();
   assert.ok(controls.settingsButton);
+  assert.equal(controls.panel.dataset.presentation, 'popover');
+  // 도크의 편집 버튼은 글자 그대로다(가로 한 줄이라 폭이 넉넉하다).
+  assert.equal(controls.undoButton.textContent, '실행 취소');
+  assert.equal(controls.undoButton.children.length, 0);
   assert.ok(controls.panel);
   assert.equal(controls.settingsButton.getAttribute('aria-expanded'), 'false');
   assert.equal(controls.panel.style.display, 'none');
@@ -10117,6 +10176,8 @@ test('each stroke snapshots color size and opacity and warm reactivation restore
     fabric: { Canvas: FakeCanvas, Path: FakePath },
     document,
     sceneStore,
+    // 패널을 연 상태가 재활성화 뒤에도 남는지까지 보므로 여닫는 버튼이 있는 도크 배치로 돈다.
+    paletteLayout: 'dock',
     strokePathFactory(samples, options) {
       observedSizes.push(options.size);
       return createStrokePathData(samples, options);
@@ -14252,7 +14313,6 @@ test('Alt 드래그는 브러시 크기를 1~50으로 조절하고 팔레트·HU
   // delta 40 / 4 = 10 → 3 + 10 = 13
   assert.equal(controls.sizeInput.value, '13');
   assert.equal(controls.sizeOutput.textContent, '13px');
-  assert.equal(controls.summary.textContent, '13px · 100%');
   assert.equal(controls.sizeHudLabel.textContent, '13px');
   assert.equal(controls.sizeHud.style.left, '100px', 'HUD는 드래그 시작점에 고정된다');
   element.dispatch('pointermove', { pointerId: 900, altKey: true, clientX: 1000, clientY: 130 });
@@ -15260,8 +15320,14 @@ test('the tool row is five icon buttons with the shape tools folded into a dropd
     assert.ok(row, '도구 줄이 있어야 한다');
     assert.equal(row.dataset.layout, 'grid');
     assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
-    assert.equal(row.style.gap, '3px');
+    assert.equal(row.style.gap, '4px');
     assert.equal(row.children.length, 5, '한 줄에 5개 — 브러시·펜·지우개·도형·선택');
+    // 아이콘만으로 읽히는 줄이라 라벨(접기 손잡이)을 두지 않는다.
+    assert.equal(
+      Array.from(toolsSection.children).some(node =>
+        node.className === 'mpv-fabric-pilot-section-label'),
+      false
+    );
 
     // 도형 4종은 줄이 아니라 플라이아웃 안에 있고 기본은 닫혀 있다.
     const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
@@ -15337,103 +15403,710 @@ test('only the sections that matter for the active tool stay visible', async () 
   }
 });
 
-test('the always-on status row reports size, opacity and tool without moving panel elements', async () => {
-  const harness = createRealFabricHarness();
-  try {
-    const text = findOne(harness.root, node =>
-      node.dataset?.fabricPilotOutput === 'brush-status-text');
-    const swatch = findOne(harness.root, node =>
-      node.dataset?.fabricPilotOutput === 'brush-status-swatch');
-    assert.ok(text && swatch);
-    assert.equal(text.textContent, '3px · 100% · 브러시');
+function realClick(harness, target) {
+  target.dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
+}
 
-    harness.runtime.updateDrawingBrush({ size: 14 });
-    assert.equal(text.textContent, '14px · 100% · 브러시');
-    assert.equal(swatch.style.width, '14px');
+function stubColorFieldRect(controls, rect = { left: 10, top: 20, width: 100, height: 50 }) {
+  controls.pickerField.getBoundingClientRect = () => rect;
+  controls.pickerField.setPointerCapture = () => {};
+  controls.pickerField.releasePointerCapture = () => {};
+}
 
-    // §6.6 회귀 방지 — summary 와 sizePreview 는 원래 자리에 남아 있어야 한다.
-    // appendChild 로 옮기면 브러시 설정 버튼의 표시가 사라진다.
-    const settingsButton = paletteButton(harness.root, 'brush-settings');
-    const summary = findOne(settingsButton, node =>
-      node.dataset?.fabricPilotOutput === 'summary');
-    assert.ok(summary, 'summary 는 설정 버튼의 자식으로 남아야 한다');
-    assert.equal(summary.textContent, '14px · 100%');
-  } finally {
-    await harness.destroy();
+function typeColorCode(harness, controls, text) {
+  controls.hexInput.dispatchEvent(new harness.environment.window.Event('focus'));
+  controls.hexInput.value = text;
+  controls.hexInput.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+}
+
+test('color helpers accept only six-digit codes and round-trip through the picker space', () => {
+  assert.equal(normalizeHexColor('#FF4757'), '#ff4757');
+  assert.equal(normalizeHexColor('  a55eea '), '#a55eea');
+  for (const invalid of ['#fff', '#ff47571', 'ff475g', '', null, 123456, 'rgb(1,2,3)']) {
+    assert.equal(normalizeHexColor(invalid), null, `${String(invalid)} 는 받지 않는다`);
+  }
+  assert.deepEqual(hexToHsv('#ff0000'), { h: 0, s: 1, v: 1 });
+  assert.deepEqual(hexToHsv('#000000'), { h: 0, s: 0, v: 0 });
+  assert.equal(hexToHsv('nope'), null);
+  assert.equal(hsvToHex(120, 1, 1), '#00ff00');
+  assert.equal(hsvToHex(-120, 1, 1), '#0000ff', '음수 색조도 한 바퀴 안으로 접는다');
+  assert.equal(hsvToHex(0, 2, -1), '#000000', '범위를 넘는 채도·명도는 잘라 쓴다');
+  // 저장 형식이 받는 색이면 고르기 판을 거쳐도 같은 색으로 돌아와야 한다.
+  for (const color of ['#ff4757', '#ffd000', '#26de81', '#4a9eff', '#1abc9c', '#ff6b9d', '#a55eea', '#123456']) {
+    const { h, s, v } = hexToHsv(color);
+    assert.equal(hsvToHex(h, s, v), color);
   }
 });
 
-test('recent colors keep the newest first without duplicates and cap at four', async () => {
+test('the color section shows the current color beside its label and stays open', async () => {
   const harness = createRealFabricHarness();
   try {
-    const readRecent = () => [0, 1, 2, 3]
-      .map(index => paletteButton(harness.root, `recent-color-${index}`))
-      .map(button => ({
-        color: button.dataset.fabricPilotRecentColor,
-        display: button.style.display
-      }));
-
-    const click = action => paletteButton(harness.root, action).dispatchEvent(
-      new harness.environment.window.Event('click', { bubbles: true })
-    );
-    const colorButtons = findAll(harness.root, node =>
-      typeof node.dataset?.fabricPilotColor === 'string' && node.dataset.fabricPilotColor.length > 0);
-    assert.ok(colorButtons.length >= 5, '색상 버튼이 5개 이상이어야 한다');
-
-    const used = [];
-    for (const button of colorButtons.slice(0, 5)) {
-      used.push(button.dataset.fabricPilotColor);
-      button.dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
-    }
-    // 최근 4개만, 최신이 앞에.
-    assert.deepEqual(readRecent().map(entry => entry.color), used.slice(1).reverse());
-
-    // 이미 쓴 색을 다시 고르면 중복 없이 맨 앞으로 온다.
-    const revisited = used[2];
-    colorButtons.find(button => button.dataset.fabricPilotColor === revisited)
-      .dispatchEvent(new harness.environment.window.Event('click', { bubbles: true }));
-    const recent = readRecent().map(entry => entry.color);
-    assert.equal(recent[0], revisited);
-    assert.equal(recent.filter(color => color === revisited).length, 1);
-
-    // 최근 색 버튼을 누르면 그 색으로 돌아가고, 그 색이 다시 맨 앞으로 온다.
-    const revived = recent[1];
-    click('recent-color-1');
-    assert.equal(readRecent()[0].color, revived);
-    assert.equal(
-      findOne(harness.root, node => node.dataset?.fabricPilotColor === revived)
-        .getAttribute('aria-pressed'),
-      'true',
-      '해당 색상 버튼이 활성으로 표시돼야 한다'
-    );
-  } finally {
-    await harness.destroy();
-  }
-});
-
-test('collapsing a section and reopening it keeps the tool grid layout', async () => {
-  const harness = createRealFabricHarness();
-  try {
-    const toolsSection = paletteSection(harness.root, 'tools');
-    const label = Array.from(toolsSection.children).find(node =>
+    const controls = getBrushControls(harness.root);
+    const brushSection = paletteSection(harness.root, 'brush');
+    const label = Array.from(brushSection.children).find(node =>
       node.className === 'mpv-fabric-pilot-section-label');
-    const row = Array.from(toolsSection.children).find(node =>
-      node.className === 'mpv-fabric-pilot-section-row');
-    const click = () => label.dispatchEvent(
-      new harness.environment.window.Event('click', { bubbles: true })
-    );
+    assert.equal(label.children[0].textContent, '색');
+    assert.equal(controls.colorCode.textContent, '#FF4757');
+    assert.equal(controls.colorCode.parentNode.parentNode, label, '현재 색 표시는 라벨 줄에 있다');
+    // 여닫는 버튼 없이 처음부터 펼쳐져 있다.
+    assert.equal(controls.settingsButton, null);
+    assert.equal(controls.panel.style.display, 'flex');
+    assert.equal(controls.colorButtons.length, 8);
+    assert.equal(controls.colorButtons[0].parentNode.className, 'mpv-fabric-pilot-swatches');
+    // 굵기·불투명도 막대도 같은 묶음 안에 늘 보인다.
+    assert.equal(controls.sizeInput.closest('[data-fabric-pilot-panel="brush-settings"]'), controls.panel);
+    assert.equal(controls.opacityInput.closest('[data-fabric-pilot-panel="brush-settings"]'), controls.panel);
 
-    click();
-    assert.equal(label.dataset.collapsed, 'true');
-    assert.equal(row.style.display, 'none');
-
-    click();
-    assert.equal(label.dataset.collapsed, 'false');
-    // flex 로 되돌리면 도구 줄이 한 줄로 무너진다.
-    assert.equal(row.style.display, 'grid');
-    assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
+    realClick(harness, controls.colorButtons[3]);
+    assert.equal(controls.colorCode.textContent, '#4A9EFF');
+    assert.equal(controls.colorButtons[3].getAttribute('aria-pressed'), 'true');
+    assert.equal(controls.colorButtons[0].getAttribute('aria-pressed'), 'false');
   } finally {
     await harness.destroy();
+  }
+});
+
+test('the picker field and hue bar reach colors outside the eight presets', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const controls = getBrushControls(harness.root);
+    stubColorFieldRect(controls);
+    // 색 고르기 판은 + 를 눌렀을 때만 펼쳐진다.
+    assert.equal(controls.pickerPanel.style.display, 'none');
+    assert.equal(controls.pickerToggle.getAttribute('aria-expanded'), 'false');
+    realClick(harness, controls.pickerToggle);
+    assert.equal(controls.pickerPanel.style.display, 'flex');
+    assert.equal(controls.pickerToggle.getAttribute('aria-expanded'), 'true');
+
+    // 색조 240(파랑)에서 오른쪽 위 구석 = 채도·명도 최대.
+    controls.hueInput.value = '240';
+    controls.hueInput.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+    harness.dispatchPointer(controls.pickerField, 'pointerdown', 110, 20, 9101, 1);
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#0000ff');
+    assert.equal(controls.pickerKnob.style.left, '100%');
+    assert.equal(controls.pickerKnob.style.top, '0%');
+
+    // 끄는 동안 값이 따라오고, 판 밖으로 나가면 가장자리에서 멈춘다.
+    harness.dispatchPointer(controls.pickerField, 'pointermove', 60, 45, 9101, 1);
+    assert.equal(harness.runtime.getDiagnostics().palette.color, hsvToHex(240, 0.5, 0.5));
+    harness.dispatchPointer(controls.pickerField, 'pointermove', -500, 900, 9101, 1);
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#000000');
+    // 검정까지 내려가도 색조는 남는다. 색에서 역산하면 0 으로 돌아가 손잡이가 튄다.
+    assert.equal(controls.hueInput.value, '240');
+    assert.equal(controls.pickerField.style.getPropertyValue('--fabric-picker-hue'), '240');
+
+    harness.dispatchPointer(controls.pickerField, 'pointerup', 60, 45, 9101, 0);
+    // 손을 뗀 뒤의 움직임은 색을 바꾸지 않는다.
+    harness.dispatchPointer(controls.pickerField, 'pointermove', 110, 20, 9101, 0);
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#000000');
+
+    // 고른 색으로 그은 획은 그 색으로 저장된다.
+    harness.dispatchPointer(controls.pickerField, 'pointerdown', 110, 20, 9102, 1);
+    harness.dispatchPointer(controls.pickerField, 'pointerup', 110, 20, 9102, 0);
+    harness.drawStrokeAt(100, 9103);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects[0].style.color, '#0000ff');
+    // 기본 8색에 없는 색이므로 눌린 견본이 없다.
+    assert.equal(
+      controls.colorButtons.some(button => button.getAttribute('aria-pressed') === 'true'),
+      false
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a typed color code applies once complete and says what is wrong', async () => {
+  const calls = [];
+  const harness = createRealFabricHarness({ textEntryBridge: { set: active => calls.push(active) } });
+  try {
+    const controls = getBrushControls(harness.root);
+    const { window } = harness.environment;
+    realClick(harness, controls.pickerToggle);
+    assert.equal(controls.hexInput.value, '#ff4757');
+
+    // 입력을 시작하면 호스트에 알린다. 알리지 않으면 호스트가 모든 키를 가로챈다.
+    typeColorCode(harness, controls, 'A55E');
+    assert.deepEqual(calls, [true]);
+    // 덜 친 값은 오류가 아니고 색도 아직 그대로다.
+    assert.equal(controls.hexError.textContent, '');
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#ff4757');
+
+    typeColorCode(harness, controls, 'A55EEA');
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#a55eea');
+    assert.equal(controls.colorCode.textContent, '#A55EEA');
+    // 치는 동안에는 입력칸 글자를 다시 쓰지 않는다(커서가 끝으로 튄다).
+    assert.equal(controls.hexInput.value, 'A55EEA');
+
+    typeColorCode(harness, controls, '#zz');
+    assert.equal(controls.hexError.textContent, '0–9와 A–F만 쓸 수 있습니다');
+    assert.equal(controls.hexInput.getAttribute('aria-invalid'), 'true');
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#a55eea', '잘못된 값은 색을 바꾸지 않는다');
+
+    typeColorCode(harness, controls, '1234567');
+    assert.equal(controls.hexError.textContent, '여섯 자리까지만 입력하세요');
+
+    // 덜 친 채 Enter 를 누르면 무엇이 모자란지 알린다.
+    typeColorCode(harness, controls, '#12');
+    const enter = new window.Event('keydown', { bubbles: true, cancelable: true });
+    Object.defineProperty(enter, 'key', { value: 'Enter' });
+    controls.hexInput.dispatchEvent(enter);
+    assert.equal(controls.hexError.textContent, '# 뒤에 여섯 자리를 입력하세요');
+
+    // 입력칸을 떠나면 덜 친 값은 지금 색으로 되돌아가고 호스트의 키 넘김도 풀린다.
+    controls.hexInput.dispatchEvent(new window.Event('blur'));
+    assert.equal(controls.hexInput.value, '#a55eea');
+    assert.equal(controls.hexError.textContent, '');
+    assert.equal(controls.hexInput.getAttribute('aria-invalid'), 'false');
+    assert.deepEqual(calls, [true, false]);
+
+    // 입력칸에 포커스를 둔 채 캔버스를 누르면 입력은 끝난다. pointerdown 의 기본 동작을
+    // 막는 경로에서는 포커스가 저절로 옮겨가지 않으므로 런타임이 직접 끝낸다.
+    typeColorCode(harness, controls, '#1');
+    assert.deepEqual(calls, [true, false, true]);
+    harness.dispatchPointer(harness.element, 'pointerdown', 30, 30, 9150, 1);
+    harness.dispatchPointer(harness.element, 'pointerup', 30, 30, 9150, 0);
+    assert.deepEqual(calls, [true, false, true, false]);
+    assert.equal(controls.hexInput.value, '#a55eea', '덜 친 값은 지금 색으로 돌아간다');
+
+    // 팔레트가 사라질 때도 반드시 풀린다. 남으면 그리기 단축키가 전부 죽는다.
+    controls.hexInput.dispatchEvent(new window.Event('focus'));
+    assert.deepEqual(calls, [true, false, true, false, true]);
+    harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    });
+    assert.equal(calls.at(-1), false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('my colors keep the newest first, skip presets, cap at seven and drop on right-click', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const controls = getBrushControls(harness.root);
+    const { window } = harness.environment;
+    const shown = () => controls.savedButtons
+      .filter(button => button.style.display !== 'none')
+      .map(button => button.dataset.fabricPilotSavedColor);
+    const hint = findOne(harness.root, node => node.dataset?.fabricPilotOutput === 'saved-hint');
+    // 담아 둔 색이 없으면 + 옆에 무엇을 하는 버튼인지 적혀 있고, 그 글자를 눌러도 열린다.
+    assert.equal(hint.textContent, '색 직접 고르기');
+    assert.notEqual(hint.style.display, 'none');
+    realClick(harness, hint);
+    assert.equal(controls.pickerPanel.style.display, 'flex');
+    assert.equal(controls.savedButtons.length, 7);
+    assert.deepEqual(shown(), []);
+
+    // 기본 8색은 늘 위에 있으므로 담지 않는다. 버튼이 이유를 말해 준다.
+    assert.equal(controls.saveColorButton.textContent, '이미 있는 색');
+    assert.equal(controls.saveColorButton.getAttribute('aria-disabled'), 'true');
+    realClick(harness, controls.saveColorButton);
+    assert.deepEqual(shown(), []);
+
+    const custom = ['#111111', '#222222', '#333333', '#444444', '#555555', '#666666', '#777777', '#888888'];
+    for (const [index, color] of custom.entries()) {
+      typeColorCode(harness, controls, color);
+      assert.equal(controls.saveColorButton.textContent, '내 색에 담기');
+      // 칸이 가득 찬 뒤에는 무엇이 빠지는지 누르기 전에 알린다.
+      assert.equal(
+        controls.saveColorButton.getAttribute('title'),
+        index < 7
+          ? '지금 색을 내 색에 담기'
+          : '지금 색을 내 색에 담기 (칸이 가득 차 가장 오래된 색이 빠집니다)'
+      );
+      realClick(harness, controls.saveColorButton);
+    }
+    // 일곱 칸. 여덟 번째를 담으면 가장 오래된 것이 밀려난다.
+    assert.deepEqual(shown(), custom.slice(1).reverse());
+    assert.equal(hint.style.display, 'none', '색을 담으면 안내는 사라진다');
+    assert.equal(controls.saveColorButton.textContent, '이미 있는 색');
+    assert.equal(controls.savedButtons[0].getAttribute('aria-pressed'), 'true');
+    assert.equal(controls.savedButtons[0].getAttribute('aria-label'), '내 색 #888888');
+    assert.equal(controls.savedButtons[0].getAttribute('title'), '내 색 #888888 · 우클릭으로 빼기');
+
+    // 담아 둔 색을 누르면 그 색으로 돌아간다.
+    realClick(harness, controls.savedButtons[3]);
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#555555');
+    assert.equal(controls.savedButtons[3].getAttribute('aria-pressed'), 'true');
+    assert.equal(controls.savedButtons[0].getAttribute('aria-pressed'), 'false');
+
+    // 우클릭으로 뺀다. 기본 메뉴는 뜨지 않는다.
+    const contextMenu = new window.Event('contextmenu', { bubbles: true, cancelable: true });
+    controls.savedButtons[0].dispatchEvent(contextMenu);
+    assert.equal(contextMenu.defaultPrevented, true);
+    assert.deepEqual(shown(), ['#777777', '#666666', '#555555', '#444444', '#333333', '#222222']);
+    assert.deepEqual(harness.runtime.getDiagnostics().palette.savedColors, shown());
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('stored palette values hydrate once and never overwrite what the user just changed', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const controls = getBrushControls(harness.root);
+    const applied = harness.runtime.applyPalettePrefs({
+      color: '#A55EEA',
+      size: 12,
+      opacity: 60,
+      // 잘못된 값·중복·기본색은 걸러지고 일곱 개에서 끊긴다.
+      savedColors: ['#123456', 'oops', '#123456', '#ff4757', '#abcdef', 7]
+    });
+    assert.deepEqual(applied, {
+      accepted: true,
+      color: '#a55eea',
+      size: 12,
+      opacity: 60,
+      savedColors: ['#123456', '#abcdef']
+    });
+    assert.equal(controls.sizeInput.value, '12');
+    assert.equal(controls.opacityInput.value, '60');
+    assert.equal(controls.colorCode.textContent, '#A55EEA');
+    assert.equal(controls.hexInput.value, '#a55eea');
+
+    // 범위를 벗어난 값은 지금 값을 지키거나 경계로 잘린다.
+    assert.deepEqual(harness.runtime.applyPalettePrefs({ color: 'red', size: 999, opacity: 1 }), {
+      accepted: true,
+      color: '#a55eea',
+      size: 50,
+      opacity: 10,
+      savedColors: []
+    });
+
+    // 사용자가 손댄 뒤에 늦게 도착한 저장값은 받지 않는다.
+    realClick(harness, controls.colorButtons[2]);
+    assert.deepEqual(harness.runtime.applyPalettePrefs({ color: '#000000', size: 3, opacity: 100 }), {
+      accepted: false,
+      reason: 'local-changes'
+    });
+    assert.equal(harness.runtime.getDiagnostics().palette.color, '#26de81');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('palette changes are announced once after the debounce', async () => {
+  const timers = [];
+  const announced = [];
+  const harness = createRealFabricHarness({
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay, cancelled: false });
+      return timers.length;
+    },
+    clearTimeout: handle => {
+      const entry = timers[handle - 1];
+      if (entry) entry.cancelled = true;
+    },
+    palettePrefsBridge: { notify: prefs => announced.push(prefs) }
+  });
+  try {
+    const controls = getBrushControls(harness.root);
+    const prefsTimers = () => timers.filter(timer => timer.delay === 400);
+    // 저장값을 받는 것은 사용자의 변경이 아니다. 되받아 알리지 않는다.
+    harness.runtime.applyPalettePrefs({ color: '#123456', size: 8, opacity: 80, savedColors: [] });
+    assert.equal(prefsTimers().length, 0);
+
+    realClick(harness, controls.colorButtons[1]);
+    controls.sizeInput.value = '20';
+    controls.sizeInput.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+    controls.opacityInput.value = '50';
+    controls.opacityInput.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+    // 연달아 바꾸면 앞선 예약은 취소되고 마지막 것만 남는다.
+    assert.deepEqual(prefsTimers().map(timer => timer.cancelled), [true, true, false]);
+    assert.deepEqual(announced, []);
+
+    prefsTimers().at(-1).callback();
+    assert.deepEqual(announced, [{ color: '#ffd000', size: 20, opacity: 50, savedColors: [] }]);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+function makeShellSection(document, overrides = {}) {
+  const item = document.createElement('button');
+  const appended = document.createElement('div');
+  return {
+    item,
+    appended,
+    section: { id: 'sample', label: '묶음', items: [item], appended: [appended], ...overrides }
+  };
+}
+
+test('a labeled grid section collapses and reopens as a grid', () => {
+  const document = new FakeDocument();
+  const element = document.createElement('div');
+  const { section } = makeShellSection(document, { layout: 'grid', columns: 5, gap: '4px' });
+  const shell = createFabricDrawingPalette({ documentRef: document, element, sections: [section] });
+  const sectionElement = shell.content.children[0];
+  const [label, row] = sectionElement.children;
+  assert.equal(label.className, 'mpv-fabric-pilot-section-label');
+  assert.equal(label.children[0].textContent, '묶음');
+  assert.equal(row.style.gridTemplateColumns, 'repeat(5, minmax(0, 1fr))');
+
+  label.dispatch('click');
+  assert.equal(label.dataset.collapsed, 'true');
+  assert.equal(row.style.display, 'none');
+  assert.equal(shell.isSectionCollapsed('sample'), true);
+
+  label.dispatch('click');
+  assert.equal(label.dataset.collapsed, 'false');
+  // flex 로 되돌리면 격자 줄이 한 줄로 무너진다.
+  assert.equal(row.style.display, 'grid');
+  assert.equal(shell.isSectionCollapsed('sample'), false);
+});
+
+test('a reopened section hands its appended panels back to their owner', () => {
+  // 접혀 있는 동안 소유자 쪽 상태가 바뀌면 셸이 캐시해 둔 표시값은 낡는다.
+  // 그래서 셸은 펼칠 때 표시를 비우기만 하고, 무엇을 보일지는 소유자가 다시 쓴다.
+  const document = new FakeDocument();
+  const element = document.createElement('div');
+  const { section, appended } = makeShellSection(document);
+  let ownerOpen = true;
+  const reopened = [];
+  const shell = createFabricDrawingPalette({
+    documentRef: document,
+    element,
+    sections: [section],
+    onSectionToggle(id, collapsed) {
+      reopened.push([id, collapsed]);
+      appended.style.display = ownerOpen ? 'grid' : 'none';
+    }
+  });
+  const label = shell.content.children[0].children[0];
+  appended.style.display = 'grid';
+
+  label.dispatch('click');
+  assert.equal(appended.style.display, 'none');
+  assert.deepEqual(reopened, [], '접을 때는 소유자를 부르지 않는다');
+
+  // 접힌 채로 소유자가 닫았다면 펼쳐도 닫힌 채여야 한다.
+  ownerOpen = false;
+  label.dispatch('click');
+  assert.deepEqual(reopened, [['sample', false]]);
+  assert.equal(appended.style.display, 'none');
+
+  // 열려 있던 것은 그대로 돌아온다.
+  ownerOpen = true;
+  label.dispatch('click');
+  label.dispatch('click');
+  assert.equal(appended.style.display, 'grid');
+});
+
+test('an unlabeled wrapped section has no collapse handle but can still be hidden', () => {
+  const document = new FakeDocument();
+  const element = document.createElement('div');
+  const accessory = document.createElement('span');
+  const wrapped = makeShellSection(document, {
+    id: 'tools',
+    label: undefined,
+    wrap: true,
+    layout: 'grid',
+    gridTemplateColumns: 'repeat(3, 30px) minmax(0, 1fr)'
+  });
+  const bare = makeShellSection(document, { id: 'status', label: undefined });
+  const labeled = makeShellSection(document, { id: 'brush', label: '색', labelAccessory: accessory });
+  const shell = createFabricDrawingPalette({
+    documentRef: document,
+    element,
+    sections: [wrapped.section, bare.section, labeled.section]
+  });
+
+  const wrappedElement = shell.content.children[0];
+  assert.equal(wrappedElement.dataset.fabricPilotSection, 'tools');
+  assert.equal(wrappedElement.children.length, 2, '라벨 없이 줄과 붙임 패널만 있다');
+  assert.equal(wrappedElement.children[0], wrapped.item.parentNode);
+  assert.equal(wrappedElement.children[1], wrapped.appended);
+  // 폭이 다른 칸은 호출 쪽이 준 트랙을 그대로 쓴다.
+  assert.equal(wrapped.item.parentNode.style.gridTemplateColumns, 'repeat(3, 30px) minmax(0, 1fr)');
+  assert.equal(shell.isSectionCollapsed('tools'), false);
+  assert.equal(shell.setSectionVisible('tools', false), true);
+  assert.equal(wrappedElement.style.display, 'none');
+
+  // 래퍼도 라벨도 없는 묶음은 본문에 바로 붙고, 숨기는 대상으로 등록되지 않는다.
+  assert.equal(bare.item.parentNode, shell.content);
+  assert.equal(shell.setSectionVisible('status', false), false);
+
+  // 라벨 오른쪽 표시는 라벨과 한 줄에 놓인다.
+  const label = shell.content.children[3].children[0];
+  assert.deepEqual(label.children.map(child => child.textContent), ['색', '']);
+  assert.equal(label.children[1], accessory);
+});
+
+function dispatchOverlayKey(harness, type, key) {
+  const event = new harness.environment.window.Event(type, { bubbles: true });
+  Object.defineProperty(event, 'key', { value: key });
+  harness.environment.document.dispatchEvent(event);
+}
+
+const ERASER_CURSOR_PATTERN = /^url\("data:image\/svg\+xml,[^"]+"\) 12 12, crosshair$/;
+
+test('holding Ctrl over the canvas previews the temporary eraser before any click', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const toolbar = harness.root.querySelector('.mpv-fabric-pilot-toolbar');
+    const brushButton = paletteButton(harness.root, 'brush');
+    const eraserButton = paletteButton(harness.root, 'eraser');
+    const activeToolLabel = findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === 'active-tool');
+    const armed = () => harness.runtime.getDiagnostics().gestures.tempEraseArmed;
+
+    assert.equal(armed(), false);
+    assert.equal(harness.canvas.defaultCursor, 'crosshair');
+    assert.equal(toolbar.dataset.tempErase, 'false');
+
+    // 마우스는 포인터 이벤트가 실어 온 Ctrl 을 본다. 누르기 전, 움직이기만 해도 바뀐다.
+    harness.dispatchPointer(harness.element, 'pointermove', 50, 50, 1, 0, { ctrlKey: true });
+    assert.equal(armed(), true);
+    assert.match(harness.canvas.defaultCursor, ERASER_CURSOR_PATTERN);
+    assert.equal(toolbar.dataset.tempErase, 'true');
+    assert.equal(eraserButton.dataset.tempActive, 'true');
+    assert.equal(brushButton.dataset.returnTool, 'true');
+    assert.equal(activeToolLabel.textContent, ' · 지우개 · Ctrl');
+    // 도구 자체는 바뀌지 않았다. 손을 떼면 돌아갈 곳이다.
+    assert.equal(brushButton.dataset.active, 'true');
+    assert.equal(eraserButton.getAttribute('aria-pressed'), 'false');
+    assert.equal(harness.sceneStore.getDiagnostics().tool, 'brush');
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 0);
+
+    // Ctrl 을 떼고 움직이면 곧바로 원래대로 돌아온다.
+    harness.dispatchPointer(harness.element, 'pointermove', 52, 50, 1, 0);
+    assert.equal(armed(), false);
+    assert.equal(harness.canvas.defaultCursor, 'crosshair');
+    assert.equal(toolbar.dataset.tempErase, 'false');
+    assert.equal(eraserButton.dataset.tempActive, 'false');
+    assert.equal(brushButton.dataset.returnTool, 'false');
+    assert.equal(activeToolLabel.textContent, ' · 브러시');
+
+    // 포인터를 움직이지 않아도 키만으로 바뀐다(오버레이가 키를 받는 동안).
+    dispatchOverlayKey(harness, 'keydown', 'Control');
+    assert.equal(armed(), true);
+    dispatchOverlayKey(harness, 'keyup', 'Control');
+    assert.equal(armed(), false);
+
+    // 창이 포커스를 잃으면 keyup 을 못 받는다. 켜진 채 남으면 안 된다.
+    dispatchOverlayKey(harness, 'keydown', 'Control');
+    assert.equal(armed(), true);
+    harness.environment.window.dispatchEvent(new harness.environment.window.Event('blur'));
+    assert.equal(armed(), false);
+
+    // 팔레트가 사라질 때도 꺼진다.
+    harness.dispatchPointer(harness.element, 'pointermove', 50, 50, 1, 0, { ctrlKey: true });
+    assert.equal(armed(), true);
+    harness.runtime.setDrawingInput({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      inputRevision: 2,
+      enabled: false
+    });
+    assert.equal(armed(), false);
+    assert.equal(toolbar.dataset.tempErase, 'false');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the temporary eraser preview arms only where Ctrl actually erases', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const armed = () => harness.runtime.getDiagnostics().gestures.tempEraseArmed;
+    const hoverWithCtrl = () =>
+      harness.dispatchPointer(harness.element, 'pointermove', 50, 50, 1, 0, { ctrlKey: true });
+    let revision = 0;
+    const useTool = tool => enableRealFabricShapeTool(harness, tool, revision += 1);
+
+    // Ctrl 임시 지우개는 브러시·펜에서만 열린다(beginPointerDown 과 같은 조건).
+    for (const [tool, expected] of [
+      ['pen', true], ['select', false], ['rect', false], ['eraser', false], ['brush', true]
+    ]) {
+      useTool(tool);
+      hoverWithCtrl();
+      assert.equal(armed(), expected, `${tool} 에서의 Ctrl 표시`);
+    }
+
+    // 지우개 도구는 Ctrl 없이도 같은 고리 커서를 쓴다. 지우개는 한 가지 모양이다.
+    useTool('eraser');
+    harness.dispatchPointer(harness.element, 'pointermove', 50, 50, 1, 0);
+    assert.match(harness.canvas.defaultCursor, ERASER_CURSOR_PATTERN);
+    assert.equal(
+      harness.root.querySelector('.mpv-fabric-pilot-toolbar').dataset.tempErase,
+      'false',
+      '도구로 고른 지우개는 임시 표시가 아니다'
+    );
+    useTool('brush');
+    assert.equal(harness.canvas.defaultCursor, 'crosshair');
+
+    // Ctrl 을 누른 채 도구를 바꾸면 새 도구 기준으로 다시 정한다.
+    dispatchOverlayKey(harness, 'keydown', 'Control');
+    assert.equal(armed(), true);
+    useTool('select');
+    assert.equal(armed(), false);
+    assert.equal(paletteButton(harness.root, 'brush').dataset.returnTool, 'false');
+    dispatchOverlayKey(harness, 'keyup', 'Control');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a Ctrl erase keeps its eraser look until the pointer is released', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const diagnostics = () => harness.runtime.getDiagnostics();
+    harness.drawStrokeAt(100, 9201);
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1);
+
+    // 그리는 도중에 Ctrl 을 눌러도 그 획은 끝까지 브러시다. 표시도 바뀌지 않는다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 150, 9202, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 150, 9202, 1, { ctrlKey: true });
+    assert.equal(diagnostics().gestures.tempEraseArmed, false);
+    harness.dispatchPointer(harness.element, 'pointerup', 60, 150, 9202, 0, { ctrlKey: true });
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 2);
+    // 획이 끝난 뒤에도 Ctrl 을 누르고 있으면 다음 움직임에서 임시 지우개로 바뀐다.
+    harness.dispatchPointer(harness.element, 'pointermove', 60, 150, 9202, 0, { ctrlKey: true });
+    assert.equal(diagnostics().gestures.tempEraseArmed, true);
+
+    // Ctrl 을 누른 채 누르면 지우기가 시작된다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 40, 80, 9203, 1, { ctrlKey: true });
+    assert.equal(diagnostics().gestures.ctrlStrokeEraseActive, true);
+    assert.equal(diagnostics().gestures.tempEraseArmed, true);
+    // 끄는 도중 Ctrl 을 먼저 떼도 포인터를 놓을 때까지는 지우개다.
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 100, 9203, 1);
+    harness.dispatchPointer(harness.element, 'pointermove', 40, 120, 9203, 1);
+    assert.equal(diagnostics().gestures.tempEraseArmed, true);
+    assert.match(harness.canvas.defaultCursor, ERASER_CURSOR_PATTERN);
+
+    harness.dispatchCapturedPointerUp(40, 120, 9203);
+    assert.equal(diagnostics().gestures.ctrlStrokeEraseActive, false);
+    assert.equal(diagnostics().gestures.tempEraseArmed, false);
+    assert.equal(harness.canvas.defaultCursor, 'crosshair');
+    assert.equal(harness.sceneStore.getActiveSceneSnapshot().objects.length, 1, 'y=100 획이 지워진다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('the Ctrl preview never promises an erase the next press would not start', async () => {
+  const harness = createRealFabricHarness();
+  try {
+    const armed = () => harness.runtime.getDiagnostics().gestures.tempEraseArmed;
+    const hover = overrides =>
+      harness.dispatchPointer(harness.element, 'pointermove', 50, 50, 1, 0, overrides);
+    const setActiveLayerDrawable = drawable => harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: [],
+      lockedObjectIds: [],
+      activeLayerDrawable: drawable
+    });
+
+    hover({ ctrlKey: true });
+    assert.equal(armed(), true);
+    // Alt 가 함께 눌려 있으면 크기 조절이 먼저 잡는다(onPointerDown 의 순서).
+    hover({ ctrlKey: true, altKey: true });
+    assert.equal(armed(), false);
+    hover({ ctrlKey: true });
+    assert.equal(armed(), true);
+
+    // 활성 레이어가 잠기거나 숨겨지면 누름 자체를 받지 않는다. 잠그는 순간 꺼지고,
+    // 잠겨 있는 동안에는 Ctrl 을 눌러도 켜지지 않는다.
+    assert.equal(setActiveLayerDrawable(false).accepted, true);
+    assert.equal(armed(), false);
+    hover({ ctrlKey: true });
+    assert.equal(armed(), false);
+    harness.dispatchPointer(harness.element, 'pointerdown', 50, 50, 9401, 1, { ctrlKey: true });
+    assert.equal(harness.runtime.getDiagnostics().gestures.ctrlStrokeEraseActive, false);
+    harness.dispatchPointer(harness.element, 'pointerup', 50, 50, 9401, 0);
+    assert.equal(setActiveLayerDrawable(true).accepted, true);
+    hover({ ctrlKey: true });
+    assert.equal(armed(), true);
+
+    // 포인터가 캔버스를 떠나면 그 뒤 Ctrl 을 떼는 것을 포인터로는 알 수 없다. 오버레이가
+    // 키를 직접 본 적이 없으면(메인 창에 포커스) 떠나는 순간 끈다.
+    harness.dispatchPointer(harness.element, 'pointerleave', 300, 50, 1, 0, { ctrlKey: true });
+    assert.equal(armed(), false);
+    // 오버레이가 키를 직접 봤다면 keyup 도 받는다. 팔레트 위에 있는 동안 켜 둔다.
+    dispatchOverlayKey(harness, 'keydown', 'Control');
+    harness.dispatchPointer(harness.element, 'pointerleave', 300, 50, 1, 0);
+    assert.equal(armed(), true);
+    // Alt 를 더 누르면 꺼지고 떼면 돌아온다.
+    dispatchOverlayKey(harness, 'keydown', 'Alt');
+    assert.equal(armed(), false);
+    dispatchOverlayKey(harness, 'keyup', 'Alt');
+    assert.equal(armed(), true);
+    dispatchOverlayKey(harness, 'keyup', 'Control');
+    assert.equal(armed(), false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('text entry ends whenever the field stops being where the user types', async () => {
+  const calls = [];
+  const harness = createRealFabricHarness({ textEntryBridge: { set: active => calls.push(active) } });
+  try {
+    const controls = getBrushControls(harness.root);
+    const { window, document } = harness.environment;
+    stubColorFieldRect(controls);
+    realClick(harness, controls.pickerToggle);
+
+    // 색 고르기 판은 누를 때 기본 동작을 막으므로 입력칸의 포커스가 저절로 풀리지 않는다.
+    // 런타임이 끝내지 않으면 입력칸에는 옛 코드가 남고 키 넘김도 멈춘 채다.
+    controls.hexInput.focus();
+    assert.equal(document.activeElement, controls.hexInput);
+    assert.deepEqual(calls, [true]);
+    controls.hexInput.value = '#12';
+    harness.dispatchPointer(controls.pickerField, 'pointerdown', 110, 20, 9501, 1);
+    harness.dispatchPointer(controls.pickerField, 'pointerup', 110, 20, 9501, 0);
+    assert.notEqual(document.activeElement, controls.hexInput);
+    assert.deepEqual(calls, [true, false]);
+    assert.equal(controls.hexInput.value, harness.runtime.getDiagnostics().palette.color);
+
+    // 창이 포커스를 잃으면 입력도 끝난다.
+    controls.hexInput.focus();
+    assert.deepEqual(calls, [true, false, true]);
+    window.dispatchEvent(new window.Event('blur'));
+    assert.notEqual(document.activeElement, controls.hexInput);
+    assert.deepEqual(calls, [true, false, true, false]);
+
+    // 상태는 이미 꺼졌는데 입력칸이 문서의 포커스를 쥔 채 남은 경우(blur 알림만 먼저 온
+    // 경우)에도 포커스를 놓는다. 쥔 채 남으면 창이 포커스를 되찾을 때 focus 가 다시
+    // 발화해, 건드리지 않았는데 단축키가 입력칸으로 들어간다.
+    controls.hexInput.focus();
+    controls.hexInput.dispatchEvent(new window.Event('blur'));
+    assert.equal(document.activeElement, controls.hexInput);
+    assert.equal(calls.at(-1), false);
+    window.dispatchEvent(new window.Event('blur'));
+    assert.notEqual(document.activeElement, controls.hexInput);
+    assert.equal(calls.at(-1), false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('a palette change made just before teardown is still announced', async () => {
+  const announced = [];
+  const timers = [];
+  const harness = createRealFabricHarness({
+    setTimeout: (callback, delay) => {
+      timers.push({ callback, delay });
+      return timers.length;
+    },
+    clearTimeout: () => {},
+    palettePrefsBridge: { notify: prefs => announced.push(prefs) }
+  });
+  let destroyed = false;
+  try {
+    const controls = getBrushControls(harness.root);
+    realClick(harness, controls.colorButtons[2]);
+    assert.deepEqual(announced, [], '디바운스가 끝나기 전에는 알리지 않는다');
+
+    // 화면을 걷을 때 기다리던 알림을 버리면 닫기 직전에 바꾼 색이 다음 실행에 남지 않는다.
+    await harness.destroy();
+    destroyed = true;
+    assert.deepEqual(announced, [{ color: '#26de81', size: 3, opacity: 100, savedColors: [] }]);
+  } finally {
+    if (!destroyed) await harness.destroy();
   }
 });
 
@@ -15532,40 +16205,6 @@ test('a shape commits at the pointerup position even without an intervening move
     const objects = harness.sceneStore.getActiveSceneSnapshot().objects;
     assert.equal(objects.length, 1, 'move 가 없어도 드래그였으면 도형이 남아야 한다');
     assert.equal(objects[0].sourcePoints.length, 24 * 4 + 1);
-  } finally {
-    await harness.destroy();
-  }
-});
-
-test('expanding a collapsed section does not force its appended panels open', async () => {
-  const harness = createRealFabricHarness();
-  try {
-    const toolsSection = paletteSection(harness.root, 'tools');
-    const label = Array.from(toolsSection.children).find(node =>
-      node.className === 'mpv-fabric-pilot-section-label');
-    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
-    const shapeButton = paletteButton(harness.root, 'shape-menu');
-    const click = target => target.dispatchEvent(
-      new harness.environment.window.Event('click', { bubbles: true })
-    );
-
-    assert.equal(flyout.style.display, 'none');
-    click(label);
-    click(label);
-    assert.equal(
-      flyout.style.display,
-      'none',
-      '접었다 펴는 것만으로 도형 플라이아웃이 열리면 안 된다'
-    );
-    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
-
-    // 열어 둔 상태였다면 그 상태 그대로 돌아와야 한다.
-    click(shapeButton);
-    assert.equal(flyout.style.display, 'grid');
-    click(label);
-    assert.equal(flyout.style.display, 'none');
-    click(label);
-    assert.equal(flyout.style.display, 'grid', '열려 있던 패널은 그대로 돌아와야 한다');
   } finally {
     await harness.destroy();
   }
@@ -15767,19 +16406,20 @@ test('a viewport change during a pixel erase cancels the gesture instead of brid
 
 test('a collapsed section keeps its appended panel shut even when the panel resyncs', async () => {
   // syncBrushControls 는 [ / ] 로 크기가 바뀔 때마다 불린다. 섹션 접힘을 무시하면
-  // 라벨과 버튼 줄은 접힌 채 설정 패널만 혼자 떠 있는 상태가 된다.
+  // 라벨은 접힌 채 색·굵기 패널만 혼자 떠 있는 상태가 된다.
   const harness = createRealFabricHarness();
   try {
     const brushSection = paletteSection(harness.root, 'brush');
     const label = Array.from(brushSection.children).find(node =>
       node.className === 'mpv-fabric-pilot-section-label');
     const panel = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'brush-settings');
+    const picker = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'color-picker');
+    const pickerToggle = paletteButton(harness.root, 'color-picker-toggle');
     const click = target => target.dispatchEvent(
       new harness.environment.window.Event('click', { bubbles: true })
     );
 
-    click(paletteButton(harness.root, 'brush-settings'));
-    assert.equal(panel.style.display, 'flex', '설정 패널이 열려 있어야 한다');
+    assert.equal(panel.style.display, 'flex', '색·굵기 패널은 처음부터 펼쳐져 있다');
 
     click(label);
     assert.equal(panel.style.display, 'none');
@@ -15788,46 +16428,18 @@ test('a collapsed section keeps its appended panel shut even when the panel resy
     harness.runtime.updateDrawingBrush({ step: 1 });
     assert.equal(panel.style.display, 'none', '접힌 섹션의 패널이 되살아나면 안 된다');
 
-    // 다시 펼치면 원래 열려 있던 상태로 돌아온다.
+    // 다시 펼치면 돌아온다. 닫아 둔 색 고르기 판까지 따라 열리지는 않는다.
     click(label);
     assert.equal(panel.style.display, 'flex');
-  } finally {
-    await harness.destroy();
-  }
-});
+    assert.equal(picker.style.display, 'none');
+    assert.equal(pickerToggle.getAttribute('aria-expanded'), 'false');
 
-test('a panel closed while its section was collapsed stays closed when the section reopens', async () => {
-  // 접혀 있는 동안 소유자 쪽 상태가 바뀌면(도구 전환으로 도형 메뉴가 닫히는 등)
-  // 셸이 캐시해 둔 표시값은 낡는다. 그대로 되살리면 aria-expanded 는 false 인데
-  // 플라이아웃만 열려 있는 모순된 상태가 된다.
-  const harness = createRealFabricHarness();
-  try {
-    const toolsSection = paletteSection(harness.root, 'tools');
-    const label = Array.from(toolsSection.children).find(node =>
-      node.className === 'mpv-fabric-pilot-section-label');
-    const flyout = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'shape-menu');
-    const shapeButton = paletteButton(harness.root, 'shape-menu');
-    const click = target => target.dispatchEvent(
-      new harness.environment.window.Event('click', { bubbles: true })
-    );
-
-    click(shapeButton);
-    assert.equal(flyout.style.display, 'grid');
-
+    // 열어 둔 색 고르기 판은 접었다 펴도 열린 채 돌아온다.
+    click(pickerToggle);
     click(label);
-    assert.equal(flyout.style.display, 'none');
-
-    // 접힌 채로 다른 도구로 전환한다 — 도형 메뉴는 닫힌 것으로 바뀐다.
-    enableRealFabricShapeTool(harness, 'select', 7);
-    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
-
     click(label);
-    assert.equal(
-      flyout.style.display,
-      'none',
-      '접혀 있는 동안 닫힌 메뉴가 펼치기만으로 되살아나면 안 된다'
-    );
-    assert.equal(shapeButton.getAttribute('aria-expanded'), 'false');
+    assert.equal(picker.style.display, 'flex');
+    assert.equal(pickerToggle.getAttribute('aria-expanded'), 'true');
   } finally {
     await harness.destroy();
   }
