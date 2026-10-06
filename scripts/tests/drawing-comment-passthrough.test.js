@@ -19,6 +19,7 @@ test('Fabric active/preparing/recovery blocks comment input while legacy canvas 
     fabricDrawingPilotStatusSnapshot: null, lastLoggedFabricPersistenceReason: null,
     fabricDrawingPilotFailureToastShown: false, fabricDrawingPilotUiEngaged: false,
     seedFabricDrawingLayerAssignmentTracking: noop, pushFabricPilotLayerView: noop,
+    pushFabricPilotPalettePrefs: noop,
     pushFabricPilotLayerViewAfterDisplay: noop, resetMpvOverlayCollaborationDrag: noop,
     renderActiveDrawingLayers: noop, scheduleMpvOverlayStateSync: noop,
     notifyFabricDrawingPilotFailure: noop, isCurrentDrawingSurfaceReady: () => true,

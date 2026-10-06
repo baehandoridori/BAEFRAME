@@ -299,6 +299,8 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
       'mpvOverlayViewportPan',
       'mpvOverlayPersistence',
       'mpvOverlayCollaborationActions',
+      'mpvOverlayPalettePrefs',
+      'mpvOverlayTextEntry',
       'mpvOverlayDrawingFrame'
     ]
   );
@@ -347,6 +349,60 @@ test('overlay preload sends bounded layer-history notifications only', () => {
     direction: 'undo'
   }), false);
   assert.deepEqual(harness.sent, []);
+});
+
+test('overlay preload forwards only well-formed palette values', () => {
+  const harness = loadOverlayPreload();
+  const bridge = harness.exposed.get('mpvOverlayPalettePrefs');
+  assert.equal(Object.isFrozen(bridge), true);
+  assert.deepEqual(Object.keys(bridge), ['notify']);
+
+  const prefs = { color: '#a55eea', size: 12, opacity: 60, savedColors: ['#123456', '#abcdef'] };
+  assert.equal(bridge.notify(prefs), true);
+  assert.deepEqual(harness.sent, [['mpv-overlay:palette-prefs', prefs]]);
+  // 보낸 것은 검증을 거친 새 객체다. 호출자가 든 객체를 그대로 넘기지 않는다.
+  assert.notEqual(harness.sent[0][1], prefs);
+  assert.notEqual(harness.sent[0][1].savedColors, prefs.savedColors);
+
+  harness.sent.length = 0;
+  for (const malformed of [
+    null,
+    [],
+    'prefs',
+    { ...prefs, color: '#A55EEA' },
+    { ...prefs, color: 'red' },
+    { ...prefs, size: 0 },
+    { ...prefs, size: 51 },
+    { ...prefs, size: 12.5 },
+    { ...prefs, opacity: 9 },
+    { ...prefs, opacity: 101 },
+    { ...prefs, savedColors: 'none' },
+    { ...prefs, savedColors: ['#123456', '#123456'] },
+    { ...prefs, savedColors: Array.from({ length: 8 }, (_value, index) => `#00000${index}`) },
+    { ...prefs, savedColors: ['#12345'] },
+    { ...prefs, extra: true },
+    { color: prefs.color, size: prefs.size, opacity: prefs.opacity }
+  ]) {
+    assert.equal(bridge.notify(malformed), false, JSON.stringify(malformed));
+  }
+  assert.deepEqual(harness.sent, []);
+});
+
+test('overlay preload reports text entry as a plain boolean', () => {
+  const harness = loadOverlayPreload();
+  const bridge = harness.exposed.get('mpvOverlayTextEntry');
+  assert.equal(Object.isFrozen(bridge), true);
+  assert.deepEqual(Object.keys(bridge), ['set']);
+
+  assert.equal(bridge.set(true), true);
+  assert.equal(bridge.set(false), true);
+  // 참이 아닌 것은 모두 "끝났다"로 보낸다. 켜진 채 남는 쪽이 위험하다.
+  for (const value of ['true', 1, {}, null, undefined]) bridge.set(value);
+  assert.deepEqual(harness.sent, [
+    ['mpv-overlay:text-entry', true],
+    ['mpv-overlay:text-entry', false],
+    ...Array.from({ length: 5 }, () => ['mpv-overlay:text-entry', false])
+  ]);
 });
 
 test('overlay preload sends only exact bounded pointerdown frame requests', () => {

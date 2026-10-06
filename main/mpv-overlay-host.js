@@ -33,6 +33,7 @@ const {
   isFabricDrawingTool,
   normalizeFabricDrawingTool
 } = require('../shared/fabric-drawing-tools.js');
+const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
 
 // [ / ] 한 번에 허용하는 최대 증감. 실제 상한·하한은 오버레이 런타임이 자른다.
 const FABRIC_DRAWING_MAX_BRUSH_STEP = 64;
@@ -447,6 +448,11 @@ const OVERLAY_HTML = String.raw`
       --fabric-palette-inset: #161618;
       --fabric-palette-border: #424247;
       --fabric-palette-muted: #a7a7ad;
+      /* 되돌리기 어려운 동작과 Ctrl 임시 지우개 표시에 쓰는 경고색. 강조색(노랑)과
+         겹치지 않아야 "지금은 평소와 다른 상태"로 읽힌다. */
+      --fabric-palette-danger: #ff8a75;
+      /* 색 견본의 가장자리. 검정 견본이 어두운 팔레트에 묻히지 않게 한다. */
+      --fabric-swatch-edge: rgba(255, 255, 255, 0.22);
       width: 212px;
       max-width: calc(100% - 24px);
       box-sizing: border-box;
@@ -469,6 +475,8 @@ const OVERLAY_HTML = String.raw`
       --fabric-palette-inset: #efeff1;
       --fabric-palette-border: #cacacf;
       --fabric-palette-muted: #606069;
+      --fabric-palette-danger: #c2412d;
+      --fabric-swatch-edge: rgba(32, 33, 36, 0.28);
       --text-primary: #202124;
       --text-tertiary: #606069;
       --text-faint: #707079;
@@ -511,6 +519,10 @@ const OVERLAY_HTML = String.raw`
       color: var(--fabric-palette-accent);
       font-size: 11px;
     }
+    /* Ctrl 을 누르고 있는 동안 제목의 도구 이름이 "지우개 · Ctrl" 로 바뀐다. */
+    .mpv-fabric-pilot-toolbar[data-temp-erase="true"] .mpv-fabric-pilot-toolbar-tool {
+      color: var(--fabric-palette-danger);
+    }
     .mpv-fabric-pilot-toolbar-content {
       display: flex;
       flex-direction: column;
@@ -532,6 +544,22 @@ const OVERLAY_HTML = String.raw`
       color: var(--fabric-palette-muted);
       font-size: 11px;
       font-weight: 600;
+      cursor: pointer;
+    }
+    /* 라벨 오른쪽의 현재 색 표시(견본 점 + 색상 코드). */
+    .mpv-fabric-pilot-current-color {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      color: var(--text-primary);
+      font-weight: 500;
+      font-variant-numeric: tabular-nums;
+    }
+    .mpv-fabric-pilot-current-color [data-fabric-pilot-output="color-chip"] {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      box-shadow: inset 0 0 0 1px var(--fabric-swatch-edge);
     }
     .mpv-fabric-pilot-section-row {
       display: flex;
@@ -568,8 +596,36 @@ const OVERLAY_HTML = String.raw`
       box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fabric-palette-accent) 55%, transparent);
       color: var(--fabric-palette-accent);
     }
+    /* Ctrl 임시 지우개: 지우개 버튼은 경고색으로 켜지고, 원래 도구는 채움 없이
+       테두리만 남아 "손을 떼면 여기로 돌아온다"를 보여 준다. data-active 규칙보다
+       뒤에 있어야 이긴다. */
+    .mpv-fabric-pilot-toolbar button[data-temp-active="true"] {
+      background: color-mix(in srgb, var(--fabric-palette-danger) 18%, var(--fabric-palette-bg));
+      box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--fabric-palette-danger) 60%, transparent);
+      color: var(--fabric-palette-danger);
+    }
+    .mpv-fabric-pilot-toolbar button[data-return-tool="true"] {
+      background: var(--fabric-palette-button);
+    }
     .mpv-fabric-pilot-toolbar button:active {
       transform: scale(0.96);
+    }
+    /* 편집 줄: 아이콘 셋 + 글자가 붙은 전체 지우기. */
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-section="actions"] button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 5px;
+    }
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-icon] {
+      display: inline-flex;
+      line-height: 0;
+    }
+    .mpv-fabric-pilot-toolbar button[data-tone="danger"] {
+      color: var(--fabric-palette-danger);
+    }
+    .mpv-fabric-pilot-toolbar button[data-tone="danger"]:hover {
+      background: color-mix(in srgb, var(--fabric-palette-danger) 16%, var(--fabric-palette-bg));
     }
     .mpv-fabric-pilot-toolbar button:focus-visible {
       outline: 2px solid var(--fabric-palette-accent);
@@ -587,27 +643,170 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-toolbar[data-collapsed="true"] .mpv-fabric-pilot-collapse-button svg {
       transform: rotate(-90deg);
     }
-    .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button:not([data-fabric-pilot-color]) {
-      min-width: 32px;
-      min-height: 32px;
-      height: auto;
-      padding: 0;
-    }
-    .mpv-fabric-pilot-toolbar [data-fabric-pilot-action="brush-settings"] {
-      min-height: 30px !important;
-    }
+    /* 색·굵기 묶음은 팔레트 면에 그대로 놓인다(떠 있는 판이 아니다). */
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] {
-      background: var(--fabric-palette-header) !important;
-      color: var(--text-primary) !important;
+      color: var(--text-primary);
     }
-    /* 색 견본은 한 줄에 넷이 들어가야 8개가 두 줄로 끝난다.
-       팔레트 212px → 스크롤바가 있어도 패널 안쪽 170px, 4*36 + 3*6 = 162. */
-    .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button[data-fabric-pilot-color] {
-      width: 36px;
-      height: 36px;
-      min-width: 36px;
-      min-height: 36px;
+    /* 색 견본: 기본 8색이 한 줄, 그 아래 "내 색" 일곱 칸과 색 고르기 버튼이 한 줄.
+       칸 폭은 격자가 정한다 — 212px 과 190px 팔레트 어느 쪽에서도 여덟 칸이 한 줄에
+       들어가야 하므로 고정 치수를 주지 않는다. */
+    .mpv-fabric-pilot-swatches,
+    .mpv-fabric-pilot-saved-colors {
+      display: grid;
+      grid-template-columns: repeat(8, minmax(0, 1fr));
+      gap: 4px;
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-swatches button,
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-saved-colors button {
+      width: 100%;
+      min-width: 0;
+      min-height: 0;
+      height: auto;
+      aspect-ratio: 1;
       padding: 0;
+      border-radius: 50%;
+      background: transparent;
+    }
+    .mpv-fabric-pilot-swatches button > span,
+    .mpv-fabric-pilot-saved-colors button[data-fabric-pilot-saved-color] > span {
+      width: 100%;
+      height: 100%;
+      box-shadow: inset 0 0 0 1px var(--fabric-swatch-edge);
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-swatches button:hover,
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-saved-colors button[data-fabric-pilot-saved-color]:hover {
+      transform: scale(1.1);
+    }
+    /* 고른 색은 팔레트 면 색의 틈을 두고 바깥 고리로 표시한다. 견본 색과 무관한
+       중립색이어야 어떤 색을 골라도 같은 모양으로 읽힌다. */
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-swatches button[aria-pressed="true"],
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-saved-colors button[aria-pressed="true"],
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-outline-swatches button[aria-pressed="true"] {
+      box-shadow: 0 0 0 2px var(--fabric-palette-bg), 0 0 0 3.5px var(--text-primary);
+    }
+    .mpv-fabric-pilot-toolbar button[data-fabric-pilot-action="color-picker-toggle"] {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      border: 1px dashed var(--fabric-palette-border);
+      color: var(--fabric-palette-muted);
+    }
+    /* 담아 둔 색이 없을 때 + 옆에 붙는 안내. 색을 하나라도 담으면 사라진다. */
+    .mpv-fabric-pilot-saved-hint {
+      grid-column: span 7;
+      align-self: center;
+      padding-left: 2px;
+      color: var(--fabric-palette-muted);
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .mpv-fabric-pilot-toolbar button[data-fabric-pilot-action="color-picker-toggle"]:hover {
+      background: var(--fabric-palette-hover);
+      color: var(--text-primary);
+    }
+    .mpv-fabric-pilot-toolbar button[data-fabric-pilot-action="color-picker-toggle"][data-active="true"] {
+      border-color: transparent;
+      background: color-mix(in srgb, var(--fabric-palette-accent) 16%, var(--fabric-palette-bg));
+      color: var(--fabric-palette-accent);
+    }
+    /* 색 고르기 판: 가로 채도 · 세로 명도, 아래 막대가 색조. */
+    .mpv-fabric-pilot-color-picker {
+      flex-direction: column;
+      gap: 8px;
+      padding: 8px;
+      border-radius: 5px;
+      background: var(--fabric-palette-inset);
+    }
+    .mpv-fabric-pilot-color-field {
+      position: relative;
+      height: 84px;
+      border-radius: 4px;
+      background:
+        linear-gradient(to top, #000, transparent),
+        linear-gradient(to right, #fff, hsl(var(--fabric-picker-hue, 0) 100% 50%));
+      cursor: crosshair;
+      touch-action: none;
+    }
+    .mpv-fabric-pilot-color-field [data-fabric-pilot-picker="knob"] {
+      position: absolute;
+      width: 10px;
+      height: 10px;
+      margin: -5px 0 0 -5px;
+      border-radius: 50%;
+      box-shadow: 0 0 0 2px #fff, 0 0 0 3px rgba(0, 0, 0, 0.6);
+      pointer-events: none;
+    }
+    /* 색조 막대는 아래의 공통 range 규칙(회색 트랙)보다 선택자가 구체적이어야 이긴다. */
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-color-picker input[data-fabric-pilot-setting="hue"] {
+      height: 12px;
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-color-picker input[data-fabric-pilot-setting="hue"]::-webkit-slider-runnable-track {
+      height: 8px;
+      border-radius: 4px;
+      background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-color-picker input[data-fabric-pilot-setting="hue"]::-webkit-slider-thumb {
+      width: 12px;
+      height: 12px;
+      /* 트랙 8px 한가운데에 12px 손잡이를 앉힌다: (8 - 12) / 2 */
+      margin-top: -2px;
+      background: #fff;
+      box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5), 0 1px 3px rgba(0, 0, 0, 0.5);
+    }
+    .mpv-fabric-pilot-hex-row {
+      display: flex;
+      gap: 6px;
+    }
+    .mpv-fabric-pilot-toolbar input[data-fabric-pilot-setting="hex"] {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: 26px;
+      box-sizing: border-box;
+      padding: 0 6px;
+      border: 1px solid var(--fabric-palette-border);
+      border-radius: 4px;
+      background: var(--fabric-palette-bg);
+      color: var(--text-primary);
+      font: inherit;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+      text-transform: uppercase;
+      user-select: text;
+    }
+    .mpv-fabric-pilot-toolbar input[data-fabric-pilot-setting="hex"]:focus {
+      outline: 2px solid var(--fabric-palette-accent);
+      outline-offset: 1px;
+    }
+    .mpv-fabric-pilot-toolbar input[data-fabric-pilot-setting="hex"][aria-invalid="true"] {
+      border-color: var(--fabric-palette-danger);
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-hex-row button {
+      flex: 0 0 auto;
+      min-height: 26px;
+      height: 26px;
+      padding: 0 8px;
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-hex-row button[aria-disabled="true"] {
+      color: var(--fabric-palette-muted);
+      cursor: default;
+    }
+    .mpv-fabric-pilot-hex-error {
+      color: var(--fabric-palette-danger);
+      font-size: 10px;
+      line-height: 1.4;
+    }
+    .mpv-fabric-pilot-hex-error:empty {
+      display: none;
+    }
+    /* 외곽선: 켜기 버튼 한 줄, 켜면 그 아래 색과 굵기가 펼쳐진다. */
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-outline > button {
+      min-height: 28px;
+      height: 28px;
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-outline-swatches button {
+      width: 20px;
+      height: 20px;
+      border-radius: 50%;
     }
     /* 목업(§0.3 시안)의 field 구성 — 라벨과 수치를 한 줄에, 그 아래 3px 트랙.
        버튼이 없으므로 트랙이 이 줄에서 가장 큰 요소가 된다. */
@@ -621,11 +820,11 @@ const OVERLAY_HTML = String.raw`
       align-items: baseline;
       justify-content: space-between;
       gap: 8px;
-      font-size: 10px;
+      /* 섹션 라벨("색")과 같은 글자로 맞춘다. 자간을 벌리면 한글 라벨이
+         "크 기"처럼 낱자로 흩어져 읽힌다. */
+      font-size: 11px;
       font-weight: 600;
-      letter-spacing: 0.11em;
-      text-transform: uppercase;
-      color: var(--text-faint);
+      color: var(--fabric-palette-muted);
     }
     .mpv-fabric-pilot-field-top b {
       font-size: 11px;
@@ -674,27 +873,7 @@ const OVERLAY_HTML = String.raw`
       outline: 2px solid var(--fabric-palette-accent);
       outline-offset: 2px;
     }
-    .mpv-fabric-pilot-brush-status {
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      min-width: 0;
-      min-height: 20px;
-      color: var(--fabric-palette-muted);
-      font-size: 11px;
-      font-variant-numeric: tabular-nums;
-    }
-    .mpv-fabric-pilot-brush-status [data-fabric-pilot-output="brush-status-swatch"] {
-      flex: 0 0 auto;
-    }
-    .mpv-fabric-pilot-brush-status [data-fabric-pilot-output="brush-status-text"] {
-      min-width: 0;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-    }
-    .mpv-fabric-pilot-eraser-mode,
-    .mpv-fabric-pilot-recent-colors {
+    .mpv-fabric-pilot-eraser-mode {
       display: flex;
       flex-flow: row wrap;
       gap: var(--fabric-palette-gap);
@@ -735,18 +914,27 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-badge {
       display: block;
       width: 100%;
-      min-height: 24px;
-      line-height: 24px;
-      padding: 0 6px;
+      min-height: 18px;
+      line-height: 18px;
+      padding: 0 2px;
       box-sizing: border-box;
-      border-radius: 4px;
-      background: var(--fabric-palette-inset);
       color: var(--fabric-palette-muted);
       font-size: 11px;
       font-variant-numeric: tabular-nums;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    /* 저장 상태는 버튼처럼 보이는 상자 대신 한 줄 글자와 작은 점으로 둔다. */
+    .mpv-fabric-pilot-badge::before {
+      content: "";
+      display: inline-block;
+      width: 6px;
+      height: 6px;
+      margin-right: 6px;
+      border-radius: 50%;
+      background: var(--success);
+      vertical-align: 1px;
     }
     @media (max-width: 800px) {
       .mpv-fabric-pilot-toolbar {
@@ -767,14 +955,10 @@ const OVERLAY_HTML = String.raw`
       .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="selection-summary"] {
         display: none;
       }
-      /* 팔레트가 190px 로 좁아지면 패널 안쪽은 약 156px 이다.
-         36px 그대로면 4*36 + 3*4 = 156 을 넘겨 3/3/2 로 흘러 세 줄이 된다.
-         32px 이면 4*32 + 3*4 = 140 이라 넉넉히 넷이 앉는다. */
-      .mpv-fabric-pilot-toolbar [data-fabric-pilot-panel="brush-settings"] button[data-fabric-pilot-color] {
-        width: 32px;
-        height: 32px;
-        min-width: 32px;
-        min-height: 32px;
+      /* 팔레트가 190px 로 좁아지면 편집 줄의 마지막 칸이 약 70px 이다. 아이콘까지
+         두면 "전체 지우기" 글자가 잘리므로 글자만 남긴다. */
+      .mpv-fabric-pilot-toolbar [data-fabric-pilot-action="clear-session"] [data-fabric-pilot-icon] {
+        display: none;
       }
     }
     .mirror-canvas {
@@ -3066,6 +3250,9 @@ class MPVOverlayHost {
     this.maxProcessedActionIds = 2048;
     this.drawingActionQueue = Promise.resolve();
     this.suppressedOverlayHistoryKeys = new Set();
+    // 오버레이 팔레트의 글자 입력칸(색상 코드)에 포커스가 있는 동안 true.
+    // 그동안은 키를 메인 창으로 넘기지 않는다(before-input-event 참조).
+    this.overlayTextEntryActive = false;
     this.drawingV3ShadowEnabled = false;
     this.drawingV3ShadowConfigured = false;
     this.drawingV3ShadowLocked = false;
@@ -3098,6 +3285,41 @@ class MPVOverlayHost {
       !hostWindow.isDestroyed?.() &&
       !hostWindow.webContents?.isDestroyed?.() &&
       event?.sender === hostWindow.webContents;
+  }
+
+  // 오버레이가 "글자 입력칸에 포커스가 있다/없다"를 알린다. 켜져 있는 동안
+  // before-input-event 가 키를 가로채지 않아 입력칸에 글자가 들어간다.
+  // 그리기 입력이 꺼져 있으면 켜지 않는다 — 그때는 애초에 릴레이가 없고,
+  // 켠 채 남으면 다음에 그리기를 켰을 때 단축키가 전부 죽는다.
+  setTextEntryActive(event, active) {
+    if (!this.isCurrentOverlaySender(event)) return false;
+    this.overlayTextEntryActive = active === true && this.desiredInputEnabled === true;
+    return this.overlayTextEntryActive;
+  }
+
+  // 메인 창이 보존해 둔 팔레트 값(마지막 색·굵기·불투명도·내 색)을 오버레이에 심는다.
+  // 세션 토큰과 무관한 화면 상태라 Fabric 런타임이 준비돼 있기만 하면 된다.
+  // 사용자가 그 사이 값을 바꿨는지는 런타임이 판단해 거절한다.
+  async applyDrawingPalettePrefs(value) {
+    const prefs = normalizeFabricPalettePrefs(value);
+    if (!prefs) {
+      return { success: false, accepted: false, error: 'invalid drawing palette prefs' };
+    }
+    const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() ||
+        this.fabricReadyGeneration !== this.hostGeneration) {
+      return { success: false, accepted: false, error: 'fabric runtime is not ready' };
+    }
+    try {
+      const result = await this._executeFabricMethod('applyPalettePrefs', prefs);
+      return {
+        success: true,
+        accepted: result?.accepted === true,
+        ...(result?.accepted === true ? {} : { reason: String(result?.reason || 'rejected') })
+      };
+    } catch (error) {
+      return { success: false, accepted: false, error: error.message };
+    }
   }
 
   _collaborationActionRelayIsReady({ allowHidden = false } = {}) {
@@ -3327,6 +3549,7 @@ class MPVOverlayHost {
     this.currentLayerViewRevision = -1;
     if (!request.enabled) {
       this.suppressedOverlayHistoryKeys.clear();
+      this.overlayTextEntryActive = false;
     }
 
     // 준비된 Fabric surface가 없다면 disable은 native click-through만 보장하면 된다.
@@ -4853,6 +5076,7 @@ class MPVOverlayHost {
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
+    this.overlayTextEntryActive = false;
     this.lastBounds = null;
     // 피드백 32: 호스트 재생성 후 동일 bounds 스킵 오판 방지
     this._lastAppliedScreenBounds = null;
@@ -4927,6 +5151,7 @@ class MPVOverlayHost {
     this.completedActionIds.clear();
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
+    this.overlayTextEntryActive = false;
     this.window = hostWindow;
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
@@ -4959,6 +5184,9 @@ class MPVOverlayHost {
     hostWindow.on?.('blur', () => {
       if (this.window !== hostWindow || this.hostGeneration !== hostGeneration) return;
       this.viewportPanGesture = null;
+      // 창이 포커스를 잃으면 입력칸의 blur 알림이 오지 않을 수 있다. 여기서 풀지
+      // 않으면 다음에 오버레이가 포커스를 얻었을 때 단축키가 메인 창으로 가지 않는다.
+      this.overlayTextEntryActive = false;
       try { this.getMainWindow()?.webContents?.send('mpv-overlay:input-blur'); } catch { /* window closing */ }
     });
     hostWindow.webContents?.on?.('before-input-event', (event, input) => {
@@ -4969,6 +5197,10 @@ class MPVOverlayHost {
           !this.activeSessionId) {
         return;
       }
+      // 팔레트의 색상 코드 입력칸에 글자를 넣는 중이다. 여기서 키를 메인 창으로 넘기면
+      // (아래 preventDefault 때문에) 입력칸에는 한 글자도 들어가지 않는다.
+      // Ctrl+Z·B 같은 단축키도 이 동안은 입력칸의 것이다.
+      if (this.overlayTextEntryActive) return;
       const inputCode = String(input?.code || '');
       if (this.suppressedOverlayHistoryKeys.has(inputCode)) {
         if (input?.type === 'keyUp') {
@@ -5065,6 +5297,7 @@ class MPVOverlayHost {
       this.completedActionIds.clear();
       this.inFlightDrawingActions.clear();
       this.suppressedOverlayHistoryKeys.clear();
+      this.overlayTextEntryActive = false;
       this._lastAppliedScreenBounds = null;
       if (!hostWindow.isDestroyed?.()) hostWindow.destroy();
     });
@@ -5078,6 +5311,7 @@ class MPVOverlayHost {
       this.collaborationActionSequence = 0;
       this.activeCollaborationDragPointerId = null;
       this.suppressedOverlayHistoryKeys.clear();
+      this.overlayTextEntryActive = false;
     });
 
     return hostWindow;

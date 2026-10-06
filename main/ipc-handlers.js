@@ -19,6 +19,7 @@ const {
   normalizeMpvCollaborationState,
   normalizeFabricDrawingPersistenceMessage
 } = require('./mpv-overlay-host');
+const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
 const {
   readReviewSnapshot,
   saveReviewFile
@@ -426,6 +427,8 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingTool(request)));
   ipcMain.handle('mpv:update-overlay-drawing-brush', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingBrush(request)));
+  ipcMain.handle('mpv:apply-overlay-drawing-palette-prefs', (event, prefs) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingPalettePrefs(prefs)));
   ipcMain.handle('mpv:update-overlay-drawing-layer-view', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingLayerView(request)));
   ipcMain.handle('mpv:update-overlay-drawing-frame', (event, request) =>
@@ -474,6 +477,28 @@ function setupIpcHandlers({
   });
   ipcMain.on('mpv-overlay:collaboration-action', (event, action) => {
     mpvOverlayHost.forwardCollaborationAction(event, action);
+  });
+  // 팔레트의 글자 입력칸 포커스. 호스트가 그동안 키 릴레이를 멈춘다(발신자는 호스트가 확인한다).
+  ipcMain.on('mpv-overlay:text-entry', (event, active) => {
+    if (isFabricDrawingPilotEnabled) mpvOverlayHost.setTextEntryActive(event, active);
+  });
+  // 팔레트 값(마지막 색·굵기·불투명도·내 색)을 메인 렌더러의 사용자 설정으로 넘긴다.
+  ipcMain.on('mpv-overlay:palette-prefs', (event, value) => {
+    if (!isFabricDrawingPilotEnabled ||
+        !mpvOverlayHost.isCurrentOverlaySender(event)) {
+      return;
+    }
+    const normalized = normalizeFabricPalettePrefs(value);
+    if (!normalized) return;
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) return;
+    const mainWebContents = mainWindow.webContents;
+    if (!mainWebContents || mainWebContents.isDestroyed?.()) return;
+    try {
+      mainWebContents.send('fabric-drawing:palette-prefs', normalized);
+    } catch (_error) {
+      // 보존용 보조 신호다. 놓쳐도 다음 변경 때 다시 온다.
+    }
   });
   ipcMain.on('mpv-overlay:fabric-drawing-persistence', (event, message) => {
     if (!isFabricDrawingPilotEnabled ||

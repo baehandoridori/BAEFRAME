@@ -2192,6 +2192,138 @@ test('successful drawing activation repaints and restores the overlay above the 
   );
 });
 
+async function enableDrawingForRelay(harness, sessionId) {
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration));
+  await harness.host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId,
+      stableVideoIdentity: `${sessionId}-video`,
+      targetFrame: 24,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }));
+  return hostGeneration;
+}
+
+test('keyboard relay pauses while the palette text field is being typed into', async () => {
+  const harness = createDrawingHostHarness();
+  const { host, events, windows } = harness;
+  const hostGeneration = await enableDrawingForRelay(harness, 'session-text-entry');
+  const overlay = windows[0];
+  const fromOverlay = { sender: overlay.webContents };
+  const press = (overrides = {}) => {
+    let prevented = false;
+    overlay.webContents.emit('before-input-event', {
+      preventDefault: () => {
+        prevented = true;
+      }
+    }, {
+      type: 'keyDown',
+      key: 'b',
+      code: 'KeyB',
+      shift: false,
+      control: false,
+      alt: false,
+      meta: false,
+      isAutoRepeat: false,
+      ...overrides
+    });
+    return prevented;
+  };
+
+  // 오버레이가 아닌 발신자는 릴레이를 멈출 수 없다.
+  assert.equal(host.setTextEntryActive({ sender: {} }, true), false);
+  assert.equal(host.setTextEntryActive({ sender: harness.mainWindow.webContents }, true), false);
+  assert.equal(press(), true);
+
+  // 입력칸에 포커스가 있는 동안에는 키를 가로채지 않는다. 가로채면 색상 코드가
+  // 한 글자도 들어가지 않는다. 실행취소 단축키도 이 동안은 입력칸의 것이다.
+  assert.equal(host.setTextEntryActive(fromOverlay, true), true);
+  events.length = 0;
+  assert.equal(press(), false);
+  assert.equal(press({ key: 'z', code: 'KeyZ', control: true }), false);
+  assert.equal(press({ key: 'Enter', code: 'Enter' }), false);
+  assert.deepEqual(events, [], '메인 창으로는 아무것도 가지 않는다');
+
+  // 참이 아닌 값은 모두 "끝났다"다.
+  assert.equal(host.setTextEntryActive(fromOverlay, 'true'), false);
+  assert.equal(press(), true);
+
+  // 창이 포커스를 잃으면 입력칸의 blur 알림 없이도 풀린다.
+  assert.equal(host.setTextEntryActive(fromOverlay, true), true);
+  overlay.listeners.get('blur')();
+  assert.equal(press(), true);
+
+  // 그리기를 끄면 풀리고, 꺼져 있는 동안에는 다시 켤 수 없다. 켠 채 남으면 다음에
+  // 그리기를 켰을 때 단축키가 전부 죽는다.
+  assert.equal(host.setTextEntryActive(fromOverlay, true), true);
+  await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    inputRevision: 3,
+    enabled: false
+  }));
+  assert.equal(host.overlayTextEntryActive, false);
+  assert.equal(host.setTextEntryActive(fromOverlay, true), false);
+  assert.equal(host.overlayTextEntryActive, false);
+});
+
+test('stored palette values reach the runtime only when well-formed and the runtime is ready', async () => {
+  let runtimeAnswer = { accepted: true, color: '#a55eea', size: 12, opacity: 60, savedColors: [] };
+  const harness = createDrawingHostHarness({
+    executeDrawing: script => (script.includes('.applyPalettePrefs(') ? runtimeAnswer : undefined)
+  });
+  const { host, events } = harness;
+  const prefs = { color: '#a55eea', size: 12, opacity: 60, savedColors: ['#123456'] };
+
+  // Fabric 런타임이 준비되기 전에는 심을 곳이 없다.
+  assert.deepEqual(await host.applyDrawingPalettePrefs(prefs), {
+    success: false,
+    accepted: false,
+    error: 'fabric runtime is not ready'
+  });
+
+  await enableDrawingForRelay(harness, 'session-palette-prefs');
+  events.length = 0;
+  assert.deepEqual(await host.applyDrawingPalettePrefs(prefs), { success: true, accepted: true });
+  assert.deepEqual(events, [[
+    'executeJavaScript',
+    `window.__mpvFabricOverlay.applyPalettePrefs(${JSON.stringify(prefs)});`
+  ]]);
+
+  // 사용자가 그 사이 팔레트를 만졌다면 런타임이 거절한다. 그 사유만 돌려주고
+  // 런타임이 든 값은 메인 창으로 새지 않는다.
+  runtimeAnswer = { accepted: false, reason: 'local-changes', color: '#000000' };
+  assert.deepEqual(await host.applyDrawingPalettePrefs(prefs), {
+    success: true,
+    accepted: false,
+    reason: 'local-changes'
+  });
+
+  // 형식이 다른 값은 오버레이에 닿지 않는다.
+  events.length = 0;
+  for (const malformed of [
+    null,
+    { ...prefs, color: 'red' },
+    { ...prefs, size: 51 },
+    { ...prefs, opacity: 5 },
+    { ...prefs, savedColors: ['#123456', '#123456'] },
+    { ...prefs, script: '");alert(1);//' }
+  ]) {
+    assert.deepEqual(await host.applyDrawingPalettePrefs(malformed), {
+      success: false,
+      accepted: false,
+      error: 'invalid drawing palette prefs'
+    });
+  }
+  assert.deepEqual(events, []);
+});
+
 test('relays keyboard input through the focused main renderer and restores main focus on disable', async () => {
   const { host, events, windows } = createDrawingHostHarness();
   const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
@@ -4895,9 +5027,40 @@ test('Fabric 드로잉 팔레트는 드래그형 구조를 유지하고 승인�
   assert.match(hostSource, /button\[data-active="true"\]\s*\{/);
   assert.match(hostSource, /\.mpv-fabric-pilot-toolbar button:active\s*\{[^}]*transform:\s*scale\(0\.96\)/s);
   assert.match(hostSource, /\.mpv-fabric-pilot-collapse-button\s*\{[^}]*min-width:\s*24px/s);
+  // 색 견본은 고정 치수가 아니라 8칸 격자가 폭을 정한다. 212px 과 190px 팔레트
+  // 어느 쪽에서도 기본 8색이 한 줄에 들어가야 한다.
   assert.match(
     hostSource,
-    /\[data-fabric-pilot-panel="brush-settings"\] button:not\(\[data-fabric-pilot-color\]\)\s*\{[^}]*min-width:\s*32px/s
+    /\.mpv-fabric-pilot-swatches,\s*\.mpv-fabric-pilot-saved-colors\s*\{[^}]*grid-template-columns:\s*repeat\(8, minmax\(0, 1fr\)\)/s
+  );
+  assert.doesNotMatch(
+    hostSource,
+    /button\[data-fabric-pilot-color\]\s*\{[^}]*width:\s*36px/s
+  );
+  // 고른 색의 고리는 견본 색과 무관한 중립색이다.
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-swatches button\[aria-pressed="true"\][^{]*\{[^}]*box-shadow:\s*0 0 0 2px var\(--fabric-palette-bg\), 0 0 0 3\.5px var\(--text-primary\)/s
+  );
+  // Ctrl 임시 지우개와 되돌리기 어려운 동작은 강조색(노랑)과 다른 경고색으로 구분한다.
+  assert.match(hostSource, /\.mpv-fabric-pilot-toolbar\s*\{[^}]*--fabric-palette-danger:\s*#ff8a75/s);
+  assert.match(
+    hostSource,
+    /\.mpv-fabric-pilot-toolbar\[data-temp-erase="true"\] \.mpv-fabric-pilot-toolbar-tool\s*\{[^}]*color:\s*var\(--fabric-palette-danger\)/s
+  );
+  assert.match(
+    hostSource,
+    /button\[data-temp-active="true"\]\s*\{[^}]*color:\s*var\(--fabric-palette-danger\)/s
+  );
+  assert.match(
+    hostSource,
+    /button\[data-tone="danger"\]\s*\{[^}]*color:\s*var\(--fabric-palette-danger\)/s
+  );
+  // 원래 도구의 "돌아올 자리" 표시는 활성 채움보다 뒤에 있어야 이긴다.
+  assert.ok(
+    hostSource.indexOf('button[data-return-tool="true"]') >
+      hostSource.indexOf('.mpv-fabric-pilot-toolbar button[data-active="true"]'),
+    'data-return-tool 규칙은 data-active 규칙 뒤에 와야 한다'
   );
 
   assert.match(hostSource, /\.mpv-fabric-pilot-badge\s*\{[^}]*width:\s*100%/s);

@@ -50,9 +50,63 @@ var require_viewport_pan_message = __commonJS({
   }
 });
 
+// shared/fabric-palette-prefs.js
+var require_fabric_palette_prefs = __commonJS({
+  "shared/fabric-palette-prefs.js"(exports2, module2) {
+    "use strict";
+    var FABRIC_PALETTE_SAVED_COLOR_LIMIT = 7;
+    var FABRIC_PALETTE_MIN_BRUSH_SIZE = 1;
+    var FABRIC_PALETTE_MAX_BRUSH_SIZE = 50;
+    var FABRIC_PALETTE_MIN_OPACITY_PERCENT = 10;
+    var FABRIC_PALETTE_MAX_OPACITY_PERCENT = 100;
+    var FABRIC_PALETTE_PREFS_KEYS = Object.freeze(["color", "size", "opacity", "savedColors"]);
+    var FABRIC_PALETTE_HEX_COLOR = /^#[0-9a-f]{6}$/;
+    function isIntegerInRange(value, min, max) {
+      return Number.isInteger(value) && value >= min && value <= max;
+    }
+    function normalizeFabricPalettePrefs2(value) {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+      try {
+        if (Object.getPrototypeOf(value) !== Object.prototype) return null;
+        const keys = Object.keys(value);
+        if (keys.length !== FABRIC_PALETTE_PREFS_KEYS.length || !FABRIC_PALETTE_PREFS_KEYS.every((key) => keys.includes(key))) {
+          return null;
+        }
+        const { color, size, opacity, savedColors } = value;
+        if (typeof color !== "string" || !FABRIC_PALETTE_HEX_COLOR.test(color) || !isIntegerInRange(size, FABRIC_PALETTE_MIN_BRUSH_SIZE, FABRIC_PALETTE_MAX_BRUSH_SIZE) || !isIntegerInRange(
+          opacity,
+          FABRIC_PALETTE_MIN_OPACITY_PERCENT,
+          FABRIC_PALETTE_MAX_OPACITY_PERCENT
+        ) || !Array.isArray(savedColors) || savedColors.length > FABRIC_PALETTE_SAVED_COLOR_LIMIT) {
+          return null;
+        }
+        const colors = [];
+        for (const entry of savedColors) {
+          if (typeof entry !== "string" || !FABRIC_PALETTE_HEX_COLOR.test(entry) || colors.includes(entry)) {
+            return null;
+          }
+          colors.push(entry);
+        }
+        return { color, size, opacity, savedColors: colors };
+      } catch (_error) {
+        return null;
+      }
+    }
+    module2.exports = {
+      FABRIC_PALETTE_SAVED_COLOR_LIMIT,
+      FABRIC_PALETTE_MIN_BRUSH_SIZE,
+      FABRIC_PALETTE_MAX_BRUSH_SIZE,
+      FABRIC_PALETTE_MIN_OPACITY_PERCENT,
+      FABRIC_PALETTE_MAX_OPACITY_PERCENT,
+      normalizeFabricPalettePrefs: normalizeFabricPalettePrefs2
+    };
+  }
+});
+
 // preload/mpv-overlay-preload.js
 var { contextBridge, ipcRenderer } = require("electron");
 var { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require_viewport_pan_message();
+var { normalizeFabricPalettePrefs } = require_fabric_palette_prefs();
 contextBridge.exposeInMainWorld("mpvOverlayViewportPan", {
   send(value) {
     const normalized = normalizeViewportPanMessage(value);
@@ -80,6 +134,8 @@ var POINTER_PRESENCE_CHANNEL = "mpv-overlay:pointer-presence";
 var COLLABORATION_ACTION_CHANNEL = "mpv-overlay:collaboration-action";
 var COLLABORATION_DRAG_RESET_CHANNEL = "mpv-overlay:collaboration-drag-reset";
 var DRAWING_POINTERDOWN_FRAME_REQUEST_CHANNEL = "mpv-overlay:drawing-pointerdown-frame-request";
+var PALETTE_PREFS_CHANNEL = "mpv-overlay:palette-prefs";
+var TEXT_ENTRY_CHANNEL = "mpv-overlay:text-entry";
 var DRAWING_POINTERDOWN_FRAME_REQUEST_KEYS = Object.freeze([
   "hostGeneration",
   "videoGeneration",
@@ -564,6 +620,28 @@ contextBridge.exposeInMainWorld("mpvOverlayCollaborationActions", Object.freeze(
   },
   cancelActiveDrag() {
     return cancelActiveCollaborationDrag();
+  }
+}));
+contextBridge.exposeInMainWorld("mpvOverlayPalettePrefs", Object.freeze({
+  notify(value) {
+    const prefs = normalizeFabricPalettePrefs(value);
+    if (!prefs) return false;
+    try {
+      ipcRenderer.send(PALETTE_PREFS_CHANNEL, prefs);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+}));
+contextBridge.exposeInMainWorld("mpvOverlayTextEntry", Object.freeze({
+  set(active) {
+    try {
+      ipcRenderer.send(TEXT_ENTRY_CHANNEL, active === true);
+      return true;
+    } catch (_error) {
+      return false;
+    }
   }
 }));
 contextBridge.exposeInMainWorld("mpvOverlayDrawingFrame", Object.freeze({

@@ -58,6 +58,15 @@ const {
   isFabricDrawingTool,
   normalizeFabricDrawingTool
 } = require('../../../shared/fabric-drawing-tools.js');
+// 팔레트 값은 오버레이 밖(메인 창의 사용자 설정)에 보존되므로 한도를 공유 모듈에서 받는다.
+// 여기서 따로 적으면 이쪽이 만든 값을 경계의 검증기가 거부할 수 있다.
+const {
+  FABRIC_PALETTE_SAVED_COLOR_LIMIT: SAVED_COLOR_LIMIT,
+  FABRIC_PALETTE_MIN_BRUSH_SIZE: MIN_BRUSH_SIZE,
+  FABRIC_PALETTE_MAX_BRUSH_SIZE: MAX_BRUSH_SIZE,
+  FABRIC_PALETTE_MIN_OPACITY_PERCENT: MIN_BRUSH_OPACITY_PERCENT,
+  FABRIC_PALETTE_MAX_OPACITY_PERCENT: MAX_BRUSH_OPACITY_PERCENT
+} = require('../../../shared/fabric-palette-prefs.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -106,8 +115,28 @@ const TOOL_ICON_SVG = Object.freeze({
   arrow: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>',
   select: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M3 3l7 18 2.5-7.5L20 11z"/></svg>'
 });
+// 편집 줄 아이콘. 도구 아이콘과 같은 선 굵기·크기를 써서 한 벌로 읽히게 한다.
+const ACTION_ICON_SVG = Object.freeze({
+  undo: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7v6h6"/><path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"/></svg>',
+  redo: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 7v6h-6"/><path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3l3 2.7"/></svg>',
+  'delete-selection': '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  'clear-session': '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="m9 9 6 6"/><path d="m15 9-6 6"/></svg>',
+  'color-picker-toggle': '<svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14"/><path d="M5 12h14"/></svg>'
+});
 // 도형 버튼 우하단의 플라이아웃 예고 삼각형.
 const SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
+// 지우개(도구·Ctrl 임시 지우개)의 고리 커서. 흰 고리에 어두운 테두리를 겹쳐 밝은
+// 영상과 어두운 영상 어디서나 보이게 한다. 실패하면 십자 커서로 떨어진다.
+// 고리는 실제 지우기 반경(선택 여유 6px 의 절반)보다 조금 크게 그려 눈에 띄게 하고,
+// 정확한 지점은 가운데 점으로 짚는다.
+const ERASER_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24">' +
+  '<circle cx="12" cy="12" r="6.5" fill="none" stroke="#000" stroke-opacity="0.65" stroke-width="3.5"/>' +
+  '<circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.5"/>' +
+  '<circle cx="12" cy="12" r="1.6" fill="#000" fill-opacity="0.65"/>' +
+  '<circle cx="12" cy="12" r="0.9" fill="#fff"/></svg>'
+)}") 12 12, crosshair`;
+const TEMP_ERASE_TOOL_LABEL = '지우개 · Ctrl';
 // 상시 요약 줄에 띄우는 도구 이름.
 const TOOL_STATUS_LABELS = Object.freeze({
   brush: '브러시',
@@ -125,17 +154,12 @@ const SHAPE_TOOL_LABELS = Object.freeze({
   circle: '원',
   arrow: '화살표'
 });
-const RECENT_COLOR_LIMIT = 4;
-const MIN_BRUSH_SIZE = 1;
-const MAX_BRUSH_SIZE = 50;
 const MIN_OUTLINE_WIDTH = 1;
 const MAX_OUTLINE_WIDTH = 20;
 const DEFAULT_OUTLINE_WIDTH = 2;
 const DEFAULT_OUTLINE_COLOR = '#000000';
 // [ / ] 로 띄운 크기 HUD 가 스스로 사라지기까지. 레거시 감각과 같다.
 const SIZE_ADJUST_HUD_FLASH_MS = 700;
-const MIN_BRUSH_OPACITY_PERCENT = 10;
-const MAX_BRUSH_OPACITY_PERCENT = 100;
 // 레거시 Canvas2D 엔진(drawing-canvas.js `_updateSizeAdjust`)의 delta/4 감도를 그대로 계승한다.
 const SIZE_ADJUST_PIXELS_PER_STEP = 4;
 const FABRIC_PERSISTENCE_BADGE_PREFIX = '새 드로잉 · 리뷰 자동 저장';
@@ -336,6 +360,56 @@ function boundedInteger(value, min, max, fallback) {
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.min(max, Math.max(min, parsed));
+}
+
+// 색은 저장 스키마와 같은 `#rrggbb` 만 받는다(세 검증기가 모두 6자리 hex 를 요구한다).
+// 사용자가 붙여 넣는 값은 `#` 없이 오거나 대문자일 수 있어 여기서만 느슨하게 받는다.
+function normalizeHexColor(value) {
+  if (typeof value !== 'string') return null;
+  const match = /^#?([0-9a-f]{6})$/i.exec(value.trim());
+  return match ? `#${match[1].toLowerCase()}` : null;
+}
+
+function hexToHsv(hex) {
+  const normalized = normalizeHexColor(hex);
+  if (!normalized) return null;
+  const red = Number.parseInt(normalized.slice(1, 3), 16) / 255;
+  const green = Number.parseInt(normalized.slice(3, 5), 16) / 255;
+  const blue = Number.parseInt(normalized.slice(5, 7), 16) / 255;
+  const max = Math.max(red, green, blue);
+  const delta = max - Math.min(red, green, blue);
+  let hue = 0;
+  if (delta > 0) {
+    if (max === red) hue = ((green - blue) / delta) % 6;
+    else if (max === green) hue = (blue - red) / delta + 2;
+    else hue = (red - green) / delta + 4;
+    hue *= 60;
+    if (hue < 0) hue += 360;
+  }
+  return { h: hue, s: max > 0 ? delta / max : 0, v: max };
+}
+
+function hsvToHex(hue, saturation, value) {
+  const h = ((finiteNumber(hue) % 360) + 360) % 360;
+  const s = Math.min(1, Math.max(0, finiteNumber(saturation)));
+  const v = Math.min(1, Math.max(0, finiteNumber(value)));
+  const channel = offset => {
+    const k = (offset + h / 60) % 6;
+    const level = v - v * s * Math.max(0, Math.min(k, 4 - k, 1));
+    return Math.round(level * 255).toString(16).padStart(2, '0');
+  };
+  return `#${channel(5)}${channel(3)}${channel(1)}`;
+}
+
+function normalizeSavedColors(value, limit = SAVED_COLOR_LIMIT) {
+  const colors = [];
+  if (!Array.isArray(value)) return colors;
+  for (const entry of value) {
+    if (colors.length >= limit) break;
+    const color = normalizeHexColor(entry);
+    if (color && !colors.includes(color)) colors.push(color);
+  }
+  return colors;
 }
 
 function normalizePathOpacity(value) {
@@ -3867,7 +3941,12 @@ function createFabricOverlayRuntime(options = {}) {
   };
   let outlineControls = null;
   let brushControls = null;
-  let brushPanelOpen = false;
+  // 팔레트가 놓이는 꼴. 리뷰 화면은 영상 위에 뜨는 세로 팔레트라 색·굵기를 항상
+  // 펼쳐 두고 편집 버튼을 아이콘으로 줄인다. 편집창은 가로 한 줄 도크('dock')라
+  // 색·굵기를 버튼을 눌렀을 때만 뜨는 패널로 두고 편집 버튼은 글자 그대로 둔다.
+  const paletteDocked = options.paletteLayout === 'dock';
+  const brushPanelInline = !paletteDocked;
+  let brushPanelOpen = brushPanelInline;
   let selectionTarget = 'stroke';
   let selectionShape = 'rectangle';
   let selectionControlEventCount = 0;
@@ -3885,12 +3964,24 @@ function createFabricOverlayRuntime(options = {}) {
   // 캔버스 쪽 상태를 팔레트 셸이 캐시하면 접혀 있는 동안 낡는다.
   let shapeMenuOpen = false;
   let lastShapeTool = 'rect';
-  let brushStatusRow = null;
-  // 최근 사용 색 4개. 팔레트 색상 8종 중 실제로 쓰는 건 보통 2~3개인데 매번 전체를
-  // 훑어야 했다. 오버레이 문서는 data: URL 오리진이라 localStorage 가 SecurityError 를
-  // 던지므로 세션 메모리에만 둔다.
-  const recentColors = [];
-  let recentColorControls = null;
+  // 사용자가 담아 둔 "내 색". 최신이 앞이다. 오버레이 문서는 data: URL 오리진이라
+  // localStorage 가 SecurityError 를 던지므로 여기서는 메모리에만 두고, 보존은
+  // palettePrefsBridge 로 알린 쪽(메인 렌더러의 사용자 설정)이 맡는다.
+  let savedColors = [];
+  let colorControls = null;
+  let colorPickerOpen = false;
+  // 색 고르기 판의 현재 위치. 색에서 매번 역산하면 채도·명도가 0 일 때 색조가
+  // 0 으로 돌아가 끄는 도중 손잡이가 튄다. 판을 끄는 동안에는 이 값이 원본이다.
+  let pickerHsv = hexToHsv(DEFAULT_BRUSH_STYLE.color);
+  let pickerDrag = null;
+  const palettePrefsBridge = options.palettePrefsBridge || windowRef?.mpvOverlayPalettePrefs;
+  const textEntryBridge = options.textEntryBridge || windowRef?.mpvOverlayTextEntry;
+  // 사용자가 이 런타임에서 값을 한 번이라도 바꿨으면 저장된 값으로 덮지 않는다.
+  let palettePrefsTouched = false;
+  let lastNotifiedPalettePrefsKey = null;
+  let textEntryActive = false;
+  // Ctrl 을 누르고 있어 브러시·펜이 임시 지우개로 동작할 상태인가(표시 전용).
+  let tempEraseArmed = false;
   let transformStart = null;
   let selectGesture = null;
   const ignoredModifiedTargets = new WeakSet();
@@ -3978,84 +4069,452 @@ function createFabricOverlayRuntime(options = {}) {
       : `현재: 획 전체 · ${selectionShape === 'lasso' ? '라쏘 영역' : '사각 영역'}`;
   }
 
-  // 팔레트를 펼치지 않아도 현재 브러시 상태가 보이게 하는 상시 요약 줄.
-  // brushControls.sizePreview / summary 는 설정 패널·버튼 안에 그대로 둔다
-  // (appendChild 로 옮기면 원래 자리에서 사라진다).
-  function createBrushStatusRow() {
-    const row = documentRef.createElement('div');
-    row.className = 'mpv-fabric-pilot-brush-status';
-    const swatch = documentRef.createElement('span');
-    swatch.dataset.fabricPilotOutput = 'brush-status-swatch';
-    const text = documentRef.createElement('span');
-    text.dataset.fabricPilotOutput = 'brush-status-text';
-    text.setAttribute?.('role', 'status');
-    text.setAttribute?.('aria-live', 'polite');
-    row.appendChild(swatch);
-    row.appendChild(text);
-    return { row, swatch, text };
-  }
-
-  function syncBrushStatusRow(tool = sceneStore.getDiagnostics().tool) {
-    if (!brushStatusRow) return;
-    // 하한이 2px 이면 문장 앞의 마침표로 읽힌다. 정확한 굵기는 옆의 숫자가 말하므로
-    // 견본은 색을 알아볼 수 있는 최소 크기(4px)를 지킨다.
-    const diameter = Math.min(22, Math.max(4, brushStyle.size));
-    setStyles(brushStatusRow.swatch, {
-      display: 'inline-block',
-      width: `${diameter}px`,
-      height: `${diameter}px`,
-      borderRadius: '50%',
-      background: brushStyle.color,
-      opacity: String(brushStyle.opacity)
-    });
-    const toolName = TOOL_STATUS_LABELS[tool] || '';
-    const outlineSuffix = outlineStyle.enabled ? ` · 외곽선 ${outlineStyle.width}px` : '';
-    brushStatusRow.text.textContent = toolName
-      ? `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}% · ${toolName}${outlineSuffix}`
-      : `${brushStyle.size}px · ${Math.round(brushStyle.opacity * 100)}%${outlineSuffix}`;
-  }
-
-  function createRecentColorControls() {
-    const row = documentRef.createElement('div');
-    row.className = 'mpv-fabric-pilot-recent-colors';
-    row.setAttribute?.('role', 'group');
-    row.setAttribute?.('aria-label', '최근 사용 색');
-    const buttons = [];
-    for (let index = 0; index < RECENT_COLOR_LIMIT; index += 1) {
-      const button = createButton('', `recent-color-${index}`);
-      button.dataset.fabricPilotRecentColor = '';
-      setStyles(button, { display: 'none', minWidth: '20px', minHeight: '20px', padding: '0' });
+  // ── 색 고르기 ────────────────────────────────────────────────────────────
+  // 기본 8색 아래에 "내 색" 한 줄과, 눌러서 펼치는 색 고르기 판을 둔다. 버튼은 고정
+  // 개수를 미리 만들어 두고 표시만 바꾼다(값이 바뀔 때마다 DOM 을 새로 짓지 않는다).
+  function createColorControls() {
+    const savedRow = documentRef.createElement('div');
+    savedRow.className = 'mpv-fabric-pilot-saved-colors';
+    savedRow.setAttribute?.('role', 'group');
+    savedRow.setAttribute?.('aria-label', '내 색');
+    const savedButtons = [];
+    const savedDots = [];
+    for (let index = 0; index < SAVED_COLOR_LIMIT; index += 1) {
+      const button = createButton('', `saved-color-${index}`);
+      button.dataset.fabricPilotSavedColor = '';
+      button.setAttribute?.('aria-pressed', 'false');
+      setStyles(button, { display: 'none', alignItems: 'center', justifyContent: 'center' });
+      // 기본 색 견본과 같은 짜임(버튼 안의 둥근 점)이라 두 줄이 한 벌로 보인다.
+      const dot = documentRef.createElement('span');
+      setStyles(dot, { borderRadius: '50%' });
+      if (!brushPanelInline) setStyles(dot, { width: '20px', height: '20px' });
+      button.appendChild(dot);
+      savedDots.push(dot);
       addDomListener(button, 'click', () => {
-        const color = button.dataset.fabricPilotRecentColor;
+        const color = button.dataset.fabricPilotSavedColor;
         if (color) setBrushColor(color);
       });
-      row.appendChild(button);
-      buttons.push(button);
-    }
-    return { row, buttons };
-  }
-
-  function syncRecentColorControls() {
-    if (!recentColorControls) return;
-    recentColorControls.buttons.forEach((button, index) => {
-      const color = recentColors[index];
-      button.dataset.fabricPilotRecentColor = color || '';
-      setStyles(button, {
-        display: color ? 'inline-block' : 'none',
-        background: color || 'transparent'
+      // 우클릭으로 내 색에서 뺀다. 칸이 일곱뿐이라 빼는 길이 없으면 금방 막힌다.
+      addDomListener(button, 'contextmenu', event => {
+        event?.preventDefault?.();
+        removeSavedColor(button.dataset.fabricPilotSavedColor);
       });
-      button.setAttribute?.('aria-label', color ? `최근 색 ${color}` : '');
-      button.setAttribute?.('title', color ? `최근 색 ${color}` : '');
+      savedRow.appendChild(button);
+      savedButtons.push(button);
+    }
+    const toggle = iconToolbarButton(
+      createButton('', 'color-picker-toggle'),
+      '색 직접 고르기',
+      ACTION_ICON_SVG['color-picker-toggle']
+    );
+    toggle.dataset.active = 'false';
+    toggle.setAttribute?.('aria-expanded', 'false');
+    savedRow.appendChild(toggle);
+    // 담아 둔 색이 없으면 줄에 + 하나만 남는다. 무엇을 하는 버튼인지 옆에 적어 둔다.
+    const hint = documentRef.createElement('span');
+    hint.className = 'mpv-fabric-pilot-saved-hint';
+    hint.dataset.fabricPilotOutput = 'saved-hint';
+    hint.setAttribute?.('aria-hidden', 'true');
+    hint.textContent = '색 직접 고르기';
+    savedRow.appendChild(hint);
+
+    const panel = documentRef.createElement('div');
+    panel.className = 'mpv-fabric-pilot-color-picker';
+    panel.dataset.fabricPilotPanel = 'color-picker';
+    panel.setAttribute?.('role', 'group');
+    panel.setAttribute?.('aria-label', '색 직접 고르기');
+    setStyles(panel, { display: 'none' });
+
+    // 가로는 채도, 세로는 명도. 색조는 아래 막대가 맡는다.
+    const field = documentRef.createElement('div');
+    field.className = 'mpv-fabric-pilot-color-field';
+    field.dataset.fabricPilotPicker = 'field';
+    const knob = documentRef.createElement('span');
+    knob.dataset.fabricPilotPicker = 'knob';
+    field.appendChild(knob);
+
+    const hueInput = documentRef.createElement('input');
+    hueInput.type = 'range';
+    hueInput.tabIndex = -1;
+    hueInput.min = '0';
+    hueInput.max = '359';
+    hueInput.step = '1';
+    hueInput.dataset.fabricPilotSetting = 'hue';
+    hueInput.setAttribute?.('aria-label', '색조');
+
+    const hexRow = documentRef.createElement('div');
+    hexRow.className = 'mpv-fabric-pilot-hex-row';
+    const hexInput = documentRef.createElement('input');
+    hexInput.type = 'text';
+    hexInput.maxLength = 7;
+    hexInput.spellcheck = false;
+    hexInput.autocomplete = 'off';
+    hexInput.dataset.fabricPilotSetting = 'hex';
+    hexInput.setAttribute?.('aria-label', '색상 코드');
+    const saveButton = labelToolbarButton(
+      createButton('내 색에 담기', 'save-color'),
+      '지금 색을 내 색에 담기'
+    );
+    hexRow.appendChild(hexInput);
+    hexRow.appendChild(saveButton);
+
+    const hexError = documentRef.createElement('div');
+    hexError.className = 'mpv-fabric-pilot-hex-error';
+    hexError.dataset.fabricPilotOutput = 'hex-error';
+    hexError.setAttribute?.('role', 'alert');
+
+    panel.appendChild(field);
+    panel.appendChild(hueInput);
+    panel.appendChild(hexRow);
+    panel.appendChild(hexError);
+
+    // 섹션 라벨 오른쪽에 붙는 현재 색 표시.
+    const current = documentRef.createElement('span');
+    current.className = 'mpv-fabric-pilot-current-color';
+    const chip = documentRef.createElement('span');
+    chip.dataset.fabricPilotOutput = 'color-chip';
+    const code = documentRef.createElement('span');
+    code.dataset.fabricPilotOutput = 'color-code';
+    current.appendChild(chip);
+    current.appendChild(code);
+
+    addDomListener(toggle, 'click', () => setColorPickerOpen(!colorPickerOpen));
+    addDomListener(hint, 'click', () => setColorPickerOpen(!colorPickerOpen));
+    addDomListener(field, 'pointerdown', onColorFieldPointerDown);
+    addDomListener(field, 'pointermove', onColorFieldPointerMove);
+    addDomListener(field, 'pointerup', onColorFieldPointerEnd);
+    addDomListener(field, 'pointercancel', onColorFieldPointerEnd);
+    addDomListener(field, 'lostpointercapture', onColorFieldPointerEnd);
+    addDomListener(hueInput, 'input', () => {
+      pickerHsv = {
+        ...pickerHsv,
+        h: boundedInteger(hueInput.value, 0, 359, Math.round(pickerHsv.h) % 360)
+      };
+      applyPickerColor();
     });
+    addDomListener(hexInput, 'focus', () => setTextEntryActive(true));
+    addDomListener(hexInput, 'blur', () => {
+      // 덜 친 값은 조용히 지금 색으로 되돌린다. 입력칸에 붙잡아 두지 않는다.
+      setTextEntryActive(false);
+      showHexError('');
+      syncColorControls();
+    });
+    addDomListener(hexInput, 'input', onHexInput);
+    addDomListener(hexInput, 'keydown', onHexKeyDown);
+    addDomListener(saveButton, 'click', () => saveCurrentColor());
+
+    return {
+      savedRow,
+      savedButtons,
+      savedDots,
+      toggle,
+      hint,
+      panel,
+      field,
+      knob,
+      hueInput,
+      hexInput,
+      hexError,
+      saveButton,
+      current,
+      chip,
+      code
+    };
   }
 
-  function noteRecentColor(color) {
-    if (typeof color !== 'string' || color.length === 0) return;
-    const index = recentColors.indexOf(color);
-    if (index >= 0) recentColors.splice(index, 1);
-    recentColors.unshift(color);
-    while (recentColors.length > RECENT_COLOR_LIMIT) recentColors.pop();
-    syncRecentColorControls();
+  function syncColorControls() {
+    if (!colorControls) return;
+    const color = brushStyle.color;
+    colorControls.savedButtons.forEach((button, index) => {
+      const saved = savedColors[index] || '';
+      button.dataset.fabricPilotSavedColor = saved;
+      setStyles(button, { display: saved ? 'inline-flex' : 'none' });
+      setStyles(colorControls.savedDots[index], { background: saved || 'transparent' });
+      button.setAttribute?.('aria-pressed', String(saved !== '' && saved === color));
+      button.setAttribute?.('aria-label', saved ? `내 색 ${saved.toUpperCase()}` : '');
+      button.setAttribute?.(
+        'title',
+        saved ? `내 색 ${saved.toUpperCase()} · 우클릭으로 빼기` : ''
+      );
+    });
+    setStyles(colorControls.hint, { display: savedColors.length === 0 ? '' : 'none' });
+    colorControls.toggle.dataset.active = String(colorPickerOpen);
+    colorControls.toggle.setAttribute?.('aria-expanded', String(colorPickerOpen));
+    setStyles(colorControls.panel, { display: colorPickerOpen ? 'flex' : 'none' });
+    const hue = Math.round(pickerHsv.h) % 360;
+    colorControls.field.style.setProperty?.('--fabric-picker-hue', String(hue));
+    setStyles(colorControls.knob, {
+      left: `${Math.round(pickerHsv.s * 1000) / 10}%`,
+      top: `${Math.round((1 - pickerHsv.v) * 1000) / 10}%`,
+      background: color
+    });
+    colorControls.hueInput.value = String(hue);
+    // 치는 도중에 값을 다시 쓰면 커서가 끝으로 튄다. 입력이 끝난 뒤에만 맞춘다.
+    if (!textEntryActive) colorControls.hexInput.value = color;
+    setStyles(colorControls.chip, { background: color });
+    colorControls.code.textContent = color.toUpperCase();
+    // 기본 8색과 이미 담은 색은 다시 담을 수 없다. 눌러도 아무 일이 없는 버튼으로
+    // 두지 않고 이유를 글자로 보여 준다.
+    const savable = !BRUSH_COLORS.includes(color) && !savedColors.includes(color);
+    colorControls.saveButton.textContent = savable ? '내 색에 담기' : '이미 있는 색';
+    colorControls.saveButton.setAttribute?.('aria-disabled', String(!savable));
+    // 칸이 가득 찼을 때 담으면 가장 오래된 색이 빠진다. 누르기 전에 알 수 있게 한다.
+    const saveHint = savable && savedColors.length >= SAVED_COLOR_LIMIT
+      ? '지금 색을 내 색에 담기 (칸이 가득 차 가장 오래된 색이 빠집니다)'
+      : '지금 색을 내 색에 담기';
+    colorControls.saveButton.setAttribute?.('aria-label', saveHint);
+    colorControls.saveButton.setAttribute?.('title', saveHint);
+  }
+
+  function setColorPickerOpen(open) {
+    colorPickerOpen = open === true;
+    if (!colorPickerOpen) colorControls?.hexInput?.blur?.();
+    syncColorControls();
+    // 판을 여닫으면 팔레트 높이가 달라진다. 화면 밖으로 나가지 않게 다시 잡는다.
+    paletteShell?.restore?.();
+    return colorPickerOpen;
+  }
+
+  function readColorFieldPosition(event) {
+    const rect = colorControls?.field?.getBoundingClientRect?.();
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return null;
+    return {
+      s: Math.min(1, Math.max(0, (finiteNumber(event?.clientX) - rect.left) / rect.width)),
+      v: 1 - Math.min(1, Math.max(0, (finiteNumber(event?.clientY) - rect.top) / rect.height))
+    };
+  }
+
+  function applyPickerColor() {
+    setBrushColor(hsvToHex(pickerHsv.h, pickerHsv.s, pickerHsv.v), { fromPicker: true });
+  }
+
+  function onColorFieldPointerDown(event) {
+    if (event?.button !== undefined && event.button !== 0) return;
+    const position = readColorFieldPosition(event);
+    if (!position) return;
+    // 아래에서 기본 동작을 막으므로 색상 코드 입력칸의 포커스가 저절로 풀리지 않는다.
+    // 그대로 두면 입력칸에는 옛 코드가 남고 키 넘김도 멈춘 채다.
+    endTextEntry();
+    pickerDrag = { pointerId: event?.pointerId };
+    try {
+      colorControls.field.setPointerCapture?.(event.pointerId);
+    } catch (_error) { /* 합성 포인터에서는 캡처가 실패할 수 있다 */ }
+    pickerHsv = { ...pickerHsv, ...position };
+    applyPickerColor();
+    event?.preventDefault?.();
+  }
+
+  function onColorFieldPointerMove(event) {
+    if (!pickerDrag) return;
+    if (pickerDrag.pointerId !== undefined && event?.pointerId !== pickerDrag.pointerId) return;
+    const position = readColorFieldPosition(event);
+    if (!position) return;
+    pickerHsv = { ...pickerHsv, ...position };
+    applyPickerColor();
+  }
+
+  function onColorFieldPointerEnd(event) {
+    if (!pickerDrag) return;
+    if (pickerDrag.pointerId !== undefined && event?.pointerId !== undefined &&
+        event.pointerId !== pickerDrag.pointerId) return;
+    const pointerId = pickerDrag.pointerId;
+    pickerDrag = null;
+    try {
+      colorControls?.field?.releasePointerCapture?.(pointerId);
+    } catch (_error) { /* 캡처가 없으면 해제도 필요 없다 */ }
+  }
+
+  function showHexError(message) {
+    if (!colorControls) return;
+    colorControls.hexError.textContent = message || '';
+    colorControls.hexInput.setAttribute?.('aria-invalid', String(!!message));
+  }
+
+  // 치는 도중의 덜 찬 값은 오류가 아니다. 쓸 수 없는 글자가 들어왔을 때만 바로 알린다.
+  function hexDraftProblem(text) {
+    const draft = String(text ?? '').trim();
+    if (draft === '') return '';
+    if (!/^#?[0-9a-f]*$/i.test(draft)) return '0–9와 A–F만 쓸 수 있습니다';
+    if (draft.replace('#', '').length > 6) return '여섯 자리까지만 입력하세요';
+    return '';
+  }
+
+  function onHexInput() {
+    if (!colorControls) return;
+    const text = colorControls.hexInput.value;
+    const color = normalizeHexColor(text);
+    if (color) {
+      showHexError('');
+      setBrushColor(color);
+      return;
+    }
+    showHexError(hexDraftProblem(text));
+  }
+
+  function onHexKeyDown(event) {
+    if (!colorControls) return;
+    if (event?.key === 'Enter') {
+      event.preventDefault?.();
+      if (normalizeHexColor(colorControls.hexInput.value)) {
+        colorControls.hexInput.blur?.();
+      } else {
+        showHexError(
+          hexDraftProblem(colorControls.hexInput.value) || '# 뒤에 여섯 자리를 입력하세요'
+        );
+      }
+      return;
+    }
+    if (event?.key === 'Escape') {
+      event.preventDefault?.();
+      colorControls.hexInput.blur?.();
+    }
+  }
+
+  // 색상 코드 입력칸에 글자를 넣는 동안에는 호스트가 키를 메인 창으로 넘기지 않게
+  // 알린다. 알리지 않으면 호스트가 모든 키를 가로채 입력칸에 한 글자도 들어오지 않는다.
+  function setTextEntryActive(active) {
+    const next = active === true;
+    if (next === textEntryActive) return;
+    textEntryActive = next;
+    try {
+      textEntryBridge?.set?.(next);
+    } catch (_error) { /* 보조 신호다. 포커스가 나가면 호스트가 스스로 푼다. */ }
+  }
+
+  // 글자 입력을 밖에서 끝낸다(캔버스·색 고르기 판을 누르거나, 창이 포커스를 잃거나,
+  // 팔레트가 사라질 때). 입력칸의 blur 이벤트가 오지 않는 경우에도 상태와 화면을 같은
+  // 자리로 되돌린다.
+  //
+  // 상태가 이미 꺼져 있어도 입력칸이 문서의 포커스를 쥐고 있으면 놓게 한다. 쥔 채
+  // 남으면 나중에 창이 포커스를 되찾을 때 focus 가 다시 발화해, 사용자가 건드리지
+  // 않았는데도 글자 입력 상태로 돌아가 단축키가 입력칸으로 들어간다.
+  function endTextEntry() {
+    const input = colorControls?.hexInput;
+    const holdsFocus = !!input && documentRef?.activeElement === input;
+    if (!textEntryActive && !holdsFocus) return;
+    input?.blur?.();
+    setTextEntryActive(false);
+    showHexError('');
+    syncColorControls();
+  }
+
+  function saveCurrentColor() {
+    const color = brushStyle.color;
+    if (BRUSH_COLORS.includes(color) || savedColors.includes(color)) return false;
+    savedColors = [color, ...savedColors].slice(0, SAVED_COLOR_LIMIT);
+    syncColorControls();
+    notifyPalettePrefsChanged();
+    return true;
+  }
+
+  function removeSavedColor(color) {
+    if (!color || !savedColors.includes(color)) return false;
+    savedColors = savedColors.filter(entry => entry !== color);
+    syncColorControls();
+    notifyPalettePrefsChanged();
+    return true;
+  }
+
+  // ── 팔레트 값 보존 ───────────────────────────────────────────────────────
+  function getPalettePrefs() {
+    return {
+      color: brushStyle.color,
+      size: brushStyle.size,
+      opacity: Math.round(brushStyle.opacity * 100),
+      savedColors: [...savedColors]
+    };
+  }
+
+  // 값이 바뀌면 **그 자리에서** 알린다. 여기서 모았다가 늦게 보내면, 그 사이에 이
+  // 창이 사라질 때(앱 종료·오버레이 복구 — 호스트는 런타임의 정리를 부르지 않고 창을
+  // 바로 없앤다) 마지막 변경이 통째로 사라진다. 슬라이더를 끄는 동안 값이 수십 번
+  // 바뀌어도 작은 메시지 하나씩이고, 모아서 저장하는 일은 수명이 더 긴 메인 창이 맡는다.
+  function notifyPalettePrefsChanged() {
+    palettePrefsTouched = true;
+    if (typeof palettePrefsBridge?.notify !== 'function') return;
+    const prefs = getPalettePrefs();
+    // 값이 그대로면 보내지 않는다. 색 고르기 판을 끄는 동안 같은 색이 연달아 나온다.
+    const key = JSON.stringify(prefs);
+    if (key === lastNotifiedPalettePrefsKey) return;
+    lastNotifiedPalettePrefsKey = key;
+    try {
+      palettePrefsBridge.notify(prefs);
+    } catch (_error) { /* 보조 신호다. 다음 변경에서 다시 알린다. */ }
+  }
+
+  // 저장돼 있던 값(마지막 색·굵기·불투명도·내 색)을 받는다. 사용자가 이 런타임에서
+  // 이미 값을 바꿨다면 그쪽이 더 새 값이므로 덮지 않는다.
+  function applyPalettePrefs(prefs = {}) {
+    if (destroyed) return { accepted: false, reason: 'destroyed' };
+    if (palettePrefsTouched) return { accepted: false, reason: 'local-changes' };
+    brushStyle = {
+      color: normalizeHexColor(prefs?.color) || brushStyle.color,
+      size: boundedInteger(prefs?.size, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size),
+      opacity: boundedInteger(
+        prefs?.opacity,
+        MIN_BRUSH_OPACITY_PERCENT,
+        MAX_BRUSH_OPACITY_PERCENT,
+        Math.round(brushStyle.opacity * 100)
+      ) / 100
+    };
+    savedColors = normalizeSavedColors(prefs?.savedColors)
+      .filter(color => !BRUSH_COLORS.includes(color));
+    pickerHsv = hexToHsv(brushStyle.color) || pickerHsv;
+    syncBrushControls();
+    // 받은 값은 저장 쪽이 이미 알고 있다. 되받아 알리지 않는다.
+    lastNotifiedPalettePrefsKey = JSON.stringify(getPalettePrefs());
+    return { accepted: true, ...getPalettePrefs() };
+  }
+
+  // ── Ctrl 임시 지우개 표시 ────────────────────────────────────────────────
+  // 지울지 그릴지는 beginPointerDown 이 정한다. 여기서는 "지금 누르면 지워진다"를
+  // 누르기 전에 보여 주기만 하며, 판정에는 같은 isCtrlActive 를 쓴다.
+  function resolveTempEraseArmed(event, tool = currentSession?.tool) {
+    if (!inputEnabled) return false;
+    // 진행 중인 지우기는 시작할 때의 판정을 끝까지 따른다. Ctrl 을 먼저 떼도
+    // 포인터를 놓을 때까지는 지우개다.
+    if (strokeEraseGesture) return strokeEraseGesture.temporary === true;
+    if (activeStroke || activeLasso || shapeGesture || sizeAdjustGesture || selectGesture) {
+      return false;
+    }
+    if (tool !== 'brush' && tool !== 'pen') return false;
+    // 활성 레이어가 잠겼거나 숨겨져 있으면 onPointerDown 이 누름 자체를 받지 않는다.
+    // 지워지지 않는데 지우개로 보이면 안 된다.
+    if (!activeLayerDrawable) return false;
+    // 포인터 이벤트가 있으면 그 이벤트가 실어 온 키를 본다(마우스는 이것만 믿는다).
+    // 키 입력·포커스 변화처럼 포인터가 없는 경로는 오버레이의 키 상태를 본다.
+    const pointerEvent = typeof event?.pointerType === 'string' ? event : null;
+    // Alt 가 함께 눌려 있으면 크기 조절이 먼저 잡는다(onPointerDown 의 순서와 같다).
+    if (pointerEvent ? isAltActive(pointerEvent) : overlayModifierState.alt === true) return false;
+    return pointerEvent ? isCtrlActive(pointerEvent) : overlayModifierState.ctrl === true;
+  }
+
+  function resolveCanvasCursor(tool) {
+    if (tool === 'select') return usesNativeRectangleSelection(tool) ? 'default' : 'crosshair';
+    return tool === 'eraser' || tempEraseArmed ? ERASER_CURSOR : 'crosshair';
+  }
+
+  function applyTempErasePresentation(tool = currentSession?.tool) {
+    if (toolbar) toolbar.dataset.tempErase = String(tempEraseArmed);
+    for (const [buttonTool, button] of toolButtons) {
+      // 지우개 버튼에 임시 표시를, 원래 도구에는 "손을 떼면 여기로 돌아온다" 표시를 둔다.
+      button.dataset.tempActive = String(tempEraseArmed && buttonTool === 'eraser');
+      button.dataset.returnTool = String(tempEraseArmed && buttonTool === tool);
+    }
+    paletteShell?.setActiveToolLabel?.(
+      tempEraseArmed ? TEMP_ERASE_TOOL_LABEL : (TOOL_STATUS_LABELS[tool] || '')
+    );
+    if (fabricCanvas) {
+      fabricCanvas.defaultCursor = resolveCanvasCursor(tool);
+      fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
+    }
+  }
+
+  function syncTempErase(event) {
+    const armed = resolveTempEraseArmed(event);
+    if (armed === tempEraseArmed) return;
+    tempEraseArmed = armed;
+    applyTempErasePresentation();
   }
 
   function createShapeMenuControls() {
@@ -4407,12 +4866,18 @@ function createFabricOverlayRuntime(options = {}) {
     return outlineStyle.width;
   }
 
-  function setBrushColor(color) {
-    if (!BRUSH_COLORS.includes(color)) return brushStyle.color;
-    brushStyle = { ...brushStyle, color };
+  function setBrushColor(color, { fromPicker = false } = {}) {
+    const normalized = normalizeHexColor(color);
+    if (!normalized) return brushStyle.color;
+    brushStyle = { ...brushStyle, color: normalized };
+    // 색 고르기 판에서 고른 색은 판의 위치가 원본이다. 그 밖의 경로(견본·코드 입력)는
+    // 색에서 위치를 다시 잡되, 무채색은 색조를 알 수 없으므로 지금 색조를 남긴다.
+    if (!fromPicker) {
+      const next = hexToHsv(normalized);
+      pickerHsv = next.s === 0 || next.v === 0 ? { ...next, h: pickerHsv.h } : next;
+    }
     syncBrushControls();
-    // 팔레트 클릭과 원격 변경을 모두 여기서 거치므로 최근 색 기록도 여기 둔다.
-    noteRecentColor(brushStyle.color);
+    notifyPalettePrefsChanged();
     return brushStyle.color;
   }
 
@@ -4422,6 +4887,7 @@ function createFabricOverlayRuntime(options = {}) {
       size: boundedInteger(value, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size)
     };
     syncBrushControls();
+    notifyPalettePrefsChanged();
     return brushStyle.size;
   }
 
@@ -4435,18 +4901,17 @@ function createFabricOverlayRuntime(options = {}) {
     );
     brushStyle = { ...brushStyle, opacity: percent / 100 };
     syncBrushControls();
+    notifyPalettePrefsChanged();
     return percent;
   }
 
   function syncBrushControls() {
-    // 상시 요약 줄은 설정 패널과 별개 요소다. brushControls 가 아직 없어도 갱신한다.
-    syncBrushStatusRow();
     if (!brushControls) return;
     const opacityPercent = Math.round(brushStyle.opacity * 100);
     brushControls.settingsButton.setAttribute?.('aria-expanded', String(brushPanelOpen));
     // 섹션이 접혀 있으면 패널도 접힌 상태다. 이 판정을 빼면 [ / ] 로 크기를
-    // 바꿀 때마다 syncBrushControls 가 패널을 도로 열어, 라벨과 버튼 줄은
-    // 접힌 채 설정 패널만 떠 있는 상태가 된다.
+    // 바꿀 때마다 syncBrushControls 가 패널을 도로 열어, 라벨은 접힌 채
+    // 설정 패널만 떠 있는 상태가 된다.
     const sectionCollapsed = paletteShell?.isSectionCollapsed?.('brush') === true;
     brushControls.panel.style.display = brushPanelOpen && !sectionCollapsed ? 'flex' : 'none';
     brushControls.sizeInput.value = String(brushStyle.size);
@@ -4470,21 +4935,17 @@ function createFabricOverlayRuntime(options = {}) {
       outlineControls.widthRow.input.value = String(outlineStyle.width);
       outlineControls.widthRow.output.textContent = `${outlineStyle.width}px`;
       outlineControls.syncFill();
+      // 고른 색의 테두리는 호스트 CSS 가 aria-pressed 로 그린다(팔레트 밝기에 맞춰야 한다).
       for (const button of outlineControls.colorButtons) {
         const active = button.dataset.fabricPilotOutlineColor === outlineStyle.color;
         button.setAttribute?.('aria-pressed', String(active));
-        button.style.boxShadow = active
-          ? '0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)'
-          : 'none';
       }
     }
     for (const button of brushControls.colorButtons) {
       const active = button.dataset.fabricPilotColor === brushStyle.color;
       button.setAttribute?.('aria-pressed', String(active));
-      button.style.boxShadow = active
-        ? '0 0 0 2px #fff, 0 0 0 4px rgba(255, 71, 87, 0.75)'
-        : 'none';
     }
+    syncColorControls();
   }
 
   function createBrushSettingsControls() {
@@ -4520,9 +4981,10 @@ function createFabricOverlayRuntime(options = {}) {
     panel.dataset.fabricPilotPanel = 'brush-settings';
     panel.setAttribute?.('role', 'group');
     panel.setAttribute?.('aria-label', '브러시 설정');
+    panel.dataset.presentation = brushPanelInline ? 'inline' : 'popover';
     // 팔레트 안에 인라인으로 펼쳐진다(더 이상 툴바 아래로 떨어지는 드롭다운이 아니다)
     // 높이를 210px 로 자르면 안 된다 — 내용이 500px 을 넘어(색·굵기·불투명도·
-    // 외곽선·최근 색) **팔레트 스크롤 안에 또 스크롤**이 생기고, 맨 아래 외곽선
+    // 외곽선·색 고르기) **팔레트 스크롤 안에 또 스크롤**이 생기고, 맨 아래 외곽선
     // 설정은 안쪽 스크롤을 따로 내려야만 닿는다. 바깥
     // `.mpv-fabric-pilot-toolbar-content` 가 이미 70vh 에서 스크롤하므로
     // 여기서는 자르지 않는다 — 스크롤 막대는 하나여야 한다.
@@ -4532,13 +4994,19 @@ function createFabricOverlayRuntime(options = {}) {
       width: '100%',
       flexDirection: 'column',
       gap: '10px',
-      marginTop: '6px',
-      padding: '8px',
-      boxSizing: 'border-box',
-      borderRadius: '8px',
-      background: 'rgba(255, 255, 255, 0.05)',
-      color: '#fff'
+      boxSizing: 'border-box'
     });
+    // 항상 펼쳐 두는 배치에서는 팔레트 면에 그대로 놓는다. 눌러서 띄우는 배치만
+    // 떠 있는 판처럼 안쪽 여백과 배경을 갖는다.
+    if (!brushPanelInline) {
+      setStyles(panel, {
+        marginTop: '6px',
+        padding: '8px',
+        borderRadius: '8px',
+        background: 'rgba(255, 255, 255, 0.05)',
+        color: '#fff'
+      });
+    }
 
     const previewRow = documentRef.createElement('div');
     setStyles(previewRow, {
@@ -4556,16 +5024,23 @@ function createFabricOverlayRuntime(options = {}) {
     previewRow.appendChild(sizePreview);
 
     const palette = documentRef.createElement('div');
-    setStyles(palette, {
-      display: 'flex',
-      flexWrap: 'wrap',
-      // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
-      gap: 'var(--fabric-palette-gap)'
-    });
+    palette.className = 'mpv-fabric-pilot-swatches';
+    palette.setAttribute?.('role', 'group');
+    palette.setAttribute?.('aria-label', '기본 색');
+    // 항상 펼쳐 두는 배치는 호스트 CSS 가 8칸 한 줄 그리드로 잡는다.
+    if (!brushPanelInline) {
+      setStyles(palette, {
+        display: 'flex',
+        flexWrap: 'wrap',
+        // 좁은 화면에서 미디어 쿼리가 4px 로 줄이는 변수를 그대로 쓴다.
+        gap: 'var(--fabric-palette-gap)'
+      });
+    }
     const colorButtons = BRUSH_COLORS.map(color => {
       const button = createButton('', 'brush-color');
       button.dataset.fabricPilotColor = color;
       button.setAttribute?.('aria-label', `브러시 색상 ${BRUSH_COLOR_LABELS[color]}`);
+      button.setAttribute?.('title', BRUSH_COLOR_LABELS[color]);
       button.setAttribute?.('aria-pressed', 'false');
       // 치수는 **인라인으로 주지 않는다.** 기본 버튼 CSS 의 `padding: 0 12px` 가
       // 22px 점에 더해져 46px 이 되면 한 줄에 둘밖에 못 들어가지만, 인라인으로
@@ -4577,13 +5052,15 @@ function createFabricOverlayRuntime(options = {}) {
         justifyContent: 'center'
       });
       const dot = documentRef.createElement('span');
-      setStyles(dot, {
-        width: '20px',
-        height: '20px',
-        borderRadius: '50%',
-        background: color,
-        border: color === '#ffffff' ? '1px solid rgba(0, 0, 0, 0.7)' : 'none'
-      });
+      setStyles(dot, { borderRadius: '50%', background: color });
+      // 항상 펼쳐 두는 배치에서는 칸 크기에 맞춰 호스트 CSS 가 점을 채운다.
+      if (!brushPanelInline) {
+        setStyles(dot, {
+          width: '20px',
+          height: '20px',
+          border: color === '#ffffff' ? '1px solid rgba(0, 0, 0, 0.7)' : 'none'
+        });
+      }
       button.appendChild(dot);
       palette.appendChild(button);
       return button;
@@ -4646,7 +5123,6 @@ function createFabricOverlayRuntime(options = {}) {
       output: 'opacity'
     });
 
-    // 외곽선 — 목업이 "색상 아래 자리를 비워 둔다"고 한 그 자리다.
     const outlineGroup = documentRef.createElement('div');
     outlineGroup.className = 'mpv-fabric-pilot-outline';
     outlineGroup.setAttribute?.('role', 'group');
@@ -4662,6 +5138,7 @@ function createFabricOverlayRuntime(options = {}) {
     outlineGroup.appendChild(outlineToggle);
 
     const outlinePalette = documentRef.createElement('div');
+    outlinePalette.className = 'mpv-fabric-pilot-outline-swatches';
     setStyles(outlinePalette, { display: 'flex', flexFlow: 'row wrap', gap: '4px', flex: '1 1 100%' });
     const outlineColorButtons = BRUSH_COLORS.map(color => {
       const button = createButton('', `outline-color-${color.replace('#', '')}`);
@@ -4690,15 +5167,22 @@ function createFabricOverlayRuntime(options = {}) {
     setStyles(outlineWidthRow.row, { flex: '1 1 100%' });
     outlineGroup.appendChild(outlineWidthRow.row);
 
-    const recentColors = createRecentColorControls();
-    panel.appendChild(previewRow);
+    const color = createColorControls();
+    // 굵기 견본 줄은 눌러서 띄우는 배치에만 둔다. 항상 펼쳐 두는 배치는 섹션 라벨
+    // 오른쪽의 현재 색 표시가 그 자리를 맡는다.
+    if (!brushPanelInline) panel.appendChild(previewRow);
     panel.appendChild(palette);
-    panel.appendChild(recentColors.row);
-    panel.appendChild(outlineGroup);
+    panel.appendChild(color.savedRow);
+    panel.appendChild(color.panel);
     panel.appendChild(sizeRow.row);
     panel.appendChild(opacityRow.row);
+    // 외곽선은 맨 아래에 둔다. 켜면 색·굵기 줄이 펼쳐지는데, 위에 있으면 그때마다
+    // 자주 쓰는 크기·불투명도 막대가 아래로 밀린다.
+    panel.appendChild(outlineGroup);
 
     addDomListener(settingsButton, 'click', () => {
+      // 항상 펼쳐 두는 배치에는 이 버튼이 화면에 없다. 닫을 길이 없어야 한다.
+      if (brushPanelInline) return;
       brushPanelOpen = !brushPanelOpen;
       syncBrushControls();
     });
@@ -4732,7 +5216,7 @@ function createFabricOverlayRuntime(options = {}) {
       summary,
       colorPreview,
       sizePreview,
-      recentColors,
+      color,
       outline: {
         group: outlineGroup,
         toggle: outlineToggle,
@@ -5228,7 +5712,6 @@ function createFabricOverlayRuntime(options = {}) {
 
   function setToolMode(tool) {
     if (!fabricCanvas) return;
-    paletteShell?.setActiveToolLabel?.(TOOL_STATUS_LABELS[tool] || '');
     if (tool !== 'select') abortPendingLassoSelection();
     const selectMode = tool === 'select';
     const nativeSelectMode = usesNativeRectangleSelection(tool);
@@ -5239,9 +5722,10 @@ function createFabricOverlayRuntime(options = {}) {
     }
     fabricCanvas.isDrawingMode = false;
     fabricCanvas.selection = nativeSelectMode;
-    fabricCanvas.defaultCursor = selectMode
-      ? (nativeSelectMode ? 'default' : 'crosshair')
-      : 'crosshair';
+    // 도구가 바뀌면 Ctrl 임시 지우개 표시도 새 도구 기준으로 다시 정한다
+    // (브러시·펜에서만 켜진다). 제목의 도구 이름과 커서도 여기서 함께 맞춘다.
+    tempEraseArmed = resolveTempEraseArmed(null, tool);
+    applyTempErasePresentation(tool);
     fabricCanvas.hoverCursor = 'grab';
     fabricCanvas.moveCursor = 'grabbing';
     fabricCanvas.freeDrawingCursor = 'crosshair';
@@ -5261,8 +5745,6 @@ function createFabricOverlayRuntime(options = {}) {
     syncSelectionControls(tool);
     syncEraserModeControls(tool);
     syncShapeMenuControls(tool);
-    // 상시 요약 줄이 현재 도구 이름을 함께 띄우므로 도구가 바뀔 때도 갱신한다.
-    syncBrushStatusRow(tool);
     syncToolSectionVisibility(tool);
     refreshSelectionInteractionPolicy();
     fabricCanvas.setCursor?.(fabricCanvas.defaultCursor);
@@ -5278,6 +5760,16 @@ function createFabricOverlayRuntime(options = {}) {
       visibility: enabled ? 'visible' : 'hidden',
       opacity: enabled ? '1' : '0'
     });
+    if (!enabled) {
+      // 팔레트가 사라지면 그 안의 입력도 끝난다. 색상 코드 입력칸이 포커스를 쥔 채
+      // 남으면 호스트의 키 넘김이 풀리지 않고, 색 고르기 판을 끌던 포인터도 떠 있게 된다.
+      endTextEntry();
+      pickerDrag = null;
+      if (tempEraseArmed) {
+        tempEraseArmed = false;
+        applyTempErasePresentation();
+      }
+    }
   }
 
   function toSourceSample(event) {
@@ -7429,21 +7921,38 @@ function createFabricOverlayRuntime(options = {}) {
     if (event?.key === 'Alt') {
       overlayModifierState.alt = true;
       gestureProbe.overlayAltKeyDownCount += 1;
+      syncTempErase();
     }
     if (event?.key === 'Control') {
       overlayModifierState.ctrl = true;
       gestureProbe.overlayCtrlKeyDownCount += 1;
+      syncTempErase();
     }
   }
 
   function onOverlayKeyUp(event) {
-    if (event?.key === 'Alt') overlayModifierState.alt = false;
-    if (event?.key === 'Control') overlayModifierState.ctrl = false;
+    if (event?.key === 'Alt') {
+      overlayModifierState.alt = false;
+      syncTempErase();
+    }
+    if (event?.key === 'Control') {
+      overlayModifierState.ctrl = false;
+      syncTempErase();
+    }
+  }
+
+  // 포인터가 캔버스를 떠나면 그 뒤의 Ctrl 변화는 포인터 이벤트로 알 수 없다. 메인 창에
+  // 키보드 포커스가 있으면 키 이벤트도 오지 않으므로, 떠나는 순간 오버레이가 직접 본
+  // 키 상태로 다시 맞춘다 — 그러지 않으면 Ctrl 을 뗀 뒤에도 팔레트가 지우개로 남는다.
+  function onCanvasPointerLeave() {
+    syncTempErase();
   }
 
   function onOverlayWindowBlur(event) {
     viewportPanInput?.reset();
     resetOverlayModifierState();
+    endTextEntry();
+    syncTempErase();
     endSizeAdjustGesture(event);
     cancelStrokeEraseGesture(event);
     cancelShapeGesture();
@@ -7874,6 +8383,7 @@ function createFabricOverlayRuntime(options = {}) {
       event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
       gesture.pointerId
     );
+    syncTempErase(event);
     return true;
   }
 
@@ -8250,9 +8760,12 @@ function createFabricOverlayRuntime(options = {}) {
         // Ctrl 임시 지우개는 항상 'stroke' 다 — 레거시 동작과 같고, modifier 제스처가
         // 팔레트 상태에 따라 달라지면 사용자가 예측할 수 없다.
         mode: tool === 'eraser' ? eraserMode : 'stroke',
+        // Ctrl 로 잠깐 연 지우개인가. 표시(커서·팔레트)가 제스처 끝까지 이 값을 따른다.
+        temporary: tool !== 'eraser',
         // 픽셀 모드에서 리본 폴리곤을 만들기 위한 지나간 경로. stroke 모드에서는 쓰지 않는다.
         pathPoints: []
       };
+      syncTempErase(event);
       try {
         event.currentTarget?.setPointerCapture?.(event.pointerId);
       } catch (_error) { /* pointer capture is best-effort */ }
@@ -8460,6 +8973,10 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onPointerDown(event) {
+    // 캔버스를 누르면 팔레트의 글자 입력은 끝난다. pointerdown 의 기본 동작을 막는
+    // 경로에서는 포커스가 저절로 옮겨가지 않아, 입력칸이 포커스를 쥔 채 호스트의
+    // 키 넘김이 멈춰 있을 수 있다.
+    endTextEntry();
     // 표본은 래치 자가복구(syncOverlayModifierStateFromPointer)보다 먼저 찍는다.
     // 뒤에 찍으면 마우스 경로에서 래치가 지워진 뒤라 원인 판별 정보가 사라진다.
     recordPointerdownProbe(event);
@@ -8604,6 +9121,9 @@ function createFabricOverlayRuntime(options = {}) {
 
   function onPointerMove(event) {
     if (!event?.[REPLAYED_POINTERDOWN] && viewportPanInput?.event(event)) return;
+    // 누르기 전에 Ctrl 임시 지우개 여부를 커서·팔레트에 미리 보여 준다. 마우스는
+    // 포인터 이벤트가 실어 온 Ctrl 이 가장 정확하므로 움직일 때마다 여기서 맞춘다.
+    syncTempErase(event);
     if (sizeAdjustGesture) {
       if (event.pointerId !== sizeAdjustGesture.pointerId) return;
       updateSizeAdjustGesture(event);
@@ -8664,6 +9184,8 @@ function createFabricOverlayRuntime(options = {}) {
       // 제스처를 먼저 비운 뒤 캡처를 놓아, 동기 lostpointercapture가 취소로 해석되지 않게 한다.
       finalizeStrokeEraseGesture();
       releasePointerCapture(event.currentTarget, event.pointerId);
+      // Ctrl 을 아직 누르고 있으면 임시 지우개 표시가 남고, 뗐으면 원래 도구로 돌아간다.
+      syncTempErase(event);
       event.preventDefault?.();
       return;
     }
@@ -9037,6 +9559,7 @@ function createFabricOverlayRuntime(options = {}) {
     addDomListener(pointerTarget, 'pointerup', onPointerUp, true);
     addDomListener(pointerTarget, 'pointercancel', onPointerCancel, true);
     addDomListener(pointerTarget, 'lostpointercapture', onPointerCancel, true);
+    addDomListener(pointerTarget, 'pointerleave', onCanvasPointerLeave, true);
     addDomListener(pointerTarget, 'contextmenu', onCanvasContextMenu, true);
     addDomListener(documentRef, 'pointerup', onDocumentPointerUp);
     addDomListener(documentRef, 'pointercancel', onDocumentPointerCancel);
@@ -9308,8 +9831,10 @@ function createFabricOverlayRuntime(options = {}) {
     selectionControls = null;
     eraserModeControls = null;
     shapeMenuControls = null;
-    brushStatusRow = null;
-    recentColorControls = null;
+    setTextEntryActive(false);
+    colorControls = null;
+    pickerDrag = null;
+    tempEraseArmed = false;
     outlineControls = null;
     badge = null;
     sizeAdjustHud = null;
@@ -9362,19 +9887,30 @@ function createFabricOverlayRuntime(options = {}) {
       const selectButton = iconToolbarButton(
         createButton('', 'select'), '선택 도구 (V)', TOOL_ICON_SVG.select);
       shapeMenuControls = createShapeMenuControls();
-      const undoButton = labelToolbarButton(createButton('실행 취소', 'undo'), '실행 취소 (Ctrl+Z)');
-      const redoButton = labelToolbarButton(createButton('다시 실행', 'redo'), '다시 실행 (Ctrl+Y)');
-      const deleteButton = labelToolbarButton(
-        createButton('선택 삭제', 'delete-selection'),
-        '선택한 획 삭제 (Delete)'
-      );
-      const clearButton = labelToolbarButton(
-        createButton('전체 지우기', 'clear-session'),
-        '현재 프레임 드로잉 전체 삭제'
-      );
+      // 세로 팔레트의 편집 줄은 아이콘이다. 이름은 title/aria-label 로 남는다.
+      // 되돌릴 수 없는 범위가 가장 넓은 "전체 지우기"만 글자를 함께 둔다.
+      const actionButton = (action, text, label) => {
+        const button = labelToolbarButton(createButton(paletteDocked ? text : '', action), label);
+        if (paletteDocked) return button;
+        const icon = documentRef.createElement('span');
+        icon.dataset.fabricPilotIcon = action;
+        icon.setAttribute?.('aria-hidden', 'true');
+        icon.innerHTML = ACTION_ICON_SVG[action] || '';
+        button.appendChild(icon);
+        return button;
+      };
+      const undoButton = actionButton('undo', '실행 취소', '실행 취소 (Ctrl+Z)');
+      const redoButton = actionButton('redo', '다시 실행', '다시 실행 (Ctrl+Y)');
+      const deleteButton = actionButton('delete-selection', '선택 삭제', '선택한 획 삭제 (Delete)');
+      const clearButton = actionButton('clear-session', '전체 지우기', '현재 프레임 드로잉 전체 삭제');
+      clearButton.dataset.tone = 'danger';
+      if (!paletteDocked) {
+        const clearText = documentRef.createElement('span');
+        clearText.textContent = '전체 지우기';
+        clearButton.appendChild(clearText);
+      }
       brushControls = createBrushSettingsControls();
-      brushStatusRow = createBrushStatusRow();
-      recentColorControls = brushControls.recentColors;
+      colorControls = brushControls.color;
       outlineControls = brushControls.outline;
       selectionControls = createSelectionControls();
       eraserModeControls = createEraserModeControls();
@@ -9401,30 +9937,43 @@ function createFabricOverlayRuntime(options = {}) {
         },
         sections: [
           {
+            // 도구 줄과 편집 줄은 아이콘만으로 읽히므로 라벨을 두지 않는다.
             id: 'tools',
-            label: '도구',
+            wrap: true,
             layout: 'grid',
             columns: 5,
-            gap: '3px',
+            gap: '4px',
             items: [
               brushButton, penButton, eraserButton, shapeMenuControls.button, selectButton
             ],
             appended: [shapeMenuControls.flyout]
           },
-          { id: 'brush-status', items: [brushStatusRow.row] },
           { id: 'selection', items: [selectionControls.group] },
           { id: 'eraser', label: '지우개 방식', items: [eraserModeControls.group] },
-          {
-            id: 'brush',
-            label: '브러시 설정',
-            items: [brushControls.settingsButton],
-            appended: [brushControls.panel]
-          },
-          {
-            id: 'actions',
-            label: '편집',
-            items: [undoButton, redoButton, deleteButton, clearButton]
-          },
+          paletteDocked
+            ? {
+              id: 'brush',
+              label: '브러시 설정',
+              items: [brushControls.settingsButton],
+              appended: [brushControls.panel]
+            }
+            : {
+              id: 'brush',
+              label: '색',
+              labelAccessory: colorControls.current,
+              appended: [brushControls.panel]
+            },
+          paletteDocked
+            ? { id: 'actions', wrap: true, items: [undoButton, redoButton, deleteButton, clearButton] }
+            : {
+              id: 'actions',
+              wrap: true,
+              layout: 'grid',
+              // 아이콘 셋은 정사각, 글자가 붙은 "전체 지우기"가 남은 폭을 쓴다.
+              gridTemplateColumns: 'repeat(3, 30px) minmax(0, 1fr)',
+              gap: '4px',
+              items: [undoButton, redoButton, deleteButton, clearButton]
+            },
           { id: 'status', items: [badge] }
         ]
       });
@@ -9915,6 +10464,8 @@ function createFabricOverlayRuntime(options = {}) {
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
     layerHistoryBusy = command.layerHistoryBusy === true;
+    // 활성 레이어가 잠기거나 풀리면 Ctrl 임시 지우개가 실제로 될지도 달라진다.
+    syncTempErase();
     // 겹침 순서 랭크도 같은 경로로 온다. 새 획이 **그리는 순간** 제 층에 들어가야
     // 레이어를 옮겨 맞춰 놓은 순서가 다음 획 하나에 어긋나지 않는다.
     if (command.objectRanks !== undefined) {
@@ -10214,6 +10765,8 @@ function createFabricOverlayRuntime(options = {}) {
       gestures: {
         altSizeAdjustActive: !!sizeAdjustGesture,
         ctrlStrokeEraseActive: !!strokeEraseGesture,
+        // 누르기 전에 보여 주는 Ctrl 임시 지우개 표시가 켜져 있는가.
+        tempEraseArmed,
         strokeEraseCandidateCount: strokeEraseGesture ? strokeEraseGesture.erasedIds.size : 0,
         modifierAlt: overlayModifierState.alt,
         modifierCtrl: overlayModifierState.ctrl,
@@ -10244,6 +10797,7 @@ function createFabricOverlayRuntime(options = {}) {
       selectionTarget,
       selectionShape,
       eraserMode,
+      palette: getPalettePrefs(),
       // 진행 중 지우기 제스처가 시작 시점에 래치한 모드. 드래그 도중 팔레트를 눌러도
       // 이 값은 바뀌지 않는다.
       activeEraseMode: strokeEraseGesture ? strokeEraseGesture.mode : null,
@@ -10314,6 +10868,7 @@ function createFabricOverlayRuntime(options = {}) {
     exportDrawingVideo,
     updateDrawingTool,
     updateDrawingBrush,
+    applyPalettePrefs,
     updateDrawingLayerView,
     updateViewport,
     applyDrawingAction,
@@ -10391,5 +10946,8 @@ module.exports = {
   resolveEffectiveCanvasRect,
   resolveSelectionHitTolerance,
   mapClientPointToSource,
-  splitStrokePointsByPolygon
+  splitStrokePointsByPolygon,
+  normalizeHexColor,
+  hexToHsv,
+  hsvToHex
 };

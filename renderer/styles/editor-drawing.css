@@ -38,7 +38,6 @@
 }
 .editor-drawing-palette .mpv-fabric-pilot-toolbar-header,
 .editor-drawing-palette .mpv-fabric-pilot-section-label,
-.editor-drawing-palette .mpv-fabric-pilot-brush-status,
 .editor-drawing-palette .mpv-fabric-pilot-badge,
 .editor-drawing-palette [data-fabric-pilot-section='tools'],
 .editor-drawing-palette [data-fabric-pilot-action='undo'],
@@ -97,7 +96,8 @@
   bottom: var(--editor-palette-bottom, 80px) !important;
   top: auto !important;
   width: var(--editor-palette-width, 280px) !important;
-  max-height: min(420px, var(--editor-palette-height, 420px));
+  /* 색 고르기 판을 펼쳐도 창 높이가 허락하면 스크롤 없이 한눈에 들어오게 한다. */
+  max-height: min(560px, var(--editor-palette-height, 560px));
   overflow-y: auto;
   overscroll-behavior: contain;
   z-index: 46;
@@ -108,14 +108,6 @@
   background: #20201e !important;
   box-shadow: 0 3px 8px #0008;
   color: #f0f0ed;
-}
-.editor-drawing-palette [data-fabric-pilot-panel='brush-settings'] button[data-fabric-pilot-color] {
-  width: 26px;
-  min-width: 26px;
-  height: 28px;
-  min-height: 28px;
-  padding: 0;
-  border-radius: 4px;
 }
 .editor-drawing-palette .mpv-fabric-pilot-field {
   display: flex;
@@ -160,11 +152,121 @@
   background: #f0f0ed;
   margin-top: -4px;
 }
-.editor-drawing-palette .mpv-fabric-pilot-eraser-mode,
-.editor-drawing-palette .mpv-fabric-pilot-recent-colors {
+.editor-drawing-palette .mpv-fabric-pilot-eraser-mode {
   display: flex;
   flex-flow: row wrap;
   gap: 6px;
+}
+
+/* 색 견본: 기본 8색 한 줄, 그 아래 "내 색" 일곱 칸과 색 고르기 버튼. 스크롤 막대가
+   생겨 패널 폭이 줄어도 여덟 칸이 한 줄을 지키도록 격자로 잡는다. 런타임이 도크
+   배치에서 flex 를 인라인으로 주므로 여기서 덮는다. */
+.editor-drawing-palette .mpv-fabric-pilot-swatches,
+.editor-drawing-palette .mpv-fabric-pilot-saved-colors {
+  display: grid !important;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 4px !important;
+}
+.editor-drawing-palette [data-fabric-pilot-panel='brush-settings'] .mpv-fabric-pilot-swatches button,
+.editor-drawing-palette .mpv-fabric-pilot-saved-colors button {
+  width: 100%;
+  min-width: 0;
+  height: 28px;
+  min-height: 28px;
+  padding: 0;
+  border-radius: 4px;
+}
+/* 고른 색의 고리. 예전에는 런타임이 인라인으로 그렸지만 이제 팔레트마다 CSS 가 맡는다. */
+.editor-drawing-palette button[data-fabric-pilot-color][aria-pressed='true'],
+.editor-drawing-palette .mpv-fabric-pilot-saved-colors button[aria-pressed='true'],
+.editor-drawing-palette .mpv-fabric-pilot-outline-swatches button[aria-pressed='true'] {
+  box-shadow: 0 0 0 2px #20201e, 0 0 0 4px #ffe292;
+}
+.editor-drawing-palette .mpv-fabric-pilot-saved-hint {
+  grid-column: span 7;
+  align-self: center;
+  padding-left: 2px;
+  color: #b8b8b1;
+  font-size: 12px;
+  cursor: pointer;
+}
+.editor-drawing-palette [data-fabric-pilot-action='color-picker-toggle'] {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-style: dashed;
+}
+.editor-drawing-palette .mpv-fabric-pilot-color-picker {
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  border-radius: 6px;
+  background: #171716;
+}
+.editor-drawing-palette .mpv-fabric-pilot-color-field {
+  position: relative;
+  height: 96px;
+  border-radius: 4px;
+  background:
+    linear-gradient(to top, #000, transparent),
+    linear-gradient(to right, #fff, hsl(var(--fabric-picker-hue, 0) 100% 50%));
+  cursor: crosshair;
+  touch-action: none;
+}
+.editor-drawing-palette .mpv-fabric-pilot-color-field [data-fabric-pilot-picker='knob'] {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px #fff, 0 0 0 3px #0009;
+  pointer-events: none;
+}
+.editor-drawing-palette input[data-fabric-pilot-setting='hue']::-webkit-slider-runnable-track {
+  height: 8px;
+  border-radius: 4px;
+  background: linear-gradient(to right, #f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.editor-drawing-palette input[data-fabric-pilot-setting='hue']::-webkit-slider-thumb {
+  margin-top: -2px;
+  box-shadow: 0 0 0 1px #0008;
+}
+.editor-drawing-palette .mpv-fabric-pilot-hex-row {
+  display: flex;
+  gap: 6px;
+}
+.editor-drawing-palette .mpv-fabric-pilot-hex-row button {
+  flex: 0 0 auto;
+}
+.editor-drawing-palette input[data-fabric-pilot-setting='hex'] {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  box-sizing: border-box;
+  padding: 0 8px;
+  border: 1px solid #50504a;
+  border-radius: 4px;
+  background: #171716;
+  color: #f0f0ed;
+  font: inherit;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-transform: uppercase;
+  user-select: text;
+}
+.editor-drawing-palette input[data-fabric-pilot-setting='hex'][aria-invalid='true'] {
+  border-color: #ff8a75;
+}
+.editor-drawing-palette .mpv-fabric-pilot-hex-row button[aria-disabled='true'] {
+  color: #8c8c86;
+  cursor: default;
+}
+.editor-drawing-palette .mpv-fabric-pilot-hex-error {
+  color: #ff8a75;
+  font-size: 11px;
+}
+.editor-drawing-palette .mpv-fabric-pilot-hex-error:empty {
+  display: none;
 }
 
 /* Keep selection options on the same context row; tool changes cannot resize the viewer. */
