@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { pathToFileURL } = require('node:url');
 
 const rootDir = path.resolve(__dirname, '../..');
 const read = relativePath =>
@@ -238,20 +239,78 @@ test('damaged or legacy stored values never block or leak into the palette', () 
   assert.equal(legacy.getBrushSettings().brushSize, 40, '구형 값 자체는 그대로 보존된다');
 });
 
+test('the main window gathers rapid palette changes into one save and never loses the last', async () => {
+  // 오버레이는 값이 바뀔 때마다 알린다(1초에 수십 번일 수 있다). 그때마다 설정 파일을
+  // 쓰면 안 되므로 메인 창이 마지막 값만 들고 있다가 조용해지면 한 번 저장한다.
+  const { createFabricPalettePrefsSaver, FABRIC_PALETTE_PREFS_SAVE_DELAY_MS } = await import(
+    pathToFileURL(path.join(rootDir, 'renderer/scripts/modules/fabric-palette-prefs-saver.js')).href
+  );
+  const saved = [];
+  const timers = [];
+  const saver = createFabricPalettePrefsSaver({
+    save: prefs => saved.push(prefs),
+    setTimeoutFn: (callback, delay) => {
+      timers.push({ callback, delay, cleared: false });
+      return timers.length;
+    },
+    clearTimeoutFn: handle => {
+      timers[handle - 1].cleared = true;
+    }
+  });
+  const prefs = color => ({ ...validPrefs(), color });
+
+  assert.equal(saver.hasPending(), false);
+  assert.equal(saver.flush(), false, '들고 있는 값이 없으면 저장하지 않는다');
+
+  saver.push(prefs('#111111'));
+  saver.push(prefs('#222222'));
+  saver.push(prefs('#333333'));
+  assert.deepEqual(saved, [], '조용해지기 전에는 저장하지 않는다');
+  assert.equal(saver.hasPending(), true);
+  assert.deepEqual(timers.map(timer => timer.cleared), [true, true, false]);
+  assert.equal(timers.at(-1).delay, FABRIC_PALETTE_PREFS_SAVE_DELAY_MS);
+
+  timers.at(-1).callback();
+  assert.deepEqual(saved, [prefs('#333333')], '마지막 값 하나만 저장한다');
+  assert.equal(saver.hasPending(), false);
+
+  // 창이 닫히거나 오버레이에 값을 다시 심어야 할 때는 기다리지 않고 바로 적는다.
+  saver.push(prefs('#444444'));
+  assert.equal(saver.flush(), true);
+  assert.deepEqual(saved.at(-1), prefs('#444444'));
+  assert.equal(timers.at(-1).cleared, true);
+  // 이미 적은 값을 늦게 발화한 타이머가 다시 적지 않는다.
+  timers.at(-1).callback();
+  assert.equal(saved.length, 2);
+
+  assert.throws(() => createFabricPalettePrefsSaver({}), /save function/);
+});
+
 test('the main window stores overlay palette changes and replays them when drawing turns on', () => {
-  // 오버레이에서 온 값은 사용자 설정에 적는다.
+  // 오버레이에서 온 값은 모아서 사용자 설정에 적는다.
   assert.match(
     appSource,
-    /window\.electronAPI\?\.onFabricDrawingPalettePrefs\?\.\(prefs => \{\n\s+userSettings\.setFabricPalettePrefs\(prefs\);\n\s+\}\);/
+    /const fabricPalettePrefsSaver = createFabricPalettePrefsSaver\(\{\n\s+save: prefs => userSettings\.setFabricPalettePrefs\(prefs\)\n\s+\}\);/
+  );
+  assert.match(
+    appSource,
+    /window\.electronAPI\?\.onFabricDrawingPalettePrefs\?\.\(prefs => \{\n\s+fabricPalettePrefsSaver\.push\(prefs\);\n\s+\}\);/
+  );
+  // 메인 창이 닫힐 때 아직 적지 못한 값을 적는다.
+  assert.match(
+    appSource,
+    /window\.addEventListener\('beforeunload', \(\) => \{\n\s+fabricPalettePrefsSaver\.flush\(\);\n\s+\}\);/
   );
   // 그리기를 켤 때마다 보존해 둔 값을 심는다(오버레이 창이 새로 만들어졌을 수 있다).
   assert.match(
     appSource,
     /if \(nextState === 'active'\) \{[\s\S]{0,600}?pushFabricPilotPalettePrefs\(\);/
   );
+  // 심기 전에 아직 적지 못한 변경을 먼저 적는다. 오버레이가 복구로 방금 새로 만들어졌다면
+  // 그 변경이 새 팔레트가 받아야 할 최신 값이다.
   assert.match(
     appSource,
-    /function pushFabricPilotPalettePrefs\(\) \{[\s\S]{0,260}?apply\(userSettings\.getFabricPalettePrefs\(\)\)/
+    /function pushFabricPilotPalettePrefs\(\) \{[\s\S]{0,420}?fabricPalettePrefsSaver\.flush\(\);\n\s+Promise\.resolve\(apply\(userSettings\.getFabricPalettePrefs\(\)\)\)/
   );
 });
 

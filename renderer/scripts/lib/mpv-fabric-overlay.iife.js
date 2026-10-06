@@ -14060,7 +14060,6 @@ void main() {
         circle: "\uC6D0",
         arrow: "\uD654\uC0B4\uD45C"
       });
-      var PALETTE_PREFS_NOTIFY_DELAY_MS = 400;
       var MIN_OUTLINE_WIDTH = 1;
       var MAX_OUTLINE_WIDTH = 20;
       var DEFAULT_OUTLINE_WIDTH = 2;
@@ -17112,8 +17111,8 @@ void main() {
         let pickerDrag = null;
         const palettePrefsBridge = options.palettePrefsBridge || windowRef?.mpvOverlayPalettePrefs;
         const textEntryBridge = options.textEntryBridge || windowRef?.mpvOverlayTextEntry;
-        let palettePrefsTimer = null;
         let palettePrefsTouched = false;
+        let lastNotifiedPalettePrefsKey = null;
         let textEntryActive = false;
         let tempEraseArmed = false;
         let transformStart = null;
@@ -17474,14 +17473,14 @@ void main() {
           if (BRUSH_COLORS.includes(color) || savedColors.includes(color)) return false;
           savedColors = [color, ...savedColors].slice(0, SAVED_COLOR_LIMIT);
           syncColorControls();
-          schedulePalettePrefsNotify();
+          notifyPalettePrefsChanged();
           return true;
         }
         function removeSavedColor(color) {
           if (!color || !savedColors.includes(color)) return false;
           savedColors = savedColors.filter((entry) => entry !== color);
           syncColorControls();
-          schedulePalettePrefsNotify();
+          notifyPalettePrefsChanged();
           return true;
         }
         function getPalettePrefs() {
@@ -17492,30 +17491,17 @@ void main() {
             savedColors: [...savedColors]
           };
         }
-        function cancelPalettePrefsNotify() {
-          if (palettePrefsTimer === null) return;
-          clearTimeoutRef?.(palettePrefsTimer);
-          palettePrefsTimer = null;
-        }
-        function notifyPalettePrefs() {
+        function notifyPalettePrefsChanged() {
+          palettePrefsTouched = true;
+          if (typeof palettePrefsBridge?.notify !== "function") return;
+          const prefs = getPalettePrefs();
+          const key = JSON.stringify(prefs);
+          if (key === lastNotifiedPalettePrefsKey) return;
+          lastNotifiedPalettePrefsKey = key;
           try {
-            palettePrefsBridge.notify(getPalettePrefs());
+            palettePrefsBridge.notify(prefs);
           } catch (_error) {
           }
-        }
-        function schedulePalettePrefsNotify() {
-          palettePrefsTouched = true;
-          if (typeof palettePrefsBridge?.notify !== "function" || typeof setTimeoutRef !== "function") return;
-          cancelPalettePrefsNotify();
-          palettePrefsTimer = setTimeoutRef(() => {
-            palettePrefsTimer = null;
-            notifyPalettePrefs();
-          }, PALETTE_PREFS_NOTIFY_DELAY_MS);
-        }
-        function flushPalettePrefsNotify() {
-          if (palettePrefsTimer === null) return;
-          cancelPalettePrefsNotify();
-          notifyPalettePrefs();
         }
         function applyPalettePrefs(prefs = {}) {
           if (destroyed) return { accepted: false, reason: "destroyed" };
@@ -17533,6 +17519,7 @@ void main() {
           savedColors = normalizeSavedColors(prefs?.savedColors).filter((color) => !BRUSH_COLORS.includes(color));
           pickerHsv = hexToHsv(brushStyle.color) || pickerHsv;
           syncBrushControls();
+          lastNotifiedPalettePrefsKey = JSON.stringify(getPalettePrefs());
           return { accepted: true, ...getPalettePrefs() };
         }
         function resolveTempEraseArmed(event, tool = currentSession?.tool) {
@@ -17890,7 +17877,7 @@ void main() {
             pickerHsv = next.s === 0 || next.v === 0 ? { ...next, h: pickerHsv.h } : next;
           }
           syncBrushControls();
-          schedulePalettePrefsNotify();
+          notifyPalettePrefsChanged();
           return brushStyle.color;
         }
         function setBrushSize(value) {
@@ -17899,7 +17886,7 @@ void main() {
             size: boundedInteger(value, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size)
           };
           syncBrushControls();
-          schedulePalettePrefsNotify();
+          notifyPalettePrefsChanged();
           return brushStyle.size;
         }
         function setBrushOpacityPercent(value) {
@@ -17912,7 +17899,7 @@ void main() {
           );
           brushStyle = { ...brushStyle, opacity: percent / 100 };
           syncBrushControls();
-          schedulePalettePrefsNotify();
+          notifyPalettePrefsChanged();
           return percent;
         }
         function syncBrushControls() {
@@ -22123,7 +22110,6 @@ void main() {
           colorControls = null;
           pickerDrag = null;
           tempEraseArmed = false;
-          flushPalettePrefsNotify();
           outlineControls = null;
           badge = null;
           sizeAdjustHud = null;

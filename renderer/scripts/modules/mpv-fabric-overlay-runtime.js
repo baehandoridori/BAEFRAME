@@ -154,9 +154,6 @@ const SHAPE_TOOL_LABELS = Object.freeze({
   circle: '원',
   arrow: '화살표'
 });
-// 팔레트 값이 바뀐 뒤 설정 저장 쪽에 알리기까지의 지연. 슬라이더·Alt 드래그는
-// 한 번 움직일 때 값이 수십 번 바뀐다.
-const PALETTE_PREFS_NOTIFY_DELAY_MS = 400;
 const MIN_OUTLINE_WIDTH = 1;
 const MAX_OUTLINE_WIDTH = 20;
 const DEFAULT_OUTLINE_WIDTH = 2;
@@ -3979,9 +3976,9 @@ function createFabricOverlayRuntime(options = {}) {
   let pickerDrag = null;
   const palettePrefsBridge = options.palettePrefsBridge || windowRef?.mpvOverlayPalettePrefs;
   const textEntryBridge = options.textEntryBridge || windowRef?.mpvOverlayTextEntry;
-  let palettePrefsTimer = null;
   // 사용자가 이 런타임에서 값을 한 번이라도 바꿨으면 저장된 값으로 덮지 않는다.
   let palettePrefsTouched = false;
+  let lastNotifiedPalettePrefsKey = null;
   let textEntryActive = false;
   // Ctrl 을 누르고 있어 브러시·펜이 임시 지우개로 동작할 상태인가(표시 전용).
   let tempEraseArmed = false;
@@ -4406,7 +4403,7 @@ function createFabricOverlayRuntime(options = {}) {
     if (BRUSH_COLORS.includes(color) || savedColors.includes(color)) return false;
     savedColors = [color, ...savedColors].slice(0, SAVED_COLOR_LIMIT);
     syncColorControls();
-    schedulePalettePrefsNotify();
+    notifyPalettePrefsChanged();
     return true;
   }
 
@@ -4414,7 +4411,7 @@ function createFabricOverlayRuntime(options = {}) {
     if (!color || !savedColors.includes(color)) return false;
     savedColors = savedColors.filter(entry => entry !== color);
     syncColorControls();
-    schedulePalettePrefsNotify();
+    notifyPalettePrefsChanged();
     return true;
   }
 
@@ -4428,34 +4425,21 @@ function createFabricOverlayRuntime(options = {}) {
     };
   }
 
-  function cancelPalettePrefsNotify() {
-    if (palettePrefsTimer === null) return;
-    clearTimeoutRef?.(palettePrefsTimer);
-    palettePrefsTimer = null;
-  }
-
-  function notifyPalettePrefs() {
-    try {
-      palettePrefsBridge.notify(getPalettePrefs());
-    } catch (_error) { /* 보조 신호다. 다음 변경에서 다시 알린다. */ }
-  }
-
-  function schedulePalettePrefsNotify() {
+  // 값이 바뀌면 **그 자리에서** 알린다. 여기서 모았다가 늦게 보내면, 그 사이에 이
+  // 창이 사라질 때(앱 종료·오버레이 복구 — 호스트는 런타임의 정리를 부르지 않고 창을
+  // 바로 없앤다) 마지막 변경이 통째로 사라진다. 슬라이더를 끄는 동안 값이 수십 번
+  // 바뀌어도 작은 메시지 하나씩이고, 모아서 저장하는 일은 수명이 더 긴 메인 창이 맡는다.
+  function notifyPalettePrefsChanged() {
     palettePrefsTouched = true;
-    if (typeof palettePrefsBridge?.notify !== 'function' || typeof setTimeoutRef !== 'function') return;
-    cancelPalettePrefsNotify();
-    palettePrefsTimer = setTimeoutRef(() => {
-      palettePrefsTimer = null;
-      notifyPalettePrefs();
-    }, PALETTE_PREFS_NOTIFY_DELAY_MS);
-  }
-
-  // 화면을 걷을 때 아직 알리지 못한 변경이 있으면 지금 알린다. 버리면 닫기 직전에
-  // 바꾼 색이 다음 실행에 남지 않는다.
-  function flushPalettePrefsNotify() {
-    if (palettePrefsTimer === null) return;
-    cancelPalettePrefsNotify();
-    notifyPalettePrefs();
+    if (typeof palettePrefsBridge?.notify !== 'function') return;
+    const prefs = getPalettePrefs();
+    // 값이 그대로면 보내지 않는다. 색 고르기 판을 끄는 동안 같은 색이 연달아 나온다.
+    const key = JSON.stringify(prefs);
+    if (key === lastNotifiedPalettePrefsKey) return;
+    lastNotifiedPalettePrefsKey = key;
+    try {
+      palettePrefsBridge.notify(prefs);
+    } catch (_error) { /* 보조 신호다. 다음 변경에서 다시 알린다. */ }
   }
 
   // 저장돼 있던 값(마지막 색·굵기·불투명도·내 색)을 받는다. 사용자가 이 런타임에서
@@ -4477,6 +4461,8 @@ function createFabricOverlayRuntime(options = {}) {
       .filter(color => !BRUSH_COLORS.includes(color));
     pickerHsv = hexToHsv(brushStyle.color) || pickerHsv;
     syncBrushControls();
+    // 받은 값은 저장 쪽이 이미 알고 있다. 되받아 알리지 않는다.
+    lastNotifiedPalettePrefsKey = JSON.stringify(getPalettePrefs());
     return { accepted: true, ...getPalettePrefs() };
   }
 
@@ -4891,7 +4877,7 @@ function createFabricOverlayRuntime(options = {}) {
       pickerHsv = next.s === 0 || next.v === 0 ? { ...next, h: pickerHsv.h } : next;
     }
     syncBrushControls();
-    schedulePalettePrefsNotify();
+    notifyPalettePrefsChanged();
     return brushStyle.color;
   }
 
@@ -4901,7 +4887,7 @@ function createFabricOverlayRuntime(options = {}) {
       size: boundedInteger(value, MIN_BRUSH_SIZE, MAX_BRUSH_SIZE, brushStyle.size)
     };
     syncBrushControls();
-    schedulePalettePrefsNotify();
+    notifyPalettePrefsChanged();
     return brushStyle.size;
   }
 
@@ -4915,7 +4901,7 @@ function createFabricOverlayRuntime(options = {}) {
     );
     brushStyle = { ...brushStyle, opacity: percent / 100 };
     syncBrushControls();
-    schedulePalettePrefsNotify();
+    notifyPalettePrefsChanged();
     return percent;
   }
 
@@ -9849,7 +9835,6 @@ function createFabricOverlayRuntime(options = {}) {
     colorControls = null;
     pickerDrag = null;
     tempEraseArmed = false;
-    flushPalettePrefsNotify();
     outlineControls = null;
     badge = null;
     sizeAdjustHud = null;

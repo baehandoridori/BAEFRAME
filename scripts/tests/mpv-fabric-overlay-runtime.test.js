@@ -15688,38 +15688,57 @@ test('stored palette values hydrate once and never overwrite what the user just 
   }
 });
 
-test('palette changes are announced once after the debounce', async () => {
+test('every palette change is announced at once, never held back in the overlay', async () => {
+  // 오버레이 창은 앱 종료나 복구 때 예고 없이 사라진다(호스트는 런타임의 정리를 부르지
+  // 않고 창을 바로 없앤다). 여기서 모았다가 늦게 알리면 사라지기 직전의 변경이 통째로
+  // 없어지므로, 바뀐 그 자리에서 알리고 모아서 저장하는 일은 메인 창이 맡는다.
   const timers = [];
   const announced = [];
   const harness = createRealFabricHarness({
     setTimeout: (callback, delay) => {
-      timers.push({ callback, delay, cancelled: false });
+      timers.push({ callback, delay });
       return timers.length;
     },
-    clearTimeout: handle => {
-      const entry = timers[handle - 1];
-      if (entry) entry.cancelled = true;
-    },
+    clearTimeout: () => {},
     palettePrefsBridge: { notify: prefs => announced.push(prefs) }
   });
   try {
     const controls = getBrushControls(harness.root);
-    const prefsTimers = () => timers.filter(timer => timer.delay === 400);
+    const input = (element, value) => {
+      element.value = value;
+      element.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+    };
     // 저장값을 받는 것은 사용자의 변경이 아니다. 되받아 알리지 않는다.
     harness.runtime.applyPalettePrefs({ color: '#123456', size: 8, opacity: 80, savedColors: [] });
-    assert.equal(prefsTimers().length, 0);
-
-    realClick(harness, controls.colorButtons[1]);
-    controls.sizeInput.value = '20';
-    controls.sizeInput.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
-    controls.opacityInput.value = '50';
-    controls.opacityInput.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
-    // 연달아 바꾸면 앞선 예약은 취소되고 마지막 것만 남는다.
-    assert.deepEqual(prefsTimers().map(timer => timer.cancelled), [true, true, false]);
     assert.deepEqual(announced, []);
 
-    prefsTimers().at(-1).callback();
-    assert.deepEqual(announced, [{ color: '#ffd000', size: 20, opacity: 50, savedColors: [] }]);
+    realClick(harness, controls.colorButtons[1]);
+    assert.deepEqual(announced, [{ color: '#ffd000', size: 8, opacity: 80, savedColors: [] }]);
+    input(controls.sizeInput, '20');
+    input(controls.opacityInput, '50');
+    assert.deepEqual(announced.slice(1), [
+      { color: '#ffd000', size: 20, opacity: 80, savedColors: [] },
+      { color: '#ffd000', size: 20, opacity: 50, savedColors: [] }
+    ]);
+    // 값이 그대로면 다시 보내지 않는다. 색 고르기 판을 끄는 동안 같은 색이 연달아 나온다.
+    realClick(harness, controls.colorButtons[1]);
+    input(controls.sizeInput, '20');
+    assert.equal(announced.length, 3);
+    // 받은 저장값과 같은 값으로 "바꾼" 것도 새 소식이 아니다.
+    const fresh = createRealFabricHarness({ palettePrefsBridge: { notify: prefs => announced.push(prefs) } });
+    try {
+      fresh.runtime.applyPalettePrefs({ color: '#ffd000', size: 3, opacity: 100, savedColors: [] });
+      realClick(fresh, getBrushControls(fresh.root).colorButtons[1]);
+      assert.equal(announced.length, 3);
+    } finally {
+      await fresh.destroy();
+    }
+    // 알림을 미루는 타이머를 걸지 않는다.
+    assert.deepEqual(timers.filter(timer => timer.delay === 400), []);
+
+    // 이미 다 알렸으므로 화면을 걷을 때 따로 보낼 것이 없다.
+    await harness.destroy();
+    assert.equal(announced.length, 3);
   } finally {
     await harness.destroy();
   }
@@ -16081,32 +16100,6 @@ test('text entry ends whenever the field stops being where the user types', asyn
     assert.equal(calls.at(-1), false);
   } finally {
     await harness.destroy();
-  }
-});
-
-test('a palette change made just before teardown is still announced', async () => {
-  const announced = [];
-  const timers = [];
-  const harness = createRealFabricHarness({
-    setTimeout: (callback, delay) => {
-      timers.push({ callback, delay });
-      return timers.length;
-    },
-    clearTimeout: () => {},
-    palettePrefsBridge: { notify: prefs => announced.push(prefs) }
-  });
-  let destroyed = false;
-  try {
-    const controls = getBrushControls(harness.root);
-    realClick(harness, controls.colorButtons[2]);
-    assert.deepEqual(announced, [], '디바운스가 끝나기 전에는 알리지 않는다');
-
-    // 화면을 걷을 때 기다리던 알림을 버리면 닫기 직전에 바꾼 색이 다음 실행에 남지 않는다.
-    await harness.destroy();
-    destroyed = true;
-    assert.deepEqual(announced, [{ color: '#26de81', size: 3, opacity: 100, savedColors: [] }]);
-  } finally {
-    if (!destroyed) await harness.destroy();
   }
 });
 

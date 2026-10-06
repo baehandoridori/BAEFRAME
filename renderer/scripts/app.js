@@ -43,6 +43,7 @@ import { DrawingSync } from './modules/drawing-sync.js';
 import { FabricDrawingSync } from './modules/fabric-drawing-sync.js';
 import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
 import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
+import { createFabricPalettePrefsSaver } from './modules/fabric-palette-prefs-saver.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { createCommentPanelPopout } from './modules/comment-panel-popout.js';
@@ -8041,16 +8042,27 @@ async function initApp() {
   }
 
   // 드로잉 팔레트 값(마지막 색·굵기·불투명도·내 색)은 오버레이가 원본이고, 여기서는
-  // 앱을 껐다 켜도 남도록 사용자 설정에 보존한다. 그리기를 켤 때 보존해 둔 값을
-  // 심는데, 사용자가 그 사이 팔레트를 만졌다면 오버레이가 스스로 거절한다.
+  // 앱을 껐다 켜도 남도록 사용자 설정에 보존한다. 오버레이는 값이 바뀔 때마다 바로
+  // 알리므로(그 창은 예고 없이 사라질 수 있다) 저장은 여기서 모아서 한다.
+  const fabricPalettePrefsSaver = createFabricPalettePrefsSaver({
+    save: prefs => userSettings.setFabricPalettePrefs(prefs)
+  });
+  window.electronAPI?.onFabricDrawingPalettePrefs?.(prefs => {
+    fabricPalettePrefsSaver.push(prefs);
+  });
+  window.addEventListener('beforeunload', () => {
+    fabricPalettePrefsSaver.flush();
+  });
+  // 그리기를 켤 때 보존해 둔 값을 심는다. 사용자가 그 사이 팔레트를 만졌다면 오버레이가
+  // 스스로 거절한다.
   function pushFabricPilotPalettePrefs() {
     const apply = window.electronAPI?.mpvApplyOverlayDrawingPalettePrefs;
     if (typeof apply !== 'function') return;
+    // 아직 저장하지 못한 변경이 있으면 먼저 적는다. 오버레이가 방금 새로 만들어졌다면
+    // (복구) 그 변경이 새 팔레트에 심어야 할 최신 값이다.
+    fabricPalettePrefsSaver.flush();
     Promise.resolve(apply(userSettings.getFabricPalettePrefs())).catch(() => {});
   }
-  window.electronAPI?.onFabricDrawingPalettePrefs?.(prefs => {
-    userSettings.setFabricPalettePrefs(prefs);
-  });
 
   let fabricPilotTimelineRenderQueued = false;
   fabricDrawingPersistenceStore.subscribe(() => {

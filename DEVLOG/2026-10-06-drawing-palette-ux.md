@@ -40,7 +40,7 @@
 
 ### 값 보존 (`shared/fabric-palette-prefs.js` 신규)
 
-- 오버레이 → 메인: 런타임이 400ms 디바운스로 `mpvOverlayPalettePrefs.notify` → `mpv-overlay:palette-prefs`(발신자 확인 + 검증) → `fabric-drawing:palette-prefs` → `userSettings.setFabricPalettePrefs`.
+- 오버레이 → 메인: 런타임이 값이 바뀐 그 자리에서 `mpvOverlayPalettePrefs.notify` → `mpv-overlay:palette-prefs`(발신자 확인 + 검증) → `fabric-drawing:palette-prefs` → 메인 창의 `fabric-palette-prefs-saver.js` 가 400ms 동안 모아 `userSettings.setFabricPalettePrefs` 로 한 번 저장한다. 메인 창이 닫힐 때와 오버레이에 값을 다시 심기 직전에는 기다리지 않고 바로 적는다.
 - 메인 → 오버레이: 그리기가 켜질 때(`handleFabricDrawingPilotStateChange('active')`) `mpv:apply-overlay-drawing-palette-prefs` → `MPVOverlayHost.applyDrawingPalettePrefs` → 런타임 `applyPalettePrefs`.
 - 원본은 오버레이다. 사용자가 이 런타임에서 값을 한 번이라도 바꿨으면(`palettePrefsTouched`) 저장값을 거절한다. 저장값을 받는 것은 변경이 아니므로 되받아 알리지 않는다.
 - 한도와 검증은 공유 모듈 하나. 런타임은 한도를 그 모듈에서 받고, ES 모듈인 `user-settings.js` 만 리터럴을 따로 두며 테스트가 값이 같음을 강제한다.
@@ -71,11 +71,17 @@
 | 활성 레이어가 잠겼거나 Alt 가 함께 눌렸을 때는 지워지지 않는데 지우개로 보인다 | `resolveTempEraseArmed` 에 `activeLayerDrawable` 과 Alt 를 넣고, 레이어 상태가 바뀔 때·Alt 키에서 다시 맞춘다 |
 | 메인 창에 포커스가 있을 때 포인터가 캔버스를 떠난 뒤 Ctrl 을 떼면 팔레트가 지우개로 남는다 | 캔버스 `pointerleave` 에서 오버레이가 직접 본 키 상태로 다시 맞춘다 |
 | 입력칸에 포커스를 둔 채 색 고르기 판을 끌면 입력칸에 옛 코드가 남는다 | 판을 누를 때 글자 입력을 끝낸다 |
-| 화면을 걷기 직전 400ms 안의 변경은 보존되지 않는다 | 걷을 때 기다리던 알림을 버리지 않고 보낸다 |
+| 화면을 걷기 직전 400ms 안의 변경은 보존되지 않는다 | 걷을 때 기다리던 알림을 버리지 않고 보내게 했으나, 아래 코덱스 1차 지적으로 방식을 바꿨다 |
 | 내 색이 가득 찼을 때 담으면 가장 오래된 색이 말없이 빠진다 | 의도한 동작이다. 담기 버튼의 설명(title)에 미리 적는다 |
 | 구형 `brushSettings` 를 다시 쓰면 구형 도구의 마지막 값으로 시작한다 | 전용 키 `drawingPalette` 로 나눴다 |
 
 `panel.dataset.presentation` 은 CSS 가 읽지 않는다는 지적이 있었다. 배치 꼴을 DOM 에서 확인하는 표식으로 테스트가 쓰므로 남겼다.
+
+## 코덱스 리뷰 (PR #230)
+
+- 1차(대상 `609f6dd`), P2 1건: 팔레트 값을 바꾼 뒤 400ms 안에 오버레이가 없어지면 알림이 사라진다. 런타임의 정리에서 내보내도록 해 두었지만 `MPVOverlayHost.destroy()` 는 그 정리를 부르지 않고 `BrowserWindow.destroy()` 를 바로 부른다(앱 종료·오버레이 복구). 지적이 맞다.
+- 반영: 오버레이에서 모으지 않는다. 값이 바뀐 그 자리에서 알리고(같은 값은 다시 보내지 않는다), 모아서 저장하는 일은 수명이 더 긴 메인 창의 `renderer/scripts/modules/fabric-palette-prefs-saver.js` 로 옮겼다. 메인 창은 `beforeunload` 와, 오버레이에 값을 다시 심기 직전에 남은 값을 바로 적는다 — 복구로 새로 만들어진 오버레이가 최신 값을 받는다.
+- 이후 라운드의 트리거·대상 SHA·완료 신호는 `output/releases/2026-10-06-v2.13.0-beta/` 에 남긴다.
 
 ## 검증 결과 (2026-10-06, 리뷰 반영 후)
 
@@ -83,11 +89,14 @@
 
 | 묶음 | 결과 |
 |---|---|
-| `npm run test:fabric-drawing-pilot` | 648 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:fabric-drawing-pilot` | 647 pass / 0 fail / 0 cancelled, exit 0 |
 | `npm run test:mpv` (실제 숨김 Electron 배치 검사 포함) | 475 pass / 0 fail / 0 cancelled, exit 0 |
-| `npm run test:drawing` (신규 `fabric-palette-prefs.test.js` 포함) | 365 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:drawing` (신규 `fabric-palette-prefs.test.js` 포함) | 366 pass / 0 fail / 0 cancelled, exit 0 |
 | `npm run test:editor` | 147 pass / 0 fail / 0 cancelled, exit 0 — `BAEFRAME_TEST_FFMPEG` 로 메인 체크아웃의 ffmpeg 를 지정 |
 | `npm run test:fabric-drawing-persistence` | 167 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:release-paths` | 24 pass / 0 fail / 0 cancelled, exit 0 |
+
+위 수치는 코덱스 1차 반영 뒤의 것이다(반영 전에는 pilot 648, drawing 365).
 
 전체 146개 테스트 파일을 한 번에 돌린 결과(리뷰 반영 전 시점): 2,765건 중 2,750 pass / 15 fail. 실패 15건은 이번 변경과 무관하다.
 
