@@ -3976,6 +3976,9 @@ function createFabricOverlayRuntime(options = {}) {
   let pickerDrag = null;
   const palettePrefsBridge = options.palettePrefsBridge || windowRef?.mpvOverlayPalettePrefs;
   const textEntryBridge = options.textEntryBridge || windowRef?.mpvOverlayTextEntry;
+  // 그리기 중 키를 메인 창으로 넘기는 호스트(mpv 오버레이) 안에서 돌고 있는가.
+  // 편집창에는 그런 호스트가 없어 키가 평소처럼 이 문서의 것이다.
+  const hostRelaysKeys = typeof textEntryBridge?.set === 'function';
   // 사용자가 이 런타임에서 값을 한 번이라도 바꿨으면 저장된 값으로 덮지 않는다.
   let palettePrefsTouched = false;
   let lastNotifiedPalettePrefsKey = null;
@@ -7927,6 +7930,13 @@ function createFabricOverlayRuntime(options = {}) {
       overlayModifierState.ctrl = true;
       gestureProbe.overlayCtrlKeyDownCount += 1;
       syncTempErase();
+    }
+    // 호스트는 그리기 중 Space 누름을 메인 창으로 넘기되 삼키지 않는다 — 삼키면 Chromium 이
+    // 짝이 되는 뗌을 버려 메인 창이 Space 를 누른 채로 남는다. 그래서 누름이 이 문서까지
+    // 온다. 포커스가 남은 팔레트 버튼이 눌리거나 팔레트가 스크롤되지 않게 기본 동작만 막는다.
+    // 색상 코드를 입력하는 동안에는 호스트가 키를 넘기지 않으므로 손대지 않는다.
+    if (event?.code === 'Space' && hostRelaysKeys && inputEnabled && !textEntryActive) {
+      event.preventDefault?.();
     }
   }
 

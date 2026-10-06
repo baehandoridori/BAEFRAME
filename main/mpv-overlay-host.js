@@ -2372,6 +2372,30 @@ function forwardedInputNeedsMainFocus(input = {}, drawModeShortcut = null) {
     input.metaKey !== true;
 }
 
+// Chromium 은 브라우저 쪽이 삼킨 누름(before-input-event 에서 preventDefault 한 keyDown) 뒤의
+// 뗌을 아예 내보내지 않는다 — before-input-event 도 오버레이 문서도 그 keyUp 을 받지 못한다.
+// 메인 창은 Space 의 뗌으로 "탭이면 재생, 누른 채 끌면 화면 이동"을 끝내므로, 뗌이 없으면
+// Space 를 계속 누르고 있다고 보고 재생도 다음 획도 막는다.
+//
+// 그래서 Space 누름은 메인 창으로 넘기되 삼키지 않는다. 오버레이 문서로 내려간 누름의 기본
+// 동작(포커스가 남은 팔레트 버튼 누름·스크롤)은 오버레이 런타임이 막는다.
+// Alt·Meta 조합은 삼키지 않으면 창 시스템 메뉴 같은 OS 동작으로 넘어가므로 계속 삼킨다.
+function forwardedSpaceKeyDownKeepsRelease(input = {}) {
+  return input.type === 'keyDown' && input.code === 'Space' &&
+    input.altKey !== true && input.metaKey !== true;
+}
+
+// 삼킬 수밖에 없는 Space 누름은 뗌이 영영 오지 않는다. 메인 창이 "누른 채"로 남지 않도록
+// 호스트가 곧바로 짝이 되는 뗌을 만들어 보낸다. 그 조합은 오버레이에서 눌렀다 뗀 것으로만
+// 동작한다(누른 채 끌기는 메인 창에 포커스가 있을 때만 된다).
+function pairedReleaseForSwallowedSpace(input = {}) {
+  if (input.type !== 'keyDown' || input.code !== 'Space' || input.repeat === true ||
+      forwardedSpaceKeyDownKeepsRelease(input)) {
+    return null;
+  }
+  return { ...input, type: 'keyUp', repeat: false };
+}
+
 function overlayHistoryActionFromInput(input = {}) {
   if (input.type !== 'keyDown' ||
       input.isComposing === true ||
@@ -5246,7 +5270,13 @@ class MPVOverlayHost {
         mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, forwardedInput);
         this.keyboardRelayCount += 1;
         this.lastKeyboardRelayCode = forwardedInput.code;
+        if (forwardedSpaceKeyDownKeepsRelease(forwardedInput)) return;
         event?.preventDefault?.();
+        const pairedRelease = pairedReleaseForSwallowedSpace(forwardedInput);
+        if (pairedRelease) {
+          mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, pairedRelease);
+          this.keyboardRelayCount += 1;
+        }
       } catch (error) {
         this.logger.debug('Fabric overlay keyboard relay failed', { error: error.message });
       } finally {
