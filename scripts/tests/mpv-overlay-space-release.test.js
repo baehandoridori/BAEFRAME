@@ -133,7 +133,23 @@ async function runElectronProbe() {
     await press('A');
     const letter = { relayed: takeRelayed(), page: await takePage() };
 
-    process.stdout.write(`${PROBE_PREFIX}${JSON.stringify({ space, spaceAgain, letter })}\n`);
+    // Space 를 누른 채 다른 키를 눌렀다 뗀 뒤 Space 를 뗀다. 다른 키의 누름을 삼키는 순간
+    // Chromium 은 다음 누름까지 모든 뗌을 버리므로 Space 의 실제 뗌은 오지 않는다.
+    overlay.sendInputEvent({ type: 'keyDown', keyCode: 'Space' });
+    await settle();
+    overlay.sendInputEvent({ type: 'keyDown', keyCode: 'A' });
+    await settle();
+    overlay.sendInputEvent({ type: 'keyUp', keyCode: 'A' });
+    await settle();
+    overlay.sendInputEvent({ type: 'keyUp', keyCode: 'Space' });
+    await settle();
+    const interrupted = { relayed: takeRelayed(), page: await takePage() };
+    await press('Space');
+    const afterInterrupted = { relayed: takeRelayed(), page: await takePage() };
+
+    process.stdout.write(`${PROBE_PREFIX}${JSON.stringify({
+      space, spaceAgain, letter, interrupted, afterInterrupted
+    })}\n`);
   } finally {
     try {
       host?.destroy();
@@ -208,5 +224,13 @@ if (process.versions.electron) {
     // 다른 키는 지금처럼 호스트가 삼켜 오버레이 문서에 닿지 않는다.
     assert.deepEqual(probe.letter.relayed, ['keyDown:KeyA']);
     assert.deepEqual(probe.letter.page.keys, []);
+
+    // Space 를 누른 채 다른 키를 누르면, 그 키를 삼키기 전에 Space 의 뗌을 먼저 넘긴다.
+    // 실제 뗌은 오지 않으므로 그러지 않으면 메인 창이 다시 Space 를 누른 채로 남는다.
+    assert.deepEqual(probe.interrupted.relayed, ['keyDown:Space', 'keyUp:Space', 'keyDown:KeyA']);
+    assert.deepEqual(probe.interrupted.page.keys, ['keydown:Space:prevented']);
+    // 그 뒤의 Space 는 다시 평소대로 동작한다.
+    assert.deepEqual(probe.afterInterrupted.relayed, ['keyDown:Space', 'keyUp:Space']);
+    assert.equal(probe.afterInterrupted.page.clicks, 0);
   });
 }

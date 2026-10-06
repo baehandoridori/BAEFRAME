@@ -51,6 +51,16 @@
 
 다른 키의 뗌은 여전히 오지 않는다. 메인 창은 Space 외의 뗌을 쓰지 않고(`handleKeyup` 은 Space 만 본다), 오버레이의 Ctrl·Alt 상태는 포인터 이벤트로 다시 맞춘다(`syncOverlayModifierStateFromPointer`).
 
+## 코덱스 리뷰
+
+### 1차 (대상 `3dce037`) — P2 1건
+
+- 지적(`main/mpv-overlay-host.js`): Space 를 누른 채 다른 키를 누르면 그 키의 누름은 여전히 삼켜진다. Chromium 은 삼킨 키의 뗌만이 아니라 다음 누름이 올 때까지 **모든** 뗌을 버리므로, Space 의 실제 뗌이 다시 사라져 같은 증상이 난다.
+- 확인: 실제 Chromium 테스트에 "Space 누름 → A 누름 → A 뗌 → Space 뗌"을 추가해 재현했다. 넘어온 것은 `keyDown:Space`, `keyDown:KeyA` 뿐이었다.
+- 수정: 호스트가 뗌을 아직 못 넘긴 Space 를 기억한다(`overlaySpaceReleasePending`). 다른 키의 누름을 삼키는 모든 길(일반 릴레이, 실행 취소 키, 그 자동 반복, Alt·Meta+Space) 직전에 Space 의 뗌을 먼저 넘기고(`_flushPendingOverlaySpaceRelease`), 색상 코드 입력이 시작될 때도 넘긴다. 실제 뗌이 오면 기억을 지운다. 그리기 입력이 꺼지거나 오버레이 창이 포커스를 잃으면 메인 창이 스스로 상태를 풀므로 기억만 지운다.
+- 결과적으로 Space 를 누른 채 다른 키를 누르면 그 순간 Space 누름이 끝난 것으로 처리된다(끌지 않았으면 재생 전환, 끄는 중이면 화면 이동 종료). 메인 창에 포커스가 있을 때는 Space 를 뗄 때 같은 일이 일어나므로 결과는 같고 시점만 이르다.
+- 실제 앱 확인: Space 를 누른 채 Delete 를 누르고 둘 다 뗀 뒤 상태가 풀려 있고 이후 획이 그려진다.
+
 ## 테스트
 
 - 새 `scripts/tests/mpv-overlay-space-release.test.js`: 숨김 Electron 에서 실제 `MPVOverlayHost` 와 실제 런타임 번들로 Space 를 눌렀다 뗀다. 메인 창으로 `keyDown`·`keyUp` 이 모두 넘어오는지, 오버레이 문서에서 기본 동작이 막혔는지, 포커스된 팔레트 버튼이 눌리지 않는지, 다른 키는 그대로 삼켜지는지 본다. `test:mpv` 에 등록.
@@ -61,18 +71,23 @@
 
 ## 검증 결과
 
-자동 테스트 (모두 exit 0, fail 0, cancelled 0)
+자동 테스트 (코덱스 1차 반영 후 다시 실행)
 
 | 명령 | 결과 |
 |---|---|
-| `npm run test:mpv` | 477 pass |
-| `npm run test:fabric-drawing-pilot` | 648 pass |
-| `npm run test:drawing` | 366 pass |
-| `npm run test:editor` (`BAEFRAME_TEST_FFMPEG` 지정) | 147 pass |
-| `npm run test:fabric-drawing-persistence` | 167 pass |
-| `npm run test:release-paths` | 24 pass |
+| `npm run test:mpv` | 477 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:fabric-drawing-pilot` | 648 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:drawing` | 366 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:editor` (`BAEFRAME_TEST_FFMPEG` 지정) | 147 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:release-paths` | 24 pass / 0 fail / 0 cancelled, exit 0 |
+| `npm run test:fabric-drawing-persistence` | 첫 실행 167 pass / 0 fail, exit 0. 이후 실행 164 pass / **3 fail**, exit 1 (아래 설명) |
 
 lint(변경 파일, `--no-ignore`) 오류 0. `git diff --check` 통과.
+
+전체 147개 테스트 파일 일괄 실행(`3dce037`): 2,771개 중 2,759 pass / 12 fail / 0 cancelled.
+
+- 7건은 변경 전부터 실패하던 항목이다(`hybrid-review-engine-source` 4, `playback-buffering-runtime` 1, `drawing-v3-engine-adapter-benchmark` 2).
+- 5건은 이 PC 의 상태에 따라 실패하는 저장 복구 테스트다(`review-file-store-recovery` 3, `review-read-ux` 2, `ERR_REVIEW_LOCK_TIMEOUT`). 테스트가 "없는 프로세스"로 가정한 고정 번호 12345 는 Windows 에서 12344 를 가리키는데, 그 번호의 프로세스가 실행 중이면 소유자가 살아 있다고 보고 시간 초과된다. 같은 시각에 수정 전 `5e10a41` 체크아웃에서도 똑같이 실패했다. 이번 변경과 무관하며 여기서 고치지 않았다.
 
 실제 앱(수정본을 소스로 실행, 격리 프로필, DevTools 프로토콜 입력)
 

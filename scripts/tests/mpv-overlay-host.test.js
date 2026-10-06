@@ -2452,9 +2452,11 @@ test('V Delete Space and repeat relay keep the active drawing overlay focused', 
   emit({ key: 'b', code: 'KeyB', isAutoRepeat: true });
   emit({ type: 'keyUp', key: 'b', code: 'KeyB' });
 
+  // 키 7개 + Space 의 뗌 1개. Space 를 떼기 전에 B 누름을 삼키므로, 그 직전에
+  // 호스트가 Space 의 뗌을 먼저 넘긴다(삼킨 뒤에는 실제 뗌이 오지 않는다).
   assert.equal(
     events.filter(([name]) => name === 'mainWindow.send').length,
-    7
+    8
   );
   assert.equal(
     events.some(([name]) => name === 'mainWindow.focus'),
@@ -2596,6 +2598,17 @@ test('canonicalizes overlay keys, drops IME composition, and never steals focus 
   assert.deepEqual(events.filter(([name]) => name === 'mainWindow.send'), [
     ['mainWindow.send', 'mpv-overlay:keyboard-input', {
       type: 'keyDown',
+      key: ' ',
+      code: 'Space',
+      shiftKey: false,
+      ctrlKey: false,
+      altKey: false,
+      metaKey: false,
+      repeat: false
+    }],
+    // ArrowLeft 누름을 삼키기 전에 Space 의 뗌을 먼저 넘긴다.
+    ['mainWindow.send', 'mpv-overlay:keyboard-input', {
+      type: 'keyUp',
       key: ' ',
       code: 'Space',
       shiftKey: false,
@@ -3099,28 +3112,61 @@ test('a relayed Space press always gets its release to the main renderer', async
     const relayed = harness.events
       .filter(([name, channel]) =>
         name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
-      .map(([, , relay]) => `${relay.type}${relay.repeat ? ':repeat' : ''}`);
+      .map(([, , relay]) => `${relay.type}:${relay.code}${relay.repeat ? ':repeat' : ''}`);
     return { prevented, relayed };
   };
+  const releaseSpace = () => emit({ type: 'keyUp' });
 
   // 누름: 넘기되 삼키지 않는다. 그래야 Chromium 이 뗌을 이 핸들러까지 가져온다.
-  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown'] });
-  assert.deepEqual(emit({ isAutoRepeat: true }), { prevented: false, relayed: ['keyDown:repeat'] });
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ isAutoRepeat: true }), { prevented: false, relayed: ['keyDown:Space:repeat'] });
   // 뗌: 넘기고 삼킨다. 오버레이 문서는 Space 뗌으로 팔레트 버튼을 누르지 못한다.
-  assert.deepEqual(emit({ type: 'keyUp' }), { prevented: true, relayed: ['keyUp'] });
+  assert.deepEqual(releaseSpace(), { prevented: true, relayed: ['keyUp:Space'] });
   // Ctrl·Shift 조합도 같은 길이다.
-  assert.deepEqual(emit({ control: true }), { prevented: false, relayed: ['keyDown'] });
-  assert.deepEqual(emit({ shift: true }), { prevented: false, relayed: ['keyDown'] });
+  assert.deepEqual(emit({ control: true }), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ type: 'keyUp', control: true }), { prevented: true, relayed: ['keyUp:Space'] });
+  assert.deepEqual(emit({ shift: true }), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ type: 'keyUp', shift: true }), { prevented: true, relayed: ['keyUp:Space'] });
 
   // Alt·Meta 조합은 OS 동작으로 넘어가지 않게 계속 삼킨다. 그 뗌은 영영 오지 않으므로
   // 호스트가 짝이 되는 뗌을 곧바로 만들어 보낸다.
-  assert.deepEqual(emit({ alt: true }), { prevented: true, relayed: ['keyDown', 'keyUp'] });
-  assert.deepEqual(emit({ meta: true }), { prevented: true, relayed: ['keyDown', 'keyUp'] });
-  assert.deepEqual(emit({ alt: true, isAutoRepeat: true }), { prevented: true, relayed: ['keyDown:repeat'] });
+  assert.deepEqual(emit({ alt: true }), { prevented: true, relayed: ['keyDown:Space', 'keyUp:Space'] });
+  assert.deepEqual(emit({ meta: true }), { prevented: true, relayed: ['keyDown:Space', 'keyUp:Space'] });
+  assert.deepEqual(emit({ alt: true, isAutoRepeat: true }), { prevented: true, relayed: ['keyDown:Space:repeat'] });
 
   // 다른 키는 그대로다: 누름을 삼키고, 뗌을 지어내지 않는다.
-  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown'] });
-  assert.deepEqual(emit({ key: 'ArrowLeft', code: 'ArrowLeft', alt: true }), { prevented: true, relayed: ['keyDown'] });
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
+  assert.deepEqual(emit({ key: 'ArrowLeft', code: 'ArrowLeft', alt: true }), { prevented: true, relayed: ['keyDown:ArrowLeft'] });
+
+  // Space 를 누른 채 다른 키를 누른다. Chromium 은 누름 하나를 삼키면 다음 누름까지 **모든**
+  // 뗌을 버리므로 Space 의 실제 뗌도 오지 않는다. 그 키를 삼키기 전에 Space 의 뗌부터 넘긴다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyUp:Space', 'keyDown:KeyV'] });
+  // 이미 짝을 맞췄다. 다음 키에서 뗌을 또 만들지 않는다.
+  assert.deepEqual(emit({ key: 'Delete', code: 'Delete' }), { prevented: true, relayed: ['keyDown:Delete'] });
+  // 아직 누르고 있는 Space 의 자동 반복은 새 누름으로 세지 않는다.
+  assert.deepEqual(emit({ isAutoRepeat: true }), { prevented: false, relayed: ['keyDown:Space:repeat'] });
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
+
+  // 실행 취소(Ctrl+Z)처럼 다른 길로 삼키는 누름도 같다. 자동 반복은 넘기지 않고 삼키기만 한다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true }), { prevented: true, relayed: ['keyUp:Space', 'keyDown:KeyZ'] });
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true, isAutoRepeat: true }), { prevented: true, relayed: ['keyUp:Space'] });
+
+  // 색상 코드 입력이 시작되면 키를 넘기지 않게 되므로, 그 전에 누르고 있던 Space 를 놓아 준다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  harness.events.length = 0;
+  assert.equal(harness.host.setTextEntryActive({ sender: overlay.webContents }, true), true);
+  assert.deepEqual(harness.events
+    .filter(([name, channel]) => name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
+    .map(([, , relay]) => `${relay.type}:${relay.code}`), ['keyUp:Space']);
+  assert.equal(harness.host.setTextEntryActive({ sender: overlay.webContents }, false), false);
+
+  // 오버레이 창이 포커스를 잃으면 메인 창이 스스로 상태를 푼다. 호스트는 기억만 지운다.
+  assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
+  overlay.listeners.get('blur')();
+  assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
 });
 
 test('overlay history keyup suppression is cleared when drawing input is disabled', async () => {

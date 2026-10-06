@@ -3277,6 +3277,9 @@ class MPVOverlayHost {
     // 오버레이 팔레트의 글자 입력칸(색상 코드)에 포커스가 있는 동안 true.
     // 그동안은 키를 메인 창으로 넘기지 않는다(before-input-event 참조).
     this.overlayTextEntryActive = false;
+    // 메인 창으로 넘긴 Space 누름 중 아직 뗌을 넘기지 못한 것(없으면 null).
+    // 다른 키의 누름을 삼키기 전에 이 뗌부터 넘겨야 한다(_flushPendingOverlaySpaceRelease).
+    this.overlaySpaceReleasePending = null;
     this.drawingV3ShadowEnabled = false;
     this.drawingV3ShadowConfigured = false;
     this.drawingV3ShadowLocked = false;
@@ -3318,7 +3321,29 @@ class MPVOverlayHost {
   setTextEntryActive(event, active) {
     if (!this.isCurrentOverlaySender(event)) return false;
     this.overlayTextEntryActive = active === true && this.desiredInputEnabled === true;
+    // 글자 입력 중에는 키를 넘기지 않으므로, 그 전에 누르고 있던 Space 의 뗌도 넘어가지 않는다.
+    if (this.overlayTextEntryActive) this._flushPendingOverlaySpaceRelease();
     return this.overlayTextEntryActive;
+  }
+
+  // 뗌을 아직 넘기지 못한 Space 가 있으면 지금 넘긴다. Chromium 은 누름 하나를 삼키면 그 키만이
+  // 아니라 다음 누름이 올 때까지 **모든** 뗌을 버린다. Space 를 누른 채 다른 키를 누르면 그 키를
+  // 삼키는 순간 Space 의 실제 뗌도 사라지므로, 삼키기 전에 짝을 맞춰 둔다.
+  _flushPendingOverlaySpaceRelease() {
+    const pending = this.overlaySpaceReleasePending;
+    if (!pending) return;
+    this.overlaySpaceReleasePending = null;
+    const mainWindow = this.getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.() ||
+        typeof mainWindow.webContents?.send !== 'function') {
+      return;
+    }
+    try {
+      mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, { ...pending, type: 'keyUp', repeat: false });
+      this.keyboardRelayCount += 1;
+    } catch (error) {
+      this.logger.debug('Fabric overlay Space release relay failed', { error: error.message });
+    }
   }
 
   // 메인 창이 보존해 둔 팔레트 값(마지막 색·굵기·불투명도·내 색)을 오버레이에 심는다.
@@ -3574,6 +3599,7 @@ class MPVOverlayHost {
     if (!request.enabled) {
       this.suppressedOverlayHistoryKeys.clear();
       this.overlayTextEntryActive = false;
+      this.overlaySpaceReleasePending = null;
     }
 
     // 준비된 Fabric surface가 없다면 disable은 native click-through만 보장하면 된다.
@@ -5101,6 +5127,7 @@ class MPVOverlayHost {
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
     this.overlayTextEntryActive = false;
+    this.overlaySpaceReleasePending = null;
     this.lastBounds = null;
     // 피드백 32: 호스트 재생성 후 동일 bounds 스킵 오판 방지
     this._lastAppliedScreenBounds = null;
@@ -5176,6 +5203,7 @@ class MPVOverlayHost {
     this.inFlightDrawingActions.clear();
     this.suppressedOverlayHistoryKeys.clear();
     this.overlayTextEntryActive = false;
+    this.overlaySpaceReleasePending = null;
     this.window = hostWindow;
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
@@ -5211,6 +5239,7 @@ class MPVOverlayHost {
       // 창이 포커스를 잃으면 입력칸의 blur 알림이 오지 않을 수 있다. 여기서 풀지
       // 않으면 다음에 오버레이가 포커스를 얻었을 때 단축키가 메인 창으로 가지 않는다.
       this.overlayTextEntryActive = false;
+      this.overlaySpaceReleasePending = null;
       try { this.getMainWindow()?.webContents?.send('mpv-overlay:input-blur'); } catch { /* window closing */ }
     });
     hostWindow.webContents?.on?.('before-input-event', (event, input) => {
@@ -5233,6 +5262,7 @@ class MPVOverlayHost {
           return;
         }
         if (input?.type === 'keyDown' && input.isAutoRepeat === true) {
+          this._flushPendingOverlaySpaceRelease();
           event?.preventDefault?.();
           return;
         }
@@ -5240,6 +5270,7 @@ class MPVOverlayHost {
       const historyAction = overlayHistoryActionFromInput(input);
       if (historyAction) {
         this.suppressedOverlayHistoryKeys.add(inputCode);
+        this._flushPendingOverlaySpaceRelease();
         event?.preventDefault?.();
         if (input.isAutoRepeat === true) return;
         // renderer가 Fabric 실행과 전역 히스토리 fallback을 한 경로에서 판정하도록
@@ -5267,10 +5298,21 @@ class MPVOverlayHost {
         if (needsMainFocusHandoff) {
           mainWindow.focus?.();
         }
+        const keepsRelease = forwardedSpaceKeyDownKeepsRelease(forwardedInput);
+        // 이 누름을 삼킬 것이면, 뗌을 아직 못 넘긴 Space 부터 짝을 맞춘 뒤에 넘긴다.
+        if (forwardedInput.type === 'keyDown' && !keepsRelease) {
+          this._flushPendingOverlaySpaceRelease();
+        }
         mainWindow.webContents.send(FORWARDED_KEYBOARD_CHANNEL, forwardedInput);
         this.keyboardRelayCount += 1;
         this.lastKeyboardRelayCode = forwardedInput.code;
-        if (forwardedSpaceKeyDownKeepsRelease(forwardedInput)) return;
+        if (keepsRelease) {
+          if (forwardedInput.repeat !== true) this.overlaySpaceReleasePending = forwardedInput;
+          return;
+        }
+        if (forwardedInput.type === 'keyUp' && forwardedInput.code === 'Space') {
+          this.overlaySpaceReleasePending = null;
+        }
         event?.preventDefault?.();
         const pairedRelease = pairedReleaseForSwallowedSpace(forwardedInput);
         if (pairedRelease) {
@@ -5328,6 +5370,7 @@ class MPVOverlayHost {
       this.inFlightDrawingActions.clear();
       this.suppressedOverlayHistoryKeys.clear();
       this.overlayTextEntryActive = false;
+      this.overlaySpaceReleasePending = null;
       this._lastAppliedScreenBounds = null;
       if (!hostWindow.isDestroyed?.()) hostWindow.destroy();
     });
@@ -5342,6 +5385,7 @@ class MPVOverlayHost {
       this.activeCollaborationDragPointerId = null;
       this.suppressedOverlayHistoryKeys.clear();
       this.overlayTextEntryActive = false;
+      this.overlaySpaceReleasePending = null;
     });
 
     return hostWindow;
