@@ -1,7 +1,7 @@
 'use strict';
 
 // 그리기 중 오버레이 창이 키보드 포커스를 가진 채 Space 를 눌렀다 뗐을 때, 메인 창이
-// "누름"과 "뗌"을 둘 다 받는지 실제 Chromium 으로 확인한다.
+// "누름"과 "뗌"을 둘 다 받는지, Ctrl+Z 후 펜을 다시 쓸 수 있는지 실제 Chromium으로 확인한다.
 //
 // 가짜 이벤트를 쓰는 단위 테스트로는 이 결함을 잡을 수 없다. Chromium 은 브라우저 쪽이
 // 삼킨(before-input-event 에서 preventDefault 한) 누름 뒤의 뗌을 아예 내보내지 않는데,
@@ -16,7 +16,7 @@ const KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
 const rootDir = path.resolve(__dirname, '../..');
 
 async function runElectronProbe() {
-  const { app, BrowserWindow } = require('electron');
+  const { app, BrowserWindow, ipcMain } = require('electron');
   const esbuild = require('esbuild');
   const { MPVOverlayHost } = require('../../main/mpv-overlay-host');
   const tempDir = process.env.BAEFRAME_SPACE_RELEASE_TEMP_DIR;
@@ -75,6 +75,12 @@ async function runElectronProbe() {
     if (primed.accepted !== true) {
       throw new Error(`drawing input prime failed: ${JSON.stringify(primed)}`);
     }
+    const hydrated = await host.hydrateDrawingVideo({
+      hostGeneration: host.hostGeneration, videoGeneration: 1,
+      persistenceSessionId: 'pen-persistence', stableVideoIdentity: 'space-release-video',
+      fps: 24, totalFrames: 240, keyframes: []
+    });
+    if (!hydrated.accepted) throw new Error(`pen hydration failed: ${JSON.stringify(hydrated)}`);
     const enabled = await host.setDrawingInput({
       hostGeneration: host.hostGeneration,
       videoGeneration: 1,
@@ -147,8 +153,95 @@ async function runElectronProbe() {
     await press('Space');
     const afterInterrupted = { relayed: takeRelayed(), page: await takePage() };
 
+    // 이 probe의 메인 창은 Space 키를 기록만 한다. 실제 앱의 pan 종료 응답을 대신해
+    // 새 입력 세션으로 이전 Space 제스처를 정리하고 펜 시나리오를 시작한다.
+    const penEnabled = await host.setDrawingInput({
+      hostGeneration: host.hostGeneration, videoGeneration: 1, inputRevision: 3, enabled: true,
+      session: {
+        sessionId: 'space-release-session', stableVideoIdentity: 'space-release-video',
+        targetFrame: 0, sourceWidth: 1920, sourceHeight: 1080,
+        canvasRect: { left: 0, top: 0, width: 640, height: 360 }, tool: 'brush'
+      }
+    });
+    if (!penEnabled.accepted) throw new Error('pen input session failed');
+
+    // 실제 키보드 이벤트를 사용해야 Chromium이 Ctrl 뗌을 누락하는 결함을 잡는다.
+    // 포인터는 타블렛의 modifier 누락을 재현하기 위해 pen/ctrlKey:false로 넣는다.
+    const pendingFrameConfirmations = [];
+    const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, panCommandFields } = require('../../shared/viewport-pan-message');
+    ipcMain.on(PAN_CHANNEL, (event, message) => {
+      if (event.sender !== overlay || message.phase !== 'start') return;
+      // 이 시나리오는 Space를 누르지 않는다. 메인 창의 그리기 소유권 응답이다.
+      overlay.send(PAN_COMMAND_CHANNEL, {
+        ...panCommandFields(message), type: 'decision', disposition: 'draw',
+        transform: { scale: 1, panX: 0, panY: 0 }
+      });
+    });
+    ipcMain.on('mpv-overlay:drawing-pointerdown-frame-request', (event, request) => {
+      if (event.sender !== overlay) return;
+      pendingFrameConfirmations.push(host.confirmDrawingPointerdownFrame({ ...request, targetFrame: 0 }));
+    });
+    const drawPen = async pointerId => {
+      await overlay.executeJavaScript(`
+      (() => {
+        const canvas = document.querySelector('canvas.upper-canvas');
+        // 합성 포인터에는 OS capture가 없다. 키보드는 아래 sendInputEvent의 실제 경로다.
+        canvas.setPointerCapture = () => {};
+        canvas.releasePointerCapture = () => {};
+        const rect = canvas.getBoundingClientRect();
+        for (const [type, x, buttons] of [
+          ['pointerdown', 30, 1], ['pointermove', 80, 1], ['pointerup', 80, 0]
+        ]) {
+          canvas.dispatchEvent(new PointerEvent(type, {
+            bubbles: true, cancelable: true, pointerId: ${pointerId}, pointerType: 'pen',
+            isPrimary: true, button: 0, buttons, pressure: buttons ? 0.5 : 0,
+            ctrlKey: false, clientX: rect.left + x, clientY: rect.top + 60
+          }));
+        }
+      })();
+    `, true);
+      await settle();
+      for (const result of await Promise.all(pendingFrameConfirmations.splice(0))) {
+        if (!result.accepted) throw new Error(`pen frame confirmation failed: ${JSON.stringify(result)}`);
+      }
+      return diagnostics();
+    };
+    const diagnostics = () => overlay.executeJavaScript('window.__mpvFabricOverlay.getDiagnostics();', true);
+    const sendKey = async (type, keyCode, modifiers = []) => {
+      overlay.sendInputEvent({ type, keyCode, modifiers });
+      await settle();
+    };
+    const beforeUndo = await drawPen(401);
+    await sendKey('keyDown', 'Control', ['control']);
+    const controlDown = await diagnostics();
+    await sendKey('keyDown', 'Z', ['control']);
+    const historyRelayed = takeRelayed();
+    const undoResult = await host.applyDrawingAction({
+      hostGeneration: host.hostGeneration, videoGeneration: 1, inputRevision: 3,
+      sessionId: 'space-release-session', actionId: 'pen-undo', action: 'undo'
+    });
+    await sendKey('keyUp', 'Z', ['control']);
+    await sendKey('keyUp', 'Control');
+    const afterRelease = await diagnostics();
+    const afterUndo = await drawPen(402);
+    // Ctrl만 실제로 누른 동안에는 modifier 없는 펜도 여전히 임시 지우개다.
+    await sendKey('keyDown', 'Control', ['control']);
+    const heldErase = await drawPen(403);
+    await sendKey('keyUp', 'Control');
+    const afterErase = await drawPen(404);
+    const otherChords = [];
+    for (const [key, modifiers] of [['Y', ['control']], ['Z', ['control', 'shift']], ['C', ['control']]]) {
+      await sendKey('keyDown', 'Control', ['control']);
+      await sendKey('keyDown', key, modifiers);
+      // Ctrl을 글자보다 먼저 떼는 순서도 확인한다.
+      await sendKey('keyUp', 'Control');
+      await sendKey('keyUp', key);
+      otherChords.push({ key, state: await drawPen(410 + otherChords.length) });
+    }
+    const tablet = { beforeUndo, controlDown, historyRelayed, undoResult, afterRelease, afterUndo, heldErase, afterErase, otherChords };
+
     process.stdout.write(`${PROBE_PREFIX}${JSON.stringify({
-      space, spaceAgain, letter, interrupted, afterInterrupted
+      space, spaceAgain, letter, interrupted, afterInterrupted, tablet
     })}\n`);
   } finally {
     try {
@@ -179,7 +272,7 @@ if (process.versions.electron) {
   const assert = require('node:assert/strict');
   const { spawnSync } = require('node:child_process');
 
-  test('real Chromium delivers both the press and the release of Space from the drawing overlay', {
+  test('real Chromium preserves Space releases and pen drawing after Ctrl history shortcuts', {
     timeout: 45000
   }, () => {
     const electronPath = require('electron');
@@ -232,5 +325,18 @@ if (process.versions.electron) {
     // 그 뒤의 Space 는 다시 평소대로 동작한다.
     assert.deepEqual(probe.afterInterrupted.relayed, ['keyDown:Space', 'keyUp:Space']);
     assert.equal(probe.afterInterrupted.page.clicks, 0);
+
+    assert.equal(probe.tablet.beforeUndo.objectCount, 1, 'the first pen stroke is drawn');
+    assert.equal(probe.tablet.controlDown.gestures.modifierCtrl, true);
+    assert.deepEqual(probe.tablet.historyRelayed, ['keyDown:KeyZ']);
+    assert.equal(probe.tablet.undoResult.applied, true, 'undo removes the first stroke');
+    assert.equal(probe.tablet.afterRelease.gestures.modifierCtrl, false, 'Ctrl release reaches the pen modifier latch');
+    assert.equal(probe.tablet.afterUndo.objectCount, 1, 'a new pen stroke works after undo');
+    assert.equal(probe.tablet.heldErase.objectCount, 0, 'held Ctrl still erases with a tablet');
+    assert.equal(probe.tablet.afterErase.objectCount, 1, 'releasing Ctrl restores pen drawing');
+    for (const [index, { key, state }] of probe.tablet.otherChords.entries()) {
+      assert.equal(state.gestures.modifierCtrl, false, `Ctrl release survives Ctrl+${key}`);
+      assert.equal(state.objectCount, index + 2, `pen drawing resumes after Ctrl+${key}`);
+    }
   });
 }

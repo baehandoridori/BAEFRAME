@@ -16122,10 +16122,20 @@ test('a relayed Space press reaching the overlay document does not act on the pa
     assert.equal(dispatchSpaceKeydown(hosted, brushButton), true);
     assert.equal(dispatchSpaceKeydown(hosted, hosted.environment.document.body), true);
 
+    const ctrlChord = () => new hosted.environment.window.KeyboardEvent('keydown', {
+      key: 'z', code: 'KeyZ', ctrlKey: true, bubbles: true, cancelable: true
+    });
+    const undoKey = ctrlChord();
+    brushButton.dispatchEvent(undoKey);
+    assert.equal(undoKey.defaultPrevented, true, 'the overlay must not execute a second undo');
+
     // 색상 코드를 입력하는 동안에는 호스트가 키를 넘기지 않는다. 입력칸의 키는 그대로 둔다.
     realClick(hosted, controls.pickerToggle);
     controls.hexInput.focus();
     assert.equal(dispatchSpaceKeydown(hosted, controls.hexInput), false);
+    const textUndo = ctrlChord();
+    controls.hexInput.dispatchEvent(textUndo);
+    assert.equal(textUndo.defaultPrevented, false, 'text entry keeps its native undo');
     controls.hexInput.blur();
     assert.equal(dispatchSpaceKeydown(hosted, brushButton), true);
 

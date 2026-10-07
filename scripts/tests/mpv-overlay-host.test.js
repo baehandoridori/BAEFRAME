@@ -2923,7 +2923,7 @@ test('overlay history shortcuts relay once to the main renderer without host-sid
     return prevented;
   };
 
-  assert.equal(emit({ control: true }), true);
+  assert.equal(emit({ control: true }), false, 'Ctrl release must remain observable by the pen runtime');
   assert.deepEqual(harness.events.filter(([name, channel]) =>
     name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
     .map(([, , input]) => input.code), ['KeyZ'],
@@ -2937,9 +2937,9 @@ test('overlay history shortcuts relay once to the main renderer without host-sid
     control: false
   }), true, 'keyup remains suppressed after the modifier is released');
   assert.equal(emit({ meta: true }), true);
-  assert.equal(emit({ key: 'y', code: 'KeyY', control: true }), true);
-  assert.equal(emit({ control: true, shift: true }), true);
-  assert.equal(emit({ control: true, isAutoRepeat: true }), true);
+  assert.equal(emit({ key: 'y', code: 'KeyY', control: true }), false);
+  assert.equal(emit({ control: true, shift: true }), false);
+  assert.equal(emit({ control: true, isAutoRepeat: true }), false);
   const relayedInputs = harness.events
     .filter(([name, channel]) =>
       name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
@@ -2981,15 +2981,17 @@ test('overlay history routing leaves invalid combinations and Electron IME input
   };
 
   const forwarded = [
-    { key: 'z', code: 'KeyZ' },
-    { key: 'y', code: 'KeyY' },
-    { key: 'z', code: 'KeyZ', control: true, alt: true },
-    { key: 'z', code: 'KeyZ', control: true, meta: true },
-    { key: 'y', code: 'KeyY', control: true, shift: true },
-    { key: 'c', code: 'KeyC', control: true },
-    { key: 'v', code: 'KeyV', control: true }
+    [{ key: 'z', code: 'KeyZ' }, true],
+    [{ key: 'y', code: 'KeyY' }, true],
+    [{ key: 'z', code: 'KeyZ', control: true, alt: true }, true],
+    [{ key: 'z', code: 'KeyZ', control: true, meta: true }, true],
+    [{ key: 'y', code: 'KeyY', control: true, shift: true }, false],
+    [{ key: 'c', code: 'KeyC', control: true }, false],
+    [{ key: 'v', code: 'KeyV', control: true }, false]
   ];
-  for (const input of forwarded) assert.equal(emit(input), true);
+  for (const [input, prevented] of forwarded) {
+    assert.equal(emit(input), prevented);
+  }
 
   const eventCount = harness.events.length;
   assert.equal(emit({ key: 'z', code: 'KeyZ', control: true, isComposing: true }), false);
@@ -3040,7 +3042,7 @@ test('overlay history relay bypasses an in-flight controller-origin host queue',
     meta: false,
     isAutoRepeat: false
   });
-  assert.equal(overlayPrevented, true);
+  assert.equal(overlayPrevented, false, 'Ctrl+Y is cancelled in the document so Control keyup survives');
   assert.deepEqual(harness.events
     .filter(([name, channel]) =>
       name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input')
@@ -3148,11 +3150,13 @@ test('a relayed Space press always gets its release to the main renderer', async
   assert.deepEqual(emit({ isAutoRepeat: true }), { prevented: false, relayed: ['keyDown:Space:repeat'] });
   assert.deepEqual(emit({ key: 'v', code: 'KeyV' }), { prevented: true, relayed: ['keyDown:KeyV'] });
 
-  // 실행 취소(Ctrl+Z)처럼 다른 길로 삼키는 누름도 같다. 자동 반복은 넘기지 않고 삼키기만 한다.
+  // Ctrl+Z와 자동 반복은 문서에서 기본 동작만 막는다. Space의 실제 뗌도 보존된다.
   assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
-  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true }), { prevented: true, relayed: ['keyUp:Space', 'keyDown:KeyZ'] });
+  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true }), { prevented: false, relayed: ['keyDown:KeyZ'] });
+  assert.deepEqual(releaseSpace(), { prevented: true, relayed: ['keyUp:Space'] });
   assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
-  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true, isAutoRepeat: true }), { prevented: true, relayed: ['keyUp:Space'] });
+  assert.deepEqual(emit({ key: 'z', code: 'KeyZ', control: true, isAutoRepeat: true }), { prevented: false, relayed: [] });
+  assert.deepEqual(releaseSpace(), { prevented: true, relayed: ['keyUp:Space'] });
 
   // 색상 코드 입력이 시작되면 키를 넘기지 않게 되므로, 그 전에 누르고 있던 Space 를 놓아 준다.
   assert.deepEqual(emit({}), { prevented: false, relayed: ['keyDown:Space'] });
