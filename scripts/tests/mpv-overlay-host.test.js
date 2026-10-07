@@ -62,6 +62,7 @@ function createDrawingHostHarness(options = {}) {
       this.webContentsListeners = new Map();
       this.webContents = {
         destroyed: false,
+        setIgnoreMenuShortcuts: options.setIgnoreMenuShortcuts || (() => {}),
         isDestroyed() {
           return this.destroyed;
         },
@@ -2892,6 +2893,21 @@ test('comment shortcut relays Korean IME physical keys with the configured chord
 
   await harness.host.updateState({ commentModeShortcut: null });
   assert.equal(emit({ code: 'KeyG', shift: true }), false);
+});
+
+test('overlay disables application menu accelerators before passing Ctrl shortcuts to its document', async () => {
+  const menuPolicy = [];
+  const harness = createDrawingHostHarness({ setIgnoreMenuShortcuts: ignore => menuPolicy.push(ignore) });
+  await activateDrawingHost(harness, { videoGeneration: 12, sessionId: 'menu-shortcut-guard' });
+  let prevented = false;
+  harness.windows[0].webContents.emit('before-input-event', { preventDefault() { prevented = true; } }, {
+    type: 'keyDown', key: 'r', code: 'KeyR', control: true,
+    shift: false, alt: false, meta: false, isAutoRepeat: false
+  });
+  assert.equal(prevented, false, 'page input is needed to preserve Control keyup');
+  assert.deepEqual(menuPolicy, [true], 'the native menu boundary must be blocked independently of page input');
+  assert.equal(harness.events.some(([name, channel, input]) =>
+    name === 'mainWindow.send' && channel === 'mpv-overlay:keyboard-input' && input.code === 'KeyR'), true);
 });
 
 test('overlay history shortcuts relay once to the main renderer without host-side history execution', async () => {

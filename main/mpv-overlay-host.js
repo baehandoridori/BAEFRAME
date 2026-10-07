@@ -5205,6 +5205,9 @@ class MPVOverlayHost {
     this.overlayTextEntryActive = false;
     this.overlaySpaceReleasePending = null;
     this.window = hostWindow;
+    // DOM keydown을 보존하는 Ctrl 조합도 개발 메뉴의 Reload 같은 accelerator를
+    // 실행하면 안 된다. 메뉴와 문서 입력은 별도 경계이므로 이 창의 메뉴만 차단한다.
+    hostWindow.webContents?.setIgnoreMenuShortcuts?.(true);
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
     // 쓰지 않으므로 전달 없이 완전 관통시킨다.

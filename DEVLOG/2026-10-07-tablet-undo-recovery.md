@@ -31,3 +31,10 @@
 - PR #232, `996d2f5` 대상 지적 1건: 현재 기능표가 Space 외의 모든 키 누름을 삼킨다고 서술해 수정 코드와 모순이었다.
 - `docs/drawing-keyframe-features.md`의 Ctrl 예외·history 중복 방지·펜 래치 해제와 검증 범위를 갱신했다. 제품 코드는 변경하지 않았다.
 - 문서 링크와 코드의 조건을 대조하고 `git diff --check`를 통과했다. 제품 검증은 위 최종 코드의 1,491 pass 결과를 유지한다.
+
+## Codex 2차 리뷰 반영
+
+- `0b61e4a` 대상 P2 1건: Ctrl 조합을 DOM에 보존해도 개발 모드 앱 메뉴 accelerator는 별도 차단해야 한다.
+- `main/window.js`의 개발 메뉴 유지와 [Electron 공식 문서](https://www.electronjs.org/docs/latest/api/web-contents/#contentssetignoremenushortcutsignore)를 대조했다. 오버레이 생성 시 `webContents.setIgnoreMenuShortcuts(true)`를 설정해 메인 창의 메뉴와 분리했다.
+- 숨긴 창의 메뉴 실행 probe만으로는 메뉴 동작을 재현하지 못했으므로 이를 회귀 근거로 삼지 않았다. 대신 Electron API 경계 검사에서 수정 전 메뉴 차단 호출 누락(exit 1)을 확인하고, 수정 후 호출과 Ctrl 전달·키 보존을 검증했다.
+- `npm run test:mpv`: exit 0, 478 pass / 0 fail / 0 cancelled / 0 skipped. 기존 366 drawing + 648 Fabric 결과와 합쳐 최종 관련 검사 1,492 pass. 메뉴 보완은 main 호스트만 변경했다.
