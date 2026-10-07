@@ -38,3 +38,11 @@
 - `main/window.js`의 개발 메뉴 유지와 [Electron 공식 문서](https://www.electronjs.org/docs/latest/api/web-contents/#contentssetignoremenushortcutsignore)를 대조했다. 오버레이 생성 시 `webContents.setIgnoreMenuShortcuts(true)`를 설정해 메인 창의 메뉴와 분리했다.
 - 숨긴 창의 메뉴 실행 probe만으로는 메뉴 동작을 재현하지 못했으므로 이를 회귀 근거로 삼지 않았다. 대신 Electron API 경계 검사에서 수정 전 메뉴 차단 호출 누락(exit 1)을 확인하고, 수정 후 호출과 Ctrl 전달·키 보존을 검증했다.
 - `npm run test:mpv`: exit 0, 478 pass / 0 fail / 0 cancelled / 0 skipped. 기존 366 drawing + 648 Fabric 결과와 합쳐 최종 관련 검사 1,492 pass. 메뉴 보완은 main 호스트만 변경했다.
+
+## 병합 후 패키지 검증
+
+- PR #232의 최종 SHA `fdf57a1`에 Codex가 명시적인 문제 없음 응답을 남겼고, 리뷰 스레드 2건을 해결한 뒤 `818410c`로 병합했다.
+- 정확한 merge SHA의 깨끗한 체크아웃에서 `npm run build`가 exit 0으로 완료됐다.
+- prebuild의 `bundle:editor-drawing`도 공용 런타임을 포함하므로 `editor-drawing.iife.js`에 동일한 Ctrl 기본 동작 차단 3줄 diff가 생성됐다. 배포 재현성을 위해 생성 결과를 별도 후속 커밋에 포함한다. 새 원본 로직·버전 변경은 없다.
+- 패키지 ASAR의 버전 2.13.2-beta, stable 프로필, 호스트·원본 런타임·오버레이/편집창/preload 번들의 SHA가 빌드 입력과 일치한다.
+- 패키지 내부 호스트·preload·오버레이 번들을 사용하는 숨김 Electron 재현 검사: exit 0, 1 pass / 0 fail / 0 cancelled / 0 skipped. 실제 타블렛 실기 확인으로 확대 해석하지 않는다.
