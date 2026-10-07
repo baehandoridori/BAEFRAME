@@ -7935,7 +7935,12 @@ function createFabricOverlayRuntime(options = {}) {
     // 짝이 되는 뗌을 버려 메인 창이 Space 를 누른 채로 남는다. 그래서 누름이 이 문서까지
     // 온다. 포커스가 남은 팔레트 버튼이 눌리거나 팔레트가 스크롤되지 않게 기본 동작만 막는다.
     // 색상 코드를 입력하는 동안에는 호스트가 키를 넘기지 않으므로 손대지 않는다.
-    if (event?.code === 'Space' && hostRelaysKeys && inputEnabled && !textEntryActive) {
+    // Ctrl 단축키도 호스트가 누름을 통과시킨다. 문서의 기본 실행취소·전체 선택 등은
+    // 여기서 막되 Control keyup은 보존하여 타블렛 임시 지우개 래치가 해제되게 한다.
+    const relayedControlChord = event?.ctrlKey === true &&
+      event.altKey !== true && event.metaKey !== true;
+    if ((event?.code === 'Space' || relayedControlChord) &&
+        hostRelaysKeys && inputEnabled && !textEntryActive) {
       event.preventDefault?.();
     }
   }

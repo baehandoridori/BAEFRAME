@@ -5205,6 +5205,9 @@ class MPVOverlayHost {
     this.overlayTextEntryActive = false;
     this.overlaySpaceReleasePending = null;
     this.window = hostWindow;
+    // DOM keydown을 보존하는 Ctrl 조합도 개발 메뉴의 Reload 같은 accelerator를
+    // 실행하면 안 된다. 메뉴와 문서 입력은 별도 경계이므로 이 창의 메뉴만 차단한다.
+    hostWindow.webContents?.setIgnoreMenuShortcuts?.(true);
     // 피드백 27·29·31: forward는 mousemove를 이 창의 Chromium에도 전달해
     // 기본 화살표 커서가 메인 창 커서와 경합(깜빡임)한다. 이 창은 마우스 이벤트를
     // 쓰지 않으므로 전달 없이 완전 관통시킨다.
@@ -5255,6 +5258,16 @@ class MPVOverlayHost {
       // Ctrl+Z·B 같은 단축키도 이 동안은 입력칸의 것이다.
       if (this.overlayTextEntryActive) return;
       const inputCode = String(input?.code || '');
+      const drawModeShortcut = this.drawModeShortcutDescriptor;
+      const forwardedInput = createForwardedKeyboardInput(
+        input, drawModeShortcut, this.commentModeShortcutDescriptor
+      );
+      // Ctrl 조합의 누름을 삼키면 Chromium이 Control의 뗌까지 버린다.
+      // 펜은 DOM 키 상태로 임시 지우개를 판정하므로, 누름은 문서로 보내고
+      // 기본 동작만 문서에서 막아 실제 뗌이 도착하게 한다. Alt/Meta는 OS 경로를 유지한다.
+      const keepsControlRelease = forwardedInput?.type === 'keyDown' &&
+        forwardedInput.ctrlKey === true && forwardedInput.altKey !== true &&
+        forwardedInput.metaKey !== true;
       if (this.suppressedOverlayHistoryKeys.has(inputCode)) {
         if (input?.type === 'keyUp') {
           this.suppressedOverlayHistoryKeys.delete(inputCode);
@@ -5262,24 +5275,24 @@ class MPVOverlayHost {
           return;
         }
         if (input?.type === 'keyDown' && input.isAutoRepeat === true) {
-          this._flushPendingOverlaySpaceRelease();
-          event?.preventDefault?.();
+          if (!keepsControlRelease) {
+            this._flushPendingOverlaySpaceRelease();
+            event?.preventDefault?.();
+          }
           return;
         }
       }
       const historyAction = overlayHistoryActionFromInput(input);
       if (historyAction) {
         this.suppressedOverlayHistoryKeys.add(inputCode);
-        this._flushPendingOverlaySpaceRelease();
-        event?.preventDefault?.();
+        if (!keepsControlRelease) {
+          this._flushPendingOverlaySpaceRelease();
+          event?.preventDefault?.();
+        }
         if (input.isAutoRepeat === true) return;
         // renderer가 Fabric 실행과 전역 히스토리 fallback을 한 경로에서 판정하도록
         // 물리 키 입력을 즉시 릴레이한다.
       }
-      const drawModeShortcut = this.drawModeShortcutDescriptor;
-      const forwardedInput = createForwardedKeyboardInput(
-        input, drawModeShortcut, this.commentModeShortcutDescriptor
-      );
       const mainWindow = this.getMainWindow();
       if (!forwardedInput ||
           !mainWindow ||
@@ -5298,7 +5311,7 @@ class MPVOverlayHost {
         if (needsMainFocusHandoff) {
           mainWindow.focus?.();
         }
-        const keepsRelease = forwardedSpaceKeyDownKeepsRelease(forwardedInput);
+        const keepsRelease = keepsControlRelease || forwardedSpaceKeyDownKeepsRelease(forwardedInput);
         // 이 누름을 삼킬 것이면, 뗌을 아직 못 넘긴 Space 부터 짝을 맞춘 뒤에 넘긴다.
         if (forwardedInput.type === 'keyDown' && !keepsRelease) {
           this._flushPendingOverlaySpaceRelease();
@@ -5307,7 +5320,9 @@ class MPVOverlayHost {
         this.keyboardRelayCount += 1;
         this.lastKeyboardRelayCode = forwardedInput.code;
         if (keepsRelease) {
-          if (forwardedInput.repeat !== true) this.overlaySpaceReleasePending = forwardedInput;
+          if (forwardedInput.code === 'Space' && forwardedInput.repeat !== true) {
+            this.overlaySpaceReleasePending = forwardedInput;
+          }
           return;
         }
         if (forwardedInput.type === 'keyUp' && forwardedInput.code === 'Space') {
