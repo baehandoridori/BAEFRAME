@@ -20501,7 +20501,8 @@ void main() {
             gestureProbe.overlayCtrlKeyDownCount += 1;
             syncTempErase();
           }
-          if (event?.code === "Space" && hostRelaysKeys && inputEnabled && !textEntryActive) {
+          const relayedControlChord = event?.ctrlKey === true && event.altKey !== true && event.metaKey !== true;
+          if ((event?.code === "Space" || relayedControlChord) && hostRelaysKeys && inputEnabled && !textEntryActive) {
             event.preventDefault?.();
           }
         }
