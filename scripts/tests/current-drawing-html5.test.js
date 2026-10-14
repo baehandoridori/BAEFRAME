@@ -143,6 +143,7 @@ test('HTML5 visibility updates only the overlay and never the native video host'
   const { context, calls } = fixture();
   await context.toggleDrawMode();
   context.mpvHostVisibilityRequestRevision = 0;
+  context.mpvHostVisibilityInFlight = null;
   install(context, 'applyMpvHostVisibility');
   const result = await context.applyMpvHostVisibility(true);
   assert.equal(result.success, true);

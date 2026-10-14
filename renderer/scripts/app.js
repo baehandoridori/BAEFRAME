@@ -8152,6 +8152,7 @@ async function initApp() {
   let expectedMpvHtml5FallbackStopSequence = 0;
   let mpvHostVisibilitySyncPending = false;
   let mpvHostVisibilityRequestRevision = 0;
+  let mpvHostVisibilityInFlight = null;
   let mpvHostLastRequestedVisible = null;
   let mpvPilotHostPreparing = false;
   let fullscreenTimecodeOverlay = null;
@@ -8531,8 +8532,16 @@ async function initApp() {
   }
 
   async function applyMpvHostVisibility(visible) {
-    const requestRevision = ++mpvHostVisibilityRequestRevision;
     const shouldShow = visible === true;
+    const engine = videoPlayer.engine;
+    // 댓글 freeze 해제와 DOM observer가 같은 표시 요청을 동시에 보낸다.
+    // 같은 진행 중 요청은 응답을 공유해야 먼저 기다리던 freeze 해제가 stale로 남지 않는다.
+    const pending = mpvHostVisibilityInFlight;
+    if (engine !== 'html5' && pending && pending.engine === engine &&
+        pending.visible === shouldShow && pending.revision === mpvHostVisibilityRequestRevision) {
+      return pending.promise;
+    }
+    const requestRevision = ++mpvHostVisibilityRequestRevision;
     if (!shouldShow) setMpvNativeHostVisibleClass(false);
     if (videoPlayer.engine === 'html5') {
       const result = await window.electronAPI?.mpvSetOverlayVisible?.(shouldShow && isHtml5DrawingSurfaceReady());
@@ -8544,20 +8553,31 @@ async function initApp() {
       return { success: false, error: 'mpv host visibility API is unavailable' };
     }
 
+    const request = { engine, visible: shouldShow, revision: requestRevision, promise: null };
+    request.promise = (async () => {
+      try {
+        const result = await window.electronAPI.mpvSetHostVisible(shouldShow);
+        if (requestRevision !== mpvHostVisibilityRequestRevision) {
+          return { ...(result || {}), stale: true };
+        }
+        if (didMpvHostVisibilityApply(result, shouldShow)) {
+          setMpvNativeHostVisibleClass(shouldShow);
+        } else if (shouldShow) {
+          setMpvNativeHostVisibleClass(false);
+        }
+        return result;
+      } catch (error) {
+        if (shouldShow && requestRevision === mpvHostVisibilityRequestRevision) {
+          setMpvNativeHostVisibleClass(false);
+        }
+        throw error;
+      }
+    })();
+    mpvHostVisibilityInFlight = request;
     try {
-      const result = await window.electronAPI.mpvSetHostVisible(shouldShow);
-      if (requestRevision !== mpvHostVisibilityRequestRevision) {
-        return { ...(result || {}), stale: true };
-      }
-      if (didMpvHostVisibilityApply(result, shouldShow)) {
-        setMpvNativeHostVisibleClass(shouldShow);
-      } else if (shouldShow) {
-        setMpvNativeHostVisibleClass(false);
-      }
-      return result;
-    } catch (error) {
-      if (shouldShow) setMpvNativeHostVisibleClass(false);
-      throw error;
+      return await request.promise;
+    } finally {
+      if (mpvHostVisibilityInFlight === request) mpvHostVisibilityInFlight = null;
     }
   }
 
