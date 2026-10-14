@@ -59,12 +59,17 @@ function createVisibilityHarness(engine) {
     const elements = { videoWrapper: document.querySelector('div') };
     const log = { warn() {}, debug() {}, info() {} };
     const state = { currentFile: 'fixture.mp4' };
+    let videoLoadIntentGeneration = 1;
+    let activeVideoLoadToken = null;
     let mpvOverlayRecoveryOwner = null;
     let mpvOverlayRecoveryInFlightOwner = null;
     let mpvOverlaySyncEpoch = 0;
     let recoveryPromise;
-    const mpvTeardownGate = { run(callback) { recoveryPromise = callback(); return recoveryPromise; } };
-    const mpvOverlayLifecycle = { owns: () => true, markReady: () => true };
+    let gateWaits = 0;
+    let activeOwner = {};
+    const mpvTeardownGate = { run(callback) { recoveryPromise = callback(); return recoveryPromise; },
+      async waitForIdle() { gateWaits += 1; await recoveryPromise; } };
+    const mpvOverlayLifecycle = { owns: owner => !!owner && owner === activeOwner, markReady: () => true };
     const fabricDrawingPilotController = { adoptOverlayCapability: async () => true };
     const initializeCurrentDrawing = async () => {};
     const getMpvEmbedBounds = () => ({ x: 0, y: 0, width: 640, height: 360 });
@@ -74,6 +79,7 @@ function createVisibilityHarness(engine) {
     const scheduleMpvOverlayCollaborationStateSync = () => {};
     const fallbackFromMpvOverlayRecoveryFailureOnce = () => { throw new Error('unexpected fallback'); };
     const isMpvPilotPlaybackActive = () => true;
+    const isMpvReviewInteractionActive = () => elements.videoWrapper.classList.contains('comment-mode');
     const isCurrentDrawingSurfaceReady = () => true;
     const hasBlockingOverlayForMpv = () => elements.videoWrapper.classList.contains('mpv-review-freeze-ready');
     const requestAnimationFrame = callback => frames.push(callback);
@@ -91,7 +97,9 @@ function createVisibilityHarness(engine) {
     ${extractFunction('recoverMpvOverlayHostOnce')}
     return { apply: applyMpvHostVisibility, didApply: didMpvHostVisibilityApply,
       release: releaseMpvReviewFreezeFrame, observe: installMpvBlockingOverlayObserver,
-      recover: () => recoverMpvOverlayHostOnce({}, 'test recovery'), waitRecovery: () => recoveryPromise,
+      recover: () => recoverMpvOverlayHostOnce(activeOwner, 'test recovery'), waitRecovery: () => recoveryPromise,
+      endOwner: () => { activeOwner = null; invalidateMpvHostVisibilityRequests(); }, gateWaits: () => gateWaits,
+      navigate: () => { videoLoadIntentGeneration += 1; state.currentFile = 'next.mp4'; },
       invalidate: invalidateMpvHostVisibilityRequests };
   `)(window, document, videoPlayer, () => surfaceReady, frames);
   return { ...api, calls, pending, classes, document, videoPlayer,
@@ -111,6 +119,65 @@ test('overlay recovery sends a fresh hide to the replacement instead of reusing 
   await sync;
   assert.equal(harness.nativeVisible(), false, 'replacement must stay hidden behind the comment input');
   assert.equal(harness.didApply(await oldHide, false), false, 'destroyed host response is stale');
+});
+
+test('comment freeze release follows successful host recovery through the new visibility response', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const release = harness.release();
+  harness.recover();
+  await harness.waitRecovery();
+  const sync = harness.flushFrames();
+  harness.pending[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(harness.document.querySelector('.mpv-review-freeze-frame'), 'keep freeze until replacement confirms show');
+  harness.pending.slice(1).forEach(resolve => resolve());
+  await sync;
+  assert.equal(await release, true);
+  assert.equal(harness.document.querySelector('.mpv-review-freeze-frame'), null);
+});
+
+for (const change of ['new comment', 'navigation']) {
+  test(`recovery retry does not revive the old freeze release after ${change}`, async t => {
+    const harness = createVisibilityHarness('mpv-embedded');
+    t.after(harness.close);
+    const release = harness.release();
+    harness.recover();
+    await harness.waitRecovery();
+    if (change === 'new comment') harness.document.querySelector('div').classList.add('comment-mode');
+    else harness.navigate();
+    harness.pending[0]();
+    assert.equal(await release, false);
+    assert.ok(harness.document.querySelector('.mpv-review-freeze-frame'));
+    assert.equal(harness.calls.length, 1, 'superseded release must not issue a new show');
+  });
+}
+
+test('release inside an invalidated teardown owner never waits on its own teardown gate', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  harness.recover();
+  await harness.waitRecovery();
+  const release = harness.release();
+  harness.endOwner();
+  harness.pending[0]();
+  assert.equal(await release, false);
+  assert.equal(harness.gateWaits(), 0);
+});
+
+test('a new comment arriving while the recovery retry waits keeps the freeze image', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const release = harness.release();
+  harness.recover();
+  await harness.waitRecovery();
+  harness.pending[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.length, 2, 'recovery requested a fresh show');
+  harness.document.querySelector('div').classList.add('comment-mode');
+  harness.pending[1]();
+  assert.equal(await release, false);
+  assert.ok(harness.document.querySelector('.mpv-review-freeze-frame'));
 });
 
 test('comment freeze is removed when the DOM observer also requests video visibility before IPC returns', async t => {

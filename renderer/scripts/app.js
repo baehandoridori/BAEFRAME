@@ -6711,6 +6711,8 @@ async function initApp() {
   async function releaseMpvReviewFreezeFrame() {
     const token = ++mpvReviewFreezeToken;
     const freezeElement = mpvReviewFreezeElement;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
 
     mpvReviewFreezeCaptureOwner.cancel();
     mpvReviewFreezeRefreshScheduler.cancel();
@@ -6727,7 +6729,20 @@ async function initApp() {
 
       try {
         mpvHostLastRequestedVisible = null;
-        const result = await applyMpvHostVisibility(true);
+        let result = await applyMpvHostVisibility(true);
+        const canRetryAfterRecovery = () => token === mpvReviewFreezeToken &&
+          state.currentFile === filePath && videoLoadIntentGeneration === loadIntent &&
+          activeVideoLoadToken === null && isMpvPilotPlaybackActive() &&
+          !isMpvReviewInteractionActive() && !hasBlockingOverlayForMpv() &&
+          mpvOverlayLifecycle.owns(mpvOverlayRecoveryOwner);
+        if (result?.stale && canRetryAfterRecovery()) {
+          // 복구 중 교체된 창의 응답으로 freeze를 남기지 않는다. 종료 경로는
+          // owner가 이미 무효화되므로 자기 teardown을 기다리지 않는다.
+          await mpvTeardownGate.waitForIdle();
+          if (!canRetryAfterRecovery()) return false;
+          result = await applyMpvHostVisibility(true);
+          if (!canRetryAfterRecovery()) return false;
+        }
         if (token !== mpvReviewFreezeToken) return;
         if (!didMpvHostVisibilityApply(result, true)) {
           log.warn('mpv 호스트 복원 실패, 정지 프레임을 유지합니다.', {

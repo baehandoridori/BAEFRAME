@@ -36,3 +36,11 @@
 - 복구 파괴 직전과 새 embed/overlay 준비 성공 시 이전 표시 요청을 무효화했다. 준비 도중 들어온 요청도 새 창의 증거로 재사용하지 않는다.
 - 보완 후 HTML5 포함 35 pass / 0 fail / 0 cancelled / 0 skipped, exit 0.
 - 보완 후 재검증: `test:mpv` 483, `test:comment-input` 78, `test:ux` 84 pass. 각 exit 0 / fail 0 / cancelled 0 / skipped 0. 기존 댓글 분리창 64, 재생목록 377 결과와 합해 관련 검사 1,086 pass.
+
+## 2차 경합 보완
+
+- 독립 검토와 Codex 2차 P2에서 창 복구가 기존 freeze 해제 응답을 stale로 만든 뒤 새 창 표시만 성공하고 freeze는 남는 경합을 확인했다.
+- 실제 복구와 freeze 해제를 연결한 테스트로 수정 전 실패를 확인했다. 복구 owner가 여전히 유효할 때만 복구 완료를 기다리고 원래 freeze 해제 요청의 영상·로드 의도·token 및 새 입력/차단 화면 여부를 재확인해 표시를 한 번 재요청한다.
+- 종료 처리의 owner는 이미 무효화되므로 자기 자신이 실행 중인 teardown을 기다리지 않는다. 재요청 중 새 댓글 입력이 시작되는 경우도 이미지를 제거하지 않는다.
+- 최종 대상 검사 40 pass, `test:mpv` 488 pass. 각 exit 0 / fail 0 / cancelled 0 / skipped 0.
+- 댓글 입력 78, UX 84, 재생목록 377도 다시 통과했다. 기존 분리창 64와 합한 관련 검사 수는 1,091 pass이다.
