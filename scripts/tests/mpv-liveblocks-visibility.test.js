@@ -2,6 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
+const { JSDOM } = require('jsdom');
 
 const rootDir = path.resolve(__dirname, '../..');
 const read = relativePath => fs.readFileSync(path.join(rootDir, relativePath), 'utf8')
@@ -21,34 +22,219 @@ function extractFunction(name) {
 function createVisibilityHarness(engine) {
   const calls = [];
   const pending = [];
-  const classes = new Set();
+  const dom = new JSDOM('<body class="mpv-pilot-mode"><div class="mpv-review-freeze-ready"><img class="mpv-review-freeze-frame"></div></body>');
+  const { window } = dom;
+  const { document } = window;
+  const classes = { has: name => document.body.classList.contains(name) };
+  const frames = [];
+  const videoPlayer = { engine };
+  let nativeVisible = true;
   let surfaceReady = true;
-  const window = { electronAPI: {} };
+  window.electronAPI = {};
+  window.electronAPI.mpvDestroyOverlay = async () => { nativeVisible = true; return { success: true }; };
+  window.electronAPI.mpvPrepareOverlay = async () => ({ success: true, drawingCapability: {} });
+  window.electronAPI.mpvUpdateOverlayState = async () => ({ success: true });
   for (const name of ['mpvSetHostVisible', 'mpvSetOverlayVisible']) {
     window.electronAPI[name] = visible => {
       calls.push([name, visible]);
-      return new Promise(resolve => pending.push(() => resolve({
+      if (name === 'mpvSetHostVisible') nativeVisible = visible;
+      return new Promise((resolve, reject) => pending.push(error => error ? reject(error) : resolve({
         success: true, visible, ready: true, embed: { ready: true }, overlay: { ready: true }
       })));
     };
   }
-  const document = { body: { classList: {
-    toggle(name, visible) { if (visible) classes.add(name); else classes.delete(name); }
-  } } };
-  const api = Function('window', 'document', 'videoPlayer', 'isHtml5DrawingSurfaceReady', `
+  const api = Function('window', 'document', 'videoPlayer', 'isHtml5DrawingSurfaceReady', 'frames', `
     let mpvHostVisibilityRequestRevision = 0;
+    let mpvHostVisibilityInFlight = null;
+    let mpvHostLastRequestedVisible = false;
+    let mpvHostVisibilitySyncPending = false;
+    let mpvPilotHostPreparing = false;
+    let mpvReviewFreezeToken = 0;
+    let mpvReviewFreezeElement = document.querySelector('img');
+    let mpvReviewFreezeHostHideOwner = null;
+    let mpvReviewFreezeFrameSnapshot = {};
+    let mpvReviewTargetFrameSnapshot = {};
+    const mpvReviewFreezeCaptureOwner = { cancel() {} };
+    const mpvReviewFreezeRefreshScheduler = { cancel() {} };
+    const elements = { videoWrapper: document.querySelector('div') };
+    const log = { warn() {}, debug() {}, info() {} };
+    const state = { currentFile: 'fixture.mp4' };
+    let videoLoadIntentGeneration = 1;
+    let activeVideoLoadToken = null;
+    let mpvOverlayRecoveryOwner = null;
+    let mpvOverlayRecoveryInFlightOwner = null;
+    let mpvOverlaySyncEpoch = 0;
+    let recoveryPromise;
+    let gateWaits = 0;
+    let activeOwner = {};
+    const mpvTeardownGate = { run(callback) { recoveryPromise = callback(); return recoveryPromise; },
+      async waitForIdle() { gateWaits += 1; await recoveryPromise; } };
+    const mpvOverlayLifecycle = { owns: owner => !!owner && owner === activeOwner, markReady: () => true };
+    const fabricDrawingPilotController = { adoptOverlayCapability: async () => true };
+    const initializeCurrentDrawing = async () => {};
+    const getMpvEmbedBounds = () => ({ x: 0, y: 0, width: 640, height: 360 });
+    const getMpvOverlayState = () => ({});
+    const scheduleMpvOverlayStateSync = () => {};
+    const scheduleMpvOverlayRemoteCursorStateSync = () => {};
+    const scheduleMpvOverlayCollaborationStateSync = () => {};
+    const fallbackFromMpvOverlayRecoveryFailureOnce = () => { throw new Error('unexpected fallback'); };
+    const isMpvPilotPlaybackActive = () => true;
+    const isMpvReviewInteractionActive = () => elements.videoWrapper.classList.contains('comment-mode');
+    const isCurrentDrawingSurfaceReady = () => true;
+    const hasBlockingOverlayForMpv = () => elements.videoWrapper.classList.contains('mpv-review-freeze-ready');
+    const requestAnimationFrame = callback => frames.push(callback);
+    const MutationObserver = window.MutationObserver;
     ${extractFunction('setMpvNativeHostVisibleClass')}
     ${extractFunction('didMpvHostVisibilityApply')}
     ${extractFunction('applyMpvHostVisibility')}
     ${extractFunction('invalidateMpvHostVisibilityRequests')}
+    ${extractFunction('shouldShowMpvHostForCurrentState')}
+    ${extractFunction('syncMpvHostVisibilityWithDom')}
+    ${extractFunction('installMpvBlockingOverlayObserver')}
+    ${extractFunction('releaseMpvReviewFreezeFrame')}
+    ${extractFunction('forceMpvHostVisibilitySync')}
+    ${extractFunction('prepareMpvOverlayHost')}
+    ${extractFunction('recoverMpvOverlayHostOnce')}
     return { apply: applyMpvHostVisibility, didApply: didMpvHostVisibilityApply,
+      release: releaseMpvReviewFreezeFrame, observe: installMpvBlockingOverlayObserver,
+      recover: () => recoverMpvOverlayHostOnce(activeOwner, 'test recovery'), waitRecovery: () => recoveryPromise,
+      endOwner: () => { activeOwner = null; invalidateMpvHostVisibilityRequests(); }, gateWaits: () => gateWaits,
+      navigate: () => { videoLoadIntentGeneration += 1; state.currentFile = 'next.mp4'; },
       invalidate: invalidateMpvHostVisibilityRequests };
-  `)(window, document, { engine }, () => surfaceReady);
-  return { ...api, calls, pending, classes, setSurfaceReady: value => { surfaceReady = value; } };
+  `)(window, document, videoPlayer, () => surfaceReady, frames);
+  return { ...api, calls, pending, classes, document, videoPlayer,
+    nativeVisible: () => nativeVisible,
+    close: () => window.close(), flushFrames: () => Promise.all(frames.splice(0).map(callback => callback())),
+    setSurfaceReady: value => { surfaceReady = value; } };
 }
 
-test('HTML5 drawing visibility only uses the prepared overlay and never marks native video visible', async () => {
+test('overlay recovery sends a fresh hide to the replacement instead of reusing the destroyed host response', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const oldHide = harness.apply(false);
+  assert.equal(harness.recover(), true);
+  await harness.waitRecovery();
+  const sync = harness.flushFrames();
+  harness.pending.forEach(resolve => resolve());
+  await sync;
+  assert.equal(harness.nativeVisible(), false, 'replacement must stay hidden behind the comment input');
+  assert.equal(harness.didApply(await oldHide, false), false, 'destroyed host response is stale');
+});
+
+test('comment freeze release follows successful host recovery through the new visibility response', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const release = harness.release();
+  harness.recover();
+  await harness.waitRecovery();
+  const sync = harness.flushFrames();
+  harness.pending[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.ok(harness.document.querySelector('.mpv-review-freeze-frame'), 'keep freeze until replacement confirms show');
+  harness.pending.slice(1).forEach(resolve => resolve());
+  await sync;
+  assert.equal(await release, true);
+  assert.equal(harness.document.querySelector('.mpv-review-freeze-frame'), null);
+});
+
+for (const change of ['new comment', 'navigation']) {
+  test(`recovery retry does not revive the old freeze release after ${change}`, async t => {
+    const harness = createVisibilityHarness('mpv-embedded');
+    t.after(harness.close);
+    const release = harness.release();
+    harness.recover();
+    await harness.waitRecovery();
+    if (change === 'new comment') harness.document.querySelector('div').classList.add('comment-mode');
+    else harness.navigate();
+    harness.pending[0]();
+    assert.equal(await release, false);
+    assert.ok(harness.document.querySelector('.mpv-review-freeze-frame'));
+    assert.equal(harness.calls.length, 1, 'superseded release must not issue a new show');
+  });
+}
+
+test('release inside an invalidated teardown owner never waits on its own teardown gate', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  harness.recover();
+  await harness.waitRecovery();
+  const release = harness.release();
+  harness.endOwner();
+  harness.pending[0]();
+  assert.equal(await release, false);
+  assert.equal(harness.gateWaits(), 0);
+});
+
+test('a new comment arriving while the recovery retry waits keeps the freeze image', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const release = harness.release();
+  harness.recover();
+  await harness.waitRecovery();
+  harness.pending[0]();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(harness.calls.length, 2, 'recovery requested a fresh show');
+  harness.document.querySelector('div').classList.add('comment-mode');
+  harness.pending[1]();
+  assert.equal(await release, false);
+  assert.ok(harness.document.querySelector('.mpv-review-freeze-frame'));
+});
+
+test('comment freeze is removed when the DOM observer also requests video visibility before IPC returns', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  harness.observe();
+  const release = harness.release();
+  await Promise.resolve();
+  const sync = harness.flushFrames();
+  harness.pending.forEach(resolve => resolve());
+  assert.equal(await release, true, 'a duplicate show must not strand the comment freeze image');
+  await sync;
+  assert.equal(harness.document.querySelector('.mpv-review-freeze-frame'), null);
+  assert.equal(harness.classes.has('mpv-native-host-visible'), true);
+});
+
+test('overlapping native show requests share success without invalidating the original caller', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const first = harness.apply(true);
+  const second = harness.apply(true);
+  harness.pending.forEach(resolve => resolve());
+  assert.equal(harness.didApply(await first, true), true);
+  assert.equal(harness.didApply(await second, true), true);
+  assert.equal(harness.calls.length, 1);
+});
+
+test('a same-direction request after teardown never reuses a previous lifecycle request', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const oldShow = harness.apply(true);
+  harness.invalidate();
+  const newShow = harness.apply(true);
+  harness.pending[1]();
+  assert.equal(harness.didApply(await newShow, true), true);
+  harness.pending[0]();
+  assert.equal(harness.didApply(await oldShow, true), false);
+  assert.equal(harness.classes.has('mpv-native-host-visible'), true);
+});
+
+test('a rejected older show cannot erase the visibility of a newer successful show', async t => {
+  const harness = createVisibilityHarness('mpv-embedded');
+  t.after(harness.close);
+  const oldShow = harness.apply(true);
+  const rejected = assert.rejects(oldShow, /older request failed/);
+  harness.invalidate();
+  const newShow = harness.apply(true);
+  harness.pending[1]();
+  assert.equal(harness.didApply(await newShow, true), true);
+  harness.pending[0](new Error('older request failed'));
+  await rejected;
+  assert.equal(harness.classes.has('mpv-native-host-visible'), true);
+});
+
+test('HTML5 drawing visibility only uses the prepared overlay and never marks native video visible', async t => {
   const harness = createVisibilityHarness('html5');
+  t.after(harness.close);
   const show = harness.apply(true);
   assert.deepEqual(harness.calls, [['mpvSetOverlayVisible', true]]);
   harness.pending.shift()();
@@ -62,9 +248,10 @@ test('HTML5 drawing visibility only uses the prepared overlay and never marks na
   assert.deepEqual(harness.calls, [['mpvSetOverlayVisible', true], ['mpvSetOverlayVisible', false]]);
 });
 
-test('native and HTML5 visibility both reject older show completions after a newer hide or teardown', async () => {
+test('native and HTML5 visibility both reject older show completions after a newer hide or teardown', async t => {
   for (const engine of ['mpv-embedded', 'html5']) {
     const harness = createVisibilityHarness(engine);
+    t.after(harness.close);
     const show = harness.apply(true);
     const hide = harness.apply(false);
     harness.pending[1]();

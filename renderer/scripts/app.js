@@ -6711,6 +6711,8 @@ async function initApp() {
   async function releaseMpvReviewFreezeFrame() {
     const token = ++mpvReviewFreezeToken;
     const freezeElement = mpvReviewFreezeElement;
+    const filePath = state.currentFile;
+    const loadIntent = videoLoadIntentGeneration;
 
     mpvReviewFreezeCaptureOwner.cancel();
     mpvReviewFreezeRefreshScheduler.cancel();
@@ -6727,7 +6729,20 @@ async function initApp() {
 
       try {
         mpvHostLastRequestedVisible = null;
-        const result = await applyMpvHostVisibility(true);
+        let result = await applyMpvHostVisibility(true);
+        const canRetryAfterRecovery = () => token === mpvReviewFreezeToken &&
+          state.currentFile === filePath && videoLoadIntentGeneration === loadIntent &&
+          activeVideoLoadToken === null && isMpvPilotPlaybackActive() &&
+          !isMpvReviewInteractionActive() && !hasBlockingOverlayForMpv() &&
+          mpvOverlayLifecycle.owns(mpvOverlayRecoveryOwner);
+        if (result?.stale && canRetryAfterRecovery()) {
+          // 복구 중 교체된 창의 응답으로 freeze를 남기지 않는다. 종료 경로는
+          // owner가 이미 무효화되므로 자기 teardown을 기다리지 않는다.
+          await mpvTeardownGate.waitForIdle();
+          if (!canRetryAfterRecovery()) return false;
+          result = await applyMpvHostVisibility(true);
+          if (!canRetryAfterRecovery()) return false;
+        }
         if (token !== mpvReviewFreezeToken) return;
         if (!didMpvHostVisibilityApply(result, true)) {
           log.warn('mpv 호스트 복원 실패, 정지 프레임을 유지합니다.', {
@@ -8152,6 +8167,7 @@ async function initApp() {
   let expectedMpvHtml5FallbackStopSequence = 0;
   let mpvHostVisibilitySyncPending = false;
   let mpvHostVisibilityRequestRevision = 0;
+  let mpvHostVisibilityInFlight = null;
   let mpvHostLastRequestedVisible = null;
   let mpvPilotHostPreparing = false;
   let fullscreenTimecodeOverlay = null;
@@ -8361,6 +8377,7 @@ async function initApp() {
       if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
 
       try {
+        invalidateMpvHostVisibilityRequests();
         const destroyResult = await window.electronAPI?.mpvDestroyOverlay?.();
         if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
         if (!destroyResult?.success) {
@@ -8531,8 +8548,16 @@ async function initApp() {
   }
 
   async function applyMpvHostVisibility(visible) {
-    const requestRevision = ++mpvHostVisibilityRequestRevision;
     const shouldShow = visible === true;
+    const engine = videoPlayer.engine;
+    // 댓글 freeze 해제와 DOM observer가 같은 표시 요청을 동시에 보낸다.
+    // 같은 진행 중 요청은 응답을 공유해야 먼저 기다리던 freeze 해제가 stale로 남지 않는다.
+    const pending = mpvHostVisibilityInFlight;
+    if (engine !== 'html5' && pending && pending.engine === engine &&
+        pending.visible === shouldShow && pending.revision === mpvHostVisibilityRequestRevision) {
+      return pending.promise;
+    }
+    const requestRevision = ++mpvHostVisibilityRequestRevision;
     if (!shouldShow) setMpvNativeHostVisibleClass(false);
     if (videoPlayer.engine === 'html5') {
       const result = await window.electronAPI?.mpvSetOverlayVisible?.(shouldShow && isHtml5DrawingSurfaceReady());
@@ -8544,20 +8569,31 @@ async function initApp() {
       return { success: false, error: 'mpv host visibility API is unavailable' };
     }
 
+    const request = { engine, visible: shouldShow, revision: requestRevision, promise: null };
+    request.promise = (async () => {
+      try {
+        const result = await window.electronAPI.mpvSetHostVisible(shouldShow);
+        if (requestRevision !== mpvHostVisibilityRequestRevision) {
+          return { ...(result || {}), stale: true };
+        }
+        if (didMpvHostVisibilityApply(result, shouldShow)) {
+          setMpvNativeHostVisibleClass(shouldShow);
+        } else if (shouldShow) {
+          setMpvNativeHostVisibleClass(false);
+        }
+        return result;
+      } catch (error) {
+        if (shouldShow && requestRevision === mpvHostVisibilityRequestRevision) {
+          setMpvNativeHostVisibleClass(false);
+        }
+        throw error;
+      }
+    })();
+    mpvHostVisibilityInFlight = request;
     try {
-      const result = await window.electronAPI.mpvSetHostVisible(shouldShow);
-      if (requestRevision !== mpvHostVisibilityRequestRevision) {
-        return { ...(result || {}), stale: true };
-      }
-      if (didMpvHostVisibilityApply(result, shouldShow)) {
-        setMpvNativeHostVisibleClass(shouldShow);
-      } else if (shouldShow) {
-        setMpvNativeHostVisibleClass(false);
-      }
-      return result;
-    } catch (error) {
-      if (shouldShow) setMpvNativeHostVisibleClass(false);
-      throw error;
+      return await request.promise;
+    } finally {
+      if (mpvHostVisibilityInFlight === request) mpvHostVisibilityInFlight = null;
     }
   }
 
@@ -8876,6 +8912,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareEmbed(bounds);
     if (result?.success && result.wid) {
+      invalidateMpvHostVisibilityRequests();
       forceMpvHostVisibilitySync();
       return result;
     }
@@ -8894,6 +8931,8 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
+      // 준비 중이던 이전 창의 표시 응답은 새 창의 상태를 증명하지 못한다.
+      invalidateMpvHostVisibilityRequests();
       await initializeCurrentDrawing();
       if (adoptCapability) {
         await fabricDrawingPilotController.adoptOverlayCapability(result.drawingCapability);
