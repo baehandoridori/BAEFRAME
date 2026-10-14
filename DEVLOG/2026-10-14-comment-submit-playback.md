@@ -28,3 +28,11 @@
 - 초기 테스트 도구는 영상 로드 완료 전에 입력하여 실패했고, 로드 완료 이벤트 대기 및 실제 mpv 상태 필드 `time`을 사용하도록 고쳤다. 앱 종료 확인에 걸린 테스트 프로세스만 정리했으며 운영 앱은 보존했다.
 - 근거: `C:\BAEframe\BAEFRAME\output\releases\2026-10-14-comment-submit-playback`의 테스트 로그, `baseline-2.13.2/result.json`, `candidate-2/result.json`.
 - 실물 키보드/OS 한글 IME의 입력이나 사용자 작업 파일로 확인한 결과는 아니다.
+
+## Codex 1차 리뷰 보완
+
+- PR #234, `ff0f738`의 P2: 오버레이 재생성 경로가 요청 revision을 무효화하지 않아 파괴된 창의 숨김 응답을 새 창에도 재사용할 수 있었다.
+- 실제 `recoverMpvOverlayHostOnce()`와 준비 함수를 실행한 회귀 검사로 새 창이 입력 화면 위에 표시되는 실패를 확인했다(12건 중 1 fail, exit 1).
+- 복구 파괴 직전과 새 embed/overlay 준비 성공 시 이전 표시 요청을 무효화했다. 준비 도중 들어온 요청도 새 창의 증거로 재사용하지 않는다.
+- 보완 후 HTML5 포함 35 pass / 0 fail / 0 cancelled / 0 skipped, exit 0.
+- 보완 후 재검증: `test:mpv` 483, `test:comment-input` 78, `test:ux` 84 pass. 각 exit 0 / fail 0 / cancelled 0 / skipped 0. 기존 댓글 분리창 64, 재생목록 377 결과와 합해 관련 검사 1,086 pass.

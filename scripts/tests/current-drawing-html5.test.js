@@ -36,6 +36,7 @@ function fixture(overrides = {}) {
     videoPlayer: { engine: 'html5', isLoaded: true, filePath: 'converted.mp4' },
     videoLoadIntentGeneration: 1, activeVideoLoadToken: null, latestVideoLoadToken: 3,
     drawingEntryRevision: 0, drawingEntryPromise: null,
+    invalidateMpvHostVisibilityRequests() {},
     fabricDrawingPilotStatusSnapshot: {}, fabricDrawingPilotDegradedNoticeShown: false,
     document: { body: { classList: { add: value => classes.add(value), remove: value => classes.delete(value), contains: value => classes.has(value) } } },
     window: { electronAPI: {

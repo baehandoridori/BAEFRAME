@@ -8362,6 +8362,7 @@ async function initApp() {
       if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
 
       try {
+        invalidateMpvHostVisibilityRequests();
         const destroyResult = await window.electronAPI?.mpvDestroyOverlay?.();
         if (!mpvOverlayLifecycle.owns(owner)) return { success: false, stale: true };
         if (!destroyResult?.success) {
@@ -8896,6 +8897,7 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareEmbed(bounds);
     if (result?.success && result.wid) {
+      invalidateMpvHostVisibilityRequests();
       forceMpvHostVisibilitySync();
       return result;
     }
@@ -8914,6 +8916,8 @@ async function initApp() {
 
     const result = await window.electronAPI.mpvPrepareOverlay(bounds);
     if (result?.success) {
+      // 준비 중이던 이전 창의 표시 응답은 새 창의 상태를 증명하지 못한다.
+      invalidateMpvHostVisibilityRequests();
       await initializeCurrentDrawing();
       if (adoptCapability) {
         await fabricDrawingPilotController.adoptOverlayCapability(result.drawingCapability);
