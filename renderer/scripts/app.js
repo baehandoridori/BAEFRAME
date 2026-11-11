@@ -11274,6 +11274,19 @@ async function initApp() {
     finally { if (drawingEntryPromise === pending) drawingEntryPromise = null; }
   }
 
+  // 그리기 단축키(B)는 브러시 키이기도 하다. 패널이 켜져 있고 다른 도구를 쓰는
+  // 중이면 브러시로 바꾸고 패널은 그대로 둔다. 이미 브러시일 때만 패널을 끈다
+  // (구형 팔레트와 같은 동작 — 다른 도구에서 B 를 누르면 패널이 꺼져 버려 단축키로
+  // 브러시를 고를 수 없었다). 툴바의 그리기 버튼은 지금까지처럼 켜기/끄기만 한다.
+  async function handleDrawModeShortcut() {
+    if (fabricDrawingPilotController.getState?.() === 'active') {
+      const outcome = await fabricDrawingPilotController.selectBrushFromShortcut();
+      if (outcome === 'selected') return true;
+      if (outcome === 'stale') return false;
+    }
+    return toggleDrawMode();
+  }
+
   /**
    * 댓글 모드 토글
    */
@@ -14632,7 +14645,7 @@ async function initApp() {
 
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      if (!e.repeat) void toggleDrawMode();
+      if (!e.repeat) void handleDrawModeShortcut();
       return;
     }
 

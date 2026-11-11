@@ -82,6 +82,21 @@ const HOST_DRAWING_ACTIONS = new Set([
   // 씬은 그대로 두고 짝 id 만 만드는 표식(페이로드 없음).
   'layer-model-marker'
 ]);
+// 그리기 패널을 닫아 둔 채(입력이 꺼진 passive 투영)로도 받는 액션.
+// 프레임·키프레임 구조 조작과, 그렇게 한 조작의 되돌리기·다시하기뿐이다.
+// 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다.
+const HOST_PASSIVE_DRAWING_ACTIONS = new Set([
+  'frame-insert-blank-keyframe',
+  'frame-insert',
+  'frame-remove',
+  'keyframe-to-frame',
+  'frame-to-keyframe',
+  'frame-copy',
+  'frame-paste',
+  'undo',
+  'redo'
+]);
+const MAX_DRAWING_HISTORY_TOKEN_LENGTH = 64;
 // 랭크는 레이어 순서 인덱스다. 레이어 상한이 훨씬 낮으므로 넉넉히 잡아도 충분하다.
 const MAX_LAYER_OBJECT_RANK = 4096;
 const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
@@ -3697,7 +3712,17 @@ class MPVOverlayHost {
       if (this._canRaiseOverlay(hostWindow)) {
         hostWindow.focus?.();
       }
-      return { success: true, accepted: true, tool: normalizeFabricDrawingTool(result.tool) };
+      return {
+        success: true,
+        accepted: true,
+        tool: normalizeFabricDrawingTool(result.tool),
+        // 바꾸기 직전 도구. 그리기 단축키(B)가 "다른 도구였으면 브러시로, 이미
+        // 브러시였으면 끄기" 를 가리는 데 쓴다. 팔레트 클릭은 오버레이 안에서만
+        // 도구를 바꾸므로 이 응답이 아니면 렌더러는 지금 도구를 알 수 없다.
+        ...(isFabricDrawingTool(result.previousTool)
+          ? { previousTool: result.previousTool }
+          : {})
+      };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
@@ -4026,9 +4051,14 @@ class MPVOverlayHost {
     const layerObjectsPayload = validAction
       ? this._normalizeLayerObjectsPayload(request)
       : null;
-    if (!this._drawingTokensMatch(request) ||
+    // 세션 id 가 null 이면 그리기 패널을 닫아 둔 채로 보낸 구조 조작이다.
+    const passivePayload = request.sessionId === null
+      ? this._normalizePassiveDrawingActionPayload(request)
+      : {};
+    if (!this._drawingActionTokensMatch(request) ||
         !validAction ||
         layerObjectsPayload === null ||
+        passivePayload === null ||
         typeof request.actionId !== 'string' ||
         request.actionId.length === 0 || request.actionId.length > 256 ||
         (request.targetFrame !== undefined && !isSafePersistenceCount(request.targetFrame))) {
@@ -4052,6 +4082,7 @@ class MPVOverlayHost {
       actionId: request.actionId,
       action: request.action,
       ...layerObjectsPayload,
+      ...passivePayload,
       ...(request.targetFrame === undefined ? {} : { targetFrame: request.targetFrame })
     };
     const executionContext = {
@@ -4089,7 +4120,7 @@ class MPVOverlayHost {
       this.hostGeneration === executionContext.hostGeneration &&
       this.fabricReadyGeneration === executionContext.fabricReadyGeneration &&
       this.fabricReadyGeneration === this.hostGeneration &&
-      this._drawingTokensMatch(request);
+      this._drawingActionTokensMatch(request);
   }
 
   async _performDrawingAction(request, executionContext) {
@@ -4119,6 +4150,13 @@ class MPVOverlayHost {
           : {}),
         ...(result?.historyDirection === 'undo' || result?.historyDirection === 'redo'
           ? { historyDirection: result.historyDirection }
+          : {}),
+        // 구조 조작의 되돌리기 표식. 세션 없이 한 조작을 세션 없이 되돌릴 때
+        // 렌더러가 이 값을 되보내 "그 항목이 맞는지" 대조하게 한다.
+        ...(typeof result?.historyToken === 'string' &&
+            result.historyToken.length > 0 &&
+            result.historyToken.length <= MAX_DRAWING_HISTORY_TOKEN_LENGTH
+          ? { historyToken: result.historyToken }
           : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount))),
         keyframeSetChanged: result?.keyframeSetChanged === true,
@@ -4768,6 +4806,50 @@ class MPVOverlayHost {
       request.inputRevision === this.currentInputRevision &&
       request.sessionId === this.activeSessionId &&
       this.desiredInputEnabled;
+  }
+
+  // 그리기 액션의 토큰 대조. 세션이 있는 요청은 기존 술어 그대로이고, 세션 id 가
+  // null 인 요청(패널을 닫아 둔 채 보낸 구조 조작)은 **영상 정체**로 맞춘다 —
+  // passive 레이어 뷰 갱신과 같은 규약이다. 입력이 켜져 있는 동안에는 받지 않는다.
+  _drawingActionTokensMatch(request = {}) {
+    if (request.sessionId !== null) return this._drawingTokensMatch(request);
+    return request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      !this.desiredInputEnabled &&
+      this.activeSessionId === null &&
+      this.currentStableVideoIdentity !== null &&
+      request.stableVideoIdentity === this.currentStableVideoIdentity;
+  }
+
+  // 세션 없는 구조 조작의 페이로드를 검사해 **새 객체로** 돌려준다(형식이 어긋나면 null).
+  _normalizePassiveDrawingActionPayload(request = {}) {
+    if (!HOST_PASSIVE_DRAWING_ACTIONS.has(request.action) ||
+        !isBoundedPersistenceString(request.stableVideoIdentity)) {
+      return null;
+    }
+    const payload = { stableVideoIdentity: request.stableVideoIdentity };
+    if (request.action === 'undo' || request.action === 'redo') {
+      // 표식 없는 되돌리기는 받지 않는다. 세션이 없는 동안에는 "방금 한 그 구조
+      // 조작" 만 되돌릴 수 있어야 한다.
+      if (typeof request.historyToken !== 'string' ||
+          request.historyToken.length === 0 ||
+          request.historyToken.length > MAX_DRAWING_HISTORY_TOKEN_LENGTH) {
+        return null;
+      }
+      payload.historyToken = request.historyToken;
+      return payload;
+    }
+    if (!isSafePersistenceCount(request.targetFrame) ||
+        !Number.isFinite(request.sourceWidth) || request.sourceWidth <= 0 ||
+        request.sourceWidth > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+        !Number.isFinite(request.sourceHeight) || request.sourceHeight <= 0 ||
+        request.sourceHeight > FABRIC_DRAWING_MAX_SOURCE_DIMENSION) {
+      return null;
+    }
+    payload.sourceWidth = request.sourceWidth;
+    payload.sourceHeight = request.sourceHeight;
+    return payload;
   }
 
   _drawingFrameRequestIsCurrent(hostWindow, request = {}) {

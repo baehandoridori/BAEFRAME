@@ -6554,3 +6554,212 @@ test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 �
   })).success, false, '쌍이 아닌 항목');
   assert.equal(forwarded.length, before, '거절은 런타임에 닿지 않는다');
 });
+
+// ── 그리기 패널을 닫아 둔 채(입력 꺼짐)로 받는 구조 조작 ─────────────────────
+
+async function preparePassiveActionHost(executeAction) {
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 1, objectCount: 1 };
+      }
+      if (script.includes('.applyDrawingAction(')) {
+        const payload = readFabricMethodPayload(script, 'applyDrawingAction');
+        forwarded.push(payload);
+        return executeAction
+          ? executeAction(payload)
+          : { applied: true, keyframeSetChanged: true, repainted: true, historyToken: 'frame-op:1' };
+      }
+      return undefined;
+    }
+  });
+  const { host } = harness;
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  // 입력을 끈 채(=passive) 영상을 수화하면 호스트가 영상 정체를 기억한다.
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }))).success, true);
+  assert.equal(
+    (await host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration))).accepted,
+    true
+  );
+  const send = (actionId, overrides = {}) => host.applyDrawingAction({
+    hostGeneration,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: null,
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    actionId,
+    action: 'frame-insert',
+    targetFrame: 12,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    ...overrides
+  });
+  return { harness, host, hostGeneration, forwarded, send };
+}
+
+test('세션 없는 프레임 조작은 영상 정체로 맞추고 허용된 필드만 넘긴다', async () => {
+  const { forwarded, send } = await preparePassiveActionHost();
+
+  const result = await send('passive-insert-1', { secret: 'must-not-reach-runtime' });
+  assert.deepEqual(result, {
+    success: true,
+    applied: true,
+    duplicate: false,
+    historyToken: 'frame-op:1',
+    deletedCount: 0,
+    keyframeSetChanged: true
+  });
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0].sessionId, null);
+  assert.equal(forwarded[0].stableVideoIdentity, 'C:/shots/host-video.mov');
+  assert.equal(forwarded[0].action, 'frame-insert');
+  assert.equal(forwarded[0].targetFrame, 12);
+  assert.equal(forwarded[0].sourceWidth, 1920);
+  assert.equal(forwarded[0].sourceHeight, 1080);
+  assert.equal(forwarded[0].secret, undefined, '허용 목록 밖 필드는 넘기지 않는다');
+
+  // 같은 actionId 는 다시 실행하지 않는다(세션 있는 경로와 같은 규약).
+  const duplicate = await send('passive-insert-1');
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(forwarded.length, 1);
+});
+
+test('세션 없는 구조 조작은 토큰·영상 정체·형식이 어긋나면 런타임에 닿지 않는다', async () => {
+  const { hostGeneration, forwarded, send } = await preparePassiveActionHost();
+
+  assert.equal((await send('bad-host', { hostGeneration: hostGeneration - 1 })).success, false);
+  assert.equal((await send('bad-video-gen', { videoGeneration: 8 })).success, false);
+  assert.equal((await send('bad-input', { inputRevision: 99 })).success, false);
+  assert.equal(
+    (await send('bad-identity', { stableVideoIdentity: 'C:/shots/other.mov' })).success,
+    false,
+    '다른 영상의 키프레임은 바꾸지 않는다'
+  );
+  assert.equal((await send('bad-identity-type', { stableVideoIdentity: 7 })).success, false);
+  // 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다.
+  for (const action of ['delete-selection', 'clear-session', 'layer-model-marker']) {
+    assert.equal((await send(`bad-${action}`, { action })).success, false, action);
+  }
+  assert.equal((await send('bad-frame', { targetFrame: -1 })).success, false);
+  assert.equal((await send('bad-frame-missing', { targetFrame: undefined })).success, false);
+  assert.equal((await send('bad-width', { sourceWidth: 0 })).success, false);
+  assert.equal((await send('bad-height', { sourceHeight: Number.NaN })).success, false);
+  assert.equal((await send('bad-width-huge', { sourceWidth: 1e12 })).success, false);
+  assert.equal(forwarded.length, 0, '거절은 런타임에 닿지 않는다');
+
+  // 위 거절들이 정상 요청을 막지 않는다.
+  assert.equal((await send('ok-after-rejections')).success, true);
+});
+
+test('세션 없는 되돌리기는 표식이 있어야 받는다', async () => {
+  const { forwarded, send } = await preparePassiveActionHost(payload => ({
+    applied: true,
+    keyframeSetChanged: true,
+    repainted: true,
+    historyToken: payload.historyToken
+  }));
+
+  for (const action of ['undo', 'redo']) {
+    assert.equal(
+      (await send(`${action}-no-token`, { action, targetFrame: undefined })).success,
+      false,
+      '표식 없는 되돌리기는 받지 않는다'
+    );
+    assert.equal((await send(`${action}-empty-token`, {
+      action, historyToken: ''
+    })).success, false);
+    assert.equal((await send(`${action}-long-token`, {
+      action, historyToken: 'x'.repeat(65)
+    })).success, false);
+  }
+  assert.equal(forwarded.length, 0);
+
+  const undone = await send('undo-with-token', {
+    action: 'undo',
+    historyToken: 'frame-op:42',
+    // 되돌리기는 대상 프레임·소스 크기를 나르지 않는다.
+    targetFrame: undefined,
+    sourceWidth: undefined,
+    sourceHeight: undefined
+  });
+  assert.equal(undone.success, true);
+  assert.equal(undone.historyToken, 'frame-op:42');
+  assert.equal(forwarded[0].historyToken, 'frame-op:42');
+  assert.equal(forwarded[0].sourceWidth, undefined);
+});
+
+test('그리기 입력이 켜져 있는 동안에는 세션 없는 구조 조작을 받지 않는다', async () => {
+  const { host, hostGeneration, forwarded, send } = await preparePassiveActionHost();
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-over-passive',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 4,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }))).success, true);
+
+  assert.equal((await send('passive-while-active', { inputRevision: 2 })).success, false);
+  assert.equal(forwarded.length, 0);
+});
+
+test('updateDrawingTool forwards the tool that was active before the change', async () => {
+  // 그리기 단축키(B)가 "다른 도구였으면 브러시로, 이미 브러시였으면 끄기" 를 가리는 값이다.
+  let previousTool = 'eraser';
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingTool(')) return undefined;
+      return { accepted: true, tool: 'brush', previousTool };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-previous-tool',
+      stableVideoIdentity: 'video-previous-tool',
+      targetFrame: 3,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }))).success, true);
+  const send = toolRevision => host.updateDrawingTool({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-previous-tool',
+    toolRevision,
+    tool: 'brush'
+  });
+
+  assert.deepEqual(await send(1), {
+    success: true,
+    accepted: true,
+    tool: 'brush',
+    previousTool: 'eraser'
+  });
+  // 런타임이 도구 집합 밖의 값을 돌려주면 싣지 않는다.
+  previousTool = 'lasso';
+  assert.deepEqual(await send(2), { success: true, accepted: true, tool: 'brush' });
+});

@@ -14829,6 +14829,7 @@ void main() {
           videoAccess.delete(stableVideoIdentity);
           persistenceByVideo.delete(stableVideoIdentity);
           globalHistoryOrder.delete(stableVideoIdentity);
+          knownVideoDimensions.delete(stableVideoIdentity);
           if (latestPersistenceVideoIdentity === stableVideoIdentity) {
             latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
           }
@@ -16035,6 +16036,23 @@ void main() {
           "frame-paste"
         ]);
         let frameClipboard = null;
+        function passiveVideoIdentity(candidate) {
+          if (activeSession) return null;
+          if (typeof candidate !== "string" || candidate.length === 0) return null;
+          if (candidate !== latestPersistenceVideoIdentity || !persistenceByVideo.has(candidate)) {
+            return null;
+          }
+          return candidate;
+        }
+        const knownVideoDimensions = /* @__PURE__ */ new Map();
+        function rememberVideoDimensions(stableVideoIdentity, dimensions) {
+          const sourceWidth = Number(dimensions?.sourceWidth);
+          const sourceHeight = Number(dimensions?.sourceHeight);
+          if (typeof stableVideoIdentity !== "string" || stableVideoIdentity.length === 0 || !Number.isFinite(sourceWidth) || sourceWidth <= 0 || sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(sourceHeight) || sourceHeight <= 0 || sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION) {
+            return;
+          }
+          knownVideoDimensions.set(stableVideoIdentity, { sourceWidth, sourceHeight });
+        }
         function committedScenesForVideo(stableVideoIdentity) {
           return [...scenes.values()].filter((scene) => scene.stableVideoIdentity === stableVideoIdentity && scene.provisional !== true).sort((left, right) => left.targetFrame - right.targetFrame);
         }
@@ -16285,7 +16303,8 @@ void main() {
         }
         function videoSourceDimensions(stableVideoIdentity) {
           const active = activeScene();
-          const reference = active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0];
+          const reference = (active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0]) || // 세션도 키프레임도 없을 때(패널을 닫은 채 빈 영상에 첫 키프레임을 넣는 경우).
+          knownVideoDimensions.get(stableVideoIdentity);
           return {
             sourceWidth: reference?.sourceWidth,
             sourceHeight: reference?.sourceHeight
@@ -16303,8 +16322,11 @@ void main() {
           };
         }
         function recordStructural(stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame = null) {
+          commandSequence += 1;
+          const historyToken = `frame-op:${commandSequence}`;
           appendStructuralOrder(stableVideoIdentity, {
-            commandId: `frame-op:${stableVideoIdentity}:${commandSequence += 1}`,
+            commandId: `frame-op:${stableVideoIdentity}:${commandSequence}`,
+            historyToken,
             structural: {
               stableVideoIdentity,
               operation,
@@ -16315,6 +16337,7 @@ void main() {
               tailBlankFrame
             }
           });
+          return historyToken;
         }
         const LAYER_OBJECT_OPERATIONS = /* @__PURE__ */ new Set([
           "layer-objects-remove",
@@ -16456,7 +16479,7 @@ void main() {
           if (!FRAME_OPERATIONS.has(operation)) {
             return { applied: false, reason: "invalid-frame-operation" };
           }
-          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          const stableVideoIdentity = activeSession?.stableVideoIdentity || passiveVideoIdentity(command.stableVideoIdentity);
           if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
           const frame = Number(command.frame);
           if (!Number.isSafeInteger(frame) || frame < 0) {
@@ -16467,6 +16490,7 @@ void main() {
           if (totalFrames !== null && frame >= totalFrames) {
             return { applied: false, reason: "frame-out-of-range" };
           }
+          if (!activeSession) rememberVideoDimensions(stableVideoIdentity, command);
           const ordered = committedScenesForVideo(stableVideoIdentity);
           const committedAtFrame = ordered.find((scene) => scene.targetFrame === frame) || null;
           const shiftsRight = operation === "frame-insert" || operation === "frame-insert-blank-keyframe";
@@ -16509,13 +16533,14 @@ void main() {
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
             const pasted = materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
-            recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16524,13 +16549,14 @@ void main() {
             const removed = sceneBlueprint(committedAtFrame);
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
-            recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16547,13 +16573,14 @@ void main() {
               sourceHeight: held.sourceHeight,
               objects: [...held.objects.values()].map(clonePlain)
             } : blankBlueprint(stableVideoIdentity));
-            recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16580,13 +16607,14 @@ void main() {
               if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
             }
             rekeyScenes(stableVideoIdentity, nextFrameByKey2);
-            recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16598,15 +16626,40 @@ void main() {
           }
           rekeyScenes(stableVideoIdentity, nextFrameByKey);
           const inserted = operation === "frame-insert-blank-keyframe" ? materializeSceneAt(stableVideoIdentity, frame, blankBlueprint(stableVideoIdentity)) : null;
-          recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
+          const historyToken = recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
           rebuildActiveProvisionalScene(stableVideoIdentity);
           return {
             applied: true,
             operation,
             frame,
             keyframeSetChanged: true,
+            historyToken,
             keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
           };
+        }
+        function applyPassiveStructuralHistory(command = {}) {
+          if (destroyed) return { applied: false, reason: "store-destroyed" };
+          const direction = command.direction;
+          if (direction !== "undo" && direction !== "redo") {
+            return { applied: false, reason: "invalid-history-direction" };
+          }
+          const stableVideoIdentity = passiveVideoIdentity(command.stableVideoIdentity);
+          if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
+          const order = globalOrderFor(stableVideoIdentity);
+          const list = order ? direction === "undo" ? order.undo : order.redo : [];
+          const entry = list[list.length - 1];
+          if (!entry) return { applied: false, reason: "history-empty" };
+          if (!entry.structural || Array.isArray(entry.structural.frames) || typeof entry.historyToken !== "string" || entry.historyToken !== command.historyToken) {
+            return { applied: false, reason: "history-mismatch" };
+          }
+          return {
+            ...applyStructuralHistory(entry, order, direction),
+            historyToken: entry.historyToken
+          };
+        }
+        function getHeldSceneFrame(stableVideoIdentity, frame) {
+          const held = heldSceneAt(stableVideoIdentity, frame);
+          return held ? held.targetFrame : null;
         }
         function hasScene(stableVideoIdentity, targetFrame) {
           return scenes.has(makeSceneKey(stableVideoIdentity, targetFrame));
@@ -16658,6 +16711,7 @@ void main() {
           const droppedSceneInstanceIds = [...scenes.values()].map((scene) => scene.sceneInstanceId);
           scenes.clear();
           globalHistoryOrder.clear();
+          knownVideoDimensions.clear();
           videoAccess.clear();
           persistenceByVideo.clear();
           latestPersistenceVideoIdentity = null;
@@ -16680,6 +16734,8 @@ void main() {
           deleteSelection,
           clearSession,
           applyFrameOperation,
+          applyPassiveStructuralHistory,
+          getHeldSceneFrame,
           applyLayerObjectsOperation,
           setObjectRanks,
           getPersistenceFence,
@@ -22632,6 +22688,7 @@ void main() {
         function updateDrawingTool(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
           const normalized = { ...command, tool: command.tool === "V" ? "select" : command.tool };
+          const previousTool = normalizeFabricDrawingTool(currentSession?.tool);
           const result = sceneStore.updateTool(normalized);
           if (!result.accepted) {
             metrics.recordStaleMessageDrop();
@@ -22639,7 +22696,7 @@ void main() {
           }
           currentSession.tool = result.tool;
           setToolMode(result.tool);
-          return result;
+          return { ...result, previousTool };
         }
         function updateDrawingBrush(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
@@ -22733,8 +22790,63 @@ void main() {
           setToolMode(result.tool);
           return result;
         }
+        function applyPassiveDrawingAction(command = {}) {
+          const stale = { applied: false, reason: "stale-session" };
+          if (inputEnabled || currentSession || command.sessionId !== null && command.sessionId !== void 0) {
+            return stale;
+          }
+          const stableVideoIdentity = String(command.stableVideoIdentity || "");
+          if (!stableVideoIdentity) return stale;
+          const action = command.action || command.type;
+          const isHistory = action === "undo" || action === "redo";
+          if (!isHistory && !FRAME_STRUCTURE_ACTIONS.has(action)) return stale;
+          if (typeof sceneStore.applyFrameOperation !== "function" || typeof sceneStore.applyPassiveStructuralHistory !== "function") {
+            return stale;
+          }
+          const frame = Number(command.targetFrame);
+          if (!isHistory && (!Number.isSafeInteger(frame) || frame < 0)) {
+            return { applied: false, reason: "invalid-action-target" };
+          }
+          if (!actionDeduper.accept(command.actionId)) {
+            metrics.recordDuplicateAction();
+            return { applied: false, duplicate: true };
+          }
+          const result = isHistory ? sceneStore.applyPassiveStructuralHistory({
+            direction: action,
+            stableVideoIdentity,
+            historyToken: command.historyToken
+          }) : sceneStore.applyFrameOperation({
+            operation: action,
+            frame,
+            stableVideoIdentity,
+            sourceWidth: command.sourceWidth,
+            sourceHeight: command.sourceHeight
+          });
+          if (!result.applied) {
+            actionDeduper.release?.(command.actionId);
+            return result;
+          }
+          if (result.keyframeSetChanged !== true) return { ...result, repainted: false };
+          const display = passiveDisplaySession;
+          if (display && display.stableVideoIdentity === stableVideoIdentity && Number.isSafeInteger(display.targetFrame) && typeof sceneStore.getHeldSceneFrame === "function") {
+            const sourceFrame = sceneStore.getHeldSceneFrame(stableVideoIdentity, display.targetFrame);
+            display.sourceFrame = sourceFrame;
+            presentationState.sourceFrame = sourceFrame;
+            presentationState.storeRevision = -1;
+            lastPaintedScene = sourceFrame === null ? null : { stableVideoIdentity, targetFrame: sourceFrame };
+            if (lastPaintedScene) {
+              repaintLastPaintedScene({ force: true, clearWhenMissing: true });
+            } else if (fabricCanvas) {
+              fabricCanvas.clear();
+              if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+              else fabricCanvas.requestRenderAll();
+            }
+          }
+          return { ...result, repainted: true };
+        }
         function applyDrawingAction(command = {}) {
-          if (!inputEnabled || command.sessionId !== currentSession?.sessionId) {
+          if (!inputEnabled) return applyPassiveDrawingAction(command);
+          if (command.sessionId !== currentSession?.sessionId) {
             return { applied: false, reason: "stale-session" };
           }
           const action = command.action || command.type;

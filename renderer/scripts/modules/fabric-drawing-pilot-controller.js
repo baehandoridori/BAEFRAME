@@ -19,6 +19,24 @@ const CONTROLLER_DRAWING_ACTIONS = new Set([
   'layer-objects-reorder',
   'layer-model-marker'
 ]);
+// 그리기 패널을 닫아 둔 채(passive)로도 보낼 수 있는 액션. 프레임·키프레임 구조
+// 조작과, 그렇게 한 조작의 되돌리기·다시하기뿐이다. 획을 건드리는 것(선택 삭제)과
+// 레이어 조작은 세션이 있어야 한다. main/mpv-overlay-host.js 의
+// HOST_PASSIVE_DRAWING_ACTIONS 와 같아야 한다(파리티 테스트가 대조한다).
+const PASSIVE_DRAWING_ACTIONS = new Set([
+  'frame-insert-blank-keyframe',
+  'frame-insert',
+  'frame-remove',
+  'keyframe-to-frame',
+  'frame-to-keyframe',
+  'frame-copy',
+  'frame-paste',
+  'undo',
+  'redo'
+]);
+// 세션 없이 한 구조 조작의 되돌리기 표식을 몇 개까지 기억할지. 오버레이의 구조
+// 히스토리 상한(32)과 같은 자릿수면 충분하다.
+const PASSIVE_HISTORY_LIMIT = 32;
 // shared/fabric-drawing-tools.js 의 FABRIC_DRAWING_TOOLS 와 같아야 한다.
 // 이 파일은 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다
 // (shared/fabric-drawing-limits.js ↔ fabric-drawing-persistence-store.js 와 같은 구조).
@@ -238,6 +256,11 @@ export function createFabricDrawingPilotController(options = {}) {
   let bInputRejected = 0;
   let bAutoRepeatIgnored = 0;
   let drawingActionQueue = Promise.resolve(false);
+  // 세션 없이(패널을 닫은 채) 한 구조 조작의 되돌리기 표식. 각 항목은 오버레이가
+  // 돌려준 표식과, 그 순간의 전역 히스토리 리비전을 든다. Ctrl+Z 는 **마지막으로 한
+  // 일이 이 조작일 때만** 오버레이로 간다 — 그 뒤에 댓글 편집 같은 전역 작업이
+  // 있었다면 리비전이 달라져 있으므로 전역 실행취소가 먼저다.
+  let passiveHistory = { undo: [], redo: [] };
   let persistenceSessionId = null;
   let persistenceBridgeReady = persistenceStore === null;
   let persistenceEventUnsubscribe = null;
@@ -943,9 +966,37 @@ export function createFabricDrawingPilotController(options = {}) {
       event.shiftKey !== true;
   }
 
+  // 세션 없는 구조 조작의 표식은 passive 로 머무는 동안에만 유효하다. 그리기
+  // 모드에 들어가면 오버레이 히스토리에 획 커맨드가 끼어들 수 있고, 영상·호스트가
+  // 바뀌거나 문서를 다시 수화하면 오버레이가 그 히스토리를 통째로 버린다.
+  function clearPassiveHistory() {
+    if (passiveHistory.undo.length === 0 && passiveHistory.redo.length === 0) return;
+    passiveHistory = { undo: [], redo: [] };
+  }
+
+  function rememberPassiveHistory(historyToken) {
+    if (typeof historyToken !== 'string' || historyToken.length === 0) return;
+    passiveHistory.redo = [];
+    passiveHistory.undo.push({ token: historyToken, revision: readHistoryRevision() });
+    while (passiveHistory.undo.length > PASSIVE_HISTORY_LIMIT) passiveHistory.undo.shift();
+  }
+
+  // 지금 Ctrl+Z / Ctrl+Y 가 세션 없는 구조 조작을 되돌려야 하는지. 맨 위 표식이
+  // **지금의** 전역 히스토리 리비전에서 만들어진 것일 때만 그렇다.
+  function peekPassiveHistory(direction) {
+    if (state !== 'passive' || !canSendPassiveDrawingAction()) return null;
+    const stack = direction === 'undo' ? passiveHistory.undo : passiveHistory.redo;
+    const entry = stack[stack.length - 1];
+    if (!entry || entry.revision !== readHistoryRevision()) return null;
+    return entry;
+  }
+
   function setState(nextState) {
     if (state === nextState) return;
-    if (nextState !== 'passive') invalidatePassivePresentationOwner();
+    if (nextState !== 'passive') {
+      invalidatePassivePresentationOwner();
+      clearPassiveHistory();
+    }
     if (nextState !== 'active') invalidateActiveFrameOwner();
     state = nextState;
     notifyStateChange();
@@ -1276,6 +1327,9 @@ export function createFabricDrawingPilotController(options = {}) {
     persistenceBoundSourceEpoch = null;
     persistenceQuitSuspension = null;
     clearPersistenceBypass();
+    // 이미 passive 였다면 setState 가 아무것도 하지 않는다. 영상이 사라졌으니
+    // 세션 없는 구조 조작의 표식도 여기서 직접 버린다.
+    clearPassiveHistory();
     setState(pilotEnabled ? 'passive' : 'disabled');
     return true;
   }
@@ -1335,8 +1389,10 @@ export function createFabricDrawingPilotController(options = {}) {
     };
   }
 
-  async function sendTool(tool) {
-    if (state !== 'active' || !currentSession) return false;
+  // 도구 변경을 보내고 결과를 **직전 도구와 함께** 돌려준다.
+  async function sendToolDetailed(tool) {
+    const rejected = { accepted: false, previousTool: null };
+    if (state !== 'active' || !currentSession) return rejected;
     currentSession.toolRevision += 1;
     desiredTool = tool;
     const request = {
@@ -1357,10 +1413,38 @@ export function createFabricDrawingPilotController(options = {}) {
       if (accepted && currentSession?.sessionId === request.sessionId) {
         currentSession.tool = tool;
       }
-      return accepted;
+      return {
+        accepted,
+        previousTool: accepted && CONTROLLER_DRAWING_TOOLS.has(response.previousTool)
+          ? response.previousTool
+          : null
+      };
     } catch {
-      return false;
+      return rejected;
     }
+  }
+
+  async function sendTool(tool) {
+    return (await sendToolDetailed(tool)).accepted;
+  }
+
+  // 그리기 단축키(B)는 브러시 키이기도 하다. 그리기가 켜져 있고 다른 도구를 쓰는
+  // 중이면 브러시로 바꾸고 패널은 그대로 둔다. 이미 브러시였을 때만 끈다
+  // (구형 팔레트와 같은 동작). 도구의 진실은 오버레이에 있다 — 팔레트 클릭은
+  // 컨트롤러에 알리지 않으므로, 브러시로 바꿔 보고 **직전 도구**를 돌려받아 가린다.
+  //
+  // 반환값 — 'selected': 브러시로 바꿨다(패널 유지). 'already-brush': 이미 브러시
+  // 였거나 직전 도구를 알 수 없다(호출부가 그리기를 끈다). 'inactive': 그리기가
+  // 켜져 있지 않다(호출부가 평소처럼 토글한다). 'stale': 기다리는 사이 세션이
+  // 바뀌었다(아무것도 하지 않는다).
+  async function selectBrushFromShortcut() {
+    if (state !== 'active' || !currentSession) return 'inactive';
+    const sessionId = currentSession.sessionId;
+    const result = await sendToolDetailed('brush');
+    if (state !== 'active' || currentSession?.sessionId !== sessionId) return 'stale';
+    return result.accepted && result.previousTool !== null && result.previousTool !== 'brush'
+      ? 'selected'
+      : 'already-brush';
   }
 
   // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 씬·프레임 왕복이
@@ -1439,8 +1523,75 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
+  // 세션 없이(패널을 닫은 채) 구조 조작을 보낼 수 있는 상태인지.
+  // 저장 계층이 저하·차단된 동안에는 받지 않는다 — 오버레이만 바뀌고 렌더러의
+  // 문서가 따라오지 못해 타임라인과 화면이 서로 어긋난다.
+  function canSendPassiveDrawingAction() {
+    return pilotEnabled &&
+      state === 'passive' &&
+      !desiredInputEnabled &&
+      currentSession === null &&
+      videoReady &&
+      !videoChangePending &&
+      hostGeneration > 0 &&
+      videoGeneration > 0 &&
+      typeof confirmedVideoIdentity === 'string' && confirmedVideoIdentity.length > 0 &&
+      !legacyBypass &&
+      !persistenceBlocked &&
+      !persistenceSourceRefreshInProgress &&
+      persistenceQuitSuspension === null &&
+      (persistenceStore === null || persistenceSessionId !== null);
+  }
+
+  // 세션 id 대신 영상 정체로 맞추는 요청. 프레임 조작은 대상 프레임과 소스 크기를,
+  // 되돌리기·다시하기는 오버레이가 돌려줬던 표식을 싣는다.
+  function makePassiveDrawingActionRequest(action, payload = null) {
+    if (!PASSIVE_DRAWING_ACTIONS.has(action) || !canSendPassiveDrawingAction()) return null;
+    const context = contextSnapshot();
+    if (!validPilotContext(context) ||
+        String(context.stableVideoIdentity || '') !== confirmedVideoIdentity) {
+      return null;
+    }
+    const request = {
+      ...makeEnvelope('drawing-action', { action }),
+      hostGeneration,
+      videoGeneration,
+      inputRevision,
+      sessionId: null,
+      stableVideoIdentity: confirmedVideoIdentity,
+      actionId: uuid(),
+      action
+    };
+    if (action === 'undo' || action === 'redo') {
+      const historyToken = payload?.historyToken;
+      if (typeof historyToken !== 'string' || historyToken.length === 0) return null;
+      return { ...request, historyToken };
+    }
+    const targetFrame = Math.max(0, Math.trunc(Number(context.targetFrame) || 0));
+    const totalFrames = Number(context.totalFrames);
+    const sourceWidth = Number(context.sourceWidth);
+    const sourceHeight = Number(context.sourceHeight);
+    if ((Number.isSafeInteger(totalFrames) && totalFrames > 0 && targetFrame >= totalFrames) ||
+        !Number.isFinite(sourceWidth) || sourceWidth <= 0 ||
+        !Number.isFinite(sourceHeight) || sourceHeight <= 0) {
+      return null;
+    }
+    return { ...request, targetFrame, sourceWidth, sourceHeight };
+  }
+
+  // 세션 없이 한 구조 조작은 표식을 기억해 둔다 — 이어지는 Ctrl+Z 가 이 조작을
+  // 되돌릴 수 있게 한다. 기다리는 사이 passive 를 벗어났으면 clearPassiveHistory 가
+  // 이미 비웠고, 그 뒤에 넣으면 낡은 표식이 남으므로 상태를 다시 본다.
+  function notePassiveFrameOperation(request, response) {
+    if (request.sessionId !== null || response?.applied !== true) return;
+    if (state !== 'passive' || !canSendPassiveDrawingAction()) return;
+    rememberPassiveHistory(response.historyToken);
+  }
+
   function makeDrawingActionRequest(action, payload = null) {
-    if (state !== 'active' || !currentSession || !CONTROLLER_DRAWING_ACTIONS.has(action)) {
+    if (!CONTROLLER_DRAWING_ACTIONS.has(action)) return null;
+    if (state === 'passive') return makePassiveDrawingActionRequest(action, payload);
+    if (state !== 'active' || !currentSession) {
       return null;
     }
     const sessionId = currentSession.sessionId;
@@ -1508,6 +1659,7 @@ export function createFabricDrawingPilotController(options = {}) {
     }
     const operation = drawingActionQueue.then(async () => {
       const response = await sendDrawingActionRequest(request);
+      notePassiveFrameOperation(request, response);
       if (typeof options.finalize === 'function') {
         try {
           await options.finalize(response);
@@ -1551,6 +1703,32 @@ export function createFabricDrawingPilotController(options = {}) {
         await onHistoryFallback(historyAction);
       }
       return result;
+    });
+    drawingActionQueue = operation.then(r => r?.success === true, () => false);
+    return operation;
+  }
+
+  // 세션 없이 한 구조 조작을 되돌리거나 다시 한다. 표식은 키를 누른 그 자리에서
+  // 스택에서 꺼낸다 — 응답을 기다렸다 꺼내면 연타한 두 번째 Ctrl+Z 가 같은 표식을
+  // 다시 집는다. 실패하면 표식이 오버레이와 어긋난 것이므로 전부 버린다.
+  function applyPassiveHistoryAction(direction) {
+    const from = direction === 'undo' ? passiveHistory.undo : passiveHistory.redo;
+    const entry = from.pop();
+    if (!entry) return Promise.resolve({ success: false, applied: false });
+    const request = makePassiveDrawingActionRequest(direction, { historyToken: entry.token });
+    if (!request) {
+      clearPassiveHistory();
+      return Promise.resolve({ success: false, applied: false, reason: 'invalid-request' });
+    }
+    const operation = drawingActionQueue.then(async () => {
+      const response = await sendDrawingActionRequest(request);
+      if (response?.applied === true && state === 'passive' && canSendPassiveDrawingAction()) {
+        const to = direction === 'undo' ? passiveHistory.redo : passiveHistory.undo;
+        to.push({ token: entry.token, revision: readHistoryRevision() });
+      } else if (response?.duplicate !== true) {
+        clearPassiveHistory();
+      }
+      return response;
     });
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation;
@@ -1631,6 +1809,9 @@ export function createFabricDrawingPilotController(options = {}) {
     { allowVideoNotReady = false, onIpcFailure = null } = {}
   ) {
     if (!persistenceStore) return true;
+    // 수화는 오버레이의 그 영상 히스토리를 통째로 버린다. 세션 없이 한 구조 조작의
+    // 표식도 함께 무효가 된다(상태가 passive 로 머문 채 다시 수화되는 경로가 있다).
+    clearPassiveHistory();
     const owner = capturePersistenceOwner(contextOverrides, {
       allowVideoNotReady
     });
@@ -2885,6 +3066,15 @@ export function createFabricDrawingPilotController(options = {}) {
 
     const historyAction = drawingHistoryActionFromKeyEvent(event);
     if (historyAction) {
+      if (state === 'passive') {
+        // 패널을 닫은 채 한 구조 조작(프레임 추가·삭제 등)이 **마지막으로 한 일**일
+        // 때만 그것을 되돌린다. 아니면 지금까지처럼 전역 실행취소로 넘긴다.
+        if (peekPassiveHistory(historyAction) === null) return false;
+        consumeKeyEvent(event);
+        if (event.repeat === true) return true;
+        runDetached(applyPassiveHistoryAction(historyAction));
+        return true;
+      }
       if (state !== 'preparing' && state !== 'active' && state !== 'recovering') {
         return false;
       }
@@ -2927,7 +3117,12 @@ export function createFabricDrawingPilotController(options = {}) {
     // 바꾸고 keyframeSetChanged 로 알리면 sendDrawingActionRequest 가 타임라인을
     // 재동기한다(실행취소가 키프레임을 되살릴 때와 같은 경로).
     if (frameOperation !== null) {
-      if (state !== 'active') return false;
+      // 그리기 패널을 닫아 둔 채로도 받는다(구형 도구에서 그랬듯이). 그때는 세션이
+      // 없으므로 영상 정체로 맞춘 요청을 보낸다. 준비·복구 중이거나 저장 계층이
+      // 저하된 동안에는 지금까지처럼 넘긴다.
+      if (state !== 'active' && !(state === 'passive' && canSendPassiveDrawingAction())) {
+        return false;
+      }
       consumeKeyEvent(event);
       if (event.repeat === true) return true;
       runDetached(applyDrawingAction(frameOperation));
@@ -3039,6 +3234,7 @@ export function createFabricDrawingPilotController(options = {}) {
     toggle,
     applyDrawingAction,
     applyDrawingActionDetailed,
+    selectBrushFromShortcut,
     sendLayerView,
     routeKeydown,
     disable,

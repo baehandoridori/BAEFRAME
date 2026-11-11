@@ -92,6 +92,7 @@ function createHarness(options = {}) {
     matchesSelectionShortcut: options.matchesSelectionShortcut,
     matchesBrushSizeShortcut: options.matchesBrushSizeShortcut,
     matchesToolShortcut: options.matchesToolShortcut,
+    matchesFrameOperationShortcut: options.matchesFrameOperationShortcut,
     persistenceStore: options.persistenceStore,
     persistenceSessionIdFactory: options.persistenceSessionIdFactory,
     getHistoryRevision: options.getHistoryRevision,
@@ -1994,4 +1995,280 @@ test('a configured tool shortcut actually switches the drawing tool', async () =
   assert.equal(unknown.controller.routeKeydown(createKeyEvent('q', { code: 'KeyQ' })), false);
   await Promise.resolve();
   assert.equal(unknown.calls.tool.length, 0);
+});
+
+// ── 그리기 단축키(B)의 "브러시 고르기 또는 끄기" ─────────────────────────────
+
+test('selectBrushFromShortcut switches to the brush and keeps the panel when another tool was active', async () => {
+  // 팔레트 클릭은 오버레이 안에서만 도구를 바꾸므로 컨트롤러는 지금 도구를 모른다.
+  // 브러시로 바꿔 보고 오버레이가 돌려준 **직전 도구**로 가린다.
+  const harness = createHarness({
+    onTool: request => ({
+      success: true,
+      accepted: true,
+      tool: request.tool,
+      previousTool: 'select'
+    })
+  });
+  await preparePassive(harness);
+  assert.equal(await harness.controller.toggle(), true);
+  harness.calls.input.length = 0;
+
+  assert.equal(await harness.controller.selectBrushFromShortcut(), 'selected');
+  assert.equal(harness.calls.tool.length, 1);
+  assert.equal(harness.calls.tool[0].tool, 'brush');
+  assert.equal(harness.controller.getState(), 'active', '패널은 그대로 켜져 있다');
+  assert.equal(harness.calls.input.length, 0, '입력을 끄는 요청을 보내지 않는다');
+});
+
+test('selectBrushFromShortcut reports already-brush so the caller turns drawing off', async () => {
+  for (const previousTool of ['brush', undefined, 'lasso']) {
+    const harness = createHarness({
+      onTool: request => ({
+        success: true,
+        accepted: true,
+        tool: request.tool,
+        ...(previousTool === undefined ? {} : { previousTool })
+      })
+    });
+    await preparePassive(harness);
+    assert.equal(await harness.controller.toggle(), true);
+    assert.equal(
+      await harness.controller.selectBrushFromShortcut(),
+      'already-brush',
+      `직전 도구 ${String(previousTool)}: 이미 브러시였거나 알 수 없으면 끄는 쪽으로 간다`
+    );
+    assert.equal(harness.controller.getState(), 'active', '끄는 것은 호출부의 몫이다');
+  }
+
+  // 도구 요청이 거절되면(낡은 토큰·타임아웃) 예전처럼 끄는 쪽으로 떨어진다.
+  const rejected = createHarness({
+    onTool: () => ({ success: false, accepted: false })
+  });
+  await preparePassive(rejected);
+  assert.equal(await rejected.controller.toggle(), true);
+  assert.equal(await rejected.controller.selectBrushFromShortcut(), 'already-brush');
+});
+
+test('selectBrushFromShortcut does nothing outside an active session', async () => {
+  const harness = createHarness();
+  await preparePassive(harness);
+  assert.equal(await harness.controller.selectBrushFromShortcut(), 'inactive');
+  assert.equal(harness.calls.tool.length, 0);
+
+  // 응답을 기다리는 사이 그리기가 꺼졌으면 호출부가 다시 켜지 않도록 알린다.
+  const pending = deferred();
+  const racing = createHarness({ onTool: () => pending.promise });
+  await preparePassive(racing);
+  assert.equal(await racing.controller.toggle(), true);
+  const outcome = racing.controller.selectBrushFromShortcut();
+  await racing.controller.disable();
+  pending.resolve({ success: true, accepted: true, tool: 'brush', previousTool: 'brush' });
+  assert.equal(await outcome, 'stale');
+});
+
+// ── 그리기 패널을 닫아 둔 채(passive)로 받는 프레임 조작 ─────────────────────
+
+function createFrameOperationHarness(options = {}) {
+  let historyRevision = 0;
+  const harness = createHarness({
+    // 숫자 키를 프레임 조작으로 잇는다(app.js 는 액션 id 로 판정해 주입한다).
+    matchesFrameOperationShortcut: event => ({
+      Digit2: 'frame-insert-blank-keyframe',
+      Digit3: 'frame-insert',
+      Digit4: 'frame-remove'
+    })[event.code] || null,
+    getHistoryRevision: () => historyRevision,
+    ...options
+  });
+  harness.advanceHistoryRevision = () => { historyRevision += 1; };
+  return harness;
+}
+
+async function settle() {
+  for (let index = 0; index < 6; index += 1) await Promise.resolve();
+}
+
+test('frame operation shortcuts work while the drawing panel is closed', async () => {
+  const harness = createFrameOperationHarness({
+    onAction: request => ({
+      success: true,
+      applied: true,
+      keyframeSetChanged: true,
+      historyToken: `frame-op:${request.actionId}`
+    })
+  });
+  await preparePassive(harness);
+
+  const insert = createKeyEvent('3', { code: 'Digit3' });
+  assert.equal(harness.controller.routeKeydown(insert), true, '패널이 닫혀 있어도 소비한다');
+  assert.deepEqual(insert.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await settle();
+
+  assert.equal(harness.calls.action.length, 1);
+  const request = harness.calls.action[0];
+  assertEnvelope(request);
+  assert.equal(request.action, 'frame-insert');
+  assert.equal(request.sessionId, null, '세션이 없으므로 영상 정체로 맞춘다');
+  assert.equal(request.stableVideoIdentity, 'video-a');
+  assert.equal(request.targetFrame, 12);
+  assert.equal(request.sourceWidth, 1920);
+  assert.equal(request.sourceHeight, 1080);
+  assert.equal(harness.controller.getState(), 'passive', '그리기 모드를 켜지 않는다');
+  assert.equal(harness.calls.input.filter(call => call.enabled === true).length, 0);
+
+  // 자동 반복은 소비하되 다시 보내지 않는다.
+  const repeat = createKeyEvent('3', { code: 'Digit3', repeat: true });
+  assert.equal(harness.controller.routeKeydown(repeat), true);
+  await settle();
+  assert.equal(harness.calls.action.length, 1);
+});
+
+test('passive frame operations are refused until the video is bound', async () => {
+  const harness = createFrameOperationHarness();
+  assert.equal(await harness.controller.initialize(), true);
+  // 호스트·영상이 아직 준비되지 않았다.
+  const early = createKeyEvent('2', { code: 'Digit2' });
+  assert.equal(harness.controller.routeKeydown(early), false);
+  assert.deepEqual(early.calls, []);
+  assert.equal(harness.calls.action.length, 0);
+
+  // 다른 영상으로 넘어가는 중에도 받지 않는다.
+  await preparePassive(harness);
+  harness.setContext({ stableVideoIdentity: 'video-b' });
+  const mismatched = createKeyEvent('2', { code: 'Digit2' });
+  assert.equal(harness.controller.routeKeydown(mismatched), true, '상태는 맞으므로 키는 소비한다');
+  await settle();
+  assert.equal(harness.calls.action.length, 0, '영상 정체가 어긋나면 요청을 만들지 않는다');
+});
+
+test('Ctrl+Z undoes a passive frame operation only while it is the latest action', async () => {
+  const harness = createFrameOperationHarness({
+    onAction: request => ({
+      success: true,
+      applied: true,
+      keyframeSetChanged: true,
+      ...(request.action === 'undo' || request.action === 'redo'
+        ? {}
+        : { historyToken: 'frame-op:7' })
+    })
+  });
+  await preparePassive(harness);
+
+  // 아무 조작도 하지 않았으면 Ctrl+Z 는 지금까지처럼 전역 실행취소로 넘어간다.
+  const idle = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(idle), false);
+  assert.deepEqual(idle.calls, []);
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('2', { code: 'Digit2' })), true);
+  await settle();
+
+  const undo = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(undo), true, '방금 한 구조 조작을 되돌린다');
+  assert.deepEqual(undo.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await settle();
+  const undoRequest = harness.calls.action.at(-1);
+  assert.equal(undoRequest.action, 'undo');
+  assert.equal(undoRequest.sessionId, null);
+  assert.equal(undoRequest.historyToken, 'frame-op:7', '오버레이가 준 표식을 되보낸다');
+
+  // 두 번째 Ctrl+Z 는 되돌릴 구조 조작이 없으므로 전역으로 넘어간다.
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true })),
+    false
+  );
+
+  // 다시 실행은 되돌린 그 조작을 재적용한다.
+  const redo = createKeyEvent('y', { code: 'KeyY', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(redo), true);
+  await settle();
+  assert.equal(harness.calls.action.at(-1).action, 'redo');
+  assert.equal(harness.calls.action.at(-1).historyToken, 'frame-op:7');
+
+  // 그 뒤에 전역 작업(댓글 편집 등)이 있었다면 전역 실행취소가 먼저다.
+  harness.advanceHistoryRevision();
+  const stale = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(stale), false);
+  assert.deepEqual(stale.calls, []);
+});
+
+test('entering drawing mode forgets passive frame-operation undo marks', async () => {
+  const harness = createFrameOperationHarness({
+    onAction: () => ({
+      success: true,
+      applied: true,
+      keyframeSetChanged: true,
+      historyToken: 'frame-op:3'
+    })
+  });
+  await preparePassive(harness);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+
+  // 그리기 모드에서는 오버레이 히스토리에 획 커맨드가 끼어든다. 나온 뒤에 옛 표식으로
+  // 되돌리면 엉뚱한 항목을 가리킨다.
+  assert.equal(await harness.controller.toggle(), true);
+  await harness.controller.disable();
+  assert.equal(harness.controller.getState(), 'passive');
+  harness.calls.action.length = 0;
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true })),
+    false
+  );
+  await settle();
+  assert.equal(harness.calls.action.length, 0);
+});
+
+test('a rejected passive undo drops every remembered mark', async () => {
+  let rejectHistory = false;
+  const harness = createFrameOperationHarness({
+    onAction: request => {
+      if (request.action === 'undo' || request.action === 'redo') {
+        return rejectHistory
+          ? { success: false, applied: false, reason: 'history-mismatch' }
+          : { success: true, applied: true, keyframeSetChanged: true };
+      }
+      return {
+        success: true,
+        applied: true,
+        keyframeSetChanged: true,
+        historyToken: `frame-op:${request.actionId}`
+      };
+    }
+  });
+  await preparePassive(harness);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+
+  rejectHistory = true;
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true })),
+    true
+  );
+  await settle();
+  // 표식이 오버레이와 어긋났으므로 남은 것도 믿을 수 없다 — 전부 버리고 전역으로 넘긴다.
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true })),
+    false
+  );
+});
+
+test('frame operations still go through the session while drawing is active', async () => {
+  const harness = createFrameOperationHarness({
+    onAction: () => ({
+      success: true,
+      applied: true,
+      keyframeSetChanged: true,
+      historyToken: 'frame-op:1'
+    })
+  });
+  await preparePassive(harness);
+  assert.equal(await harness.controller.toggle(), true);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+  const request = harness.calls.action[0];
+  assert.equal(typeof request.sessionId, 'string', '세션이 있으면 세션 id 로 보낸다');
+  assert.equal(request.stableVideoIdentity, undefined);
 });

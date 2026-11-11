@@ -1089,6 +1089,7 @@ function createSessionSceneStore(options = {}) {
     persistenceByVideo.delete(stableVideoIdentity);
     // 씬이 사라지면 그 영상의 전역 실행취소 순서도 함께 사라진다.
     globalHistoryOrder.delete(stableVideoIdentity);
+    knownVideoDimensions.delete(stableVideoIdentity);
     if (latestPersistenceVideoIdentity === stableVideoIdentity) {
       latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
     }
@@ -2548,6 +2549,36 @@ function createSessionSceneStore(options = {}) {
   // 프레임 복사는 비디오 사이를 넘지 않는다. 소스 크기가 다르면 좌표가 어긋난다.
   let frameClipboard = null;
 
+  // 그리기 세션이 없어도(패널을 닫고 보기만 하는 중) 구조 조작은 받는다. 그때는
+  // 활성 세션이 영상을 정해 주지 않으므로 요청이 실어 온 정체를 쓰되, **가장
+  // 최근에 수화한 영상**일 때만 받는다 — 화면에 떠 있지 않은 영상의 키프레임을
+  // 조용히 바꾸지 않기 위해서다.
+  function passiveVideoIdentity(candidate) {
+    if (activeSession) return null;
+    if (typeof candidate !== 'string' || candidate.length === 0) return null;
+    if (candidate !== latestPersistenceVideoIdentity || !persistenceByVideo.has(candidate)) {
+      return null;
+    }
+    return candidate;
+  }
+
+  // 빈 씬에 줄 영상 소스 크기. 세션도 키프레임도 없으면 알 길이 없어, 알게 된
+  // 시점마다(세션 활성화·세션 없는 구조 조작) 적어 둔다.
+  const knownVideoDimensions = new Map();
+
+  function rememberVideoDimensions(stableVideoIdentity, dimensions) {
+    const sourceWidth = Number(dimensions?.sourceWidth);
+    const sourceHeight = Number(dimensions?.sourceHeight);
+    if (typeof stableVideoIdentity !== 'string' || stableVideoIdentity.length === 0 ||
+        !Number.isFinite(sourceWidth) || sourceWidth <= 0 ||
+        sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION ||
+        !Number.isFinite(sourceHeight) || sourceHeight <= 0 ||
+        sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION) {
+      return;
+    }
+    knownVideoDimensions.set(stableVideoIdentity, { sourceWidth, sourceHeight });
+  }
+
   // 구조 조작은 **커밋된 씬만** 다룬다. 임시(provisional) 씬은 홀드 내용을 베낀
   // 파생물이라 함께 밀면 활성 씬이 엉뚱한 프레임을 가리키게 된다. 조작이 끝난 뒤
   // rebuildActiveProvisionalScene 이 새 상태에서 다시 만든다.
@@ -2894,9 +2925,11 @@ function createSessionSceneStore(options = {}) {
   // Drawing V3 좌표계가 오브젝트와 어긋난다.
   function videoSourceDimensions(stableVideoIdentity) {
     const active = activeScene();
-    const reference = active?.stableVideoIdentity === stableVideoIdentity
+    const reference = (active?.stableVideoIdentity === stableVideoIdentity
       ? active
-      : committedScenesForVideo(stableVideoIdentity)[0];
+      : committedScenesForVideo(stableVideoIdentity)[0]) ||
+      // 세션도 키프레임도 없을 때(패널을 닫은 채 빈 영상에 첫 키프레임을 넣는 경우).
+      knownVideoDimensions.get(stableVideoIdentity);
     return {
       sourceWidth: reference?.sourceWidth,
       sourceHeight: reference?.sourceHeight
@@ -2919,12 +2952,18 @@ function createSessionSceneStore(options = {}) {
   function recordStructural(
     stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame = null
   ) {
+    commandSequence += 1;
+    // 세션 없이 한 조작을 세션 없이 되돌릴 때 "그 항목이 맞는지" 대조하는 표식.
+    // commandId 는 영상 정체를 품어 길이가 제멋대로라 경계를 넘기기에 맞지 않는다.
+    const historyToken = `frame-op:${commandSequence}`;
     appendStructuralOrder(stableVideoIdentity, {
-      commandId: `frame-op:${stableVideoIdentity}:${(commandSequence += 1)}`,
+      commandId: `frame-op:${stableVideoIdentity}:${commandSequence}`,
+      historyToken,
       structural: {
         stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame
       }
     });
+    return historyToken;
   }
 
   // ── 레이어 단위 오브젝트 조작 ─────────────────────────────────────────────
@@ -3126,7 +3165,10 @@ function createSessionSceneStore(options = {}) {
     if (!FRAME_OPERATIONS.has(operation)) {
       return { applied: false, reason: 'invalid-frame-operation' };
     }
-    const stableVideoIdentity = activeSession?.stableVideoIdentity;
+    // 세션이 있으면 그 영상이다. 없으면(패널을 닫고 보기만 하는 중) 요청이 실어 온
+    // 영상인데, 가장 최근에 수화한 영상일 때만 받는다.
+    const stableVideoIdentity = activeSession?.stableVideoIdentity ||
+      passiveVideoIdentity(command.stableVideoIdentity);
     if (!stableVideoIdentity) return { applied: false, reason: 'no-active-session' };
     const frame = Number(command.frame);
     if (!Number.isSafeInteger(frame) || frame < 0) {
@@ -3137,6 +3179,8 @@ function createSessionSceneStore(options = {}) {
     if (totalFrames !== null && frame >= totalFrames) {
       return { applied: false, reason: 'frame-out-of-range' };
     }
+    // 세션 없는 조작은 빈 씬에 줄 소스 크기를 요청에서 받는다(세션이 주던 값이다).
+    if (!activeSession) rememberVideoDimensions(stableVideoIdentity, command);
 
     const ordered = committedScenesForVideo(stableVideoIdentity);
     const committedAtFrame = ordered.find(scene => scene.targetFrame === frame) || null;
@@ -3186,13 +3230,14 @@ function createSessionSceneStore(options = {}) {
       dropProvisionalScenes(stableVideoIdentity);
       detachScene(committedAtFrame);
       const pasted = materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
-      recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
+      const historyToken = recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
         operation,
         frame,
         keyframeSetChanged: true,
+        historyToken,
         keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
       };
     }
@@ -3202,13 +3247,14 @@ function createSessionSceneStore(options = {}) {
       const removed = sceneBlueprint(committedAtFrame);
       dropProvisionalScenes(stableVideoIdentity);
       detachScene(committedAtFrame);
-      recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
+      const historyToken = recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
         operation,
         frame,
         keyframeSetChanged: true,
+        historyToken,
         keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
       };
     }
@@ -3229,13 +3275,14 @@ function createSessionSceneStore(options = {}) {
           objects: [...held.objects.values()].map(clonePlain)
         }
         : blankBlueprint(stableVideoIdentity));
-      recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
+      const historyToken = recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
         operation,
         frame,
         keyframeSetChanged: true,
+        historyToken,
         keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
       };
     }
@@ -3283,13 +3330,14 @@ function createSessionSceneStore(options = {}) {
         if (scene.targetFrame > frame) nextFrameByKey.set(scene.key, scene.targetFrame - 1);
       }
       rekeyScenes(stableVideoIdentity, nextFrameByKey);
-      recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
+      const historyToken = recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
       rebuildActiveProvisionalScene(stableVideoIdentity);
       return {
         applied: true,
         operation,
         frame,
         keyframeSetChanged: true,
+        historyToken,
         keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
       };
     }
@@ -3306,15 +3354,51 @@ function createSessionSceneStore(options = {}) {
     const inserted = operation === 'frame-insert-blank-keyframe'
       ? materializeSceneAt(stableVideoIdentity, frame, blankBlueprint(stableVideoIdentity))
       : null;
-    recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
+    const historyToken = recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
     rebuildActiveProvisionalScene(stableVideoIdentity);
     return {
       applied: true,
       operation,
       frame,
       keyframeSetChanged: true,
+      historyToken,
       keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
     };
+  }
+
+  // 그리기 세션 없이(패널을 닫고 보기만 하는 중) 한 구조 조작을 되돌리거나 다시 한다.
+  //
+  // 전역 순서의 **최상단이 바로 그 구조 항목일 때만** 받는다. 세션이 없는 동안
+  // 획 단위 커맨드까지 되돌리면, 패널을 닫아 둔 사용자의 그림이 화면 밖에서 조용히
+  // 바뀐다 — 그 되돌리기는 그리기 모드 안에서 하는 것이다.
+  function applyPassiveStructuralHistory(command = {}) {
+    if (destroyed) return { applied: false, reason: 'store-destroyed' };
+    const direction = command.direction;
+    if (direction !== 'undo' && direction !== 'redo') {
+      return { applied: false, reason: 'invalid-history-direction' };
+    }
+    const stableVideoIdentity = passiveVideoIdentity(command.stableVideoIdentity);
+    if (!stableVideoIdentity) return { applied: false, reason: 'no-active-session' };
+    const order = globalOrderFor(stableVideoIdentity);
+    const list = order ? (direction === 'undo' ? order.undo : order.redo) : [];
+    const entry = list[list.length - 1];
+    if (!entry) return { applied: false, reason: 'history-empty' };
+    if (!entry.structural || Array.isArray(entry.structural.frames) ||
+        typeof entry.historyToken !== 'string' ||
+        entry.historyToken !== command.historyToken) {
+      return { applied: false, reason: 'history-mismatch' };
+    }
+    return {
+      ...applyStructuralHistory(entry, order, direction),
+      historyToken: entry.historyToken
+    };
+  }
+
+  // 프레임 F 에서 보이는 커밋된 키프레임의 프레임 번호(없으면 null).
+  // 세션 없는 구조 조작 뒤, 떠 있는 화면을 새 키프레임 집합에 맞출 때 쓴다.
+  function getHeldSceneFrame(stableVideoIdentity, frame) {
+    const held = heldSceneAt(stableVideoIdentity, frame);
+    return held ? held.targetFrame : null;
   }
 
   function hasScene(stableVideoIdentity, targetFrame) {
@@ -3369,6 +3453,7 @@ function createSessionSceneStore(options = {}) {
     const droppedSceneInstanceIds = [...scenes.values()].map(scene => scene.sceneInstanceId);
     scenes.clear();
     globalHistoryOrder.clear();
+    knownVideoDimensions.clear();
     videoAccess.clear();
     persistenceByVideo.clear();
     latestPersistenceVideoIdentity = null;
@@ -3392,6 +3477,8 @@ function createSessionSceneStore(options = {}) {
     deleteSelection,
     clearSession,
     applyFrameOperation,
+    applyPassiveStructuralHistory,
+    getHeldSceneFrame,
     applyLayerObjectsOperation,
     setObjectRanks,
     getPersistenceFence,
@@ -10426,6 +10513,11 @@ function createFabricOverlayRuntime(options = {}) {
   function updateDrawingTool(command = {}) {
     if (!inputEnabled) return { accepted: false, reason: 'input-disabled' };
     const normalized = { ...command, tool: command.tool === 'V' ? 'select' : command.tool };
+    // 바꾸기 **직전** 도구를 함께 돌려준다. 팔레트 클릭은 이 창 안에서만 도구를
+    // 바꾸고 컨트롤러에 알리지 않으므로, 컨트롤러는 지금 도구를 모른다. 그리기
+    // 단축키(B)가 "다른 도구였으면 브러시로, 이미 브러시였으면 끄기" 를 가리려면
+    // 이 값이 있어야 한다.
+    const previousTool = normalizeFabricDrawingTool(currentSession?.tool);
     const result = sceneStore.updateTool(normalized);
     if (!result.accepted) {
       metrics.recordStaleMessageDrop();
@@ -10433,7 +10525,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     currentSession.tool = result.tool;
     setToolMode(result.tool);
-    return result;
+    return { ...result, previousTool };
   }
 
   // 브러시 크기 원격 변경. 도구 변경과 같은 토큰 규약을 쓰되 revision 은 별도로 센다.
@@ -10586,8 +10678,81 @@ function createFabricOverlayRuntime(options = {}) {
     return result;
   }
 
+  // 그리기 입력이 꺼진 채(패널을 닫고 보기만 하는 중)로 받는 구조 조작.
+  //
+  // 프레임·키프레임 조작과 **그렇게 한 조작**의 되돌리기·다시하기만 받는다.
+  // 획을 건드리는 것(선택 삭제·전체 지우기)과 레이어 조작은 세션이 있어야 한다.
+  // 세션 id 가 없으므로 영상 정체로 맞춘다(레이어 뷰 갱신과 같은 규약).
+  function applyPassiveDrawingAction(command = {}) {
+    const stale = { applied: false, reason: 'stale-session' };
+    if (inputEnabled || currentSession ||
+        (command.sessionId !== null && command.sessionId !== undefined)) {
+      return stale;
+    }
+    const stableVideoIdentity = String(command.stableVideoIdentity || '');
+    if (!stableVideoIdentity) return stale;
+    const action = command.action || command.type;
+    const isHistory = action === 'undo' || action === 'redo';
+    if (!isHistory && !FRAME_STRUCTURE_ACTIONS.has(action)) return stale;
+    if (typeof sceneStore.applyFrameOperation !== 'function' ||
+        typeof sceneStore.applyPassiveStructuralHistory !== 'function') {
+      return stale;
+    }
+    const frame = Number(command.targetFrame);
+    if (!isHistory && (!Number.isSafeInteger(frame) || frame < 0)) {
+      return { applied: false, reason: 'invalid-action-target' };
+    }
+    if (!actionDeduper.accept(command.actionId)) {
+      metrics.recordDuplicateAction();
+      return { applied: false, duplicate: true };
+    }
+    const result = isHistory
+      ? sceneStore.applyPassiveStructuralHistory({
+        direction: action,
+        stableVideoIdentity,
+        historyToken: command.historyToken
+      })
+      : sceneStore.applyFrameOperation({
+        operation: action,
+        frame,
+        stableVideoIdentity,
+        sourceWidth: command.sourceWidth,
+        sourceHeight: command.sourceHeight
+      });
+    if (!result.applied) {
+      actionDeduper.release?.(command.actionId);
+      return result;
+    }
+    if (result.keyframeSetChanged !== true) return { ...result, repainted: false };
+    // 키프레임 집합이 바뀌었으니 떠 있는 화면이 다른 프레임의 것이 됐을 수 있다.
+    // 렌더러가 문서를 다시 받아 새 표시 요청을 보내기 전에, 지금 보이는 프레임을
+    // 새 집합에 맞춰 동기로 다시 칠한다(투명 창이라 늦으면 옛 그림이 잠깐 남는다).
+    const display = passiveDisplaySession;
+    if (display && display.stableVideoIdentity === stableVideoIdentity &&
+        Number.isSafeInteger(display.targetFrame) &&
+        typeof sceneStore.getHeldSceneFrame === 'function') {
+      const sourceFrame = sceneStore.getHeldSceneFrame(stableVideoIdentity, display.targetFrame);
+      display.sourceFrame = sourceFrame;
+      presentationState.sourceFrame = sourceFrame;
+      // 다음 표시 요청이 "같은 출처" 로 판정돼 재도색을 건너뛰지 않게 한다.
+      presentationState.storeRevision = -1;
+      lastPaintedScene = sourceFrame === null
+        ? null
+        : { stableVideoIdentity, targetFrame: sourceFrame };
+      if (lastPaintedScene) {
+        repaintLastPaintedScene({ force: true, clearWhenMissing: true });
+      } else if (fabricCanvas) {
+        fabricCanvas.clear();
+        if (typeof fabricCanvas.renderAll === 'function') fabricCanvas.renderAll();
+        else fabricCanvas.requestRenderAll();
+      }
+    }
+    return { ...result, repainted: true };
+  }
+
   function applyDrawingAction(command = {}) {
-    if (!inputEnabled || command.sessionId !== currentSession?.sessionId) {
+    if (!inputEnabled) return applyPassiveDrawingAction(command);
+    if (command.sessionId !== currentSession?.sessionId) {
       return { applied: false, reason: 'stale-session' };
     }
     const action = command.action || command.type;

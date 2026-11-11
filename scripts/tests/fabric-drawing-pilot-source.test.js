@@ -2006,6 +2006,40 @@ test('controller drawing tool literal matches the shared tool set', () => {
   assert.deepEqual([...literalTools].sort(), [...FABRIC_DRAWING_TOOLS].sort());
 });
 
+test('패널을 닫아 둔 채 받는 액션 목록은 컨트롤러와 호스트가 같다', () => {
+  // 컨트롤러는 브라우저 ES 모듈이고 호스트는 CommonJS 라 목록을 공유할 수 없다.
+  // 어긋나면 컨트롤러가 보낸 요청을 호스트가 조용히 거절하거나, 호스트가 받을
+  // 수 있는 것을 컨트롤러가 보내지 않는다.
+  const readSet = (source, name) => {
+    const match = source.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`));
+    assert.ok(match, `${name} 리터럴이 있어야 한다`);
+    return [...match[1].matchAll(/'([^']+)'/g)].map(entry => entry[1]).sort();
+  };
+  const controllerPassive = readSet(pilotControllerSource, 'PASSIVE_DRAWING_ACTIONS');
+  const hostPassive = readSet(overlayHostSource, 'HOST_PASSIVE_DRAWING_ACTIONS');
+  assert.deepEqual(controllerPassive, hostPassive);
+  // 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다 — 프레임·키프레임 구조
+  // 조작 7종과 그 되돌리기·다시하기만 들어 있어야 한다.
+  assert.deepEqual(controllerPassive, [
+    'frame-copy',
+    'frame-insert',
+    'frame-insert-blank-keyframe',
+    'frame-paste',
+    'frame-remove',
+    'frame-to-keyframe',
+    'keyframe-to-frame',
+    'redo',
+    'undo'
+  ]);
+  // 둘 다 전체 액션 목록의 부분집합이어야 한다.
+  const controllerAll = new Set(readSet(pilotControllerSource, 'CONTROLLER_DRAWING_ACTIONS'));
+  const hostAll = new Set(readSet(overlayHostSource, 'HOST_DRAWING_ACTIONS'));
+  for (const action of controllerPassive) {
+    assert.ok(controllerAll.has(action), `컨트롤러 전체 목록에 ${action} 이 없다`);
+    assert.ok(hostAll.has(action), `호스트 전체 목록에 ${action} 이 없다`);
+  }
+});
+
 test('shape and pen tools are registered as assignable shortcut actions without default keys', () => {
   const toolActions = [
     'drawingToolBrush',

@@ -18983,3 +18983,249 @@ test('native Fabric pointercancel keeps the owner and DOM viewport aligned witho
     assert.equal(h.runtime.getDiagnostics().mutationCount, 0); assert.equal(h.runtime.getDiagnostics().undoDepth, 0);
   } finally { owner.cancel(); await h.destroy(); }
 });
+
+// ── 그리기 패널을 닫아 둔 채(입력 꺼짐)로 받는 구조 조작 ─────────────────────
+//
+// 구형 도구에서는 2 / 3 / 4 같은 프레임 단축키가 패널을 열지 않아도 동작했다.
+// 지금 구조에서는 패널을 닫으면 세션이 없으므로, 영상 정체로 맞춘 요청을 따로 받는다.
+
+function createPassiveStructureHarness() {
+  const harness = createRealFabricHarness();
+  let sequence = 0;
+  const setInput = (inputRevision, enabled) => harness.runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision,
+    enabled,
+    ...(enabled
+      ? {
+        session: {
+          sessionId: 'real-fabric-session',
+          stableVideoIdentity: 'real-fabric-video',
+          targetFrame: 0,
+          sourceWidth: 200,
+          sourceHeight: 120,
+          canvasRect: { left: 0, top: 0, width: 200, height: 120 },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 },
+          tool: 'brush'
+        }
+      }
+      : {})
+  });
+  const hydrate = () => harness.runtime.hydrateDrawingVideo({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    persistenceSessionId: 'passive-structure-persistence',
+    stableVideoIdentity: 'real-fabric-video',
+    fps: 24,
+    totalFrames: 240,
+    keyframes: []
+  });
+  const passive = (action, overrides = {}) => harness.runtime.applyDrawingAction({
+    sessionId: null,
+    stableVideoIdentity: 'real-fabric-video',
+    actionId: `passive-${(sequence += 1)}`,
+    action,
+    ...(action === 'undo' || action === 'redo'
+      ? {}
+      : { targetFrame: 0, sourceWidth: 200, sourceHeight: 120 }),
+    ...overrides
+  });
+  const exportSnapshot = () => harness.sceneStore.exportVideo({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    persistenceSessionId: 'passive-structure-persistence',
+    stableVideoIdentity: 'real-fabric-video',
+    fps: 24,
+    totalFrames: 240
+  }).snapshot;
+  const sceneObjects = () => harness.canvas.getObjects()
+    .filter(object => object.__baeframeObjectId);
+  return { harness, setInput, hydrate, passive, exportSnapshot, sceneObjects };
+}
+
+test('패널을 닫아 둔 채로도 프레임 조작이 적용되고 떠 있는 화면이 따라온다', async () => {
+  const { harness, setInput, hydrate, passive, sceneObjects } = createPassiveStructureHarness();
+  try {
+    setInput(2, false);
+    assert.equal(hydrate().accepted, true);
+    assert.equal(setInput(3, true).accepted, true);
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7401);
+    // 패널을 닫는다. 화면에는 프레임 0 의 획이 투영으로 남는다.
+    assert.equal(setInput(4, false).accepted, true);
+    assert.equal(sceneObjects().length, 1);
+
+    // 2 — 빈 키프레임 삽입: 프레임 0 부터 한 칸 밀고 그 자리에 빈 키프레임을 만든다.
+    const inserted = passive('frame-insert-blank-keyframe');
+    assert.equal(inserted.applied, true);
+    assert.deepEqual(inserted.keyframeFrames, [0, 1]);
+    assert.equal(inserted.repainted, true, '호스트가 합성을 강제하도록 알린다');
+    assert.equal(typeof inserted.historyToken, 'string');
+    // 보고 있던 프레임 0 은 이제 빈 키프레임이다 — 옛 획이 화면에 남으면 안 된다.
+    assert.equal(sceneObjects().length, 0, '떠 있는 화면이 새 키프레임 집합을 따라온다');
+    assert.equal(harness.runtime.getDiagnostics().state, 'passive', '그리기 모드를 켜지 않는다');
+
+    // Ctrl+Z — 방금 한 조작을 그 표식으로 되돌린다.
+    const undone = passive('undo', { historyToken: inserted.historyToken });
+    assert.equal(undone.applied, true);
+    assert.deepEqual(undone.keyframeFrames, [0]);
+    assert.equal(sceneObjects().length, 1, '획이 다시 보인다');
+
+    // Ctrl+Y — 되돌린 조작을 다시 한다.
+    const redone = passive('redo', { historyToken: inserted.historyToken });
+    assert.equal(redone.applied, true);
+    assert.deepEqual(redone.keyframeFrames, [0, 1]);
+    assert.equal(sceneObjects().length, 0);
+
+    // 3 — 프레임 추가: 키프레임을 만들지 않고 뒤만 민다.
+    const pushed = passive('frame-insert');
+    assert.equal(pushed.applied, true);
+    assert.deepEqual(pushed.keyframeFrames, [1, 2]);
+
+    // 4 — 프레임 삭제: 되돌린다.
+    const pulled = passive('frame-remove');
+    assert.equal(pulled.applied, true);
+    assert.deepEqual(pulled.keyframeFrames, [0, 1]);
+
+    // 같은 actionId 는 다시 실행하지 않는다.
+    const duplicate = passive('frame-insert', { actionId: 'passive-duplicate' });
+    assert.equal(duplicate.applied, true);
+    assert.deepEqual(
+      passive('frame-insert', { actionId: 'passive-duplicate' }),
+      { applied: false, duplicate: true }
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('세션 없는 되돌리기는 방금 한 그 구조 조작만 되돌린다', async () => {
+  const { harness, setInput, hydrate, passive } = createPassiveStructureHarness();
+  try {
+    setInput(2, false);
+    assert.equal(hydrate().accepted, true);
+    assert.equal(setInput(3, true).accepted, true);
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7411);
+    assert.equal(setInput(4, false).accepted, true);
+
+    const inserted = passive('frame-insert');
+    assert.equal(inserted.applied, true);
+
+    // 표식이 어긋나면 받지 않는다.
+    assert.deepEqual(
+      passive('undo', { historyToken: 'frame-op:not-this-one' }),
+      { applied: false, reason: 'history-mismatch' }
+    );
+    // 다시 할 것이 없을 때의 다시 실행.
+    assert.deepEqual(
+      passive('redo', { historyToken: inserted.historyToken }),
+      { applied: false, reason: 'history-empty' }
+    );
+
+    // 그리기 모드에서 획을 더 그으면 전역 순서의 최상단은 그 획이 된다.
+    assert.equal(setInput(5, true).accepted, true);
+    harness.drawStroke([{ x: 20, y: 60 }, { x: 80, y: 60 }], 7412);
+    assert.equal(setInput(6, false).accepted, true);
+    const strokesBefore = harness.sceneStore
+      .getSceneSnapshot('real-fabric-video', 0)?.objects.length;
+
+    // 패널을 닫은 채로는 **획**을 되돌리지 않는다. 화면 밖에서 그림이 조용히 바뀐다.
+    assert.deepEqual(
+      passive('undo', { historyToken: inserted.historyToken }),
+      { applied: false, reason: 'history-mismatch' }
+    );
+    assert.equal(
+      harness.sceneStore.getSceneSnapshot('real-fabric-video', 0)?.objects.length,
+      strokesBefore,
+      '획은 그대로다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('세션 없는 구조 조작은 획 편집·다른 영상·세션 있는 요청을 받지 않는다', async () => {
+  const { harness, setInput, hydrate, passive } = createPassiveStructureHarness();
+  try {
+    setInput(2, false);
+    assert.equal(hydrate().accepted, true);
+    assert.equal(setInput(3, true).accepted, true);
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7421);
+
+    // 그리기 입력이 켜져 있는 동안에는 세션 없는 요청이 통하지 않는다.
+    assert.deepEqual(passive('frame-insert'), { applied: false, reason: 'stale-session' });
+
+    assert.equal(setInput(4, false).accepted, true);
+    const stale = { applied: false, reason: 'stale-session' };
+    // 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다.
+    for (const action of ['delete-selection', 'clear-session', 'layer-model-marker']) {
+      assert.deepEqual(passive(action), stale, action);
+    }
+    // 세션 id 를 실어 온 요청은 예전 그대로 거절한다.
+    assert.deepEqual(passive('frame-insert', { sessionId: 'real-fabric-session' }), stale);
+    // 수화하지 않은 영상의 키프레임은 바꾸지 않는다.
+    assert.deepEqual(
+      passive('frame-insert', { stableVideoIdentity: 'another-video' }),
+      { applied: false, reason: 'no-active-session' }
+    );
+    assert.deepEqual(passive('frame-insert', { stableVideoIdentity: '' }), stale);
+    assert.deepEqual(
+      passive('frame-insert', { targetFrame: -1 }),
+      { applied: false, reason: 'invalid-action-target' }
+    );
+    // 거절된 요청은 actionId 를 태우지 않는다 — 같은 id 로 다시 보내면 통한다.
+    assert.equal(passive('frame-insert', { actionId: 'retry-me', targetFrame: 500 }).applied, false);
+    assert.equal(passive('frame-insert', { actionId: 'retry-me' }).applied, true);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('세션 없이 빈 영상에 넣은 첫 키프레임도 영상의 실제 소스 크기를 갖는다', async () => {
+  // 세션도 키프레임도 없으면 스토어는 소스 크기를 알 길이 없다. 1×1 로 접히면 거기
+  // 그린 획이 진짜 영상 좌표를 쓰므로 저장 메타데이터와 좌표계가 어긋난다.
+  const { harness, setInput, hydrate, passive, exportSnapshot } = createPassiveStructureHarness();
+  try {
+    setInput(2, false);
+    assert.equal(hydrate().accepted, true);
+
+    const inserted = passive('frame-insert-blank-keyframe', { targetFrame: 3 });
+    assert.equal(inserted.applied, true);
+    assert.deepEqual(inserted.keyframeFrames, [3]);
+    const scene = exportSnapshot().scenes.find(candidate => candidate.targetFrame === 3);
+    assert.ok(scene);
+    assert.equal(scene.sourceWidth, 200);
+    assert.equal(scene.sourceHeight, 120);
+    assert.deepEqual(scene.objects, []);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('updateDrawingTool 은 바꾸기 직전 도구를 함께 돌려준다', async () => {
+  // 팔레트 클릭은 오버레이 안에서만 도구를 바꾼다. 그리기 단축키(B)가 "다른
+  // 도구였으면 브러시로, 이미 브러시였으면 끄기" 를 가리려면 이 값이 필요하다.
+  const harness = createRealFabricHarness();
+  try {
+    const update = (toolRevision, tool) => harness.runtime.updateDrawingTool({
+      sessionId: 'real-fabric-session',
+      toolRevision,
+      tool
+    });
+    const first = update(1, 'select');
+    assert.equal(first.accepted, true);
+    assert.equal(first.tool, 'select');
+    assert.equal(first.previousTool, 'brush');
+
+    // 팔레트에서 지우개를 누른다 — 컨트롤러에는 알려지지 않는 변경이다.
+    realClick(harness, paletteButton(harness.root, 'eraser'));
+    const second = update(2, 'brush');
+    assert.equal(second.accepted, true);
+    assert.equal(second.previousTool, 'eraser', '팔레트로 바꾼 도구를 직전 도구로 돌려준다');
+
+    const third = update(3, 'brush');
+    assert.equal(third.previousTool, 'brush', '이미 브러시였다');
+  } finally {
+    await harness.destroy();
+  }
+});
