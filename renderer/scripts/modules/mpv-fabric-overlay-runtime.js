@@ -4092,7 +4092,7 @@ function createFabricOverlayRuntime(options = {}) {
   // [ / ] 로 띄운 HUD 를 되돌리는 타이머. Alt 제스처는 자기 수명 동안 HUD 를
   // 계속 잡고 있어야 하므로 제스처가 시작되면 이 타이머를 취소한다.
   let sizeAdjustHudTimer = null;
-  const overlayModifierState = { alt: false, ctrl: false, shift: false };
+  const overlayModifierState = { alt: false, ctrl: false };
   // Alt 제스처 실기 미동작(v2.4.3-beta) 원인 확정용 관측값.
   // "오버레이 문서가 Alt keydown을 받기는 하는가"와 "마우스 pointerdown이 altKey를
   // 싣고 오는가"를 분리해 재현 1회로 원인을 가른다. 씬·스키마와 무관한 진단 전용 상태다.
@@ -5926,9 +5926,12 @@ function createFabricOverlayRuntime(options = {}) {
         typeof controlsUtils.rotationWithSnapping !== 'function') {
       return null;
     }
+    // Shift 는 포인터 이벤트에 실려 온 값만 믿는다. Alt·Ctrl 처럼 오버레이 문서의 키
+    // 상태를 기억해 두지 않는다 — 호스트가 Shift 조합(Shift+2 등)의 누름을 삼키면
+    // Chromium 이 Shift 뗌을 내보내지 않아, 기억해 둔 값이 눌린 채로 남는다.
     const rotate = (eventData, transform, x, y) => {
       if (transform?.target) {
-        transform.target.snapAngle = isShiftActive(eventData)
+        transform.target.snapAngle = eventData?.shiftKey === true
           ? TRANSFORM_ROTATE_SNAP_DEGREES
           : undefined;
       }
@@ -5965,18 +5968,7 @@ function createFabricOverlayRuntime(options = {}) {
         render: () => {}
       });
     }
-    const scaleControls = controlsUtils.createObjectDefaultControls();
-    for (const control of Object.values(scaleControls)) {
-      const scale = control.actionHandler;
-      if (typeof scale !== 'function') continue;
-      // 비율 유지는 Shift 다. fabric 은 포인터 이벤트에 실린 키만 보는데, 펜·터치는
-      // 그 값이 비어 오는 환경이 있다. 오버레이가 직접 본 키 상태를 함께 본다.
-      control.actionHandler = (eventData, transform, x, y) => {
-        if (fabricCanvas) fabricCanvas.uniformScaling = isShiftActive(eventData);
-        return scale(eventData, transform, x, y);
-      };
-    }
-    Object.assign(controls, scaleControls);
+    Object.assign(controls, controlsUtils.createObjectDefaultControls());
     controls.mtr = new Control({
       x: 0,
       y: -0.5,
@@ -8762,12 +8754,6 @@ function createFabricOverlayRuntime(options = {}) {
     return overlayModifierState.ctrl === true;
   }
 
-  // 변형 상자의 비율 유지·15° 단위 회전이 쓴다.
-  function isShiftActive(event) {
-    if (event?.shiftKey === true) return true;
-    if (event?.pointerType === 'mouse') return false;
-    return overlayModifierState.shift === true;
-  }
 
   function recordPointerdownProbe(event) {
     gestureProbe.lastPointerdown = {
@@ -8790,13 +8776,11 @@ function createFabricOverlayRuntime(options = {}) {
     if (event?.pointerType !== 'mouse') return;
     if (event.altKey !== true) overlayModifierState.alt = false;
     if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
-    if (event.shiftKey !== true) overlayModifierState.shift = false;
   }
 
   function resetOverlayModifierState() {
     overlayModifierState.alt = false;
     overlayModifierState.ctrl = false;
-    overlayModifierState.shift = false;
   }
 
   function onOverlayKeyDown(event) {
@@ -8810,7 +8794,6 @@ function createFabricOverlayRuntime(options = {}) {
       gestureProbe.overlayCtrlKeyDownCount += 1;
       syncTempErase();
     }
-    if (event?.key === 'Shift') overlayModifierState.shift = true;
     // 호스트는 그리기 중 Space 누름을 메인 창으로 넘기되 삼키지 않는다 — 삼키면 Chromium 이
     // 짝이 되는 뗌을 버려 메인 창이 Space 를 누른 채로 남는다. 그래서 누름이 이 문서까지
     // 온다. 포커스가 남은 팔레트 버튼이 눌리거나 팔레트가 스크롤되지 않게 기본 동작만 막는다.
@@ -8834,7 +8817,6 @@ function createFabricOverlayRuntime(options = {}) {
       overlayModifierState.ctrl = false;
       syncTempErase();
     }
-    if (event?.key === 'Shift') overlayModifierState.shift = false;
   }
 
   // 포인터가 캔버스를 떠나면 그 뒤의 Ctrl 변화는 포인터 이벤트로 알 수 없다. 메인 창에
@@ -10974,10 +10956,9 @@ function createFabricOverlayRuntime(options = {}) {
         moveCursor: 'grabbing',
         freeDrawingCursor: 'crosshair',
         // 변형 상자의 모서리는 가로·세로를 따로 늘이고, Shift 를 누르면 비율을
-        // 지킨다(애니메이트의 자유 변형과 같다). Shift 는 손잡이가 직접 판정해
-        // uniformScaling 을 그때그때 정한다(createSelectionTransformControls).
+        // 지킨다(애니메이트의 자유 변형과 같다).
         uniformScaling: false,
-        uniScaleKey: 'none',
+        uniScaleKey: 'shiftKey',
         // Alt 는 브러시 크기 조절 제스처가 쓰고, Shift+변 손잡이의 기울이기는 잠가 뒀다.
         centeredKey: 'none',
         altActionKey: 'none'

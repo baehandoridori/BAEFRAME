@@ -17266,7 +17266,7 @@ void main() {
         let sizeAdjustHud = null;
         let sizeAdjustHudLabel = null;
         let sizeAdjustHudTimer = null;
-        const overlayModifierState = { alt: false, ctrl: false, shift: false };
+        const overlayModifierState = { alt: false, ctrl: false };
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
           overlayCtrlKeyDownCount: 0,
@@ -18797,7 +18797,7 @@ void main() {
           }
           const rotate = (eventData, transform, x2, y2) => {
             if (transform?.target) {
-              transform.target.snapAngle = isShiftActive(eventData) ? TRANSFORM_ROTATE_SNAP_DEGREES : void 0;
+              transform.target.snapAngle = eventData?.shiftKey === true ? TRANSFORM_ROTATE_SNAP_DEGREES : void 0;
             }
             return controlsUtils.rotationWithSnapping(eventData, transform, x2, y2);
           };
@@ -18829,16 +18829,7 @@ void main() {
               }
             });
           }
-          const scaleControls = controlsUtils.createObjectDefaultControls();
-          for (const control of Object.values(scaleControls)) {
-            const scale = control.actionHandler;
-            if (typeof scale !== "function") continue;
-            control.actionHandler = (eventData, transform, x2, y2) => {
-              if (fabricCanvas) fabricCanvas.uniformScaling = isShiftActive(eventData);
-              return scale(eventData, transform, x2, y2);
-            };
-          }
-          Object.assign(controls, scaleControls);
+          Object.assign(controls, controlsUtils.createObjectDefaultControls());
           controls.mtr = new Control({
             x: 0,
             y: -0.5,
@@ -21205,11 +21196,6 @@ void main() {
           if (event?.pointerType === "mouse") return false;
           return overlayModifierState.ctrl === true;
         }
-        function isShiftActive(event) {
-          if (event?.shiftKey === true) return true;
-          if (event?.pointerType === "mouse") return false;
-          return overlayModifierState.shift === true;
-        }
         function recordPointerdownProbe(event) {
           gestureProbe.lastPointerdown = {
             pointerType: typeof event?.pointerType === "string" ? event.pointerType : null,
@@ -21226,12 +21212,10 @@ void main() {
           if (event?.pointerType !== "mouse") return;
           if (event.altKey !== true) overlayModifierState.alt = false;
           if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
-          if (event.shiftKey !== true) overlayModifierState.shift = false;
         }
         function resetOverlayModifierState() {
           overlayModifierState.alt = false;
           overlayModifierState.ctrl = false;
-          overlayModifierState.shift = false;
         }
         function onOverlayKeyDown(event) {
           if (event?.key === "Alt") {
@@ -21244,7 +21228,6 @@ void main() {
             gestureProbe.overlayCtrlKeyDownCount += 1;
             syncTempErase();
           }
-          if (event?.key === "Shift") overlayModifierState.shift = true;
           const relayedControlChord = event?.ctrlKey === true && event.altKey !== true && event.metaKey !== true;
           if ((event?.code === "Space" || relayedControlChord) && hostRelaysKeys && inputEnabled && !textEntryActive) {
             event.preventDefault?.();
@@ -21259,7 +21242,6 @@ void main() {
             overlayModifierState.ctrl = false;
             syncTempErase();
           }
-          if (event?.key === "Shift") overlayModifierState.shift = false;
         }
         function onCanvasPointerLeave() {
           syncTempErase();
@@ -23106,10 +23088,9 @@ void main() {
               moveCursor: "grabbing",
               freeDrawingCursor: "crosshair",
               // 변형 상자의 모서리는 가로·세로를 따로 늘이고, Shift 를 누르면 비율을
-              // 지킨다(애니메이트의 자유 변형과 같다). Shift 는 손잡이가 직접 판정해
-              // uniformScaling 을 그때그때 정한다(createSelectionTransformControls).
+              // 지킨다(애니메이트의 자유 변형과 같다).
               uniformScaling: false,
-              uniScaleKey: "none",
+              uniScaleKey: "shiftKey",
               // Alt 는 브러시 크기 조절 제스처가 쓰고, Shift+변 손잡이의 기울이기는 잠가 뒀다.
               centeredKey: "none",
               altActionKey: "none"

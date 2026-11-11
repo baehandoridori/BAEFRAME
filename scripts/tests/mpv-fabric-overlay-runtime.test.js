@@ -8377,7 +8377,7 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
     // 변형 상자: 모서리는 가로·세로를 따로 늘이고 Shift 가 비율을 지킨다.
     // Alt(브러시 크기 조절)와 Shift+변 손잡이(기울이기)는 fabric 에 넘기지 않는다.
     uniformScaling: false,
-    uniScaleKey: 'none',
+    uniScaleKey: 'shiftKey',
     centeredKey: 'none',
     altActionKey: 'none'
   });
@@ -19887,7 +19887,7 @@ test('모서리는 가로·세로를 따로 늘이고 Shift 를 누르면 비율
   }
 });
 
-test('펜처럼 Shift 가 포인터 이벤트에 실려 오지 않아도 오버레이가 본 키 상태로 비율을 지킨다', async () => {
+test('Shift 는 포인터 이벤트에 실려 온 값만 믿는다 — 뗌을 놓친 Shift 가 펜 변형에 남지 않는다', async () => {
   const { harness, selectTool, records, click, dragHandle } = createTransformBoxHarness();
   const keyEvent = (type, key) => {
     const event = new harness.environment.window.Event(type, { bubbles: true, cancelable: true });
@@ -19902,8 +19902,8 @@ test('펜처럼 Shift 가 포인터 이벤트에 실려 오지 않아도 오버�
     const before = records()[0].transform;
     const ratio = before.scaleX / before.scaleY;
 
-    keyEvent('keydown', 'Shift');
-    await dragHandle('br', 30, 0, { pointerType: 'pen' });
+    // 펜 입력도 이벤트에 Shift 가 실려 오면 비율을 지킨다.
+    await dragHandle('br', 30, 0, { pointerType: 'pen', shiftKey: true });
     let transform = records()[0].transform;
     assert.ok(transform.scaleX > before.scaleX);
     assert.ok(
@@ -19911,11 +19911,22 @@ test('펜처럼 Shift 가 포인터 이벤트에 실려 오지 않아도 오버�
       `펜 + Shift: ${transform.scaleX / transform.scaleY} vs ${ratio}`
     );
 
-    keyEvent('keyup', 'Shift');
+    // 호스트가 Shift 조합(Shift+2 등)의 누름을 삼키면 Shift 뗌이 오버레이 문서에 오지
+    // 않는다. 누름만 본 상태가 남아도 펜 변형은 Shift 없이 동작해야 한다 — 키 상태를
+    // 기억해 두면 그 뒤의 펜 변형이 계속 "비율 유지" 로 굳는다.
+    keyEvent('keydown', 'Shift');
     const scaleY = transform.scaleY;
     await dragHandle('br', 20, 0, { pointerType: 'pen' });
     transform = records()[0].transform;
-    assert.ok(Math.abs(transform.scaleY - scaleY) < 0.05, 'Shift 를 떼면 다시 따로 늘인다');
+    assert.ok(Math.abs(transform.scaleY - scaleY) < 0.05, '뗌을 놓친 Shift 가 남지 않는다');
+    const angle = transform.angle;
+    await dragHandle('mtr', 23, 17, { pointerType: 'pen' });
+    transform = records()[0].transform;
+    const steps = (transform.angle - angle) / 15;
+    assert.ok(
+      Math.abs(steps - Math.round(steps)) > 1e-3,
+      `회전도 15° 단위로 굳지 않는다: ${transform.angle}`
+    );
   } finally {
     await harness.destroy();
   }
