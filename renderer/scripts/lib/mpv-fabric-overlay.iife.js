@@ -5040,7 +5040,7 @@
         maxLatencySamples: 256
       });
       var LIMIT_KEYS = Object.freeze(Object.keys(DEFAULT_LIMITS));
-      var UNSUPPORTED_TRANSFORM_FIELDS = Object.freeze([
+      var NON_TRANSLATION_TRANSFORM_FIELDS = Object.freeze([
         "scaleX",
         "scaleY",
         "angle",
@@ -5052,7 +5052,7 @@
       var TRANSFORM_FIELDS = Object.freeze([
         "left",
         "top",
-        ...UNSUPPORTED_TRANSFORM_FIELDS
+        ...NON_TRANSLATION_TRANSFORM_FIELDS
       ]);
       var REASON_ALLOWLIST = Object.freeze(/* @__PURE__ */ new Set([
         "adapter-failed",
@@ -5165,18 +5165,89 @@
       function transformsEqual(left, right, fields = TRANSFORM_FIELDS) {
         return fields.every((field) => left[field] === right[field]);
       }
-      function canonicalTransform(finalTransform, baseline) {
-        if (!transformsEqual(finalTransform, baseline, UNSUPPORTED_TRANSFORM_FIELDS)) {
-          return null;
-        }
+      function multiplyAffine(left, right) {
         return [
-          1,
-          0,
-          0,
-          1,
-          finalTransform.left - baseline.left,
-          finalTransform.top - baseline.top
+          left[0] * right[0] + left[2] * right[1],
+          left[1] * right[0] + left[3] * right[1],
+          left[0] * right[2] + left[2] * right[3],
+          left[1] * right[2] + left[3] * right[3],
+          left[0] * right[4] + left[2] * right[5] + left[4],
+          left[1] * right[4] + left[3] * right[5] + left[5]
         ];
+      }
+      function invertAffine(matrix) {
+        const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+        if (!Number.isFinite(determinant) || determinant === 0) return null;
+        return [
+          matrix[3] / determinant,
+          -matrix[1] / determinant,
+          -matrix[2] / determinant,
+          matrix[0] / determinant,
+          (matrix[2] * matrix[5] - matrix[3] * matrix[4]) / determinant,
+          (matrix[1] * matrix[4] - matrix[0] * matrix[5]) / determinant
+        ];
+      }
+      function exactCos(radians) {
+        if (radians === 0) return 1;
+        const slice = Math.abs(radians) / (Math.PI / 2);
+        if (slice === 1 || slice === 3) return 0;
+        if (slice === 2) return -1;
+        return Math.cos(radians);
+      }
+      function exactSin(radians) {
+        if (radians === 0) return 0;
+        const slice = radians / (Math.PI / 2);
+        const sign = Math.sign(radians);
+        if (slice === 1) return sign;
+        if (slice === 2) return 0;
+        if (slice === 3) return -sign;
+        return Math.sin(radians);
+      }
+      function fabricTransformMatrix(transform) {
+        let matrix = [1, 0, 0, 1, transform.left, transform.top];
+        if (transform.angle) {
+          const radians = transform.angle * Math.PI / 180;
+          const cos = exactCos(radians);
+          const sin = exactSin(radians);
+          matrix = multiplyAffine(matrix, [cos, sin, -sin, cos, 0, 0]);
+        }
+        let dimensions = [
+          transform.flipX ? -transform.scaleX : transform.scaleX,
+          0,
+          0,
+          transform.flipY ? -transform.scaleY : transform.scaleY,
+          0,
+          0
+        ];
+        if (transform.skewX) {
+          dimensions = multiplyAffine(
+            dimensions,
+            [1, 0, Math.tan(transform.skewX * Math.PI / 180), 1, 0, 0]
+          );
+        }
+        if (transform.skewY) {
+          dimensions = multiplyAffine(
+            dimensions,
+            [1, Math.tan(transform.skewY * Math.PI / 180), 0, 1, 0, 0]
+          );
+        }
+        return multiplyAffine(matrix, dimensions);
+      }
+      function canonicalTransform(finalTransform, baseline) {
+        if (transformsEqual(finalTransform, baseline, NON_TRANSLATION_TRANSFORM_FIELDS)) {
+          return [
+            1,
+            0,
+            0,
+            1,
+            finalTransform.left - baseline.left,
+            finalTransform.top - baseline.top
+          ];
+        }
+        const inverse = invertAffine(fabricTransformMatrix(baseline));
+        if (inverse === null) return null;
+        const matrix = multiplyAffine(fabricTransformMatrix(finalTransform), inverse);
+        return matrix.every(Number.isFinite) ? matrix : null;
       }
       function hashText(text, seed, multiplier) {
         let hash = seed >>> 0;
@@ -5756,9 +5827,6 @@
             if (!current || !transformsEqual(current, before)) {
               return { valid: false, reason: "transition-before-mismatch" };
             }
-            if (!transformsEqual(before, after, UNSUPPORTED_TRANSFORM_FIELDS)) {
-              return { valid: false, reason: "unsupported-transform" };
-            }
             const baseline = state.baselines.get(transform.id) || baselineAdds.get(transform.id);
             if (!baseline) return { valid: false, reason: "missing-baseline" };
             const projected = canonicalTransform(after, baseline);
@@ -6118,7 +6186,7 @@
           getDiagnostics
         };
       }
-      module.exports = { createDrawingEngineAdapter };
+      module.exports = { createDrawingEngineAdapter, fabricTransformMatrix };
     }
   });
 
@@ -14000,7 +14068,17 @@ void main() {
       var MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 25e4;
       var DEFAULT_MAX_OBJECTS = 1e4;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
-      var UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
+      var NON_TRANSLATION_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
+      var SELECTION_TRANSFORM_ACTIONS = /* @__PURE__ */ new Set(["scale", "scaleX", "scaleY", "rotate"]);
+      var TRANSFORM_HANDLE_CSS_PX = 9;
+      var TRANSFORM_TOUCH_HANDLE_CSS_PX = 26;
+      var TRANSFORM_ROTATE_OFFSET_CSS_PX = 26;
+      var TRANSFORM_ROTATE_ZONE_CSS_PX = 18;
+      var TRANSFORM_BORDER_CSS_PX = 1.25;
+      var TRANSFORM_ROTATE_SNAP_DEGREES = 15;
+      var TRANSFORM_MIN_GESTURE_SCALE = 0.02;
+      var TRANSFORM_MIN_RECORD_SCALE = 0.01;
+      var TRANSFORM_MAX_RECORD_SCALE = 100;
       var BRUSH_COLORS = Object.freeze([
         "#ff4757",
         "#ffd000",
@@ -14042,6 +14120,10 @@ void main() {
       var SHAPE_MENU_CARET_SVG = '<svg viewBox="0 0 4 4" width="4" height="4" fill="currentColor" aria-hidden="true"><path d="M4 4H0l4-4z"/></svg>';
       var ERASER_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#000" stroke-opacity="0.65" stroke-width="3.5"/><circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.5"/><circle cx="12" cy="12" r="1.6" fill="#000" fill-opacity="0.65"/><circle cx="12" cy="12" r="0.9" fill="#fff"/></svg>'
+      )}") 12 12, crosshair`;
+      var ROTATE_CURSOR_SHAPE = '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>';
+      var ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="translate(2.4 2.4) scale(0.8)" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#000" stroke-opacity="0.65" stroke-width="5">${ROTATE_CURSOR_SHAPE}</g><g stroke="#fff" stroke-width="2.2">${ROTATE_CURSOR_SHAPE}</g></g></svg>`
       )}") 12 12, crosshair`;
       var TEMP_ERASE_TOOL_LABEL = "\uC9C0\uC6B0\uAC1C \xB7 Ctrl";
       var TOOL_STATUS_LABELS = Object.freeze({
@@ -14339,6 +14421,20 @@ void main() {
           MAX_SELECTION_HIT_TOLERANCE,
           Math.max(MIN_SELECTION_HIT_TOLERANCE, Math.ceil(SELECTION_HIT_MARGIN_CSS_PX * sourcePerCssPixel))
         );
+      }
+      function resolveSourcePerCssPixel(session = {}) {
+        const rect = session.canvasRect || {};
+        const sourceWidth = Math.max(0, finiteNumber(session.sourceWidth));
+        const sourceHeight = Math.max(0, finiteNumber(session.sourceHeight));
+        const displayWidth = Math.max(0, finiteNumber(rect.width));
+        const displayHeight = Math.max(0, finiteNumber(rect.height));
+        const scale = normalizeViewportTransform(session.viewportTransform).scale;
+        if (!sourceWidth || !sourceHeight || !displayWidth || !displayHeight) return 1;
+        const ratio = Math.max(
+          sourceWidth / displayWidth / scale,
+          sourceHeight / displayHeight / scale
+        );
+        return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
       }
       function resolveEffectiveCanvasRect(canvasRect = {}, viewportTransform = {}) {
         const left = finiteNumber(canvasRect.left, 0);
@@ -14961,13 +15057,6 @@ void main() {
               const beforeTransform = beforeTransforms.get(id);
               const afterTransform = afterTransforms.get(id);
               if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
-              if (!storedTransformsEqual(
-                beforeTransform,
-                afterTransform,
-                UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
-              )) {
-                event.unsupportedReason = "unsupported-transform";
-              }
               event.transforms.push({ id, beforeTransform, afterTransform });
             }
             event.kind = transitionKind(
@@ -15007,13 +15096,6 @@ void main() {
             const finalTransform = record?.transform || {};
             const insertionRecord = storedTransformsEqual(baseTransform, finalTransform) ? record : { ...record, transform: baseTransform };
             if (!storedTransformsEqual(baseTransform, finalTransform)) {
-              if (!storedTransformsEqual(
-                baseTransform,
-                finalTransform,
-                UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
-              )) {
-                event.unsupportedReason = "unsupported-transform";
-              }
               event.transforms.push({
                 id,
                 beforeTransform: baseTransform,
@@ -15031,13 +15113,6 @@ void main() {
             const beforeTransform = beforeObject?.transform || {};
             const afterTransform = afterObject?.transform || {};
             if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
-            if (!storedTransformsEqual(
-              beforeTransform,
-              afterTransform,
-              UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
-            )) {
-              event.unsupportedReason = "unsupported-transform";
-            }
             event.transforms.push({ id, beforeTransform, afterTransform });
           }
           const expectedOrder = beforeState.order.filter((id) => !removedIdSet.has(id));
@@ -15591,7 +15666,7 @@ void main() {
                 skewY: 0,
                 ...outlineObject.transform || {}
               };
-              const outlineNext = {
+              const outlineNext = transformById.has(outlineId) ? { ...outlineCurrent, ...clonePlain(transformById.get(outlineId)) } : {
                 ...outlineCurrent,
                 left: finiteNumber(outlineCurrent.left) + (finiteNumber(next.left) - finiteNumber(current.left)),
                 top: finiteNumber(outlineCurrent.top) + (finiteNumber(next.top) - finiteNumber(current.top))
@@ -17166,7 +17241,7 @@ void main() {
         let sizeAdjustHud = null;
         let sizeAdjustHudLabel = null;
         let sizeAdjustHudTimer = null;
-        const overlayModifierState = { alt: false, ctrl: false };
+        const overlayModifierState = { alt: false, ctrl: false, shift: false };
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
           overlayCtrlKeyDownCount: 0,
@@ -17231,6 +17306,8 @@ void main() {
         let tempEraseArmed = false;
         let transformStart = null;
         let selectGesture = null;
+        let selectionTransformControls = null;
+        let selectionTransformControlsUnit = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
         let deferredViewport = null;
         let longTaskObserver = null;
@@ -18673,13 +18750,194 @@ void main() {
         }
         function restoreUnsupportedTransform(object, persistedTransform = {}) {
           const values = {};
-          for (const field of UNSUPPORTED_PHASE0_TRANSFORM_FIELDS) {
+          for (const field of NON_TRANSLATION_TRANSFORM_FIELDS) {
             const fallback = field === "scaleX" || field === "scaleY" ? 1 : field === "flipX" || field === "flipY" ? false : 0;
             values[field] = persistedTransform[field] ?? fallback;
           }
           object.set(values);
           applyMoveOnlyConstraints(object);
+          if (object === fabricCanvas?.getActiveObject?.()) applySelectionTransformPolicy(object);
           object.setCoords?.();
+        }
+        function selectionAllowsTransform(activeObject) {
+          if (!inputEnabled || !activeObject || pendingLassoSelection) return false;
+          if (sceneStore.getDiagnostics().tool !== "select") return false;
+          const children = typeof activeObject.getObjects === "function" ? activeObject.getObjects() : [activeObject];
+          return children.length > 0 && children.every((object) => !!object?.__baeframeObjectId && !object.__baeframeTransient && !object.__baeframePendingLasso && !isLayerRestricted(object.__baeframeObjectId));
+        }
+        function createSelectionTransformControls(unit) {
+          const { Control, controlsUtils } = resolveFabric();
+          if (typeof Control !== "function" || typeof controlsUtils?.createObjectDefaultControls !== "function" || typeof controlsUtils.rotationWithSnapping !== "function") {
+            return null;
+          }
+          const rotate = (eventData, transform, x, y) => {
+            if (transform?.target) {
+              transform.target.snapAngle = isShiftActive(eventData) ? TRANSFORM_ROTATE_SNAP_DEGREES : void 0;
+            }
+            return controlsUtils.rotationWithSnapping(eventData, transform, x, y);
+          };
+          const rotateCursor = (_eventData, _control, fabricObject) => fabricObject?.lockRotation ? "not-allowed" : ROTATE_CURSOR;
+          const reach = TRANSFORM_ROTATE_ZONE_CSS_PX * unit;
+          const zone = TRANSFORM_HANDLE_CSS_PX * unit + reach;
+          const touchZone = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit + reach;
+          const zoneOffset = reach / 2;
+          const controls = {};
+          for (const [key, x, y] of [
+            ["rotateTl", -0.5, -0.5],
+            ["rotateTr", 0.5, -0.5],
+            ["rotateBl", -0.5, 0.5],
+            ["rotateBr", 0.5, 0.5]
+          ]) {
+            controls[key] = new Control({
+              x,
+              y,
+              offsetX: Math.sign(x) * zoneOffset,
+              offsetY: Math.sign(y) * zoneOffset,
+              sizeX: zone,
+              sizeY: zone,
+              touchSizeX: touchZone,
+              touchSizeY: touchZone,
+              actionHandler: rotate,
+              cursorStyleHandler: rotateCursor,
+              actionName: "rotate",
+              render: () => {
+              }
+            });
+          }
+          const scaleControls = controlsUtils.createObjectDefaultControls();
+          for (const control of Object.values(scaleControls)) {
+            const scale = control.actionHandler;
+            if (typeof scale !== "function") continue;
+            control.actionHandler = (eventData, transform, x, y) => {
+              if (fabricCanvas) fabricCanvas.uniformScaling = isShiftActive(eventData);
+              return scale(eventData, transform, x, y);
+            };
+          }
+          Object.assign(controls, scaleControls);
+          controls.mtr = new Control({
+            x: 0,
+            y: -0.5,
+            offsetY: -TRANSFORM_ROTATE_OFFSET_CSS_PX * unit,
+            actionHandler: rotate,
+            cursorStyleHandler: rotateCursor,
+            withConnection: true,
+            actionName: "rotate"
+          });
+          return controls;
+        }
+        function resolveSelectionTransformControls(unit) {
+          if (selectionTransformControlsUnit !== unit) {
+            selectionTransformControls = createSelectionTransformControls(unit);
+            selectionTransformControlsUnit = unit;
+          }
+          return selectionTransformControls;
+        }
+        function applySelectionTransformPolicy(activeObject, session = currentSession) {
+          if (!activeObject?.set || !selectionAllowsTransform(activeObject)) return false;
+          const unit = resolveSourcePerCssPixel(session || {});
+          activeObject.set({
+            hasControls: true,
+            lockScalingX: false,
+            lockScalingY: false,
+            // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다.
+            lockScalingFlip: true,
+            lockRotation: false,
+            lockSkewingX: true,
+            lockSkewingY: true,
+            minScaleLimit: TRANSFORM_MIN_GESTURE_SCALE,
+            transparentCorners: false,
+            cornerStyle: "rect",
+            // 밝은 영상과 어두운 영상 어디서나 보이게 흰 손잡이에 어두운 테두리를 준다.
+            cornerColor: "#ffffff",
+            cornerStrokeColor: "#1b1b1e",
+            cornerSize: Math.max(3, Math.round(TRANSFORM_HANDLE_CSS_PX * unit)),
+            touchCornerSize: Math.max(6, Math.round(TRANSFORM_TOUCH_HANDLE_CSS_PX * unit)),
+            borderScaleFactor: Math.max(1, TRANSFORM_BORDER_CSS_PX * unit)
+          });
+          const controls = resolveSelectionTransformControls(unit);
+          if (controls) activeObject.controls = controls;
+          return true;
+        }
+        function absoluteObjectTransform(object) {
+          if (!object) return null;
+          if (!object.group || typeof object.calcTransformMatrix !== "function") {
+            return captureTransform(object);
+          }
+          const { util } = resolveFabric();
+          if (typeof util?.qrDecompose !== "function") return null;
+          let decomposed;
+          try {
+            decomposed = util.qrDecompose(object.calcTransformMatrix());
+          } catch (_error) {
+            return null;
+          }
+          return {
+            left: finiteNumber(decomposed.translateX),
+            top: finiteNumber(decomposed.translateY),
+            scaleX: finiteNumber(decomposed.scaleX, 1),
+            scaleY: finiteNumber(decomposed.scaleY, 1),
+            angle: finiteNumber(decomposed.angle),
+            skewX: finiteNumber(decomposed.skewX),
+            skewY: finiteNumber(decomposed.skewY),
+            // 뒤집힘은 분해에서 음수 배율로 나온다.
+            flipX: false,
+            flipY: false
+          };
+        }
+        function selectionTransformIsStorable(transform) {
+          if (!validatePersistedTransform(transform)) return false;
+          return [transform.scaleX, transform.scaleY].every((scale) => {
+            const magnitude = Math.abs(scale);
+            return magnitude >= TRANSFORM_MIN_RECORD_SCALE && magnitude <= TRANSFORM_MAX_RECORD_SCALE;
+          });
+        }
+        function syncTransformedOutlinePairs() {
+          const start = transformStart;
+          if (!start?.outlinePairs?.length) return false;
+          const { util } = resolveFabric();
+          if (typeof util?.multiplyTransformMatrices !== "function" || typeof util.invertTransform !== "function" || typeof util.applyTransformToObject !== "function") {
+            return false;
+          }
+          for (const pair of start.outlinePairs) {
+            if (!pair.startMatrix || !pair.bodyStartMatrix || typeof pair.body?.calcTransformMatrix !== "function") {
+              continue;
+            }
+            try {
+              const delta = util.multiplyTransformMatrices(
+                pair.body.calcTransformMatrix(),
+                util.invertTransform(pair.bodyStartMatrix)
+              );
+              util.applyTransformToObject(
+                pair.object,
+                util.multiplyTransformMatrices(delta, pair.startMatrix)
+              );
+              pair.object.setCoords?.();
+            } catch (error) {
+              lastError = error.message;
+            }
+          }
+          fabricCanvas?.requestRenderAll();
+          return true;
+        }
+        function commitSelectionTransform(target, children, ids) {
+          syncTransformedOutlinePairs();
+          const outlineObjects = (transformStart?.outlinePairs || []).map((pair) => pair.object);
+          const transforms = [];
+          for (const object of [...children, ...outlineObjects]) {
+            const id = object?.__baeframeObjectId;
+            const transform = absoluteObjectTransform(object);
+            if (!id || !transform || !selectionTransformIsStorable(transform)) {
+              return { applied: false, reason: "invalid-selection-transform" };
+            }
+            transforms.push({ id, transform });
+          }
+          const result = sceneStore.transformSelection({ transforms });
+          if (!result.applied) return result;
+          transformStart = null;
+          renderActiveScene({ immediate: true });
+          activateObjectIds(ids);
+          updateObjectMetric();
+          return { applied: true, objectIds: result.objectIds };
         }
         function isLayerRestricted(objectId) {
           return typeof objectId === "string" && (hiddenObjectIds.has(objectId) || lockedObjectIds.has(objectId));
@@ -20781,9 +21039,19 @@ void main() {
           settleArmedFramePreview();
           return result;
         }
+        function pointerTargetsSelectionHandle(activeObject, event) {
+          if (!activeObject?.hasControls || typeof activeObject.findControl !== "function") return false;
+          try {
+            const point = fabricCanvas.getViewportPoint?.(event);
+            return !!point && !!activeObject.findControl(point, event?.pointerType === "touch");
+          } catch (_error) {
+            return false;
+          }
+        }
         function pointerTargetsActiveSelection(event) {
           const activeObject = fabricCanvas?.getActiveObject?.();
           if (!activeObject) return false;
+          if (pointerTargetsSelectionHandle(activeObject, event)) return true;
           try {
             const point = fabricCanvas.getScenePoint?.(event) || {
               x: finiteNumber(event?.clientX),
@@ -20873,6 +21141,11 @@ void main() {
           if (event?.pointerType === "mouse") return false;
           return overlayModifierState.ctrl === true;
         }
+        function isShiftActive(event) {
+          if (event?.shiftKey === true) return true;
+          if (event?.pointerType === "mouse") return false;
+          return overlayModifierState.shift === true;
+        }
         function recordPointerdownProbe(event) {
           gestureProbe.lastPointerdown = {
             pointerType: typeof event?.pointerType === "string" ? event.pointerType : null,
@@ -20889,10 +21162,12 @@ void main() {
           if (event?.pointerType !== "mouse") return;
           if (event.altKey !== true) overlayModifierState.alt = false;
           if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
+          if (event.shiftKey !== true) overlayModifierState.shift = false;
         }
         function resetOverlayModifierState() {
           overlayModifierState.alt = false;
           overlayModifierState.ctrl = false;
+          overlayModifierState.shift = false;
         }
         function onOverlayKeyDown(event) {
           if (event?.key === "Alt") {
@@ -20905,6 +21180,7 @@ void main() {
             gestureProbe.overlayCtrlKeyDownCount += 1;
             syncTempErase();
           }
+          if (event?.key === "Shift") overlayModifierState.shift = true;
           const relayedControlChord = event?.ctrlKey === true && event.altKey !== true && event.metaKey !== true;
           if ((event?.code === "Space" || relayedControlChord) && hostRelaysKeys && inputEnabled && !textEntryActive) {
             event.preventDefault?.();
@@ -20919,6 +21195,7 @@ void main() {
             overlayModifierState.ctrl = false;
             syncTempErase();
           }
+          if (event?.key === "Shift") overlayModifierState.shift = false;
         }
         function onCanvasPointerLeave() {
           syncTempErase();
@@ -21469,9 +21746,12 @@ void main() {
           try {
             start.target.set?.(start.transform);
             applyMoveOnlyConstraints(start.target);
+            if (start.target === fabricCanvas?.getActiveObject?.()) {
+              applySelectionTransformPolicy(start.target);
+            }
             start.target.setCoords?.();
             for (const pair of start.outlinePairs || []) {
-              pair.object.set?.({ left: pair.startLeft, top: pair.startTop });
+              pair.object.set?.(pair.startTransform || { left: pair.startLeft, top: pair.startTop });
               pair.object.setCoords?.();
             }
             if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
@@ -22167,6 +22447,8 @@ void main() {
           transformStart = {
             target,
             transform: captureTransform(target),
+            // 끌어 옮기기('drag')인지 변형 상자의 크기·회전인지. 커밋 경로가 여기서 갈린다.
+            action: typeof event?.transform?.action === "string" ? event.transform.action : "drag",
             // 외곽선은 선택 대상이 아니라 fabric 의 이동 타깃에 들어가지 않는다.
             // 드래그 중에도 짝이 붙어 다니도록 출발 위치를 기억해 두고 같은 델타를 준다.
             outlinePairs: collectDraggedOutlinePairs(target)
@@ -22187,10 +22469,23 @@ void main() {
             const outlineId = outlineIdFor(child?.__baeframeObjectId);
             const outlineObject = outlineId ? canvasObjects.get(outlineId) : null;
             if (!outlineObject) continue;
+            const matrixOf = (object) => {
+              try {
+                return typeof object?.calcTransformMatrix === "function" ? Array.from(object.calcTransformMatrix()) : null;
+              } catch (_error) {
+                return null;
+              }
+            };
             pairs.push({
               object: outlineObject,
               startLeft: finiteNumber(outlineObject.left),
-              startTop: finiteNumber(outlineObject.top)
+              startTop: finiteNumber(outlineObject.top),
+              // 크기·회전을 따라가려면 자리만으로는 모자란다. 본체와 외곽선의 출발
+              // 행렬을 함께 기억해 둔다(syncTransformedOutlinePairs).
+              body: child,
+              startTransform: captureTransform(outlineObject),
+              startMatrix: matrixOf(outlineObject),
+              bodyStartMatrix: matrixOf(child)
             });
           }
           return pairs;
@@ -22247,6 +22542,10 @@ void main() {
           }
           syncDraggedOutlinePairs();
         }
+        function onObjectTransforming() {
+          if (pendingLassoSelection) return;
+          syncTransformedOutlinePairs();
+        }
         function onObjectModified(event) {
           const target = event?.target;
           if (!target) return;
@@ -22269,6 +22568,13 @@ void main() {
           const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
           const ids = children.map((object) => object.__baeframeObjectId).filter(Boolean);
           sceneStore.selectObjects(ids);
+          const action = typeof event?.action === "string" ? event.action : typeof event?.transform?.action === "string" ? event.transform.action : transformStart?.action;
+          if (SELECTION_TRANSFORM_ACTIONS.has(action) && transformStart?.target === target && selectionAllowsTransform(target)) {
+            const transformed = commitSelectionTransform(target, children, ids);
+            if (!transformed.applied) rollbackSelectTransform(event, false);
+            settleArmedFramePreview();
+            return;
+          }
           let result;
           if (children.length > 1 && transformStart?.target === target) {
             restoreUnsupportedTransform(target, transformStart.transform);
@@ -22321,6 +22627,8 @@ void main() {
           addFabricListener("selection:cleared", onSelectionCleared);
           addFabricListener("before:transform", onBeforeTransform);
           addFabricListener("object:moving", onObjectMoving);
+          addFabricListener("object:scaling", onObjectTransforming);
+          addFabricListener("object:rotating", onObjectTransforming);
           addFabricListener("object:modified", onObjectModified);
           addFabricListener("after:render", onCanvasAfterRender);
         }
@@ -22369,6 +22677,7 @@ void main() {
           if ((isPermanentPath || isPermanentActiveSelection) && !activeRestricted) {
             applyMoveOnlyConstraints(activeObject);
             applySelectedActivePolicy(activeObject);
+            applySelectionTransformPolicy(activeObject, session);
             activeObject.set?.({ selectable: true, evented: true });
             activeObject.setCoords?.();
           }
@@ -22530,6 +22839,8 @@ void main() {
           pendingLassoSelection = null;
           transformStart = null;
           selectGesture = null;
+          selectionTransformControls = null;
+          selectionTransformControlsUnit = null;
           deferredViewport = null;
           inputEnabled = false;
           currentSession = null;
@@ -22726,7 +23037,15 @@ void main() {
               defaultCursor: "default",
               hoverCursor: "grab",
               moveCursor: "grabbing",
-              freeDrawingCursor: "crosshair"
+              freeDrawingCursor: "crosshair",
+              // 변형 상자의 모서리는 가로·세로를 따로 늘이고, Shift 를 누르면 비율을
+              // 지킨다(애니메이트의 자유 변형과 같다). Shift 는 손잡이가 직접 판정해
+              // uniformScaling 을 그때그때 정한다(createSelectionTransformControls).
+              uniformScaling: false,
+              uniScaleKey: "none",
+              // Alt 는 브러시 크기 조절 제스처가 쓰고, Shift+변 손잡이의 기울이기는 잠가 뒀다.
+              centeredKey: "none",
+              altActionKey: "none"
             });
             configureCanvasEvents();
             for (const [toolButton, toolName] of [

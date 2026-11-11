@@ -252,3 +252,42 @@ test('palette docks in the editor tool row, excludes local history controls and 
     assert.equal(h.paletteContainer.querySelector('.editor-drawing-dock').hidden, true);
   } finally { await h.dispose(); }
 });
+test('돌린 획도 화면 비율이 다른 출력으로 정확히 늘어난다', async () => {
+  const h = harness();
+  try {
+    // 20×20 정사각형을 두 배로 키워 45° 돌린 획(마름모). 꼭짓점은 중심에서 가로·세로로
+    // 28.28 떨어져 있다.
+    const turned = () => stroke('turned', '#ff0000', {
+      style: { color: '#ff0000', size: 3, opacity: 1 },
+      transform: { left: 100, top: 50, scaleX: 2, scaleY: 2, angle: 45, skewX: 0, skewY: 0, flipX: false, flipY: false }
+    });
+    const render = async (width, height) => {
+      const value = clip('a', documentValue([[0, [turned()]]]));
+      const [overlay] = await h.drawing.exportOverlays(value, { width, height, fps: 24 });
+      const image = await loadImage(overlay.dataUrl);
+      const ctx = createCanvas(width, height).getContext('2d');
+      ctx.drawImage(image, 0, 0);
+      return (x, y) => ctx.getImageData(Math.round(x), Math.round(y), 1, 1).data[3];
+    };
+
+    // 가로 0.5 · 세로 2 배: 세로로 긴 마름모가 돼야 한다(가로 ±14.14, 세로 ±56.57).
+    // 크기 필드에 비율만 곱하면 45° 로 누운 길쭉한 직사각형이 돼 버린다.
+    let alpha = await render(100, 200);
+    assert.ok(alpha(50, 100) > 0, '중심');
+    assert.ok(alpha(50, 150) > 0, '세로로 길게 뻗는다');
+    assert.ok(alpha(50, 50) > 0);
+    assert.ok(alpha(60, 100) > 0);
+    assert.equal(alpha(26, 124), 0, '45° 로 누운 직사각형이 아니다');
+    assert.equal(alpha(74, 76), 0);
+    assert.equal(alpha(68, 100), 0, '가로 꼭짓점 바깥');
+    assert.equal(alpha(50, 162), 0, '세로 꼭짓점 바깥');
+
+    // 같은 비율로 키우면 모양은 그대로이고 크기만 두 배다(꼭짓점 ±56.57).
+    alpha = await render(400, 200);
+    assert.ok(alpha(200, 100) > 0);
+    assert.ok(alpha(200, 150) > 0);
+    assert.ok(alpha(250, 100) > 0);
+    assert.equal(alpha(245, 145), 0, '마름모의 빗변 바깥');
+    assert.equal(alpha(200, 162), 0);
+  } finally { await h.dispose(); }
+});

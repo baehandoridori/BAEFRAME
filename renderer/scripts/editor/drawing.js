@@ -23,6 +23,25 @@ function projectGeometry(project) {
       !Number.isFinite(fps) || fps <= 0 || fps > 1000) throw new Error('올바른 출력 크기와 FPS가 필요합니다.');
   return { width, height, fps };
 }
+// 그림 한 획을 출력 캔버스 크기에 맞춰 늘인다. 돌리지 않은 획은 자리와 크기에 비율을
+// 곱하면 정확하다. 돌린 획을 가로·세로 다른 비율로 늘이면 크기만으로는 표현되지 않아
+// (기울임이 생긴다) 행렬로 곱한 뒤 fabric 과 같은 방식으로 다시 풀어 넣는다.
+function rescaleRecordTransform(transform, sx, sy) {
+  if (sx === sy || !transform.angle) {
+    transform.left *= sx; transform.top *= sy;
+    transform.scaleX *= sx; transform.scaleY *= sy;
+    return;
+  }
+  const { util } = browserFabric;
+  const scaled = util.qrDecompose(util.multiplyTransformMatrices([sx, 0, 0, sy, 0, 0], util.composeMatrix({
+    translateX: transform.left, translateY: transform.top, angle: transform.angle,
+    scaleX: transform.scaleX, scaleY: transform.scaleY, skewX: transform.skewX, skewY: transform.skewY,
+    flipX: transform.flipX, flipY: transform.flipY
+  })));
+  Object.assign(transform, { left: scaled.translateX, top: scaled.translateY, angle: scaled.angle,
+    scaleX: scaled.scaleX, scaleY: scaled.scaleY, skewX: scaled.skewX, skewY: scaled.skewY,
+    flipX: false, flipY: false });
+}
 function clipDocument(clip, project) {
   const geometry = projectGeometry(project);
   if (!clip || typeof clip.id !== 'string' || !clip.id || !Number.isSafeInteger(clip.durationFrames) || clip.durationFrames <= 0) {
@@ -41,10 +60,7 @@ function clipDocument(clip, project) {
     const sx = geometry.width / keyframe.sourceWidth;
     const sy = geometry.height / keyframe.sourceHeight;
     if (sx !== 1 || sy !== 1) {
-      for (const record of keyframe.objects) {
-        record.transform.left *= sx; record.transform.top *= sy;
-        record.transform.scaleX *= sx; record.transform.scaleY *= sy;
-      }
+      for (const record of keyframe.objects) rescaleRecordTransform(record.transform, sx, sy);
       keyframe.sourceWidth = geometry.width;
       keyframe.sourceHeight = geometry.height;
     }

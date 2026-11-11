@@ -8373,7 +8373,13 @@ test('prepare creates one Fabric canvas and the browser runtime stays reusable',
     defaultCursor: 'default',
     hoverCursor: 'grab',
     moveCursor: 'grabbing',
-    freeDrawingCursor: 'crosshair'
+    freeDrawingCursor: 'crosshair',
+    // 변형 상자: 모서리는 가로·세로를 따로 늘이고 Shift 가 비율을 지킨다.
+    // Alt(브러시 크기 조절)와 Shift+변 손잡이(기울이기)는 fabric 에 넘기지 않는다.
+    uniformScaling: false,
+    uniScaleKey: 'none',
+    centeredKey: 'none',
+    altActionKey: 'none'
   });
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-toolbar').length, 1);
   assert.equal(root.querySelectorAllByClass('mpv-fabric-pilot-viewport').length, 1);
@@ -10351,7 +10357,7 @@ test('an active stroke keeps the pointerdown style while controls change', () =>
   assert.equal(observedSizes.every(size => size === 3), true);
 });
 
-test('Phase 0 selection moves while scale rotate and skew remain locked across reactivation', () => {
+test('the active selection gets a scale and rotate box while skew and unselected strokes stay locked', () => {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
   const root = document.createElement('div');
@@ -10373,11 +10379,18 @@ test('Phase 0 selection moves while scale rotate and skew remain locked across r
   canvas.activeObject = activeSelection;
   canvas.emit('selection:created', { selected: [selected], deselected: [] });
 
+  // 고른 것(여기서는 묶음)에는 크기·회전 손잡이가 달린다. 묶음 안의 획은 fabric 이
+  // 묶음의 손잡이로 다루므로 자기 손잡이를 갖지 않는다. 기울이기는 어디서도 잠겨 있다.
+  assert.equal(activeSelection.hasControls, true);
+  assert.equal(activeSelection.lockScalingX, false);
+  assert.equal(activeSelection.lockScalingY, false);
+  assert.equal(activeSelection.lockRotation, false);
+  assert.equal(activeSelection.lockScalingFlip, true, '손잡이를 반대편 너머로 끌어도 뒤집히지 않는다');
+  assert.equal(selected.hasControls, false);
+  assert.equal(selected.lockScalingX, true);
+  assert.equal(selected.lockScalingY, true);
+  assert.equal(selected.lockRotation, true);
   for (const target of [selected, activeSelection]) {
-    assert.equal(target.hasControls, false);
-    assert.equal(target.lockScalingX, true);
-    assert.equal(target.lockScalingY, true);
-    assert.equal(target.lockRotation, true);
     assert.equal(target.lockSkewingX, true);
     assert.equal(target.lockSkewingY, true);
     assert.notEqual(target.lockMovementX, true);
@@ -10389,6 +10402,8 @@ test('Phase 0 selection moves while scale rotate and skew remain locked across r
   assert.equal(activeSelection.perPixelTargetFind, false);
   assert.equal(activeSelection.hoverCursor, 'move');
 
+  // 끌어 옮기기('drag')는 자리만 바꾼다. 그 사이 크기·회전 필드가 달라졌더라도
+  // 변형 상자를 거치지 않은 변화는 받지 않고 저장된 값으로 되돌린다.
   canvas.emit('before:transform', { target: selected, transform: { target: selected } });
   selected.left += 12;
   selected.scaleX = 2;
@@ -19621,4 +19636,789 @@ test('어니언 스킨 조회는 가까운 그림부터 돌려주고 잘못된 �
     keyframes: []
   }));
   assert.ok(store.getContentRevision() > before);
+});
+
+// ── 선택 도구의 변형 상자(크기·회전) ─────────────────────────────────────────
+//
+// 고른 획에 손잡이가 달린 상자를 띄운다. 저장은 레코드의 transform 만 바꾸고
+// pathData·sourcePoints 는 그대로 둔다.
+
+function createTransformBoxHarness(options = {}) {
+  const events = [];
+  const harness = createRealFabricHarness({
+    ...options,
+    sceneStoreOptions: {
+      committedTransitionObserver: event => { events.push(event); },
+      ...(options.sceneStoreOptions || {})
+    }
+  });
+  const size = options.sourceWidth || 200;
+  const setInput = (inputRevision, enabled, session = {}) => harness.runtime.setDrawingInput({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision,
+    enabled,
+    ...(enabled
+      ? {
+        session: {
+          sessionId: 'real-fabric-session',
+          stableVideoIdentity: 'real-fabric-video',
+          targetFrame: 0,
+          sourceWidth: size,
+          sourceHeight: size,
+          canvasRect: { left: 0, top: 0, width: size, height: size },
+          viewportTransform: { scale: 1, panX: 0, panY: 0 },
+          tool: 'brush',
+          ...session
+        }
+      }
+      : {})
+  });
+  // 전이 이벤트는 지속화가 묶인 영상에서만 나간다.
+  setInput(2, false);
+  assert.equal(harness.runtime.hydrateDrawingVideo({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    persistenceSessionId: 'transform-box-persistence',
+    stableVideoIdentity: 'real-fabric-video',
+    fps: 24,
+    totalFrames: 240,
+    keyframes: []
+  }).accepted, true);
+  assert.equal(setInput(3, true).accepted, true);
+
+  let toolRevision = 0;
+  const selectTool = (tool = 'select') => harness.runtime.updateDrawingTool({
+    sessionId: 'real-fabric-session',
+    toolRevision: (toolRevision += 1),
+    tool
+  });
+  const records = () => harness.sceneStore.getActiveSceneSnapshot().objects;
+  const active = () => harness.canvas.getActiveObject();
+  const activeIds = () => harness.canvas.getActiveObjects()
+    .map(object => object.__baeframeObjectId);
+  // 선택 제스처는 손을 뗀 뒤 한 박자 뒤에 정리된다(마이크로태스크, fabric 이 아직 변형
+  // 중이면 타이머). 실제 사용자는 그보다 빨리 다음 조작을 시작할 수 없다. 기다리지 않으면
+  // 앞 제스처가 남아 런타임이 다음 누르기를 건너뛰고, 실제와 다른 경로가 검증된다.
+  const settle = async () => {
+    await new Promise(resolve => setTimeout(resolve, 0));
+    await Promise.resolve();
+  };
+  const click = async (index, id) => {
+    harness.clickStroke(index, id);
+    await settle();
+  };
+  // 손잡이의 화면 좌표. 하네스는 캔버스를 1:1 로 띄우므로 캔버스 좌표가 곧 포인터 좌표다.
+  const handle = key => {
+    const target = active();
+    assert.ok(target, '고른 것이 있어야 손잡이를 잡을 수 있다');
+    target.setCoords();
+    const corner = target.oCoords[key];
+    assert.ok(corner, `손잡이 ${key} 가 있어야 한다`);
+    return { x: corner.x, y: corner.y };
+  };
+  let pointerId = 900;
+  const pressHandle = (key, modifiers = {}) => {
+    const from = handle(key);
+    const id = (pointerId += 1);
+    harness.dispatchPointer(harness.element, 'pointerdown', from.x, from.y, id, 1, modifiers);
+    return { from, id };
+  };
+  const dragHandle = async (key, dx, dy, modifiers = {}) => {
+    const { from, id } = pressHandle(key, modifiers);
+    // 포인터를 잡은 동안의 이동은 캔버스로 온다(런타임의 캡처 단계 → fabric 의 문서 리스너).
+    harness.dispatchPointer(
+      harness.element, 'pointermove', from.x + dx, from.y + dy, id, 1, modifiers
+    );
+    harness.dispatchCapturedPointerUp(from.x + dx, from.y + dy, id);
+    await settle();
+  };
+  const matrixOf = transform => {
+    const realFabric = require('fabric/node');
+    const path = new realFabric.Path('M 0 0 L 10 0 L 10 10 Z');
+    path.set(transform);
+    return Array.from(path.calcTransformMatrix());
+  };
+  const undoDepth = () => harness.runtime.getDiagnostics().globalUndoDepth;
+  return {
+    harness,
+    events,
+    setInput,
+    selectTool,
+    records,
+    active,
+    activeIds,
+    settle,
+    click,
+    handle,
+    pressHandle,
+    dragHandle,
+    matrixOf,
+    undoDepth
+  };
+}
+
+function assertMatrixClose(actual, expected, tolerance, message) {
+  for (let index = 0; index < 6; index += 1) {
+    assert.ok(
+      Math.abs(actual[index] - expected[index]) < tolerance,
+      `${message} [${index}]: ${actual[index]} != ${expected[index]}`
+    );
+  }
+}
+
+test('변형 상자의 모서리 손잡이로 크기를 바꾸면 transform 만 바뀌어 저장된다', async () => {
+  const { harness, events, selectTool, records, active, activeIds, click, dragHandle, undoDepth } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 60 }, { x: 100, y: 100 }], 8101);
+    const before = records()[0];
+    selectTool();
+    await click(0, 8102);
+
+    // 고른 획에 손잡이가 달린다: 모서리 넷·변 넷·회전 손잡이, 모서리 바깥의 회전 영역 넷.
+    const selected = active();
+    assert.equal(selected.__baeframeObjectId, before.id);
+    assert.equal(selected.hasControls, true);
+    assert.deepEqual(Object.keys(selected.controls).sort(), [
+      'bl', 'br', 'mb', 'ml', 'mr', 'mt', 'mtr',
+      'rotateBl', 'rotateBr', 'rotateTl', 'rotateTr',
+      'tl', 'tr'
+    ]);
+    assert.equal(selected.lockSkewingX, true, '기울이기는 잠겨 있다');
+    assert.equal(selected.lockSkewingY, true);
+
+    events.length = 0;
+    const depth = undoDepth();
+    await dragHandle('br', 30, 20);
+
+    const after = records()[0];
+    assert.equal(after.id, before.id, '같은 획이다 — 새 id 로 갈아 끼우지 않는다');
+    assert.ok(after.transform.scaleX > 1.2, `가로로 늘어난다: ${after.transform.scaleX}`);
+    assert.ok(after.transform.scaleY > 1.2, `세로로 늘어난다: ${after.transform.scaleY}`);
+    assert.equal(after.transform.angle, 0);
+    assert.equal(after.transform.skewX, 0);
+    assert.equal(after.transform.skewY, 0);
+    assert.equal(after.transform.flipX, false);
+    assert.equal(after.pathData, before.pathData, '획의 모양 데이터는 그대로다');
+    assert.deepEqual(after.sourcePoints, before.sourcePoints);
+    assert.deepEqual(after.style, before.style);
+
+    // 저장으로 가는 전이는 이동과 같은 꼴이고, 지원하지 않는 변형으로 표시되지 않는다.
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'transform-objects');
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(events[0].transforms.length, 1);
+    assert.deepEqual(events[0].transforms[0].beforeTransform, before.transform);
+    assert.deepEqual(events[0].transforms[0].afterTransform, after.transform);
+
+    // 실행취소 한 번에 한 조작이다.
+    assert.equal(undoDepth(), depth + 1);
+    // 변형한 뒤에도 그 획이 골라져 있고, 화면의 오브젝트가 저장된 값과 같다.
+    assert.deepEqual(activeIds(), [before.id]);
+    assert.equal(active().hasControls, true, '이어서 다시 변형할 수 있다');
+    assert.equal(active().scaleX, after.transform.scaleX);
+    assert.equal(active().scaleY, after.transform.scaleY);
+
+    // Ctrl+Z 로 되돌아오고 Ctrl+Y 로 다시 적용된다.
+    const undone = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'transform-box-undo',
+      action: 'undo'
+    });
+    assert.equal(undone.applied, true);
+    assert.deepEqual(records()[0].transform, before.transform);
+    const redone = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'transform-box-redo',
+      action: 'redo'
+    });
+    assert.equal(redone.applied, true);
+    assert.deepEqual(records()[0].transform, after.transform);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('모서리는 가로·세로를 따로 늘이고 Shift 를 누르면 비율을 지킨다', async () => {
+  const { harness, selectTool, records, click, dragHandle } = createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 60 }, { x: 100, y: 100 }], 8111);
+    selectTool();
+    await click(0, 8112);
+
+    // 오른쪽으로만 끌면 가로만 늘어난다(애니메이트의 자유 변형과 같다).
+    await dragHandle('br', 30, 0);
+    let transform = records()[0].transform;
+    assert.ok(transform.scaleX > 1.2, `가로: ${transform.scaleX}`);
+    assert.ok(Math.abs(transform.scaleY - 1) < 0.05, `세로는 그대로: ${transform.scaleY}`);
+
+    // 변 손잡이는 한 방향만 바꾼다.
+    const scaleXBefore = transform.scaleX;
+    await dragHandle('mb', 0, 20);
+    transform = records()[0].transform;
+    assert.ok(transform.scaleY > 1.2, `세로: ${transform.scaleY}`);
+    assert.equal(transform.scaleX, scaleXBefore, '변 손잡이는 다른 방향을 건드리지 않는다');
+
+    // Shift 를 누르고 모서리를 끌면 가로·세로 비율이 유지된다.
+    const ratio = transform.scaleX / transform.scaleY;
+    await dragHandle('br', 40, 0, { shiftKey: true });
+    transform = records()[0].transform;
+    assert.ok(transform.scaleX > scaleXBefore, 'Shift 로도 크기는 바뀐다');
+    assert.ok(
+      Math.abs(transform.scaleX / transform.scaleY - ratio) < 1e-6,
+      `비율이 유지돼야 한다: ${transform.scaleX / transform.scaleY} vs ${ratio}`
+    );
+
+    // Shift 를 뗀 다음 조작은 다시 따로 늘인다.
+    const scaleYBefore = transform.scaleY;
+    await dragHandle('br', 20, 0);
+    transform = records()[0].transform;
+    assert.ok(Math.abs(transform.scaleY - scaleYBefore) < 0.05, 'Shift 가 남아 있지 않다');
+
+    // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다.
+    await dragHandle('br', -400, -400);
+    transform = records()[0].transform;
+    assert.ok(transform.scaleX > 0 && transform.scaleY > 0, '뒤집히지 않는다');
+    assert.equal(transform.flipX, false);
+    assert.equal(transform.flipY, false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('펜처럼 Shift 가 포인터 이벤트에 실려 오지 않아도 오버레이가 본 키 상태로 비율을 지킨다', async () => {
+  const { harness, selectTool, records, click, dragHandle } = createTransformBoxHarness();
+  const keyEvent = (type, key) => {
+    const event = new harness.environment.window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(event, 'key', { value: key });
+    harness.environment.document.dispatchEvent(event);
+  };
+  try {
+    harness.drawStroke([{ x: 40, y: 60 }, { x: 100, y: 100 }], 8115);
+    selectTool();
+    await click(0, 8116);
+    await dragHandle('br', 20, 0);
+    const before = records()[0].transform;
+    const ratio = before.scaleX / before.scaleY;
+
+    keyEvent('keydown', 'Shift');
+    await dragHandle('br', 30, 0, { pointerType: 'pen' });
+    let transform = records()[0].transform;
+    assert.ok(transform.scaleX > before.scaleX);
+    assert.ok(
+      Math.abs(transform.scaleX / transform.scaleY - ratio) < 1e-6,
+      `펜 + Shift: ${transform.scaleX / transform.scaleY} vs ${ratio}`
+    );
+
+    keyEvent('keyup', 'Shift');
+    const scaleY = transform.scaleY;
+    await dragHandle('br', 20, 0, { pointerType: 'pen' });
+    transform = records()[0].transform;
+    assert.ok(Math.abs(transform.scaleY - scaleY) < 0.05, 'Shift 를 떼면 다시 따로 늘인다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('위쪽 손잡이와 모서리 바깥에서 끌면 돌고 Shift 를 누르면 15도 단위로 붙는다', async () => {
+  const { harness, events, selectTool, records, active, activeIds, click, handle, dragHandle } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 100 }, { x: 140, y: 100 }], 8121);
+    const before = records()[0];
+    selectTool();
+    await click(0, 8122);
+
+    // 회전 영역은 그리지 않는다 — 둥근 화살표 커서가 "여기서 끌면 돈다"는 표시다.
+    const cursorAt = key => {
+      const point = handle(key);
+      harness.hoverAt(point.x, point.y);
+      return harness.element.style.cursor;
+    };
+    assert.match(cursorAt('rotateBr'), /^url\("data:image\/svg\+xml/, '모서리 바깥은 회전 커서');
+    assert.match(cursorAt('mtr'), /^url\("data:image\/svg\+xml/, '위쪽 손잡이도 회전 커서');
+    assert.match(cursorAt('br'), /resize$/, '모서리 손잡이는 크기 커서');
+
+    events.length = 0;
+    await dragHandle('mtr', 40, 10);
+    let transform = records()[0].transform;
+    assert.ok(Math.abs(transform.angle) > 5, `돌아야 한다: ${transform.angle}`);
+    assert.equal(transform.scaleX, 1, '회전은 크기를 바꾸지 않는다');
+    assert.equal(transform.scaleY, 1);
+    // 중심을 축으로 돈다 — 자리(left/top 은 중심이다)는 그대로다.
+    assert.ok(Math.abs(transform.left - before.transform.left) < 1e-6);
+    assert.ok(Math.abs(transform.top - before.transform.top) < 1e-6);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(active().angle, transform.angle);
+    assert.deepEqual(activeIds(), [before.id], '돌린 뒤에도 골라져 있다');
+
+    // Shift 를 누르고 돌리면 15° 단위다.
+    await dragHandle('mtr', 23, 17, { shiftKey: true });
+    transform = records()[0].transform;
+    const snapped = transform.angle / 15;
+    assert.ok(
+      Math.abs(snapped - Math.round(snapped)) < 1e-9,
+      `15° 단위여야 한다: ${transform.angle}`
+    );
+
+    // 모서리 바로 바깥의 회전 영역(애니메이트처럼). 눈에 보이는 손잡이는 없다.
+    const angleBefore = transform.angle;
+    await dragHandle('rotateBr', -15, 25);
+    transform = records()[0].transform;
+    assert.notEqual(transform.angle, angleBefore, '모서리 바깥에서 끌어도 돈다');
+    assert.equal(transform.scaleX, 1);
+    assert.deepEqual(activeIds(), [before.id]);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('올가미 선택 방식에서도 상자 바깥의 손잡이를 잡을 수 있다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, handle, dragHandle } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 100 }, { x: 140, y: 100 }], 8191);
+    const before = records()[0];
+    selectTool();
+    // 올가미로 고르는 방식에서는 런타임이 선택 영역을 직접 그린다. 고른 것 밖을 누르면
+    // 새 올가미가 시작되면서 선택이 풀리므로, 손잡이를 "고른 것을 누른 것"으로 알아봐야
+    // 한다. 회전 손잡이와 모서리 바깥의 회전 영역은 상자 밖에 있다.
+    clickSelectionControl(harness.root, 'select-shape-lasso');
+    harness.dragLasso([
+      { x: 40, y: 80 }, { x: 160, y: 80 }, { x: 160, y: 120 }, { x: 40, y: 120 }, { x: 40, y: 80 }
+    ], 8192);
+    await settle();
+    assert.deepEqual(activeIds(), [before.id]);
+    assert.equal(active().hasControls, true);
+    // 이 방식의 기본 커서는 십자다. 회전 영역 위에서는 둥근 화살표로 바뀌어야 구별된다.
+    const zone = handle('rotateBr');
+    harness.hoverAt(zone.x, zone.y);
+    assert.match(harness.element.style.cursor, /^url\("data:image\/svg\+xml/, '회전 커서');
+
+    await dragHandle('mtr', 40, 10);
+    assert.deepEqual(activeIds(), [before.id], '회전 손잡이를 눌러도 선택이 풀리지 않는다');
+    const rotated = records()[0].transform;
+    assert.ok(Math.abs(rotated.angle) > 5, `돌아야 한다: ${rotated.angle}`);
+
+    await dragHandle('rotateTl', -10, 30);
+    assert.deepEqual(activeIds(), [before.id]);
+    assert.notEqual(records()[0].transform.angle, rotated.angle, '모서리 바깥에서도 돈다');
+
+    await dragHandle('br', 25, 15);
+    assert.deepEqual(activeIds(), [before.id]);
+    assert.ok(records()[0].transform.scaleX > 1.05, '모서리 손잡이로 크기도 바뀐다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('여러 획을 함께 고르고 변형하면 각 획의 transform 이 화면과 같게 저장된다', async () => {
+  const {
+    harness, events, selectTool, records, active, activeIds, settle, dragHandle, matrixOf, undoDepth
+  } = createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 50 }, { x: 90, y: 50 }], 8131);
+    harness.drawStroke([{ x: 60, y: 120 }, { x: 130, y: 120 }], 8132);
+    const before = records();
+    selectTool();
+    harness.dragMarquee({ x: 20, y: 30 }, { x: 160, y: 150 }, 8133);
+    await settle();
+    assert.deepEqual(activeIds().sort(), before.map(record => record.id).sort());
+    assert.equal(active().hasControls, true, '여러 개를 골라도 상자가 뜬다');
+
+    // 손을 떼기 직전의 화면 행렬을 적어 둔다 — 저장된 값이 이것과 같아야 한다.
+    const observed = new Map();
+    const capture = () => {
+      for (const object of harness.canvas.getActiveObjects()) {
+        observed.set(object.__baeframeObjectId, Array.from(object.calcTransformMatrix()));
+      }
+    };
+    harness.canvas.on('object:scaling', capture);
+    events.length = 0;
+    const depth = undoDepth();
+    await dragHandle('br', 35, 25);
+    harness.canvas.off('object:scaling', capture);
+
+    const after = records();
+    assert.equal(events.length, 1, '한 번의 전이로 나간다');
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(events[0].transforms.length, 2);
+    assert.equal(undoDepth(), depth + 1, '실행취소 한 번에 한 조작이다');
+    for (const record of after) {
+      const seen = observed.get(record.id);
+      assert.ok(seen, '끄는 동안의 행렬을 관측했다');
+      assertMatrixClose(matrixOf(record.transform), seen, 1e-6, `${record.id} 저장값과 화면`);
+      assert.ok(record.transform.scaleX > 1.1);
+    }
+    // 묶음의 왼쪽 위를 축으로 늘어나므로 아래 획이 더 멀리 간다.
+    assert.ok(after[1].transform.top - before[1].transform.top >
+      after[0].transform.top - before[0].transform.top);
+
+    // 같은 것이 다시 골라져 있고, 화면의 오브젝트가 저장된 값과 같다.
+    assert.deepEqual(activeIds().sort(), before.map(record => record.id).sort());
+    assert.equal(active().hasControls, true);
+    for (const object of harness.canvas.getObjects()) {
+      const record = after.find(candidate => candidate.id === object.__baeframeObjectId);
+      assertMatrixClose(
+        Array.from(object.calcTransformMatrix()), matrixOf(record.transform), 1e-6, '화면과 저장값'
+      );
+    }
+
+    // 묶음을 돌린 뒤에도 각 획이 화면과 같게 저장된다(획마다 각도와 자리가 함께 바뀐다).
+    observed.clear();
+    harness.canvas.on('object:rotating', capture);
+    await dragHandle('mtr', 50, 30);
+    harness.canvas.off('object:rotating', capture);
+    const rotated = records();
+    for (const record of rotated) {
+      assertMatrixClose(
+        matrixOf(record.transform), observed.get(record.id), 1e-6, `${record.id} 회전 저장값`
+      );
+      assert.ok(Math.abs(record.transform.angle) > 5);
+      // 크기와 회전만으로 표현된다 — 기울이기가 섞여 들어가지 않는다.
+      assert.ok(Math.abs(record.transform.skewX) < 1e-9, `skewX: ${record.transform.skewX}`);
+      assert.ok(Math.abs(record.transform.skewY) < 1e-9);
+    }
+
+    // 실행취소 두 번에 처음으로 돌아온다.
+    for (const actionId of ['transform-box-multi-undo-1', 'transform-box-multi-undo-2']) {
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session', actionId, action: 'undo'
+      }).applied, true);
+    }
+    assert.deepEqual(
+      records().map(record => record.transform),
+      before.map(record => record.transform)
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('외곽선은 본체와 같은 만큼 변형되고 취소하면 함께 돌아온다', async () => {
+  const { harness, selectTool, records, active, click, dragHandle, pressHandle, settle, matrixOf, undoDepth } =
+    createTransformBoxHarness();
+  const realFabric = require('fabric/node');
+  const deltaOf = (afterTransform, beforeTransform) => realFabric.util.multiplyTransformMatrices(
+    matrixOf(afterTransform),
+    realFabric.util.invertTransform(matrixOf(beforeTransform))
+  );
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 50, y: 70 }, { x: 120, y: 110 }], 8141);
+    const before = records();
+    assert.equal(before.length, 2, '외곽선 + 본체');
+    const outlineBefore = before.find(record => record.id.endsWith('~outline'));
+    const bodyBefore = before.find(record => !record.id.endsWith('~outline'));
+    assert.ok(outlineBefore && bodyBefore);
+    selectTool();
+    await click(before.indexOf(bodyBefore), 8142);
+    assert.equal(active().__baeframeObjectId, bodyBefore.id);
+
+    await dragHandle('mtr', 30, 20);
+    await dragHandle('br', 20, 15);
+
+    const after = records();
+    const outlineAfter = after.find(record => record.id === outlineBefore.id);
+    const bodyAfter = after.find(record => record.id === bodyBefore.id);
+    assert.ok(Math.abs(bodyAfter.transform.angle) > 1);
+    assert.ok(bodyAfter.transform.scaleX > 1.05);
+    // 외곽선은 본체와 중심이 달라 값이 같지는 않다. 본체가 변한 만큼(행렬)만큼 변해야
+    // 두 그림이 어긋나지 않는다.
+    assertMatrixClose(
+      deltaOf(outlineAfter.transform, outlineBefore.transform),
+      deltaOf(bodyAfter.transform, bodyBefore.transform),
+      1e-6,
+      '본체와 외곽선의 변화가 같아야 한다'
+    );
+
+    // 끄는 도중에 취소되면 본체와 외곽선이 함께 제자리로 돌아오고 아무것도 저장되지 않는다.
+    const stable = records();
+    const depth = undoDepth();
+    const outlineObject = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === outlineBefore.id);
+    const bodyObject = active();
+    const { from, id } = pressHandle('br');
+    harness.dispatchPointer(harness.element, 'pointermove', from.x + 25, from.y + 25, id, 1);
+    assert.notEqual(bodyObject.scaleX, bodyAfter.transform.scaleX, '끄는 동안 본체가 변한다');
+    assert.notEqual(outlineObject.scaleX, outlineAfter.transform.scaleX, '끄는 동안 외곽선도 따라온다');
+    harness.dispatchPointer(harness.element, 'pointercancel', from.x + 25, from.y + 25, id, 0);
+    await settle();
+    assert.deepEqual(records(), stable, '저장된 값은 그대로다');
+    assert.equal(undoDepth(), depth, '실행취소 단계가 생기지 않는다');
+    assert.ok(Math.abs(bodyObject.scaleX - bodyAfter.transform.scaleX) < 1e-9, '본체가 돌아온다');
+    assert.ok(Math.abs(outlineObject.scaleX - outlineAfter.transform.scaleX) < 1e-9, '외곽선이 돌아온다');
+    assert.ok(Math.abs(outlineObject.left - outlineAfter.transform.left) < 1e-9);
+    assert.ok(Math.abs(outlineObject.angle - outlineAfter.transform.angle) < 1e-9);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('저장할 수 없는 변형은 받지 않고 화면을 되돌린다', async () => {
+  const { harness, selectTool, records, active, activeIds, click, dragHandle, undoDepth } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 60 }, { x: 100, y: 100 }], 8151);
+    const before = records()[0];
+    selectTool();
+    await click(0, 8152);
+
+    // 스토어가 거절하면(용량 등) 화면의 오브젝트도 출발점으로 돌아가야 한다.
+    const depth = undoDepth();
+    const original = harness.sceneStore.transformSelection;
+    harness.sceneStore.transformSelection = () => ({ applied: false, reason: 'scene-capacity-exceeded' });
+    try {
+      await dragHandle('br', 30, 20);
+    } finally {
+      harness.sceneStore.transformSelection = original;
+    }
+    assert.deepEqual(records()[0].transform, before.transform);
+    assert.equal(undoDepth(), depth);
+    assert.equal(active().scaleX, 1, '화면도 되돌아온다');
+    assert.equal(active().scaleY, 1);
+    assert.deepEqual(activeIds(), [before.id]);
+    assert.equal(active().hasControls, true, '되돌린 뒤에도 손잡이가 남는다');
+
+    // 되돌린 뒤의 다음 조작은 정상으로 저장된다.
+    await dragHandle('br', 30, 20);
+    assert.ok(records()[0].transform.scaleX > 1.2);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('지나치게 작게 줄이는 변형은 한계에서 멈춘다', async () => {
+  const { harness, selectTool, records, click, dragHandle } = createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 60 }, { x: 100, y: 100 }], 8155);
+    selectTool();
+    await click(0, 8156);
+    // 손잡이를 반대편 모서리까지 끌어 한 점으로 눌러도 획이 사라지지 않는다 — 너무
+    // 작아지면 다시 고르거나 자를 수 없다.
+    await dragHandle('br', -60, -40);
+    const transform = records()[0].transform;
+    assert.ok(transform.scaleX >= 0.02 - 1e-9, `가로 한계: ${transform.scaleX}`);
+    assert.ok(transform.scaleY >= 0.02 - 1e-9, `세로 한계: ${transform.scaleY}`);
+    assert.ok(Number.isFinite(transform.left) && Number.isFinite(transform.top));
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('손잡이 크기는 화면 픽셀 기준이라 영상 해상도와 화면 배율을 따라간다', async () => {
+  const { harness, selectTool, active, click } = createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 60 }, { x: 100, y: 60 }], 8161);
+    selectTool();
+    await click(0, 8162);
+    // 1:1 로 띄운 상태: 9 화면 픽셀 = 9 캔버스 픽셀.
+    assert.equal(active().cornerSize, 9);
+    assert.equal(active().controls.mtr.offsetY, -26);
+
+    // 영상(200px)을 화면 100px 로 줄여 띄우면 캔버스 격자로는 두 배가 돼야 한다.
+    assert.deepEqual(harness.runtime.updateViewport({
+      revision: 5,
+      canvasRect: { left: 0, top: 0, width: 100, height: 100 },
+      scale: 1,
+      panX: 0,
+      panY: 0
+    }), { accepted: true, revision: 5 });
+    assert.equal(active().cornerSize, 18);
+    assert.equal(active().controls.mtr.offsetY, -52);
+    // 화면을 2배로 확대하면 다시 9 로 돌아온다.
+    assert.deepEqual(harness.runtime.updateViewport({
+      revision: 6,
+      canvasRect: { left: 0, top: 0, width: 100, height: 100 },
+      scale: 2,
+      panX: 0,
+      panY: 0
+    }), { accepted: true, revision: 6 });
+    assert.equal(active().cornerSize, 9);
+    assert.equal(active().controls.mtr.offsetY, -26);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('옮긴 뒤에도 변형 상자가 남고 변형한 값은 옮겨도 그대로다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, click, dragHandle } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 120, y: 120 }], 8201);
+    const id = records()[0].id;
+    selectTool();
+    await click(0, 8202);
+    await dragHandle('mtr', 30, 15);
+    await dragHandle('br', 20, 10);
+    const transformed = records()[0].transform;
+    assert.ok(Math.abs(transformed.angle) > 1 && transformed.scaleX > 1.05);
+
+    harness.dragActiveSelectionBy(25, -10, 8203);
+    await settle();
+    const moved = records()[0].transform;
+    assert.ok(Math.abs(moved.left - transformed.left - 25) < 1e-6, `left: ${moved.left}`);
+    assert.ok(Math.abs(moved.top - transformed.top + 10) < 1e-6, `top: ${moved.top}`);
+    for (const field of ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY']) {
+      assert.equal(moved[field], transformed[field], `옮겨도 ${field} 는 그대로다`);
+    }
+    assert.deepEqual(activeIds(), [id]);
+    assert.equal(active().hasControls, true, '옮긴 뒤에도 손잡이가 남는다');
+    assert.equal(active().lockRotation, false);
+    assert.equal(active().angle, moved.angle, '화면의 오브젝트도 변형을 유지한다');
+
+    // 이어서 다시 변형할 수 있다.
+    await dragHandle('mtr', 20, 20);
+    assert.notEqual(records()[0].transform.angle, moved.angle);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('부분 선택으로 세워 둔 조각과 선택 도구 밖에서는 변형 상자를 주지 않는다', async () => {
+  const { harness, selectTool, active, click, settle } = createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 180, y: 100 }], 8171);
+    selectTool();
+    await click(0, 8172);
+    assert.equal(active().hasControls, true);
+
+    // 다른 도구로 바꾸면 선택이 풀리고, 다시 고르기 전까지 손잡이는 없다.
+    selectTool('brush');
+    assert.equal(harness.canvas.getActiveObject(), undefined);
+    assert.equal(harness.canvas.getObjects()[0].hasControls, false);
+
+    // 부분 선택(획의 일부만 고르기)으로 세워 둔 조각은 아직 문서에 없는 프록시다.
+    // 옮겨서 확정하기 전에는 옮기기만 받는다.
+    selectTool('select');
+    selectPartialRectangle(harness.root);
+    harness.dragMarquee({ x: 60, y: 80 }, { x: 120, y: 120 }, 8173);
+    await settle();
+    const pending = harness.canvas.getActiveObject();
+    assert.ok(pending, '조각이 골라져 있다');
+    assert.equal(pending.hasControls, false, '세워 둔 조각에는 손잡이를 주지 않는다');
+    assert.equal(pending.lockRotation, true);
+    assert.equal(pending.lockScalingX, true);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('변형한 획은 저장·재수화·보기 화면에서 같은 모양으로 보이고 다시 자를 수 있다', async () => {
+  const { harness, setInput, selectTool, records, click, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 30, y: 100 }, { x: 170, y: 100 }], 8181);
+    selectTool();
+    await click(0, 8182);
+    await dragHandle('mtr', 45, 30);
+    await dragHandle('mb', 0, 12);
+    const record = records()[0];
+    assert.ok(Math.abs(record.transform.angle) > 5);
+    assert.ok(record.transform.scaleY > 1.05);
+
+    // 내보낸 스냅샷(저장으로 가는 원본)에 변형이 그대로 실린다.
+    const exported = harness.sceneStore.exportVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'transform-box-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240
+    });
+    assert.equal(exported.accepted, true, JSON.stringify(exported));
+    const scene = exported.snapshot.scenes[0];
+    assert.deepEqual(scene.objects[0].transform, record.transform);
+
+    // 그리기 패널을 닫으면(보기 화면) 같은 변형으로 다시 그려진다.
+    assert.equal(setInput(4, false).accepted, true);
+    const shown = harness.canvas.getObjects()[0];
+    assertMatrixClose(
+      Array.from(shown.calcTransformMatrix()), matrixOf(record.transform), 1e-9, '보기 화면'
+    );
+    assert.equal(shown.hasControls, false, '보기 화면에는 손잡이가 없다');
+
+    // 다시 수화해도(파일을 다시 연 것과 같다) 검증을 통과한다.
+    // jsdom 의 이벤트 시각은 epoch 기준이라 저장 한계를 넘는다 — 실제 앱처럼 획 시작을
+    // 0 으로 맞춘다(다른 왕복 테스트와 같은 준비다).
+    const persistedObjects = structuredClone(scene.objects);
+    for (const persisted of persistedObjects) {
+      const baseTime = persisted.sourcePoints[0].time;
+      for (const point of persisted.sourcePoints) point.time -= baseTime;
+    }
+    const rehydrated = harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'transform-box-persistence-2',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: [{
+        id: 'keyframe-0',
+        frame: 0,
+        sourceWidth: scene.sourceWidth,
+        sourceHeight: scene.sourceHeight,
+        mutationSequence: scene.mutationSequence,
+        objects: persistedObjects
+      }]
+    });
+    assert.equal(rehydrated.accepted, true, `변형이 담긴 문서를 다시 읽을 수 있다: ${JSON.stringify(rehydrated)}`);
+    // 다시 읽은 뒤의 보기 화면도 같은 모양이다.
+    assertMatrixClose(
+      Array.from(harness.canvas.getObjects()[0].calcTransformMatrix()),
+      matrixOf(record.transform),
+      1e-9,
+      '재수화 뒤의 보기 화면'
+    );
+
+    // 변형한 획도 지우개(부분 지우기)로 자를 수 있다 — 판정이 오브젝트의 행렬을 거꾸로
+    // 적용해 이뤄지기 때문이다.
+    assert.equal(setInput(5, true).accepted, true);
+    selectTool('eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const object = harness.canvas.getObjects()[0];
+    const center = object.getCenterPoint();
+    const alphaMap = () => {
+      harness.canvas.renderAll();
+      const { width, height } = harness.canvas.lowerCanvasEl;
+      const { data } = harness.canvas.lowerCanvasEl.getContext('2d')
+        .getImageData(0, 0, width, height);
+      return { width, height, alpha: (x, y) => data[(y * width + x) * 4 + 3] };
+    };
+    const beforeErase = alphaMap();
+    // 획의 한가운데를 가로질러 지운다(획의 진행 방향에 수직으로).
+    const radians = (record.transform.angle + 90) * Math.PI / 180;
+    const reach = 40;
+    harness.drawStroke([
+      { x: center.x - Math.cos(radians) * reach, y: center.y - Math.sin(radians) * reach },
+      { x: center.x, y: center.y },
+      { x: center.x + Math.cos(radians) * reach, y: center.y + Math.sin(radians) * reach }
+    ], 8183);
+    const pieces = harness.sceneStore.getActiveSceneSnapshot().objects;
+    assert.equal(pieces.length, 2, '가운데가 지워져 두 조각이 된다');
+
+    // 남은 두 조각은 지우기 전의 획과 같은 자리에 있어야 한다. 지운 자리에서 떨어진
+    // 픽셀을 지우기 전과 견준다 — 조각이 변형을 잘못 물려받으면 통째로 어긋난다.
+    const afterErase = alphaMap();
+    let compared = 0;
+    let inked = 0;
+    let mismatched = 0;
+    for (let y = 0; y < beforeErase.height; y += 1) {
+      for (let x = 0; x < beforeErase.width; x += 1) {
+        if (Math.hypot(x - center.x, y - center.y) < 24) continue;
+        compared += 1;
+        const was = beforeErase.alpha(x, y);
+        if (was > 0) inked += 1;
+        if (Math.abs(was - afterErase.alpha(x, y)) > 48) mismatched += 1;
+      }
+    }
+    assert.ok(inked > 200, `견줄 획 픽셀이 충분해야 한다: ${inked}/${compared}`);
+    assert.ok(mismatched <= inked * 0.02, `조각이 제자리에 있어야 한다: ${mismatched}/${inked} 픽셀이 다르다`);
+    assert.ok(beforeErase.alpha(Math.round(center.x), Math.round(center.y)) > 0, '지우기 전에는 가운데에 획이 있다');
+    assert.equal(afterErase.alpha(Math.round(center.x), Math.round(center.y)), 0, '가운데는 지워졌다');
+  } finally {
+    await harness.destroy();
+  }
 });

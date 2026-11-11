@@ -17,7 +17,8 @@ const DEFAULT_LIMITS = Object.freeze({
   maxLatencySamples: 256
 });
 const LIMIT_KEYS = Object.freeze(Object.keys(DEFAULT_LIMITS));
-const UNSUPPORTED_TRANSFORM_FIELDS = Object.freeze([
+// 이동이 아닌 변형 필드. 선택 도구의 변형 상자(크기·회전)가 이 값들을 바꾼다.
+const NON_TRANSLATION_TRANSFORM_FIELDS = Object.freeze([
   'scaleX',
   'scaleY',
   'angle',
@@ -29,7 +30,7 @@ const UNSUPPORTED_TRANSFORM_FIELDS = Object.freeze([
 const TRANSFORM_FIELDS = Object.freeze([
   'left',
   'top',
-  ...UNSUPPORTED_TRANSFORM_FIELDS
+  ...NON_TRANSLATION_TRANSFORM_FIELDS
 ]);
 const REASON_ALLOWLIST = Object.freeze(new Set([
   'adapter-failed',
@@ -174,18 +175,103 @@ function transformsEqual(left, right, fields = TRANSFORM_FIELDS) {
   return fields.every(field => left[field] === right[field]);
 }
 
-function canonicalTransform(finalTransform, baseline) {
-  if (!transformsEqual(finalTransform, baseline, UNSUPPORTED_TRANSFORM_FIELDS)) {
-    return null;
-  }
+function multiplyAffine(left, right) {
   return [
-    1,
-    0,
-    0,
-    1,
-    finalTransform.left - baseline.left,
-    finalTransform.top - baseline.top
+    left[0] * right[0] + left[2] * right[1],
+    left[1] * right[0] + left[3] * right[1],
+    left[0] * right[2] + left[2] * right[3],
+    left[1] * right[2] + left[3] * right[3],
+    left[0] * right[4] + left[2] * right[5] + left[4],
+    left[1] * right[4] + left[3] * right[5] + left[5]
   ];
+}
+
+function invertAffine(matrix) {
+  const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+  if (!Number.isFinite(determinant) || determinant === 0) return null;
+  return [
+    matrix[3] / determinant,
+    -matrix[1] / determinant,
+    -matrix[2] / determinant,
+    matrix[0] / determinant,
+    (matrix[2] * matrix[5] - matrix[3] * matrix[4]) / determinant,
+    (matrix[1] * matrix[4] - matrix[0] * matrix[5]) / determinant
+  ];
+}
+
+// 직각의 배수에서는 삼각함수가 정확한 0·±1 을 내지 못한다(cos 90° 가 6e-17 이 된다).
+// Fabric 과 같은 방식으로 그 자리만 정확한 값을 쓴다.
+function exactCos(radians) {
+  if (radians === 0) return 1;
+  const slice = Math.abs(radians) / (Math.PI / 2);
+  if (slice === 1 || slice === 3) return 0;
+  if (slice === 2) return -1;
+  return Math.cos(radians);
+}
+
+function exactSin(radians) {
+  if (radians === 0) return 0;
+  const slice = radians / (Math.PI / 2);
+  const sign = Math.sign(radians);
+  if (slice === 1) return sign;
+  if (slice === 2) return 0;
+  if (slice === 3) return -sign;
+  return Math.sin(radians);
+}
+
+// Fabric 오브젝트의 변형 필드가 뜻하는 2×3 행렬. Fabric 의 composeMatrix 와 같은
+// 순서다 — 이동 · 회전 · (크기·뒤집기 · skewX · skewY). 원점이 중심이라 left/top 이
+// 곧 이동량이고, 오브젝트의 크기를 몰라도 필드만으로 행렬이 정해진다.
+function fabricTransformMatrix(transform) {
+  let matrix = [1, 0, 0, 1, transform.left, transform.top];
+  if (transform.angle) {
+    const radians = transform.angle * Math.PI / 180;
+    const cos = exactCos(radians);
+    const sin = exactSin(radians);
+    matrix = multiplyAffine(matrix, [cos, sin, -sin, cos, 0, 0]);
+  }
+  let dimensions = [
+    transform.flipX ? -transform.scaleX : transform.scaleX,
+    0,
+    0,
+    transform.flipY ? -transform.scaleY : transform.scaleY,
+    0,
+    0
+  ];
+  if (transform.skewX) {
+    dimensions = multiplyAffine(
+      dimensions,
+      [1, 0, Math.tan(transform.skewX * Math.PI / 180), 1, 0, 0]
+    );
+  }
+  if (transform.skewY) {
+    dimensions = multiplyAffine(
+      dimensions,
+      [1, Math.tan(transform.skewY * Math.PI / 180), 0, 1, 0, 0]
+    );
+  }
+  return multiplyAffine(matrix, dimensions);
+}
+
+// 기준 변형(baseline) 자리에 놓인 그림을 지금 자리로 옮기는 행렬.
+// 문서는 오브젝트의 점을 기준 변형 때의 것으로 들고 있으므로, 지금 모양은
+// (지금 행렬) × (기준 행렬)⁻¹ 을 그 위에 얹은 것이다.
+function canonicalTransform(finalTransform, baseline) {
+  if (transformsEqual(finalTransform, baseline, NON_TRANSLATION_TRANSFORM_FIELDS)) {
+    // 이동뿐이면 행렬 곱의 오차가 끼지 않는 형태를 그대로 쓴다.
+    return [
+      1,
+      0,
+      0,
+      1,
+      finalTransform.left - baseline.left,
+      finalTransform.top - baseline.top
+    ];
+  }
+  const inverse = invertAffine(fabricTransformMatrix(baseline));
+  if (inverse === null) return null;
+  const matrix = multiplyAffine(fabricTransformMatrix(finalTransform), inverse);
+  return matrix.every(Number.isFinite) ? matrix : null;
 }
 
 function hashText(text, seed, multiplier) {
@@ -874,9 +960,6 @@ function createDrawingEngineAdapter(options = {}) {
       if (!current || !transformsEqual(current, before)) {
         return { valid: false, reason: 'transition-before-mismatch' };
       }
-      if (!transformsEqual(before, after, UNSUPPORTED_TRANSFORM_FIELDS)) {
-        return { valid: false, reason: 'unsupported-transform' };
-      }
       const baseline = state.baselines.get(transform.id) ||
         baselineAdds.get(transform.id);
       if (!baseline) return { valid: false, reason: 'missing-baseline' };
@@ -1272,4 +1355,4 @@ function createDrawingEngineAdapter(options = {}) {
   };
 }
 
-module.exports = { createDrawingEngineAdapter };
+module.exports = { createDrawingEngineAdapter, fabricTransformMatrix };
