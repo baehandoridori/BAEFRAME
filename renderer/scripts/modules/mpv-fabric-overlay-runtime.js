@@ -6039,12 +6039,15 @@ function createFabricOverlayRuntime(options = {}) {
     } catch (_error) {
       return null;
     }
+    // 분해는 각도를 (-180, 180] 로 돌려준다. 손잡이로 하나만 돌릴 때 fabric 이 쓰는
+    // [0, 360) 에 맞춘다 — 같은 모양이 고른 개수에 따라 다른 값으로 저장되지 않게 한다.
+    const angle = ((finiteNumber(decomposed.angle) % 360) + 360) % 360;
     return {
       left: finiteNumber(decomposed.translateX),
       top: finiteNumber(decomposed.translateY),
       scaleX: finiteNumber(decomposed.scaleX, 1),
       scaleY: finiteNumber(decomposed.scaleY, 1),
-      angle: finiteNumber(decomposed.angle),
+      angle,
       skewX: finiteNumber(decomposed.skewX),
       skewY: finiteNumber(decomposed.skewY),
       // 뒤집힘은 분해에서 음수 배율로 나온다.
@@ -6096,14 +6099,60 @@ function createFabricOverlayRuntime(options = {}) {
     return true;
   }
 
+  // 화면에 놓인 모양이 저장된 변형과 같은가. 묶음에서 다시 푼 값은 표현만 다를 수
+  // 있다(1e-16 의 반올림, 각도의 표기). 값이 아니라 행렬로 견준다.
+  function objectMatchesStoredTransform(object, stored) {
+    const { util } = resolveFabric();
+    if (!stored || typeof util?.composeMatrix !== 'function' ||
+        typeof object?.calcTransformMatrix !== 'function') {
+      return false;
+    }
+    let current;
+    let persisted;
+    try {
+      current = object.calcTransformMatrix();
+      persisted = util.composeMatrix({
+        translateX: stored.left,
+        translateY: stored.top,
+        angle: stored.angle,
+        scaleX: stored.scaleX,
+        scaleY: stored.scaleY,
+        skewX: stored.skewX,
+        skewY: stored.skewY,
+        flipX: stored.flipX,
+        flipY: stored.flipY
+      });
+    } catch (_error) {
+      return false;
+    }
+    for (let index = 0; index < 6; index += 1) {
+      const left = Number(current[index]);
+      const right = Number(persisted[index]);
+      if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+      if (Math.abs(left - right) > 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   // 변형 상자로 한 크기·회전을 저장한다.
   function commitSelectionTransform(target, children, ids) {
     syncTransformedOutlinePairs();
     const outlineObjects = (transformStart?.outlinePairs || []).map(pair => pair.object);
+    const storedTransforms = new Map(
+      (sceneStore.getActiveSceneSnapshot()?.objects || [])
+        .map(record => [record.id, record.transform || null])
+    );
     const transforms = [];
     for (const object of [...children, ...outlineObjects]) {
       const id = object?.__baeframeObjectId;
-      const transform = absoluteObjectTransform(object);
+      // 모양이 그대로인 획은 저장된 값을 그대로 넘긴다. 다시 푼 값을 넘기면 아무것도
+      // 바꾸지 않은 조작(끌었다가 제자리에 놓기, 취소)이 실행취소 한 단계를 만든다.
+      const stored = id ? storedTransforms.get(id) : null;
+      const transform = objectMatchesStoredTransform(object, stored)
+        ? clonePlain(stored)
+        : absoluteObjectTransform(object);
       if (!id || !transform || !selectionTransformIsStorable(transform)) {
         return { applied: false, reason: 'invalid-selection-transform' };
       }
@@ -6112,6 +6161,9 @@ function createFabricOverlayRuntime(options = {}) {
     const result = sceneStore.transformSelection({ transforms });
     if (!result.applied) return result;
     transformStart = null;
+    // 아래에서 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를
+    // 한 번 더 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
+    ignoreLateModifiedEvents(target);
     // 새 변형으로 씬을 다시 세우고 같은 것을 다시 고른다. 여러 개를 골랐을 때
     // fabric 의 묶음은 자식 좌표를 묶음 기준으로 들고 있어, 그대로 두면 다음 조작이
     // 낡은 기준에서 시작한다. 다시 고르면 상자도 새 모양에 맞춰 반듯하게 선다.
@@ -9473,7 +9525,13 @@ function createFabricOverlayRuntime(options = {}) {
         pair.object.set?.(pair.startTransform || { left: pair.startLeft, top: pair.startTop });
         pair.object.setCoords?.();
       }
-      if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
+      if (shouldEndTransform) {
+        // 변형을 끝내면 fabric 이 object:modified 를 낸다. 방금 출발점으로 되돌렸으므로
+        // 그 알림은 저장할 것이 없는 취소다 — 받으면 되돌린 값을 다시 읽어 커밋을
+        // 시도하고, 묶음에서는 표현만 다른 값이 실행취소 한 단계를 만든다.
+        ignoreLateModifiedEvents(start.target);
+        fabricCanvas?.endCurrentTransform?.(event);
+      }
     } catch (error) {
       lastError = error.message;
       metrics.recordSurfaceError();

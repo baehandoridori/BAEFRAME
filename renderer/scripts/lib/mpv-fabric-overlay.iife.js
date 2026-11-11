@@ -18871,12 +18871,13 @@ void main() {
           } catch (_error) {
             return null;
           }
+          const angle = (finiteNumber(decomposed.angle) % 360 + 360) % 360;
           return {
             left: finiteNumber(decomposed.translateX),
             top: finiteNumber(decomposed.translateY),
             scaleX: finiteNumber(decomposed.scaleX, 1),
             scaleY: finiteNumber(decomposed.scaleY, 1),
-            angle: finiteNumber(decomposed.angle),
+            angle,
             skewX: finiteNumber(decomposed.skewX),
             skewY: finiteNumber(decomposed.skewY),
             // 뒤집힘은 분해에서 음수 배율로 나온다.
@@ -18919,13 +18920,50 @@ void main() {
           fabricCanvas?.requestRenderAll();
           return true;
         }
+        function objectMatchesStoredTransform(object, stored) {
+          const { util } = resolveFabric();
+          if (!stored || typeof util?.composeMatrix !== "function" || typeof object?.calcTransformMatrix !== "function") {
+            return false;
+          }
+          let current;
+          let persisted;
+          try {
+            current = object.calcTransformMatrix();
+            persisted = util.composeMatrix({
+              translateX: stored.left,
+              translateY: stored.top,
+              angle: stored.angle,
+              scaleX: stored.scaleX,
+              scaleY: stored.scaleY,
+              skewX: stored.skewX,
+              skewY: stored.skewY,
+              flipX: stored.flipX,
+              flipY: stored.flipY
+            });
+          } catch (_error) {
+            return false;
+          }
+          for (let index = 0; index < 6; index += 1) {
+            const left = Number(current[index]);
+            const right = Number(persisted[index]);
+            if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+            if (Math.abs(left - right) > 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))) {
+              return false;
+            }
+          }
+          return true;
+        }
         function commitSelectionTransform(target, children, ids) {
           syncTransformedOutlinePairs();
           const outlineObjects = (transformStart?.outlinePairs || []).map((pair) => pair.object);
+          const storedTransforms = new Map(
+            (sceneStore.getActiveSceneSnapshot()?.objects || []).map((record) => [record.id, record.transform || null])
+          );
           const transforms = [];
           for (const object of [...children, ...outlineObjects]) {
             const id = object?.__baeframeObjectId;
-            const transform = absoluteObjectTransform(object);
+            const stored = id ? storedTransforms.get(id) : null;
+            const transform = objectMatchesStoredTransform(object, stored) ? clonePlain(stored) : absoluteObjectTransform(object);
             if (!id || !transform || !selectionTransformIsStorable(transform)) {
               return { applied: false, reason: "invalid-selection-transform" };
             }
@@ -18934,6 +18972,7 @@ void main() {
           const result = sceneStore.transformSelection({ transforms });
           if (!result.applied) return result;
           transformStart = null;
+          ignoreLateModifiedEvents(target);
           renderActiveScene({ immediate: true });
           activateObjectIds(ids);
           updateObjectMetric();
@@ -21754,7 +21793,10 @@ void main() {
               pair.object.set?.(pair.startTransform || { left: pair.startLeft, top: pair.startTop });
               pair.object.setCoords?.();
             }
-            if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
+            if (shouldEndTransform) {
+              ignoreLateModifiedEvents(start.target);
+              fabricCanvas?.endCurrentTransform?.(event);
+            }
           } catch (error) {
             lastError = error.message;
             metrics.recordSurfaceError();

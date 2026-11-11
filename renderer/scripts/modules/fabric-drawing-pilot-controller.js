@@ -270,6 +270,9 @@ export function createFabricDrawingPilotController(options = {}) {
   // 일이 이 조작일 때만** 오버레이로 간다 — 그 뒤에 댓글 편집 같은 전역 작업이
   // 있었다면 리비전이 달라져 있으므로 전역 실행취소가 먼저다.
   let passiveHistory = { undo: [], redo: [] };
+  // 패널을 닫은 채 보낸 프레임 조작 가운데 아직 응답을 받지 못한 것의 수. 그 조작의
+  // 표식은 응답이 와야 알 수 있으므로, 그 사이에 눌린 Ctrl+Z 는 조작이 끝난 뒤에 판정한다.
+  let passiveFrameOperationsInFlight = 0;
   // 오버레이에 마지막으로 알린 재생 여부와 그 호스트 세대. 오버레이 창이 새로
   // 만들어지면 그쪽 값은 기본(정지)으로 돌아가 있으므로 세대가 다르면 다시 보낸다.
   let onionSkinPlayingSent = { hostGeneration: 0, playing: false };
@@ -1531,9 +1534,12 @@ export function createFabricDrawingPilotController(options = {}) {
     const sent = { hostGeneration, playing: next };
     onionSkinPlayingSent = sent;
     const result = await sendOnionSkinUpdate({ playing: next });
-    // 보내지 못했으면 다음 변경에서 다시 보내도록 기억을 지운다.
+    // 보내지 못했으면 오버레이가 어느 값을 들고 있는지 모른다. "모름"으로 적어 다음
+    // 호출이 무조건 다시 보내게 한다. 여기서 "새 오버레이·정지"로 되돌리면, 못 보낸
+    // 것이 정지 알림일 때 다음 정지 알림이 "기본값 그대로"로 걸러져 오버레이가 재생
+    // 중인 줄 알고 어니언 스킨을 계속 숨긴다.
     if (!result.accepted && onionSkinPlayingSent === sent) {
-      onionSkinPlayingSent = { hostGeneration: 0, playing: false };
+      onionSkinPlayingSent = { hostGeneration: sent.hostGeneration, playing: null };
     }
     return result.accepted;
   }
@@ -1760,8 +1766,16 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       return response;
     });
+    trackPassiveFrameOperation(request, operation);
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation.then(r => r || { success: false, applied: false });
+  }
+
+  function trackPassiveFrameOperation(request, operation) {
+    if (request.sessionId !== null) return;
+    passiveFrameOperationsInFlight += 1;
+    const settle = () => { passiveFrameOperationsInFlight -= 1; };
+    operation.then(settle, settle);
   }
 
   function enqueueHistoryFallback(historyAction, historyRevision) {
@@ -1799,30 +1813,55 @@ export function createFabricDrawingPilotController(options = {}) {
     return operation;
   }
 
-  // 세션 없이 한 구조 조작을 되돌리거나 다시 한다. 표식은 키를 누른 그 자리에서
-  // 스택에서 꺼낸다 — 응답을 기다렸다 꺼내면 연타한 두 번째 Ctrl+Z 가 같은 표식을
-  // 다시 집는다. 실패하면 표식이 오버레이와 어긋난 것이므로 전부 버린다.
-  function applyPassiveHistoryAction(direction) {
-    const from = direction === 'undo' ? passiveHistory.undo : passiveHistory.redo;
-    const entry = from.pop();
-    if (!entry) return Promise.resolve({ success: false, applied: false });
-    const request = makePassiveDrawingActionRequest(direction, { historyToken: entry.token });
-    if (!request) {
-      clearPassiveHistory();
-      return Promise.resolve({ success: false, applied: false, reason: 'invalid-request' });
-    }
+  // 세션 없이 한 구조 조작을 되돌리거나 다시 한다. 판정과 표식 꺼내기는 **큐의 제
+  // 차례 안에서** 한다. 키를 누른 순간에는 방금 보낸 조작의 표식을 아직 모를 수 있고
+  // (응답 전), 연타한 두 번째 Ctrl+Z 는 첫 번째가 끝난 뒤의 스택을 봐야 한다.
+  //
+  // 닫은 채 한 조작이 맨 위가 아니면 전역 실행취소로 넘긴다 — 키를 누른 자리에서
+  // 넘겼을 때와 같은 결과다.
+  function applyPassiveHistoryAction(direction, historyRevision) {
     const operation = drawingActionQueue.then(async () => {
+      // 기다리는 사이 패널을 열었으면 이 키는 낡았다. 표식은 이미 버려졌고, 열린 뒤의
+      // 실행취소는 다른 경로가 맡는다.
+      if (state !== 'passive') return { success: false, applied: false, reason: 'stale' };
+      const entry = peekPassiveHistory(direction);
+      if (entry === null) return fallbackPassiveHistory(direction, historyRevision);
+      const request = makePassiveDrawingActionRequest(direction, { historyToken: entry.token });
+      if (!request) {
+        clearPassiveHistory();
+        return { success: false, applied: false, reason: 'invalid-request' };
+      }
+      (direction === 'undo' ? passiveHistory.undo : passiveHistory.redo).pop();
       const response = await sendDrawingActionRequest(request);
       if (response?.applied === true && state === 'passive' && canSendPassiveDrawingAction()) {
         const to = direction === 'undo' ? passiveHistory.redo : passiveHistory.undo;
         to.push({ token: entry.token, revision: readHistoryRevision() });
-      } else if (response?.duplicate !== true) {
-        clearPassiveHistory();
+        return response;
       }
+      if (response?.applied === true || response?.duplicate === true) {
+        if (response.duplicate !== true) clearPassiveHistory();
+        return response;
+      }
+      // 오버레이가 "그 조작은 맨 위가 아니다" 라고 분명히 답했을 때만 전역으로 넘긴다.
+      // 전송 실패·낡은 토큰은 넘기지 않는다 — 오버레이가 실제로는 되돌렸을 수 있어
+      // 한 번 누른 키로 두 번 되돌리게 된다. 표식은 어긋난 것이므로 어느 쪽이든 버린다.
+      if (response?.reason === 'history-mismatch' || response?.reason === 'history-empty') {
+        return fallbackPassiveHistory(direction, historyRevision, response);
+      }
+      clearPassiveHistory();
       return response;
     });
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation;
+  }
+
+  // 전역 히스토리로 넘어가면 닫은 채 한 조작은 더 이상 "마지막으로 한 일"이 아니다.
+  // 표식을 버리지 않으면 뒤이은 Ctrl+Y 가 방금 전역에서 되돌린 편집보다 그 조작을
+  // 먼저 되살린다(순서가 뒤집힌다).
+  async function fallbackPassiveHistory(direction, historyRevision, response = null) {
+    clearPassiveHistory();
+    if (historyRevision === readHistoryRevision()) await onHistoryFallback(direction);
+    return response || { success: false, applied: false, reason: 'not-passive-history' };
   }
 
   function runDetached(operation) {
@@ -3160,10 +3199,16 @@ export function createFabricDrawingPilotController(options = {}) {
       if (state === 'passive') {
         // 패널을 닫은 채 한 구조 조작(프레임 추가·삭제 등)이 **마지막으로 한 일**일
         // 때만 그것을 되돌린다. 아니면 지금까지처럼 전역 실행취소로 넘긴다.
-        if (peekPassiveHistory(historyAction) === null) return false;
+        // 방금 보낸 조작의 응답이 아직 오지 않았으면 표식을 모른다. 그때는 키를 받아
+        // 두고 조작이 끝난 뒤에 판정한다 — 여기서 넘겨 버리면 방금 한 프레임 조작
+        // 대신 그 앞의 다른 편집(댓글 등)이 되돌려진다.
+        if (passiveFrameOperationsInFlight === 0 &&
+            peekPassiveHistory(historyAction) === null) {
+          return false;
+        }
         consumeKeyEvent(event);
         if (event.repeat === true) return true;
-        runDetached(applyPassiveHistoryAction(historyAction));
+        runDetached(applyPassiveHistoryAction(historyAction, readHistoryRevision()));
         return true;
       }
       if (state !== 'preparing' && state !== 'active' && state !== 'recovering') {
