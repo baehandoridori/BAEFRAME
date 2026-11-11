@@ -6827,6 +6827,58 @@ test('어니언 스킨 요청은 호스트 세대와 형식이 어긋나면 런�
   );
 });
 
+test('보존해 둔 어니언 스킨 설정은 검증을 거쳐 런타임에 심기고 합성을 강제한다', async () => {
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.applyOnionSkinPrefs(')) return undefined;
+      const payload = readFabricMethodPayload(script, 'applyOnionSkinPrefs');
+      forwarded.push(payload);
+      return forwarded.length === 1
+        ? { accepted: true, ...payload }
+        : { accepted: false, reason: 'local-changes' };
+    }
+  });
+  // 그리기 입력을 켜지 않았다 — 보기만 하는 중에도 받는다.
+  await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  harness.events.length = 0;
+  const prefs = { enabled: true, before: 3, after: 0, opacityPercent: 45 };
+
+  assert.deepEqual(await harness.host.applyDrawingOnionSkinPrefs(prefs), {
+    success: true,
+    accepted: true
+  });
+  assert.deepEqual(forwarded, [prefs]);
+  assert.equal(
+    harness.events.some(([name]) => name === 'webContents.invalidate'),
+    true,
+    '켜진 채로 복원되면 바로 보여야 한다'
+  );
+
+  // 사용자가 그 사이 값을 바꿨으면 런타임이 받지 않는다. 실패가 아니라 "받지 않음"이다.
+  assert.deepEqual(await harness.host.applyDrawingOnionSkinPrefs(prefs), {
+    success: true,
+    accepted: false,
+    reason: 'local-changes'
+  });
+
+  // 형식이 조금이라도 다르면 런타임에 닿지 않는다.
+  const invalid = { success: false, accepted: false, error: 'invalid onion skin prefs' };
+  for (const malformed of [
+    null,
+    [],
+    'on',
+    { ...prefs, extra: 1 },
+    { enabled: true, before: 3, after: 0 },
+    { ...prefs, before: 9 },
+    { ...prefs, opacityPercent: 5 },
+    { ...prefs, enabled: 1 }
+  ]) {
+    assert.deepEqual(await harness.host.applyDrawingOnionSkinPrefs(malformed), invalid);
+  }
+  assert.equal(forwarded.length, 2);
+});
+
 test('어니언 스킨 요청은 보낸 순서대로 적용된다', async () => {
   // 켜기/끄기는 토글이라 순서가 뒤집히면 결과가 반대가 된다.
   const order = [];

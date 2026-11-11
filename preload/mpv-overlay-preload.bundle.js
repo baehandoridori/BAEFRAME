@@ -103,10 +103,59 @@ var require_fabric_palette_prefs = __commonJS({
   }
 });
 
+// shared/fabric-onion-skin-prefs.js
+var require_fabric_onion_skin_prefs = __commonJS({
+  "shared/fabric-onion-skin-prefs.js"(exports2, module2) {
+    "use strict";
+    var FABRIC_ONION_SKIN_MAX_SHEETS = 5;
+    var FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT = 10;
+    var FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT = 80;
+    var FABRIC_ONION_SKIN_DEFAULT_PREFS = Object.freeze({
+      enabled: false,
+      before: 2,
+      after: 1,
+      opacityPercent: 30
+    });
+    var FABRIC_ONION_SKIN_PREFS_KEYS = Object.freeze(["enabled", "before", "after", "opacityPercent"]);
+    function isIntegerInRange(value, min, max) {
+      return Number.isInteger(value) && value >= min && value <= max;
+    }
+    function normalizeFabricOnionSkinPrefs2(value) {
+      if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+      try {
+        if (Object.getPrototypeOf(value) !== Object.prototype) return null;
+        const keys = Object.keys(value);
+        if (keys.length !== FABRIC_ONION_SKIN_PREFS_KEYS.length || !FABRIC_ONION_SKIN_PREFS_KEYS.every((key) => keys.includes(key))) {
+          return null;
+        }
+        const { enabled, before, after, opacityPercent } = value;
+        if (typeof enabled !== "boolean" || !isIntegerInRange(before, 0, FABRIC_ONION_SKIN_MAX_SHEETS) || !isIntegerInRange(after, 0, FABRIC_ONION_SKIN_MAX_SHEETS) || !isIntegerInRange(
+          opacityPercent,
+          FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT,
+          FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT
+        )) {
+          return null;
+        }
+        return { enabled, before, after, opacityPercent };
+      } catch (_error) {
+        return null;
+      }
+    }
+    module2.exports = {
+      FABRIC_ONION_SKIN_MAX_SHEETS,
+      FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT,
+      FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT,
+      FABRIC_ONION_SKIN_DEFAULT_PREFS,
+      normalizeFabricOnionSkinPrefs: normalizeFabricOnionSkinPrefs2
+    };
+  }
+});
+
 // preload/mpv-overlay-preload.js
 var { contextBridge, ipcRenderer } = require("electron");
 var { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require_viewport_pan_message();
 var { normalizeFabricPalettePrefs } = require_fabric_palette_prefs();
+var { normalizeFabricOnionSkinPrefs } = require_fabric_onion_skin_prefs();
 contextBridge.exposeInMainWorld("mpvOverlayViewportPan", {
   send(value) {
     const normalized = normalizeViewportPanMessage(value);
@@ -135,6 +184,7 @@ var COLLABORATION_ACTION_CHANNEL = "mpv-overlay:collaboration-action";
 var COLLABORATION_DRAG_RESET_CHANNEL = "mpv-overlay:collaboration-drag-reset";
 var DRAWING_POINTERDOWN_FRAME_REQUEST_CHANNEL = "mpv-overlay:drawing-pointerdown-frame-request";
 var PALETTE_PREFS_CHANNEL = "mpv-overlay:palette-prefs";
+var ONION_SKIN_PREFS_CHANNEL = "mpv-overlay:onion-skin-prefs";
 var TEXT_ENTRY_CHANNEL = "mpv-overlay:text-entry";
 var DRAWING_POINTERDOWN_FRAME_REQUEST_KEYS = Object.freeze([
   "hostGeneration",
@@ -628,6 +678,18 @@ contextBridge.exposeInMainWorld("mpvOverlayPalettePrefs", Object.freeze({
     if (!prefs) return false;
     try {
       ipcRenderer.send(PALETTE_PREFS_CHANNEL, prefs);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+}));
+contextBridge.exposeInMainWorld("mpvOverlayOnionSkinPrefs", Object.freeze({
+  notify(value) {
+    const prefs = normalizeFabricOnionSkinPrefs(value);
+    if (!prefs) return false;
+    try {
+      ipcRenderer.send(ONION_SKIN_PREFS_CHANNEL, prefs);
       return true;
     } catch (_error) {
       return false;

@@ -44,6 +44,7 @@ import { FabricDrawingSync } from './modules/fabric-drawing-sync.js';
 import { createFabricDrawingPilotController } from './modules/fabric-drawing-pilot-controller.js';
 import { createFabricDrawingPersistenceStore } from './modules/fabric-drawing-persistence-store.js';
 import { createFabricPalettePrefsSaver } from './modules/fabric-palette-prefs-saver.js';
+import { createFabricOnionSkinPrefsPusher } from './modules/fabric-onion-skin-prefs-pusher.js';
 import { HighlightManager, HIGHLIGHT_COLORS } from './modules/highlight-manager.js';
 import { getUserSettings } from './modules/user-settings.js';
 import { createCommentPanelPopout } from './modules/comment-panel-popout.js';
@@ -5983,6 +5984,20 @@ async function initApp() {
     frameCopy: 'frame-copy',
     framePaste: 'frame-paste'
   };
+  // 프레임 단축키를 오버레이가 거절했을 때 보여 줄 말. 사유는 오버레이의
+  // applyFrameOperation 이 돌려주는 값이다. 여기 없는 사유에는 아무것도 띄우지 않는다.
+  const FABRIC_PILOT_FRAME_OPERATION_REJECTIONS = Object.freeze({
+    // 마지막 프레임의 키프레임은 그림이 없는 빈 키프레임일 수도 있다.
+    'timeline-full': '마지막 프레임에 키프레임이 있어 프레임을 더 넣을 수 없습니다',
+    'already-keyframe': '이미 키프레임입니다',
+    'no-keyframe-here': '이 프레임은 키프레임이 아닙니다',
+    'clipboard-empty': '복사해 둔 프레임이 없습니다',
+    'clipboard-other-video': '다른 영상에서 복사한 프레임은 붙여넣을 수 없습니다',
+    'nothing-to-copy': '이 프레임에는 복사할 그림이 없습니다',
+    // 넣기·붙여넣기뿐 아니라 프레임 삭제(끝에 경계 키프레임을 세울 때)에서도 나온다.
+    'scene-capacity-exceeded': '그림이 너무 많아 이 조작을 할 수 없습니다',
+    'frame-out-of-range': '영상 범위를 벗어난 프레임입니다'
+  });
 
   // 파일럿이 직접 처리하는 레이어 액션. 삭제·표시·잠금·이동은 오버레이가 그림을
   // 지우거나 숨기거나 순서를 바꿔야 의미가 있어 아직 넣지 않는다 — 배선 없이
@@ -7641,6 +7656,12 @@ async function initApp() {
       }
       return null;
     },
+    // 프레임 단축키가 거절되면 이유를 알린다(타임라인 끝이라 더 넣을 수 없다 등).
+    // 모르는 사유에는 아무것도 띄우지 않는다 — 사용자가 할 수 있는 일이 없다.
+    onFrameOperationRejected: ({ reason }) => {
+      const message = FABRIC_PILOT_FRAME_OPERATION_REJECTIONS[reason];
+      if (message) showToast(message, 'warn');
+    },
     // 어니언 스킨(앞뒤 그림을 반투명으로 깔아 보기). 패널을 닫아 둔 채로도 켜고 끌
     // 수 있어, 그때는 화면에 버튼이 없으므로 결과를 토스트로 알린다.
     matchesOnionSkinShortcut: event => userSettings.matchShortcut('onionSkinToggle', event),
@@ -8095,6 +8116,32 @@ async function initApp() {
     // (복구) 그 변경이 새 팔레트에 심어야 할 최신 값이다.
     fabricPalettePrefsSaver.flush();
     Promise.resolve(apply(userSettings.getFabricPalettePrefs())).catch(() => {});
+  }
+
+  // 어니언 스킨 설정(켜짐·앞뒤 장수·진하기)도 오버레이가 원본이고 여기서 보존한다.
+  // 저장을 모으는 방식은 팔레트 값과 같다.
+  const fabricOnionSkinPrefsSaver = createFabricPalettePrefsSaver({
+    save: prefs => userSettings.setFabricOnionSkinPrefs(prefs)
+  });
+  window.electronAPI?.onFabricDrawingOnionSkinPrefs?.(prefs => {
+    fabricOnionSkinPrefsSaver.push(prefs);
+  });
+  window.addEventListener('beforeunload', () => {
+    fabricOnionSkinPrefsSaver.flush();
+  });
+  // 어니언 스킨은 그리기 패널을 닫아 둔 채로도 쓴다. 그래서 오버레이가 받을 수 있는
+  // 상태가 될 때마다(보기·그리기 모두) 보존해 둔 값을 심는다. 사용자가 그 사이 값을
+  // 바꿨다면 오버레이가 스스로 거절한다. 아직 적지 못한 변경을 먼저 적고, 기본값
+  // 그대로면 보내지 않으며, 오버레이에 닿지 못했으면 잠깐 뒤에 다시 보낸다.
+  const fabricOnionSkinPrefsPusher = createFabricOnionSkinPrefsPusher({
+    apply: prefs => window.electronAPI.mpvApplyOverlayOnionSkinPrefs(prefs),
+    flush: () => fabricOnionSkinPrefsSaver.flush(),
+    getPrefs: () => userSettings.getFabricOnionSkinPrefs(),
+    hasCustomPrefs: () => userSettings.hasCustomFabricOnionSkinPrefs()
+  });
+  function pushFabricPilotOnionSkinPrefs() {
+    if (typeof window.electronAPI?.mpvApplyOverlayOnionSkinPrefs !== 'function') return;
+    fabricOnionSkinPrefsPusher.push();
   }
 
   let fabricPilotTimelineRenderQueued = false;
@@ -11156,7 +11203,11 @@ async function initApp() {
     }
     // 복구·영상 전환 중에 시작된 재생은 오버레이에 알리지 못했을 수 있다. 다시
     // 받을 수 있는 상태가 되면 재생 여부를 맞춘다(같은 값이면 보내지 않는다).
-    if (nextState === 'active' || nextState === 'passive') syncFabricOnionSkinPlayback();
+    // 오버레이 창이 새로 만들어졌다면 어니언 스킨 설정도 기본값으로 돌아가 있다.
+    if (nextState === 'active' || nextState === 'passive') {
+      pushFabricPilotOnionSkinPrefs();
+      syncFabricOnionSkinPlayback();
+    }
     // persistence 우회/차단 사유가 바뀌는 순간을 파일 로그로 남긴다(이어붙이기 정지 진단용).
     const fabricPersistenceReason = snapshot?.persistenceFailureReason || null;
     if (fabricPersistenceReason !== lastLoggedFabricPersistenceReason) {

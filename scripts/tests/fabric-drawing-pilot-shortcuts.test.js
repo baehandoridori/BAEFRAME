@@ -97,6 +97,7 @@ function createHarness(options = {}) {
     persistenceSessionIdFactory: options.persistenceSessionIdFactory,
     getHistoryRevision: options.getHistoryRevision,
     onHistoryFallback: options.onHistoryFallback,
+    onFrameOperationRejected: options.onFrameOperationRejected,
     ...(typeof options.wallNow === 'function' ? { wallNow: options.wallNow } : {}),
     uuid: () => `uuid-${++id}`
   });
@@ -2668,4 +2669,59 @@ test('a passive Ctrl+Z queued before the panel opens is dropped once drawing sta
   await settle();
   assert.equal(harness.calls.action.filter(request => request.action === 'undo').length, 0);
   assert.deepEqual(fallbacks, [], '열린 뒤의 실행취소는 다른 경로가 맡는다');
+});
+
+test('a rejected frame operation shortcut reports why it did nothing', async () => {
+  const rejections = [];
+  let answer = { success: false, applied: false, reason: 'timeline-full' };
+  const harness = createFrameOperationHarness({
+    onAction: () => answer,
+    onFrameOperationRejected: rejection => rejections.push(rejection)
+  });
+  await preparePassive(harness);
+  const press = async code => {
+    assert.equal(harness.controller.routeKeydown(createKeyEvent(code.slice(-1), { code })), true);
+    await settle();
+  };
+
+  // 오버레이가 "할 수 없다"고 사유를 붙여 답했다. 화면에 아무 반응이 없으면 키가 먹지
+  // 않은 것인지 조작이 거절된 것인지 알 수 없다.
+  await press('Digit3');
+  assert.deepEqual(rejections, [{ action: 'frame-insert', reason: 'timeline-full' }]);
+
+  // 조작이 됐으면 알릴 것이 없다.
+  answer = { success: true, applied: true, keyframeSetChanged: true, historyToken: 'frame-op:1' };
+  await press('Digit2');
+  assert.equal(rejections.length, 1);
+
+  // 사유 없는 실패(전송 실패·낡은 요청)는 사용자가 할 수 있는 일이 없다. 알리지 않는다.
+  answer = { success: false, applied: false };
+  await press('Digit4');
+  assert.equal(rejections.length, 1);
+
+  // 그리기 패널이 열려 있을 때도 같다.
+  assert.equal(await harness.controller.toggle(), true);
+  answer = { success: false, applied: false, reason: 'no-keyframe-here' };
+  await press('Digit4');
+  assert.deepEqual(rejections.at(-1), { action: 'frame-remove', reason: 'no-keyframe-here' });
+
+  // 요청을 만들지 못해 보내지도 않았다면(영상 범위 밖의 프레임) 오버레이의 답이 아니다.
+  // 컨트롤러가 스스로 붙인 사유로는 알리지 않는다.
+  const sentBefore = harness.calls.action.length;
+  const rejectedBefore = rejections.length;
+  harness.setContext({ totalFrames: 10 });
+  await press('Digit3');
+  assert.equal(harness.calls.action.length, sentBefore, '오버레이에 보내지 않는다');
+  assert.equal(rejections.length, rejectedBefore, '알리지 않는다');
+  harness.setContext({ totalFrames: 240 });
+
+  // 안내가 던져도 단축키 처리는 멈추지 않는다.
+  const throwing = createFrameOperationHarness({
+    onAction: () => ({ success: false, applied: false, reason: 'timeline-full' }),
+    onFrameOperationRejected: () => { throw new Error('toast failed'); }
+  });
+  await preparePassive(throwing);
+  assert.equal(throwing.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+  assert.equal(throwing.calls.action.length, 1);
 });

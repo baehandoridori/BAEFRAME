@@ -300,6 +300,7 @@ test('overlay preload exposes one narrow committed-transition bridge and sends p
       'mpvOverlayPersistence',
       'mpvOverlayCollaborationActions',
       'mpvOverlayPalettePrefs',
+      'mpvOverlayOnionSkinPrefs',
       'mpvOverlayTextEntry',
       'mpvOverlayDrawingFrame'
     ]
@@ -386,6 +387,46 @@ test('overlay preload forwards only well-formed palette values', () => {
     assert.equal(bridge.notify(malformed), false, JSON.stringify(malformed));
   }
   assert.deepEqual(harness.sent, []);
+});
+
+test('overlay preload forwards only well-formed onion skin settings', () => {
+  const harness = loadOverlayPreload();
+  const bridge = harness.exposed.get('mpvOverlayOnionSkinPrefs');
+  assert.equal(Object.isFrozen(bridge), true);
+  assert.deepEqual(Object.keys(bridge), ['notify']);
+
+  const prefs = { enabled: true, before: 3, after: 0, opacityPercent: 45 };
+  assert.equal(bridge.notify(prefs), true);
+  assert.deepEqual(harness.sent, [['mpv-overlay:onion-skin-prefs', prefs]]);
+  // 보낸 것은 검증을 거친 새 객체다. 호출자가 든 객체를 그대로 넘기지 않는다.
+  assert.notEqual(harness.sent[0][1], prefs);
+
+  harness.sent.length = 0;
+  for (const malformed of [
+    null,
+    [],
+    'prefs',
+    { ...prefs, enabled: 1 },
+    { ...prefs, enabled: 'true' },
+    { ...prefs, before: -1 },
+    { ...prefs, before: 6 },
+    { ...prefs, before: 1.5 },
+    { ...prefs, after: 6 },
+    { ...prefs, after: '1' },
+    { ...prefs, opacityPercent: 9 },
+    { ...prefs, opacityPercent: 81 },
+    { ...prefs, opacityPercent: 30.5 },
+    // 재생 여부는 설정이 아니다. 섞여 들어오면 통째로 버린다.
+    { ...prefs, playing: true },
+    { enabled: true, before: 3, after: 0 }
+  ]) {
+    assert.equal(bridge.notify(malformed), false, JSON.stringify(malformed));
+  }
+  assert.deepEqual(harness.sent, []);
+
+  // 전송이 실패해도 오버레이를 죽이지 않는다.
+  const failing = loadOverlayPreload({ sendError: new Error('channel closed') });
+  assert.equal(failing.exposed.get('mpvOverlayOnionSkinPrefs').notify(prefs), false);
 });
 
 test('overlay preload reports text entry as a plain boolean', () => {

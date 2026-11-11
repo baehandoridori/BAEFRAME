@@ -34,6 +34,7 @@ const {
   normalizeFabricDrawingTool
 } = require('../shared/fabric-drawing-tools.js');
 const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
+const { normalizeFabricOnionSkinPrefs } = require('../shared/fabric-onion-skin-prefs');
 
 // [ / ] 한 번에 허용하는 최대 증감. 실제 상한·하한은 오버레이 런타임이 자른다.
 const FABRIC_DRAWING_MAX_BRUSH_STEP = 64;
@@ -3873,6 +3874,57 @@ class MPVOverlayHost {
       enabled: result.enabled === true,
       playing: result.playing === true
     };
+  }
+
+  // 메인 창이 보존해 둔 어니언 스킨 설정(켜짐·장수·진하기)을 오버레이에 심는다.
+  // 세션과 무관한 뷰 상태라 그리기 패널이 닫혀 있어도 받는다. 사용자가 그 사이
+  // 값을 바꿨는지는 런타임이 판단해 거절한다. 토글·재생 알림과 같은 줄을 서서
+  // 순서가 뒤바뀌지 않게 한다.
+  applyDrawingOnionSkinPrefs(value) {
+    const prefs = normalizeFabricOnionSkinPrefs(value);
+    if (!prefs) {
+      return Promise.resolve({
+        success: false,
+        accepted: false,
+        error: 'invalid onion skin prefs'
+      });
+    }
+    const hostGeneration = this.hostGeneration;
+    const operation = this.onionSkinQueue.then(
+      () => this._performOnionSkinPrefsApply(prefs, hostGeneration)
+    );
+    this.onionSkinQueue = operation.catch(() => undefined);
+    return operation.catch(error => ({ success: false, accepted: false, error: error.message }));
+  }
+
+  async _performOnionSkinPrefsApply(prefs, hostGeneration) {
+    const stale = { success: false, accepted: false, error: 'stale onion skin prefs' };
+    const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    // 보기만 하는 동안에는 Fabric 런타임이 아직 주입되지 않았을 수 있다.
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return { success: false, accepted: false, error: prepared.error };
+    }
+    if (this.window !== hostWindow || hostWindow.isDestroyed?.() ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    const result = await this._executeFabricMethod('applyOnionSkinPrefs', prefs);
+    if (this.window !== hostWindow || hostGeneration !== this.hostGeneration) return stale;
+    if (result?.accepted !== true) {
+      return {
+        success: true,
+        accepted: false,
+        reason: typeof result?.reason === 'string' ? result.reason : 'rejected'
+      };
+    }
+    // 켜진 채로 복원되면 바로 보이게 합성을 강제한다(토글과 같다).
+    hostWindow.webContents?.invalidate?.();
+    return { success: true, accepted: true };
   }
 
   // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 프레임 왕복이나
