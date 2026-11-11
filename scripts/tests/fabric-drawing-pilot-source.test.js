@@ -2006,6 +2006,86 @@ test('controller drawing tool literal matches the shared tool set', () => {
   assert.deepEqual([...literalTools].sort(), [...FABRIC_DRAWING_TOOLS].sort());
 });
 
+test('패널을 닫아 둔 채 받는 액션 목록은 컨트롤러와 호스트가 같다', () => {
+  // 컨트롤러는 브라우저 ES 모듈이고 호스트는 CommonJS 라 목록을 공유할 수 없다.
+  // 어긋나면 컨트롤러가 보낸 요청을 호스트가 조용히 거절하거나, 호스트가 받을
+  // 수 있는 것을 컨트롤러가 보내지 않는다.
+  const readSet = (source, name) => {
+    const match = source.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`));
+    assert.ok(match, `${name} 리터럴이 있어야 한다`);
+    return [...match[1].matchAll(/'([^']+)'/g)].map(entry => entry[1]).sort();
+  };
+  const controllerPassive = readSet(pilotControllerSource, 'PASSIVE_DRAWING_ACTIONS');
+  const hostPassive = readSet(overlayHostSource, 'HOST_PASSIVE_DRAWING_ACTIONS');
+  assert.deepEqual(controllerPassive, hostPassive);
+  // 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다 — 프레임·키프레임 구조
+  // 조작 7종과 그 되돌리기·다시하기만 들어 있어야 한다.
+  assert.deepEqual(controllerPassive, [
+    'frame-copy',
+    'frame-insert',
+    'frame-insert-blank-keyframe',
+    'frame-paste',
+    'frame-remove',
+    'frame-to-keyframe',
+    'keyframe-to-frame',
+    'redo',
+    'undo'
+  ]);
+  // 둘 다 전체 액션 목록의 부분집합이어야 한다.
+  const controllerAll = new Set(readSet(pilotControllerSource, 'CONTROLLER_DRAWING_ACTIONS'));
+  const hostAll = new Set(readSet(overlayHostSource, 'HOST_DRAWING_ACTIONS'));
+  for (const action of controllerPassive) {
+    assert.ok(controllerAll.has(action), `컨트롤러 전체 목록에 ${action} 이 없다`);
+    assert.ok(hostAll.has(action), `호스트 전체 목록에 ${action} 이 없다`);
+  }
+});
+
+test('어니언 스킨 토글은 액션 id 로 컨트롤러에 이어지고 세 계층에 통로가 있다', () => {
+  // 구형 도구를 걷어내며 사라졌던 기능이다. 키가 아니라 액션 id 로 판정해야
+  // 사용자가 1 을 다른 키로 바꿔도 따라간다.
+  assert.match(userSettingsSource, /onionSkinToggle: \{ key: 'Digit1', ctrl: false, shift: false, alt: false/);
+  assert.match(
+    appSource,
+    /matchesOnionSkinShortcut: event => userSettings\.matchShortcut\('onionSkinToggle', event\)/
+  );
+  // 패널을 닫아 둔 채로 켜고 끄면 화면에 버튼이 없으므로 결과를 알려야 한다.
+  assert.match(appSource, /onOnionSkinChanged: \(\{ enabled \}\) => \{[\s\S]{0,160}?showToast\(/);
+  assert.match(pilotControllerSource, /const isOnionSkinShortcut = matchesOnionSkinShortcut\(event\);/);
+  assert.match(
+    preloadSource,
+    /mpvUpdateOverlayOnionSkin: \(request\) => ipcRenderer\.invoke\('mpv:update-overlay-onion-skin', request\)/
+  );
+  assert.match(
+    ipcHandlersSource,
+    /ipcMain\.handle\('mpv:update-overlay-onion-skin', \(event, request\) =>\s+invokeFabricDrawingHost\(event, \(\) => mpvOverlayHost\.updateDrawingOnionSkin\(request\)\)\);/
+  );
+  assert.match(overlayHostSource, /this\._executeFabricMethod\('updateOnionSkin', payload\)/);
+
+  // 재생 중에는 깔지 않는다. 재생 상태가 바뀌는 네 곳이 모두 알려야 한다.
+  for (const eventName of ['bufferingchange', 'play', 'pause', 'ended']) {
+    const start = appSource.indexOf(`videoPlayer.addEventListener('${eventName}', () => {`);
+    assert.ok(start > 0, `${eventName} 핸들러를 찾지 못했다`);
+    assert.ok(
+      appSource.slice(start, start + 900).includes('syncFabricOnionSkinPlayback();'),
+      `${eventName} 에서 어니언 스킨에 재생 여부를 알려야 한다`
+    );
+  }
+
+  // 팔레트의 색 점은 실제로 깔리는 색과 같아야 한다(오버레이는 main.css 를 쓰지 않아
+  // 호스트의 CSS 문자열에 따로 적혀 있다).
+  for (const [constant, side] of [
+    ['ONION_SKIN_PREVIOUS_COLOR', 'previous'],
+    ['ONION_SKIN_NEXT_COLOR', 'next']
+  ]) {
+    const color = fabricRuntimeSource.match(new RegExp(`const ${constant} = '(#[0-9a-f]{6})';`))?.[1];
+    assert.ok(color, `${constant} 를 찾지 못했다`);
+    assert.match(
+      overlayHostSource,
+      new RegExp(`\\[data-fabric-pilot-onion-side="${side}"\\][^{]+\\{\\s+background: ${color};`)
+    );
+  }
+});
+
 test('shape and pen tools are registered as assignable shortcut actions without default keys', () => {
   const toolActions = [
     'drawingToolBrush',
@@ -2219,7 +2299,9 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
   assert.deepEqual(listed.sort(), [
     'brushSizeDown', 'brushSizeUp',
     'drawingToolArrow', 'drawingToolBrush', 'drawingToolCircle', 'drawingToolEraser',
-    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect'
+    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect',
+    // 어니언 스킨 토글(1)도 에디터 포커스가 남아 있으면 글자로 들어간다.
+    'onionSkinToggle'
   ]);
   // 프레임·키프레임 조작 7종도 우회해야 한다. 목록을 손으로 베끼면 배선과 어긋나므로
   // 매핑을 통째로 펼쳐 넣고, 그 펼침이 실제로 있는지 확인한다. 빼면 에디터 포커스가

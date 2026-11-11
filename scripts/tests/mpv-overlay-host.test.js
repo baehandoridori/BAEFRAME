@@ -6554,3 +6554,296 @@ test('레이어 오브젝트 조작은 페이로드를 검사하고 허용된 �
   })).success, false, '쌍이 아닌 항목');
   assert.equal(forwarded.length, before, '거절은 런타임에 닿지 않는다');
 });
+
+// ── 그리기 패널을 닫아 둔 채(입력 꺼짐)로 받는 구조 조작 ─────────────────────
+
+async function preparePassiveActionHost(executeAction) {
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (script.includes('.hydrateDrawingVideo(')) {
+        return { accepted: true, sceneCount: 1, objectCount: 1 };
+      }
+      if (script.includes('.applyDrawingAction(')) {
+        const payload = readFabricMethodPayload(script, 'applyDrawingAction');
+        forwarded.push(payload);
+        return executeAction
+          ? executeAction(payload)
+          : { applied: true, keyframeSetChanged: true, repainted: true, historyToken: 'frame-op:1' };
+      }
+      return undefined;
+    }
+  });
+  const { host } = harness;
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  // 입력을 끈 채(=passive) 영상을 수화하면 호스트가 영상 정체를 기억한다.
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 1,
+    enabled: false
+  }))).success, true);
+  assert.equal(
+    (await host.hydrateDrawingVideo(makePersistenceHydration(hostGeneration))).accepted,
+    true
+  );
+  const send = (actionId, overrides = {}) => host.applyDrawingAction({
+    hostGeneration,
+    videoGeneration: 7,
+    inputRevision: 1,
+    sessionId: null,
+    stableVideoIdentity: 'C:/shots/host-video.mov',
+    actionId,
+    action: 'frame-insert',
+    targetFrame: 12,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    ...overrides
+  });
+  return { harness, host, hostGeneration, forwarded, send };
+}
+
+test('세션 없는 프레임 조작은 영상 정체로 맞추고 허용된 필드만 넘긴다', async () => {
+  const { forwarded, send } = await preparePassiveActionHost();
+
+  const result = await send('passive-insert-1', { secret: 'must-not-reach-runtime' });
+  assert.deepEqual(result, {
+    success: true,
+    applied: true,
+    duplicate: false,
+    historyToken: 'frame-op:1',
+    deletedCount: 0,
+    keyframeSetChanged: true
+  });
+  assert.equal(forwarded.length, 1);
+  assert.equal(forwarded[0].sessionId, null);
+  assert.equal(forwarded[0].stableVideoIdentity, 'C:/shots/host-video.mov');
+  assert.equal(forwarded[0].action, 'frame-insert');
+  assert.equal(forwarded[0].targetFrame, 12);
+  assert.equal(forwarded[0].sourceWidth, 1920);
+  assert.equal(forwarded[0].sourceHeight, 1080);
+  assert.equal(forwarded[0].secret, undefined, '허용 목록 밖 필드는 넘기지 않는다');
+
+  // 같은 actionId 는 다시 실행하지 않는다(세션 있는 경로와 같은 규약).
+  const duplicate = await send('passive-insert-1');
+  assert.equal(duplicate.duplicate, true);
+  assert.equal(forwarded.length, 1);
+});
+
+test('세션 없는 구조 조작은 토큰·영상 정체·형식이 어긋나면 런타임에 닿지 않는다', async () => {
+  const { hostGeneration, forwarded, send } = await preparePassiveActionHost();
+
+  assert.equal((await send('bad-host', { hostGeneration: hostGeneration - 1 })).success, false);
+  assert.equal((await send('bad-video-gen', { videoGeneration: 8 })).success, false);
+  assert.equal((await send('bad-input', { inputRevision: 99 })).success, false);
+  assert.equal(
+    (await send('bad-identity', { stableVideoIdentity: 'C:/shots/other.mov' })).success,
+    false,
+    '다른 영상의 키프레임은 바꾸지 않는다'
+  );
+  assert.equal((await send('bad-identity-type', { stableVideoIdentity: 7 })).success, false);
+  // 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다.
+  for (const action of ['delete-selection', 'clear-session', 'layer-model-marker']) {
+    assert.equal((await send(`bad-${action}`, { action })).success, false, action);
+  }
+  assert.equal((await send('bad-frame', { targetFrame: -1 })).success, false);
+  assert.equal((await send('bad-frame-missing', { targetFrame: undefined })).success, false);
+  assert.equal((await send('bad-width', { sourceWidth: 0 })).success, false);
+  assert.equal((await send('bad-height', { sourceHeight: Number.NaN })).success, false);
+  assert.equal((await send('bad-width-huge', { sourceWidth: 1e12 })).success, false);
+  assert.equal(forwarded.length, 0, '거절은 런타임에 닿지 않는다');
+
+  // 위 거절들이 정상 요청을 막지 않는다.
+  assert.equal((await send('ok-after-rejections')).success, true);
+});
+
+test('세션 없는 되돌리기는 표식이 있어야 받는다', async () => {
+  const { forwarded, send } = await preparePassiveActionHost(payload => ({
+    applied: true,
+    keyframeSetChanged: true,
+    repainted: true,
+    historyToken: payload.historyToken
+  }));
+
+  for (const action of ['undo', 'redo']) {
+    assert.equal(
+      (await send(`${action}-no-token`, { action, targetFrame: undefined })).success,
+      false,
+      '표식 없는 되돌리기는 받지 않는다'
+    );
+    assert.equal((await send(`${action}-empty-token`, {
+      action, historyToken: ''
+    })).success, false);
+    assert.equal((await send(`${action}-long-token`, {
+      action, historyToken: 'x'.repeat(65)
+    })).success, false);
+  }
+  assert.equal(forwarded.length, 0);
+
+  const undone = await send('undo-with-token', {
+    action: 'undo',
+    historyToken: 'frame-op:42',
+    // 되돌리기는 대상 프레임·소스 크기를 나르지 않는다.
+    targetFrame: undefined,
+    sourceWidth: undefined,
+    sourceHeight: undefined
+  });
+  assert.equal(undone.success, true);
+  assert.equal(undone.historyToken, 'frame-op:42');
+  assert.equal(forwarded[0].historyToken, 'frame-op:42');
+  assert.equal(forwarded[0].sourceWidth, undefined);
+});
+
+test('그리기 입력이 켜져 있는 동안에는 세션 없는 구조 조작을 받지 않는다', async () => {
+  const { host, hostGeneration, forwarded, send } = await preparePassiveActionHost();
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 7,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-over-passive',
+      stableVideoIdentity: 'C:/shots/host-video.mov',
+      targetFrame: 4,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }))).success, true);
+
+  assert.equal((await send('passive-while-active', { inputRevision: 2 })).success, false);
+  assert.equal(forwarded.length, 0);
+});
+
+test('updateDrawingTool forwards the tool that was active before the change', async () => {
+  // 그리기 단축키(B)가 "다른 도구였으면 브러시로, 이미 브러시였으면 끄기" 를 가리는 값이다.
+  let previousTool = 'eraser';
+  const { host } = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateDrawingTool(')) return undefined;
+      return { accepted: true, tool: 'brush', previousTool };
+    }
+  });
+  const ensured = await host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 1
+  }))).success, true);
+  assert.equal((await host.setDrawingInput(makeDrawingInput(hostGeneration, {
+    videoGeneration: 1,
+    inputRevision: 2,
+    enabled: true,
+    session: {
+      sessionId: 'session-previous-tool',
+      stableVideoIdentity: 'video-previous-tool',
+      targetFrame: 3,
+      sourceWidth: 1920,
+      sourceHeight: 1080,
+      canvasRect: { left: 0, top: 0, width: 640, height: 360 },
+      tool: 'brush'
+    }
+  }))).success, true);
+  const send = toolRevision => host.updateDrawingTool({
+    hostGeneration,
+    videoGeneration: 1,
+    inputRevision: 2,
+    sessionId: 'session-previous-tool',
+    toolRevision,
+    tool: 'brush'
+  });
+
+  assert.deepEqual(await send(1), {
+    success: true,
+    accepted: true,
+    tool: 'brush',
+    previousTool: 'eraser'
+  });
+  // 런타임이 도구 집합 밖의 값을 돌려주면 싣지 않는다.
+  previousTool = 'lasso';
+  assert.deepEqual(await send(2), { success: true, accepted: true, tool: 'brush' });
+});
+
+// ── 어니언 스킨(뷰 상태) 호스트 경계 ────────────────────────────────────────
+
+async function prepareOnionSkinHost(executeOnionSkin) {
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateOnionSkin(')) return undefined;
+      const payload = readFabricMethodPayload(script, 'updateOnionSkin');
+      forwarded.push(payload);
+      return executeOnionSkin
+        ? executeOnionSkin(payload)
+        : { accepted: true, enabled: true, playing: payload.playing === true };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  return { harness, host: harness.host, hostGeneration, forwarded };
+}
+
+test('어니언 스킨 토글은 그리기 입력이 꺼져 있어도 런타임에 닿고 합성을 강제한다', async () => {
+  const { harness, host, hostGeneration, forwarded } = await prepareOnionSkinHost();
+  harness.events.length = 0;
+
+  const result = await host.updateDrawingOnionSkin({
+    hostGeneration,
+    toggle: true,
+    secret: 'must-not-reach-runtime'
+  });
+  assert.deepEqual(result, { success: true, accepted: true, enabled: true, playing: false });
+  assert.deepEqual(forwarded, [{ toggle: true }], '허용된 필드만 넘긴다');
+  // 어니언 스킨은 별도 캔버스에 깔린다. 투명 창이 합성을 미루지 않게 강제한다.
+  assert.equal(
+    harness.events.some(([name]) => name === 'webContents.invalidate'),
+    true,
+    '켜고 끈 결과가 바로 보여야 한다'
+  );
+
+  const playing = await host.updateDrawingOnionSkin({ hostGeneration, playing: true });
+  assert.deepEqual(playing, { success: true, accepted: true, enabled: true, playing: true });
+  assert.deepEqual(forwarded[1], { playing: true });
+});
+
+test('어니언 스킨 요청은 호스트 세대와 형식이 어긋나면 런타임에 닿지 않는다', async () => {
+  const { host, hostGeneration, forwarded } = await prepareOnionSkinHost();
+  const rejected = { success: false, accepted: false, error: 'stale or invalid onion skin request' };
+
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration: hostGeneration - 1, toggle: true }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration }), rejected, '바꿀 것이 없는 요청');
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration, toggle: false }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration, toggle: 'yes' }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration, playing: 1 }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin(null), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin([]), rejected);
+  assert.equal(forwarded.length, 0);
+
+  // 런타임이 거절하면 그대로 실패로 돌려준다.
+  const refusing = await prepareOnionSkinHost(() => ({ accepted: false, reason: 'not-prepared' }));
+  assert.deepEqual(
+    await refusing.host.updateDrawingOnionSkin({ hostGeneration: refusing.hostGeneration, toggle: true }),
+    { success: false, accepted: false, error: 'not-prepared' }
+  );
+});
+
+test('어니언 스킨 요청은 보낸 순서대로 적용된다', async () => {
+  // 켜기/끄기는 토글이라 순서가 뒤집히면 결과가 반대가 된다.
+  const order = [];
+  const first = createDeferred();
+  const { host, hostGeneration } = await prepareOnionSkinHost(payload => {
+    order.push(payload);
+    return order.length === 1
+      ? first.promise
+      : { accepted: true, enabled: false, playing: payload.playing === true };
+  });
+
+  const slow = host.updateDrawingOnionSkin({ hostGeneration, toggle: true });
+  const fast = host.updateDrawingOnionSkin({ hostGeneration, playing: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(order, [{ toggle: true }], '앞 요청이 끝나기 전에는 다음 요청을 실행하지 않는다');
+  first.resolve({ accepted: true, enabled: true, playing: false });
+  assert.equal((await slow).enabled, true);
+  assert.equal((await fast).playing, true);
+  assert.deepEqual(order, [{ toggle: true }, { playing: true }]);
+});

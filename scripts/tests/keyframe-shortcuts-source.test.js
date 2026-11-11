@@ -105,6 +105,12 @@ test('Animate-style playback, layer toggle, and frame clipboard shortcuts are co
   assert.match(drawingManagerSource, /pasteFrames\(targetFrame = this\.currentFrame\)/);
   assert.match(userSettingsSource, /drawingToolSelect:\s*\{ key: 'KeyV', ctrl: false, shift: false, alt: false/);
   assert.match(appSource, /fabricDrawingPilotController\.routeKeydown\(e\)/);
-  assert.match(appSource, /matchShortcut\('drawMode', e\)[\s\S]{0,100}?toggleDrawMode\(\)/);
+  // 그리기 단축키는 "브러시 고르기 또는 끄기" 분기를 거친 뒤에 토글로 간다.
+  // 다른 도구를 쓰다가 B 를 누르면 패널이 꺼져 버려 단축키로 브러시를 고를 수 없었다.
+  assert.match(appSource, /matchShortcut\('drawMode', e\)[\s\S]{0,100}?handleDrawModeShortcut\(\)/);
+  assert.match(
+    appSource,
+    /async function handleDrawModeShortcut\(\) \{[\s\S]{0,400}?selectBrushFromShortcut\(\)[\s\S]{0,200}?return toggleDrawMode\(\);\n  \}/
+  );
   assert.doesNotMatch(appSource, /currentToolName|brushBtn\.click|selectDrawingTool/);
 });

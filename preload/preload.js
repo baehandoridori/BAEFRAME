@@ -368,6 +368,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvUpdateOverlayDrawingBrush: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-brush', request),
   mpvUpdateOverlayDrawingLayerView: (request) =>
     ipcRenderer.invoke('mpv:update-overlay-drawing-layer-view', request),
+  // 어니언 스킨 켜기/끄기와 재생 여부. 문서를 바꾸지 않는 뷰 상태다.
+  mpvUpdateOverlayOnionSkin: (request) => ipcRenderer.invoke('mpv:update-overlay-onion-skin', request),
   mpvUpdateOverlayDrawingFrame: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-frame', request),
   mpvApplyOverlayDrawingAction: (request) => ipcRenderer.invoke('mpv:apply-overlay-drawing-action', request),
   mpvConfirmOverlayDrawingPointerdownFrame: (request) =>

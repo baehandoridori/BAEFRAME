@@ -6,6 +6,25 @@
 >
 > 작업 전 [드로잉 작업 규칙](drawing-work-guide.md)을 읽는다. 기능 변경 시 관련 상태·데이터 출처·검증 기준을 함께 갱신한다.
 
+## 패널 없이 쓰는 단축키 · B 키 · 어니언 스킨 · 변형 상자 (2026-11-11, v2.14.0-beta)
+
+| 항목 | 현재 구현 |
+|---|---|
+| 그리기 패널이 닫힌 상태의 프레임 단축키 | `2`·`3`·`4`·`Shift+2`·`Shift+3`·`Ctrl+Alt+C`·`Ctrl+Alt+V`(§1.1·§1.2 의 파일럿 씬 조작 7종)가 패널을 열지 않아도 동작한다. 세션 id 가 없으므로 **영상 정체**(호스트 세대·영상 세대·입력 리비전·`stableVideoIdentity`)로 맞춘다. 레거시 F6/F7 과 레이어 단축키는 종전대로다 |
+| 패널이 닫힌 상태의 Ctrl+Z / Ctrl+Y | **패널을 닫은 채 한 프레임 조작만** 되돌린다. 조작마다 표식(`historyToken`)을 받아 두고, 구조 히스토리의 맨 위가 그 표식일 때만 되돌린다. 패널을 열어 그린 획이나 그 사이의 다른 편집이 맨 위에 있으면 건드리지 않고 기존 전역 히스토리 경로로 넘어간다. 조작의 응답이 오기 전에 누른 Ctrl+Z 는 키를 받아 두었다가 조작이 끝난 뒤에 판정한다(표식은 응답이 와야 안다. 기다림은 2초까지다). 판정할 때 닫은 채 한 조작이 맨 위가 아니거나 오버레이가 히스토리가 비었다고 답하면 전역 실행취소로 넘기고, 맨 위에 다른 항목이 있다는 답과 전송 실패에는 넘기지 않는다. 표식은 패널을 열거나 영상을 다시 수화하거나 전역 히스토리가 실제로 움직이면 버린다(최대 32개) |
+| `B` | 패널이 닫혀 있으면 연다(마지막에 쓰던 도구 그대로). 패널이 열려 있고 **다른 도구**를 쓰는 중이면 브러시를 고른다. 패널이 열려 있고 **브러시**를 쓰는 중이면 닫는다. 판정은 오버레이가 돌려준 "바꾸기 전 도구"(`previousTool`)로 한다 — 렌더러의 사본으로 판정하면 팔레트를 눌러 바꾼 도구를 모른다 |
+| 어니언 스킨 | `1`(`onionSkinToggle`)과 팔레트의 어니언 스킨 줄로 켠다. 패널이 닫혀 있어도 켜고 끌 수 있다. 앞 그림은 파랑, 뒤 그림은 초록으로 겹쳐 보인다. 장수(앞 0~5·뒤 0~5, 기본 앞 2·뒤 1)와 진하기(10~80%, 기본 30%)는 팔레트에서 바꾼다. **장**은 키프레임 한 장이다(홀드 프레임을 세지 않는다). 빈 키프레임은 건너뛰고, 숨긴 레이어의 획은 그리지 않으며, 재생 중에는 숨긴다 |
+| 어니언 스킨이 그려지는 자리 | Fabric 캔버스 **아래**의 별도 캔버스다. 씬·선택·저장에 들어가지 않고 `drawingsV3` 도 바뀌지 않는다. 설정값은 오버레이 창이 살아 있는 동안만 유지한다(사용자 설정에 저장하지 않는다). 편집창 도크에는 어니언 스킨 줄이 없다 |
+| 선택 도구의 변형 상자 | `V` 로 고른 획(여러 개 포함)에 손잡이가 달린 상자가 뜬다. 모서리 = 크기(가로·세로 따로, `Shift` = 비율 유지), 변 = 한 방향 크기, 위쪽 손잡이와 **모서리 바로 바깥** = 회전(`Shift` = 15° 단위). 회전 영역은 그리지 않고 둥근 화살표 커서로 알린다. 기울이기와 뒤집기는 잠가 뒀다. 손잡이 크기는 화면 픽셀 기준이라 영상 해상도·확대 배율과 무관하게 일정하다 |
+| 변형의 저장 | 레코드의 `transform`(`scaleX`·`scaleY`·`angle`. 돌린 획을 다른 획과 함께 가로·세로 다르게 늘이면 `skewX` 도 쓴다)만 바뀐다. `pathData`·`sourcePoints`·id 는 그대로라 레이어 배정이 유지되고, 실행취소 한 번에 한 조작이다. 스키마는 바뀌지 않았다 — 9개 필드는 원래부터 저장 형식에 있었고 그동안 `left`·`top` 만 썼다 |
+| 변형한 획을 다루는 다른 기능 | 투영·정지 화면·편집창 내보내기·어니언 스킨이 모두 `path.set(record.transform)` 으로 그려 같은 모양이다. 올가미·지우개는 오브젝트의 행렬을 거꾸로 적용해 판정하므로 변형한 획도 고르고 자를 수 있다. 외곽선은 본체가 변한 만큼(행렬)을 그대로 따라간다 |
+| 변형 상자를 주지 않는 경우 | 부분 선택으로 세워 둔 조각(옮겨서 확정한 뒤에 변형할 수 있다), 선택 도구가 아닐 때, 숨기거나 잠근 레이어의 획. 배율이 0.01~100 배를 벗어나면 저장하지 않고 화면을 되돌린다 |
+| `Shift` 판정 | 포인터 이벤트에 실린 `shiftKey` 만 본다. Alt·Ctrl 처럼 오버레이 문서의 키 상태를 기억해 두지 않는다 — 호스트가 Shift 조합(`Shift+2` 등)의 누름을 삼키면 Chromium 이 Shift 뗌을 내보내지 않아, 기억해 둔 값이 눌린 채로 남는다(v2.13.2-beta 에서 고친 Ctrl 고착과 같은 문제). 펜 이벤트에 `shiftKey` 가 실려 오지 않는 환경에서는 펜으로 비율 유지·15° 단위를 쓸 수 없다 |
+| Drawing V3 그림자 어댑터 | 크기·회전 전이를 `unsupported-transform` 으로 격리하지 않고, 기준 변형에 대한 아핀 행렬 `M(지금)·M(기준)⁻¹` 로 받는다. 이동뿐인 전이는 종전과 같은 `[1,0,0,1,dx,dy]` 다 |
+| 편집창(BEditer) | 같은 런타임이라 변형 상자가 그대로 뜬다. 출력 크기가 그림과 **화면 비율까지 다를 때** 돌린 획은 행렬로 다시 풀어 늘인다(크기 필드에 비율만 곱하면 모양이 틀어진다) |
+
+자동 검사(실제 Fabric 을 띄워 손잡이를 끄는 검사와 픽셀 대조 포함)와, 패키지된 앱을 격리 프로필로 띄워 자동 입력(DevTools 프로토콜의 키·마우스)으로 네 항목을 조작하는 점검으로 확인했다. 사람이 직접 조작하는 실기와 실물 펜 태블릿(특히 펜으로 `Shift` 를 누른 채 끌기)은 미확인이다. 근거는 [작업 기록](../DEVLOG/2026-11-11-drawing-feedback-onion-transform.md).
+
 ## 타블렛 실행취소 후 펜 입력 (2026-10-07, v2.13.2-beta)
 
 | 항목 | 현재 구현 |
@@ -71,6 +90,8 @@
 
 액션 id는 `renderer/scripts/modules/user-settings.js`의 기본값이며 사용자가 재지정할 수 있다. **판정은 항상 액션 id로 하고 키 문자열로 하지 말 것.**
 
+§1.1·§1.2 에서 "파일럿 씬"을 다루는 7종(`keyframeAddBlank2`·`keyframeConvertToFrame`·`keyframeConvertToKeyframe`·`insertFrame`·`deleteFrame`·`frameCopy`·`framePaste`)은 v2.14.0-beta 부터 **그리기 패널이 닫혀 있어도** 동작한다(맨 위 2026-11-11 절).
+
 ### 1.1 키프레임 조작
 
 | 액션 id | 기본 키 | 라벨 | 보는 데이터 | mpv 모드 상태 |
@@ -130,11 +151,11 @@
 
 | 액션 id | 기본 키 | 처리 |
 |---|---|---|
-| `drawMode` | `B` | 방화벽에서 **예외 통과**(engaged 여부 무관). `toggleDrawMode()` → 파일럿 `toggle()` |
+| `drawMode` | `B` | 방화벽에서 **예외 통과**(engaged 여부 무관). `handleDrawModeShortcut()` — 패널이 닫혀 있으면 `toggleDrawMode()` 로 열고, 열려 있으면 `selectBrushFromShortcut()` 으로 브러시를 고르며, 이미 브러시면 닫는다(v2.14.0-beta) |
 | `undo` / `redo` | `Ctrl+Z` / `Ctrl+Y` | 오버레이 포커스면 호스트가 가로채 메인으로 릴레이 → 파일럿 `applyDrawingAction`. 히스토리는 **영상 내 편집 순서를 전역으로 관리**하며, 그림과 레이어의 복원을 함께 처리한다 |
-| `onionSkinToggle` | `1` | 차단. 파일럿 미구현 |
+| `onionSkinToggle` | `1` | ✅ 동작 (v2.14.0-beta) — `routeKeydown` → `toggleOnionSkin()` → `mpv:update-overlay-onion-skin`. 패널이 닫혀 있어도 받는다 |
 | `brushSizeDown` / `Up` | `[` / `]` | ✅ 동작 — `matchBrushSizeShortcut` → `sendBrushSizeStep`. 팔레트와 `Alt`+드래그도 지원 |
-| `drawingToolSelect` | `V` | ✅ **이미 동작**. `routeKeydown`이 방화벽보다 먼저 가로채 `sendTool('select')` 호출 |
+| `drawingToolSelect` | `V` | ✅ **이미 동작**. `routeKeydown`이 방화벽보다 먼저 가로채 `sendTool('select')` 호출. 고른 획에는 크기·회전 변형 상자가 뜬다(v2.14.0-beta) |
 | (키 `Delete`) | `Delete` | ✅ **이미 동작**. `routeKeydown`이 `applyDrawingAction('delete-selection')` 호출 — **선택한 획 삭제**이지 키프레임 삭제가 아니다 |
 
 ---
@@ -181,11 +202,17 @@
 | 팔레트·브러시 크기 단축키 | 구현됨 | `mpv-fabric-toolbar.js`, `fabric-drawing-pilot-controller.js` |
 | 자유 색상·내 색·값 보존 | 구현됨(2026-10-06). 저장 스키마 변경 없음 | `mpv-fabric-overlay-runtime.js`, `shared/fabric-palette-prefs.js`, `user-settings.js` |
 | Ctrl 임시 지우개 표시 | 구현됨(2026-10-06). 표시 전용이며 지우기 판정은 그대로 | `mpv-fabric-overlay-runtime.js`, `main/mpv-overlay-host.js` 의 팔레트 CSS |
+| 선택 도구 변형 상자(크기·회전) | 구현됨(2026-11-11). 레코드 `transform` 만 바뀌고 저장 스키마 변경 없음 | `mpv-fabric-overlay-runtime.js`(`applySelectionTransformPolicy`·`commitSelectionTransform`), `drawing-v3/drawing-engine-adapter.js`, `editor/drawing.js` |
+| 어니언 스킨 | 구현됨(2026-11-11). 표시 전용이며 문서에 쓰지 않음 | `mpv-fabric-overlay-runtime.js`(`syncOnionSkin`), `main/mpv-overlay-host.js`, `fabric-drawing-pilot-controller.js` |
+| 패널이 닫힌 상태의 프레임 단축키 | 구현됨(2026-11-11). 세션 없이 영상 정체로 맞추고, 그 조작만 Ctrl+Z 로 되돌림 | `fabric-drawing-pilot-controller.js`(`routeKeydown`·`applyPassiveHistoryAction`), `main/mpv-overlay-host.js`, `mpv-fabric-overlay-runtime.js`(`applyPassiveDrawingAction`) |
 
 ## 4. 아직 구분해야 할 제한
 
 - F6/F7의 레거시 액션과 키프레임 자체 Delete는 위 표에 표시한 제한이 남아 있다. Shift+3·2의 파일럿 조작이나 선택 획 Delete와 혼동하지 않는다.
-- 어니언 스킨은 파일럿 미구현이다. 기존의 “캔버스가 영상을 가림” 설명만으로 현재 원인을 단정하지 않는다.
+- 어니언 스킨의 설정(켜짐·장수·진하기)은 사용자 설정에 저장하지 않는다. 앱을 다시 켜면 기본값(꺼짐)이다.
+- 변형 상자는 기울이기·뒤집기를 지원하지 않는다. 부분 선택으로 세워 둔 조각은 옮겨서 확정한 뒤에 변형한다.
+- 여러 획을 **옮긴** 뒤에는 종전대로 선택이 풀린다(크기·회전 뒤에는 유지된다).
+- 패널이 닫힌 상태에서 받는 것은 프레임 조작 7종과 어니언 스킨 토글뿐이다. 레이어 단축키는 종전대로 패널이 열려 있어야 한다.
 - 타임라인 투영 행에서의 편집 가능 여부는 §2를 따른다. 단축키 조작 지원과 마커 드래그 지원은 별개다.
 - [레이어 이식 기록](../DEVLOG/2026-08-31-레거시-드로잉-단축키-이식.md)의 “16종 완료”는 해당 작업에서 이식한 범위를 뜻하며 모든 레거시 기능의 완료를 의미하지 않는다.
 

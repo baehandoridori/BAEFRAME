@@ -1982,11 +1982,21 @@ async function initApp() {
     timeline.setPlayingState(videoPlayer.isPlaying && !buffering);
     getAudioWaveform()?.setPlaying(videoPlayer.isPlaying && !buffering);
     syncCompositionLayerPlaybackState(videoPlayer.currentTime, videoPlayer.isPlaying);
+    syncFabricOnionSkinPlayback();
   });
+
+  // 재생 중에는 어니언 스킨을 깔지 않는다(잔상이 움직임을 가린다). 버퍼 대기로
+  // 화면이 멈춰 있는 동안에는 정지와 같이 다시 보여 준다.
+  function syncFabricOnionSkinPlayback() {
+    void fabricDrawingPilotController.setOnionSkinPlaying(
+      videoPlayer.isPlaying && !videoPlayer.isBuffering
+    );
+  }
 
   // 비디오 재생 상태 변경
   videoPlayer.addEventListener('play', () => {
     syncCurrentFabricDrawingDisplayFrame({ force: true });
+    syncFabricOnionSkinPlayback();
     elements.btnPlay.innerHTML = pauseIconSVG;
     drawingManager.setPlaying(!videoPlayer.isBuffering);
     timeline.setPlayingState(!videoPlayer.isBuffering);
@@ -2002,6 +2012,7 @@ async function initApp() {
   });
 
   videoPlayer.addEventListener('pause', () => {
+    syncFabricOnionSkinPlayback();
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
@@ -2012,6 +2023,7 @@ async function initApp() {
   });
 
   videoPlayer.addEventListener('ended', () => {
+    syncFabricOnionSkinPlayback();
     elements.btnPlay.innerHTML = playIconSVG;
     drawingManager.setPlaying(false);
     timeline.setPlayingState(false);
@@ -7629,6 +7641,12 @@ async function initApp() {
       }
       return null;
     },
+    // 어니언 스킨(앞뒤 그림을 반투명으로 깔아 보기). 패널을 닫아 둔 채로도 켜고 끌
+    // 수 있어, 그때는 화면에 버튼이 없으므로 결과를 토스트로 알린다.
+    matchesOnionSkinShortcut: event => userSettings.matchShortcut('onionSkinToggle', event),
+    onOnionSkinChanged: ({ enabled }) => {
+      showToast(enabled ? '어니언 스킨 켜짐' : '어니언 스킨 꺼짐', 'info');
+    },
     // 액션 id 로 판정한다 — 사용자가 [ / ] 를 다른 키로 재지정해도 따라간다.
     matchesBrushSizeShortcut: event => {
       if (userSettings.matchShortcut('brushSizeUp', event)) return 1;
@@ -9189,6 +9207,8 @@ async function initApp() {
     'drawingToolArrow',
     'brushSizeDown',
     'brushSizeUp',
+    // 어니언 스킨 토글. 빼면 에디터 포커스가 남아 있을 때 1 이 글자로 들어간다.
+    'onionSkinToggle',
     // 프레임·키프레임 조작도 그리기 중에만 쓴다. 빼면 에디터 포커스가 남아 있을 때
     // 릴레이가 이 키를 에디터로 보내고, handleKeydown 이 shouldIgnoreGlobalShortcutTarget
     // 에서 먼저 돌아가 조작이 실패한다. 수식키 없는 2·3·4 는 에디터에 글자로 들어간다.
@@ -11134,6 +11154,9 @@ async function initApp() {
       // 한다 — passive 수신은 그 세션으로 요청을 맞추기 때문이다.
       void pushFabricPilotLayerViewAfterDisplay();
     }
+    // 복구·영상 전환 중에 시작된 재생은 오버레이에 알리지 못했을 수 있다. 다시
+    // 받을 수 있는 상태가 되면 재생 여부를 맞춘다(같은 값이면 보내지 않는다).
+    if (nextState === 'active' || nextState === 'passive') syncFabricOnionSkinPlayback();
     // persistence 우회/차단 사유가 바뀌는 순간을 파일 로그로 남긴다(이어붙이기 정지 진단용).
     const fabricPersistenceReason = snapshot?.persistenceFailureReason || null;
     if (fabricPersistenceReason !== lastLoggedFabricPersistenceReason) {
@@ -11272,6 +11295,19 @@ async function initApp() {
     drawingEntryPromise = pending;
     try { return await pending; }
     finally { if (drawingEntryPromise === pending) drawingEntryPromise = null; }
+  }
+
+  // 그리기 단축키(B)는 브러시 키이기도 하다. 패널이 켜져 있고 다른 도구를 쓰는
+  // 중이면 브러시로 바꾸고 패널은 그대로 둔다. 이미 브러시일 때만 패널을 끈다
+  // (구형 팔레트와 같은 동작 — 다른 도구에서 B 를 누르면 패널이 꺼져 버려 단축키로
+  // 브러시를 고를 수 없었다). 툴바의 그리기 버튼은 지금까지처럼 켜기/끄기만 한다.
+  async function handleDrawModeShortcut() {
+    if (fabricDrawingPilotController.getState?.() === 'active') {
+      const outcome = await fabricDrawingPilotController.selectBrushFromShortcut();
+      if (outcome === 'selected') return true;
+      if (outcome === 'stale') return false;
+    }
+    return toggleDrawMode();
   }
 
   /**
@@ -14632,7 +14668,7 @@ async function initApp() {
 
     if (userSettings.matchShortcut('drawMode', e)) {
       e.preventDefault();
-      if (!e.repeat) void toggleDrawMode();
+      if (!e.repeat) void handleDrawModeShortcut();
       return;
     }
 
