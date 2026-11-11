@@ -6763,3 +6763,87 @@ test('updateDrawingTool forwards the tool that was active before the change', as
   previousTool = 'lasso';
   assert.deepEqual(await send(2), { success: true, accepted: true, tool: 'brush' });
 });
+
+// ── 어니언 스킨(뷰 상태) 호스트 경계 ────────────────────────────────────────
+
+async function prepareOnionSkinHost(executeOnionSkin) {
+  const forwarded = [];
+  const harness = createDrawingHostHarness({
+    executeDrawing(script) {
+      if (!script.includes('.updateOnionSkin(')) return undefined;
+      const payload = readFabricMethodPayload(script, 'updateOnionSkin');
+      forwarded.push(payload);
+      return executeOnionSkin
+        ? executeOnionSkin(payload)
+        : { accepted: true, enabled: true, playing: payload.playing === true };
+    }
+  });
+  const ensured = await harness.host.ensure({ x: 0, y: 0, width: 640, height: 360 });
+  const { hostGeneration } = ensured.drawingCapability;
+  return { harness, host: harness.host, hostGeneration, forwarded };
+}
+
+test('어니언 스킨 토글은 그리기 입력이 꺼져 있어도 런타임에 닿고 합성을 강제한다', async () => {
+  const { harness, host, hostGeneration, forwarded } = await prepareOnionSkinHost();
+  harness.events.length = 0;
+
+  const result = await host.updateDrawingOnionSkin({
+    hostGeneration,
+    toggle: true,
+    secret: 'must-not-reach-runtime'
+  });
+  assert.deepEqual(result, { success: true, accepted: true, enabled: true, playing: false });
+  assert.deepEqual(forwarded, [{ toggle: true }], '허용된 필드만 넘긴다');
+  // 어니언 스킨은 별도 캔버스에 깔린다. 투명 창이 합성을 미루지 않게 강제한다.
+  assert.equal(
+    harness.events.some(([name]) => name === 'webContents.invalidate'),
+    true,
+    '켜고 끈 결과가 바로 보여야 한다'
+  );
+
+  const playing = await host.updateDrawingOnionSkin({ hostGeneration, playing: true });
+  assert.deepEqual(playing, { success: true, accepted: true, enabled: true, playing: true });
+  assert.deepEqual(forwarded[1], { playing: true });
+});
+
+test('어니언 스킨 요청은 호스트 세대와 형식이 어긋나면 런타임에 닿지 않는다', async () => {
+  const { host, hostGeneration, forwarded } = await prepareOnionSkinHost();
+  const rejected = { success: false, accepted: false, error: 'stale or invalid onion skin request' };
+
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration: hostGeneration - 1, toggle: true }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration }), rejected, '바꿀 것이 없는 요청');
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration, toggle: false }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration, toggle: 'yes' }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin({ hostGeneration, playing: 1 }), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin(null), rejected);
+  assert.deepEqual(await host.updateDrawingOnionSkin([]), rejected);
+  assert.equal(forwarded.length, 0);
+
+  // 런타임이 거절하면 그대로 실패로 돌려준다.
+  const refusing = await prepareOnionSkinHost(() => ({ accepted: false, reason: 'not-prepared' }));
+  assert.deepEqual(
+    await refusing.host.updateDrawingOnionSkin({ hostGeneration: refusing.hostGeneration, toggle: true }),
+    { success: false, accepted: false, error: 'not-prepared' }
+  );
+});
+
+test('어니언 스킨 요청은 보낸 순서대로 적용된다', async () => {
+  // 켜기/끄기는 토글이라 순서가 뒤집히면 결과가 반대가 된다.
+  const order = [];
+  const first = createDeferred();
+  const { host, hostGeneration } = await prepareOnionSkinHost(payload => {
+    order.push(payload);
+    return order.length === 1
+      ? first.promise
+      : { accepted: true, enabled: false, playing: payload.playing === true };
+  });
+
+  const slow = host.updateDrawingOnionSkin({ hostGeneration, toggle: true });
+  const fast = host.updateDrawingOnionSkin({ hostGeneration, playing: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(order, [{ toggle: true }], '앞 요청이 끝나기 전에는 다음 요청을 실행하지 않는다');
+  first.resolve({ accepted: true, enabled: true, playing: false });
+  assert.equal((await slow).enabled, true);
+  assert.equal((await fast).playing, true);
+  assert.deepEqual(order, [{ toggle: true }, { playing: true }]);
+});

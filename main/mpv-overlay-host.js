@@ -823,6 +823,41 @@ const OVERLAY_HTML = String.raw`
       height: 20px;
       border-radius: 50%;
     }
+    /* 어니언 스킨: 켜기 버튼 한 줄, 켜면 그 아래 장수·진하기가 펼쳐진다(외곽선과 같은 꼴).
+       섹션 줄(flex)이 항목을 내용 폭으로 줄이므로 줄 전체를 쓰게 한다. */
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-onion {
+      display: flex;
+      flex: 1 1 100%;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-onion > button {
+      width: 100%;
+      min-height: 28px;
+      height: 28px;
+    }
+    .mpv-fabric-pilot-onion-panel {
+      flex-direction: column;
+      gap: 8px;
+    }
+    /* 어느 색이 앞 그림이고 어느 색이 뒤 그림인지 라벨 앞의 점으로 알려 준다.
+       런타임의 ONION_SKIN_PREVIOUS_COLOR / ONION_SKIN_NEXT_COLOR 와 같은 값이다. */
+    .mpv-fabric-pilot-onion-panel [data-fabric-pilot-onion-side] .mpv-fabric-pilot-field-top > span::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 5px;
+      border-radius: 50%;
+      vertical-align: 1px;
+    }
+    .mpv-fabric-pilot-onion-panel [data-fabric-pilot-onion-side="previous"] .mpv-fabric-pilot-field-top > span::before {
+      background: #6495ed;
+    }
+    .mpv-fabric-pilot-onion-panel [data-fabric-pilot-onion-side="next"] .mpv-fabric-pilot-field-top > span::before {
+      background: #32cd32;
+    }
     /* 목업(§0.3 시안)의 field 구성 — 라벨과 수치를 한 줄에, 그 아래 3px 트랙.
        버튼이 없으므로 트랙이 이 줄에서 가장 큰 요소가 된다. */
     .mpv-fabric-pilot-field {
@@ -3284,6 +3319,9 @@ class MPVOverlayHost {
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
     this.commentModeShortcutDescriptor = null;
+    // 어니언 스킨 요청은 보낸 순서대로 적용한다(켜기/끄기는 토글이라 순서가 뒤집히면
+    // 결과가 반대가 된다).
+    this.onionSkinQueue = Promise.resolve();
     this.completedActionIds = new Map();
     this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
@@ -3769,6 +3807,72 @@ class MPVOverlayHost {
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
+  }
+
+  // 어니언 스킨(이웃 키프레임의 그림을 반투명으로 깐다)도 문서를 바꾸지 않는
+  // **뷰 상태**다. 그리기 패널이 닫혀 있어도 받는다 — 세션 토큰이 아니라 호스트
+  // 세대로만 맞춘다. 켜짐 여부의 진실은 오버레이에 있다(팔레트 버튼도 그 값을
+  // 바꾼다). 그래서 렌더러는 절대값이 아니라 **토글**과 재생 여부만 보낸다.
+  updateDrawingOnionSkin(request = {}) {
+    const hasToggle = request?.toggle !== undefined;
+    const hasPlaying = request?.playing !== undefined;
+    if (!isPlainPersistenceRecord(request) ||
+        request.hostGeneration !== this.hostGeneration ||
+        (!hasToggle && !hasPlaying) ||
+        (hasToggle && request.toggle !== true) ||
+        (hasPlaying && typeof request.playing !== 'boolean')) {
+      return Promise.resolve({
+        success: false,
+        accepted: false,
+        error: 'stale or invalid onion skin request'
+      });
+    }
+    const payload = {
+      ...(hasToggle ? { toggle: true } : {}),
+      ...(hasPlaying ? { playing: request.playing } : {})
+    };
+    const hostGeneration = this.hostGeneration;
+    const operation = this.onionSkinQueue.then(
+      () => this._performOnionSkinUpdate(payload, hostGeneration)
+    );
+    this.onionSkinQueue = operation.catch(() => undefined);
+    return operation.catch(error => ({ success: false, accepted: false, error: error.message }));
+  }
+
+  async _performOnionSkinUpdate(payload, hostGeneration) {
+    const stale = { success: false, accepted: false, error: 'stale onion skin request' };
+    const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    // 보기만 하는 동안에는 Fabric 런타임이 아직 주입되지 않았을 수 있다.
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return { success: false, accepted: false, error: prepared.error };
+    }
+    if (this.window !== hostWindow || hostWindow.isDestroyed?.() ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    const result = await this._executeFabricMethod('updateOnionSkin', payload);
+    if (this.window !== hostWindow || hostGeneration !== this.hostGeneration) return stale;
+    if (result?.accepted !== true) {
+      return {
+        success: false,
+        accepted: false,
+        error: typeof result?.reason === 'string' ? result.reason : 'onion skin update rejected'
+      };
+    }
+    // 어니언 스킨은 별도 캔버스에 깔린다. 투명 창은 다음 입력까지 합성을 미룰 수
+    // 있으므로 켜고 끈 결과가 바로 보이게 합성을 강제한다.
+    hostWindow.webContents?.invalidate?.();
+    return {
+      success: true,
+      accepted: true,
+      enabled: result.enabled === true,
+      playing: result.playing === true
+    };
   }
 
   // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 프레임 왕복이나

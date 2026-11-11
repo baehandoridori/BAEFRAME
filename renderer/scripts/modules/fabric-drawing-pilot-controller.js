@@ -194,6 +194,15 @@ export function createFabricDrawingPilotController(options = {}) {
     typeof options.matchesFrameOperationShortcut === 'function'
       ? options.matchesFrameOperationShortcut
       : null;
+  // 어니언 스킨 토글(기본 1). app.js 가 액션 id 로 판정해 주입한다.
+  const configuredOnionSkinShortcutMatcher =
+    typeof options.matchesOnionSkinShortcut === 'function'
+      ? options.matchesOnionSkinShortcut
+      : null;
+  // 어니언 스킨이 켜지거나 꺼졌을 때 알린다(패널이 닫혀 있으면 화면에 표시가 없다).
+  const onOnionSkinChanged = typeof options.onOnionSkinChanged === 'function'
+    ? options.onOnionSkinChanged
+    : () => {};
   const persistenceStore = options.persistenceStore || null;
   let fallbackId = 0;
   const uuid = typeof options.uuid === 'function'
@@ -261,6 +270,9 @@ export function createFabricDrawingPilotController(options = {}) {
   // 일이 이 조작일 때만** 오버레이로 간다 — 그 뒤에 댓글 편집 같은 전역 작업이
   // 있었다면 리비전이 달라져 있으므로 전역 실행취소가 먼저다.
   let passiveHistory = { undo: [], redo: [] };
+  // 오버레이에 마지막으로 알린 재생 여부와 그 호스트 세대. 오버레이 창이 새로
+  // 만들어지면 그쪽 값은 기본(정지)으로 돌아가 있으므로 세대가 다르면 다시 보낸다.
+  let onionSkinPlayingSent = { hostGeneration: 0, playing: false };
   let persistenceSessionId = null;
   let persistenceBridgeReady = persistenceStore === null;
   let persistenceEventUnsubscribe = null;
@@ -941,6 +953,15 @@ export function createFabricDrawingPilotController(options = {}) {
     }
   }
 
+  function matchesOnionSkinShortcut(event = {}) {
+    if (!configuredOnionSkinShortcutMatcher) return false;
+    try {
+      return configuredOnionSkinShortcutMatcher(event) === true;
+    } catch {
+      return false;
+    }
+  }
+
   function matchFrameOperationShortcut(event = {}) {
     if (!configuredFrameOperationMatcher) return null;
     try {
@@ -1445,6 +1466,76 @@ export function createFabricDrawingPilotController(options = {}) {
     return result.accepted && result.previousTool !== null && result.previousTool !== 'brush'
       ? 'selected'
       : 'already-brush';
+  }
+
+  // ── 어니언 스킨 ───────────────────────────────────────────────────────────
+  //
+  // 이웃 키프레임의 그림을 반투명으로 깔아 보여 주는 **뷰 상태**다. 문서를 바꾸지
+  // 않으므로 세션이 필요 없고, 그리기 패널을 닫아 둔 채로도 켤 수 있다.
+  // 켜짐 여부의 진실은 오버레이에 있다(팔레트 버튼도 그 값을 바꾼다) — 그래서
+  // 절대값이 아니라 토글만 보내고 결과를 응답으로 받는다.
+  async function sendOnionSkinUpdate(payload) {
+    const rejected = { accepted: false, enabled: null };
+    if (!pilotEnabled || !hostGeneration || (state !== 'active' && state !== 'passive')) {
+      return rejected;
+    }
+    let update;
+    try {
+      update = electronAPI.mpvUpdateOverlayOnionSkin;
+    } catch {
+      update = null;
+    }
+    if (typeof update !== 'function') return rejected;
+    try {
+      const response = await withPersistenceIpcDeadline(
+        update({
+          ...makeEnvelope('onion-skin-update', payload),
+          hostGeneration,
+          ...payload
+        }),
+        { success: false, accepted: false, error: 'persistence-ipc-timeout' }
+      );
+      if (response?.success !== true || response.accepted !== true) return rejected;
+      return { accepted: true, enabled: response.enabled === true };
+    } catch {
+      return rejected;
+    }
+  }
+
+  async function toggleOnionSkin() {
+    const result = await sendOnionSkinUpdate({ toggle: true });
+    if (result.accepted) {
+      try {
+        onOnionSkinChanged({ enabled: result.enabled });
+      } catch {
+        // 알림은 보조 표시다. 실패해도 토글 결과는 그대로다.
+      }
+    }
+    return result;
+  }
+
+  // 재생 중에는 어니언 스킨을 깔지 않는다(잔상이 움직임을 가린다). 같은 값은 다시
+  // 보내지 않되, 오버레이 창이 새로 만들어졌으면(호스트 세대가 다르면) 다시 보낸다.
+  async function setOnionSkinPlaying(playing) {
+    const next = playing === true;
+    if (!hostGeneration) return false;
+    if (onionSkinPlayingSent.hostGeneration === hostGeneration &&
+        onionSkinPlayingSent.playing === next) {
+      return true;
+    }
+    // 새 오버레이의 기본값은 정지다. 그 값 그대로면 보낼 것이 없다.
+    if (onionSkinPlayingSent.hostGeneration !== hostGeneration && !next) {
+      onionSkinPlayingSent = { hostGeneration, playing: false };
+      return true;
+    }
+    const sent = { hostGeneration, playing: next };
+    onionSkinPlayingSent = sent;
+    const result = await sendOnionSkinUpdate({ playing: next });
+    // 보내지 못했으면 다음 변경에서 다시 보내도록 기억을 지운다.
+    if (!result.accepted && onionSkinPlayingSent === sent) {
+      onionSkinPlayingSent = { hostGeneration: 0, playing: false };
+    }
+    return result.accepted;
   }
 
   // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 씬·프레임 왕복이
@@ -3097,7 +3188,9 @@ export function createFabricDrawingPilotController(options = {}) {
     // Shift+2·Shift+3·Ctrl+Alt+C·V 는 전부 수식키를 쓴다. 아래 수식키 가드의
     // 허용 목록에 넣지 않으면 판정 전에 통째로 빠져나간다.
     const frameOperation = matchFrameOperationShortcut(event);
-    if (!isDrawingToggleShortcut && !isSelectionShortcut &&
+    // 어니언 스킨 토글도 사용자가 chord 로 재지정할 수 있다.
+    const isOnionSkinShortcut = matchesOnionSkinShortcut(event);
+    if (!isDrawingToggleShortcut && !isSelectionShortcut && !isOnionSkinShortcut &&
       brushSizeStep === 0 && shortcutTool === null && frameOperation === null && (
       event.ctrlKey === true ||
       event.metaKey === true ||
@@ -3111,6 +3204,14 @@ export function createFabricDrawingPilotController(options = {}) {
       consumeKeyEvent(event);
       desiredTool = shortcutTool;
       if (state === 'active') runDetached(sendTool(shortcutTool));
+      return true;
+    }
+    // 어니언 스킨은 문서를 바꾸지 않는 뷰 상태라 그리기 패널이 닫혀 있어도 받는다.
+    if (isOnionSkinShortcut) {
+      if (!hostGeneration || (state !== 'active' && state !== 'passive')) return false;
+      consumeKeyEvent(event);
+      if (event.repeat === true) return true;
+      runDetached(toggleOnionSkin());
       return true;
     }
     // 구조 조작은 세션이 살아 있을 때만 의미가 있다. 오버레이가 키프레임 집합을
@@ -3235,6 +3336,8 @@ export function createFabricDrawingPilotController(options = {}) {
     applyDrawingAction,
     applyDrawingActionDetailed,
     selectBrushFromShortcut,
+    toggleOnionSkin,
+    setOnionSkinPlaying,
     sendLayerView,
     routeKeydown,
     disable,

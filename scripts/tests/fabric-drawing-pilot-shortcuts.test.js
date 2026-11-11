@@ -2272,3 +2272,151 @@ test('frame operations still go through the session while drawing is active', as
   assert.equal(typeof request.sessionId, 'string', '세션이 있으면 세션 id 로 보낸다');
   assert.equal(request.stableVideoIdentity, undefined);
 });
+
+// ── 어니언 스킨 토글(기본 1) ────────────────────────────────────────────────
+
+function createOnionSkinController(options = {}) {
+  // createHarness 는 onOnionSkinChanged 를 넘기지 않으므로 컨트롤러를 직접 만든다.
+  const onionCalls = [];
+  const changes = [];
+  let enabled = false;
+  let id = 0;
+  const context = {
+    isMpvActive: true,
+    isAudio: false,
+    stableVideoIdentity: 'video-a',
+    targetFrame: 12,
+    sourceWidth: 1920,
+    sourceHeight: 1080,
+    canvasRect: { x: 10, y: 20, width: 960, height: 540 }
+  };
+  const controller = createFabricDrawingPilotController({
+    electronAPI: {
+      async getFabricDrawingPilotState() { return true; },
+      async mpvSetOverlayDrawingInput(request) {
+        return { success: true, accepted: true, enabled: request.enabled };
+      },
+      async mpvUpdateOverlayOnionSkin(request) {
+        onionCalls.push(request);
+        if (options.onOnionSkin) return options.onOnionSkin(request, onionCalls.length - 1);
+        if (request.toggle === true) enabled = !enabled;
+        return { success: true, accepted: true, enabled, playing: request.playing === true };
+      }
+    },
+    getContext: () => context,
+    matchesOnionSkinShortcut: event => event.code === 'Digit1' &&
+      !event.ctrlKey && !event.shiftKey && !event.altKey && !event.metaKey,
+    onOnionSkinChanged: change => changes.push(change),
+    uuid: () => `uuid-${++id}`
+  });
+  return { controller, onionCalls, changes };
+}
+
+async function prepareOnionSkinPassive(controller) {
+  assert.equal(await controller.initialize(), true);
+  assert.equal(await controller.adoptOverlayCapability({
+    passiveReady: true,
+    hostGeneration: 1
+  }), true);
+  assert.equal(await controller.afterVideoReady({ loadToken: 'load-a' }), true);
+  assert.equal(controller.getState(), 'passive');
+}
+
+test('the onion skin shortcut toggles the overlay while the drawing panel is closed', async () => {
+  const { controller, onionCalls, changes } = createOnionSkinController();
+  await prepareOnionSkinPassive(controller);
+
+  const press = createKeyEvent('1', { code: 'Digit1' });
+  assert.equal(controller.routeKeydown(press), true, '패널이 닫혀 있어도 소비한다');
+  assert.deepEqual(press.calls, ['preventDefault', 'stopImmediatePropagation']);
+  await settle();
+
+  assert.equal(onionCalls.length, 1);
+  assertEnvelope(onionCalls[0]);
+  assert.equal(onionCalls[0].toggle, true, '절대값이 아니라 토글을 보낸다');
+  assert.equal(onionCalls[0].hostGeneration, 1);
+  assert.equal(onionCalls[0].sessionId, undefined, '세션이 필요 없는 뷰 상태다');
+  assert.deepEqual(changes, [{ enabled: true }], '결과를 알린다(패널이 닫혀 있으면 표시가 없다)');
+  assert.equal(controller.getState(), 'passive', '그리기 모드를 켜지 않는다');
+
+  // 자동 반복은 소비하되 다시 보내지 않는다.
+  assert.equal(controller.routeKeydown(createKeyEvent('1', { code: 'Digit1', repeat: true })), true);
+  await settle();
+  assert.equal(onionCalls.length, 1);
+
+  // 다시 누르면 끈다.
+  assert.equal(controller.routeKeydown(createKeyEvent('1', { code: 'Digit1' })), true);
+  await settle();
+  assert.deepEqual(changes, [{ enabled: true }, { enabled: false }]);
+
+  // 그리기 모드에서도 같은 경로다.
+  assert.equal(await controller.toggle(), true);
+  assert.equal(controller.routeKeydown(createKeyEvent('1', { code: 'Digit1' })), true);
+  await settle();
+  assert.equal(onionCalls.length, 3);
+  assert.deepEqual(changes.at(-1), { enabled: true });
+});
+
+test('the onion skin shortcut is left alone before the overlay host exists', async () => {
+  const { controller, onionCalls, changes } = createOnionSkinController();
+  assert.equal(await controller.initialize(), true);
+  const press = createKeyEvent('1', { code: 'Digit1' });
+  assert.equal(controller.routeKeydown(press), false);
+  assert.deepEqual(press.calls, []);
+  assert.equal(onionCalls.length, 0);
+
+  // 호스트가 거절하면 알리지 않는다.
+  const rejected = createOnionSkinController({
+    onOnionSkin: () => ({ success: false, accepted: false, error: 'stale' })
+  });
+  await prepareOnionSkinPassive(rejected.controller);
+  const result = await rejected.controller.toggleOnionSkin();
+  assert.deepEqual(result, { accepted: false, enabled: null });
+  assert.deepEqual(rejected.changes, []);
+  assert.deepEqual(changes, []);
+});
+
+test('onion skin playback state is sent once per change and resent for a new overlay host', async () => {
+  const { controller, onionCalls } = createOnionSkinController();
+  await prepareOnionSkinPassive(controller);
+
+  // 새 오버레이의 기본값은 정지다 — 그 값 그대로면 보내지 않는다.
+  assert.equal(await controller.setOnionSkinPlaying(false), true);
+  assert.equal(onionCalls.length, 0);
+
+  assert.equal(await controller.setOnionSkinPlaying(true), true);
+  assert.equal(onionCalls.length, 1);
+  assert.equal(onionCalls[0].playing, true);
+  assert.equal(onionCalls[0].toggle, undefined);
+  // 같은 값은 다시 보내지 않는다(버퍼 대기 이벤트가 연달아 온다).
+  assert.equal(await controller.setOnionSkinPlaying(true), true);
+  assert.equal(onionCalls.length, 1);
+
+  assert.equal(await controller.setOnionSkinPlaying(false), true);
+  assert.equal(onionCalls.length, 2);
+  assert.equal(onionCalls[1].playing, false);
+
+  // 오버레이 창이 새로 만들어지면 그쪽 값은 정지로 돌아가 있다. 재생 중이면 다시 알린다.
+  assert.equal(await controller.setOnionSkinPlaying(true), true);
+  assert.equal(onionCalls.length, 3);
+  await controller.adoptOverlayCapability({ passiveReady: true, hostGeneration: 2 });
+  assert.equal(await controller.setOnionSkinPlaying(true), true);
+  assert.equal(onionCalls.length, 4);
+  assert.equal(onionCalls[3].hostGeneration, 2);
+});
+
+test('a failed onion skin playback update is retried on the next change', async () => {
+  let fail = true;
+  const { controller, onionCalls } = createOnionSkinController({
+    onOnionSkin: request => (fail
+      ? { success: false, accepted: false, error: 'not ready' }
+      : { success: true, accepted: true, enabled: false, playing: request.playing === true })
+  });
+  await prepareOnionSkinPassive(controller);
+  assert.equal(await controller.setOnionSkinPlaying(true), false);
+  assert.equal(onionCalls.length, 1);
+  // 실패한 값은 기억하지 않는다 — 같은 값이라도 다시 보낸다.
+  fail = false;
+  assert.equal(await controller.setOnionSkinPlaying(true), true);
+  assert.equal(onionCalls.length, 2);
+});

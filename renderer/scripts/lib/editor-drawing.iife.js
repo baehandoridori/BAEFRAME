@@ -14096,6 +14096,17 @@ void main() {
       var MIN_SELECTION_HIT_TOLERANCE = 2;
       var MAX_SELECTION_HIT_TOLERANCE = 96;
       var SOURCE_INTERVAL_EPSILON = 1e-7;
+      var ONION_SKIN_MAX_SHEETS = 5;
+      var ONION_SKIN_MIN_OPACITY_PERCENT = 10;
+      var ONION_SKIN_MAX_OPACITY_PERCENT = 80;
+      var DEFAULT_ONION_SKIN = Object.freeze({
+        enabled: false,
+        before: 2,
+        after: 1,
+        opacityPercent: 30
+      });
+      var ONION_SKIN_PREVIOUS_COLOR = "#6495ed";
+      var ONION_SKIN_NEXT_COLOR = "#32cd32";
       var DRAWING_ACTIONS = /* @__PURE__ */ new Set([
         "delete-selection",
         "clear-session",
@@ -14605,6 +14616,7 @@ void main() {
         let persistenceObserverFailureCount = 0;
         let persistenceUnboundCommitCount = 0;
         let destroyed = false;
+        let contentRevision = 0;
         function sourceDimension(value) {
           const number = Number(value);
           return Number.isFinite(number) && number > 0 ? number : 1;
@@ -14854,6 +14866,8 @@ void main() {
           videoAccess.delete(stableVideoIdentity);
           persistenceByVideo.delete(stableVideoIdentity);
           globalHistoryOrder.delete(stableVideoIdentity);
+          knownVideoDimensions.delete(stableVideoIdentity);
+          contentRevision += 1;
           if (latestPersistenceVideoIdentity === stableVideoIdentity) {
             latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
           }
@@ -14925,6 +14939,7 @@ void main() {
           scene.dirty = true;
           scene.mutationCount += 1;
           scene.mutationSequence += 1;
+          contentRevision += 1;
         }
         function estimateObjectsBytes(objects) {
           return [...objects.values()].reduce((total, object) => {
@@ -15085,6 +15100,7 @@ void main() {
           if (scene?.provisional !== true) return;
           scene.provisional = false;
           scene.provisionalSourceFrame = null;
+          contentRevision += 1;
           if (scene.objects.size === 0) return;
           const objectIds = [...scene.objects.keys()];
           const emptyObjects = /* @__PURE__ */ new Map();
@@ -15285,6 +15301,7 @@ void main() {
             scenes.delete(key);
           }
           globalHistoryOrder.delete(request.stableVideoIdentity);
+          contentRevision += 1;
           for (const scene of hydratedScenes) scenes.set(scene.key, scene);
           persistenceByVideo.set(request.stableVideoIdentity, {
             hostGeneration: request.hostGeneration,
@@ -15837,6 +15854,7 @@ void main() {
             if (applied.applied) {
               if (entry.materializesScene === true) {
                 entryMaterializesScene = true;
+                contentRevision += 1;
                 scene.provisional = direction === "undo";
                 scene.provisionalSourceFrame = direction === "undo" ? entry.provisionalSourceFrame ?? null : null;
               }
@@ -16060,6 +16078,23 @@ void main() {
           "frame-paste"
         ]);
         let frameClipboard = null;
+        function passiveVideoIdentity(candidate) {
+          if (activeSession) return null;
+          if (typeof candidate !== "string" || candidate.length === 0) return null;
+          if (candidate !== latestPersistenceVideoIdentity || !persistenceByVideo.has(candidate)) {
+            return null;
+          }
+          return candidate;
+        }
+        const knownVideoDimensions = /* @__PURE__ */ new Map();
+        function rememberVideoDimensions(stableVideoIdentity, dimensions) {
+          const sourceWidth = Number(dimensions?.sourceWidth);
+          const sourceHeight = Number(dimensions?.sourceHeight);
+          if (typeof stableVideoIdentity !== "string" || stableVideoIdentity.length === 0 || !Number.isFinite(sourceWidth) || sourceWidth <= 0 || sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(sourceHeight) || sourceHeight <= 0 || sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION) {
+            return;
+          }
+          knownVideoDimensions.set(stableVideoIdentity, { sourceWidth, sourceHeight });
+        }
         function committedScenesForVideo(stableVideoIdentity) {
           return [...scenes.values()].filter((scene) => scene.stableVideoIdentity === stableVideoIdentity && scene.provisional !== true).sort((left, right) => left.targetFrame - right.targetFrame);
         }
@@ -16123,6 +16158,7 @@ void main() {
             scenes.set(nextKey, scene);
           }
           notifyScenesDropped(droppedInstanceIds);
+          if (moved.length > 0) contentRevision += 1;
           if (order) {
             for (const list of [order.undo, order.redo]) {
               for (const entry of list) {
@@ -16145,6 +16181,7 @@ void main() {
             order.redo = order.redo.filter((entry) => entry.sceneKey !== scene.key);
           }
           scenes.delete(scene.key);
+          contentRevision += 1;
           notifyScenesDropped([scene.sceneInstanceId]);
           return {
             targetFrame: scene.targetFrame,
@@ -16184,6 +16221,7 @@ void main() {
             provisionalSourceFrame: null
           };
           scenes.set(key, scene);
+          contentRevision += 1;
           return scene;
         }
         function committedKeyframeFrames(stableVideoIdentity) {
@@ -16310,7 +16348,8 @@ void main() {
         }
         function videoSourceDimensions(stableVideoIdentity) {
           const active = activeScene();
-          const reference = active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0];
+          const reference = (active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0]) || // 세션도 키프레임도 없을 때(패널을 닫은 채 빈 영상에 첫 키프레임을 넣는 경우).
+          knownVideoDimensions.get(stableVideoIdentity);
           return {
             sourceWidth: reference?.sourceWidth,
             sourceHeight: reference?.sourceHeight
@@ -16328,8 +16367,11 @@ void main() {
           };
         }
         function recordStructural(stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame = null) {
+          commandSequence += 1;
+          const historyToken = `frame-op:${commandSequence}`;
           appendStructuralOrder(stableVideoIdentity, {
-            commandId: `frame-op:${stableVideoIdentity}:${commandSequence += 1}`,
+            commandId: `frame-op:${stableVideoIdentity}:${commandSequence}`,
+            historyToken,
             structural: {
               stableVideoIdentity,
               operation,
@@ -16340,6 +16382,7 @@ void main() {
               tailBlankFrame
             }
           });
+          return historyToken;
         }
         const LAYER_OBJECT_OPERATIONS = /* @__PURE__ */ new Set([
           "layer-objects-remove",
@@ -16481,7 +16524,7 @@ void main() {
           if (!FRAME_OPERATIONS.has(operation)) {
             return { applied: false, reason: "invalid-frame-operation" };
           }
-          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          const stableVideoIdentity = activeSession?.stableVideoIdentity || passiveVideoIdentity(command.stableVideoIdentity);
           if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
           const frame = Number(command.frame);
           if (!Number.isSafeInteger(frame) || frame < 0) {
@@ -16492,6 +16535,7 @@ void main() {
           if (totalFrames !== null && frame >= totalFrames) {
             return { applied: false, reason: "frame-out-of-range" };
           }
+          if (!activeSession) rememberVideoDimensions(stableVideoIdentity, command);
           const ordered = committedScenesForVideo(stableVideoIdentity);
           const committedAtFrame = ordered.find((scene) => scene.targetFrame === frame) || null;
           const shiftsRight = operation === "frame-insert" || operation === "frame-insert-blank-keyframe";
@@ -16534,13 +16578,14 @@ void main() {
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
             const pasted = materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
-            recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16549,13 +16594,14 @@ void main() {
             const removed = sceneBlueprint(committedAtFrame);
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
-            recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16572,13 +16618,14 @@ void main() {
               sourceHeight: held.sourceHeight,
               objects: [...held.objects.values()].map(clonePlain2)
             } : blankBlueprint(stableVideoIdentity));
-            recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16605,13 +16652,14 @@ void main() {
               if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
             }
             rekeyScenes(stableVideoIdentity, nextFrameByKey2);
-            recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16623,15 +16671,75 @@ void main() {
           }
           rekeyScenes(stableVideoIdentity, nextFrameByKey);
           const inserted = operation === "frame-insert-blank-keyframe" ? materializeSceneAt(stableVideoIdentity, frame, blankBlueprint(stableVideoIdentity)) : null;
-          recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
+          const historyToken = recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
           rebuildActiveProvisionalScene(stableVideoIdentity);
           return {
             applied: true,
             operation,
             frame,
             keyframeSetChanged: true,
+            historyToken,
             keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
           };
+        }
+        function applyPassiveStructuralHistory(command = {}) {
+          if (destroyed) return { applied: false, reason: "store-destroyed" };
+          const direction = command.direction;
+          if (direction !== "undo" && direction !== "redo") {
+            return { applied: false, reason: "invalid-history-direction" };
+          }
+          const stableVideoIdentity = passiveVideoIdentity(command.stableVideoIdentity);
+          if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
+          const order = globalOrderFor(stableVideoIdentity);
+          const list = order ? direction === "undo" ? order.undo : order.redo : [];
+          const entry = list[list.length - 1];
+          if (!entry) return { applied: false, reason: "history-empty" };
+          if (!entry.structural || Array.isArray(entry.structural.frames) || typeof entry.historyToken !== "string" || entry.historyToken !== command.historyToken) {
+            return { applied: false, reason: "history-mismatch" };
+          }
+          return {
+            ...applyStructuralHistory(entry, order, direction),
+            historyToken: entry.historyToken
+          };
+        }
+        function getContentRevision() {
+          return contentRevision;
+        }
+        function getOnionSkinScenes(request = {}) {
+          const empty = { previous: [], next: [] };
+          const stableVideoIdentity = request.stableVideoIdentity;
+          const frame = Number(request.frame);
+          if (destroyed || typeof stableVideoIdentity !== "string" || stableVideoIdentity.length === 0 || !Number.isSafeInteger(frame) || frame < 0) {
+            return empty;
+          }
+          const before = Math.max(0, Math.trunc(Number(request.before) || 0));
+          const after = Math.max(0, Math.trunc(Number(request.after) || 0));
+          if (before === 0 && after === 0) return empty;
+          const ordered = committedScenesForVideo(stableVideoIdentity);
+          let heldIndex = -1;
+          for (let index = 0; index < ordered.length; index += 1) {
+            if (ordered[index].targetFrame > frame) break;
+            heldIndex = index;
+          }
+          const describe = (scene) => ({
+            targetFrame: scene.targetFrame,
+            sceneInstanceId: scene.sceneInstanceId,
+            mutationSequence: scene.mutationSequence,
+            objects: [...scene.objects.values()]
+          });
+          const previous = [];
+          for (let index = heldIndex - 1; index >= 0 && previous.length < before; index -= 1) {
+            if (ordered[index].objects.size > 0) previous.push(describe(ordered[index]));
+          }
+          const next = [];
+          for (let index = heldIndex + 1; index < ordered.length && next.length < after; index += 1) {
+            if (ordered[index].objects.size > 0) next.push(describe(ordered[index]));
+          }
+          return { previous, next };
+        }
+        function getHeldSceneFrame(stableVideoIdentity, frame) {
+          const held = heldSceneAt(stableVideoIdentity, frame);
+          return held ? held.targetFrame : null;
         }
         function hasScene(stableVideoIdentity, targetFrame) {
           return scenes.has(makeSceneKey(stableVideoIdentity, targetFrame));
@@ -16683,6 +16791,7 @@ void main() {
           const droppedSceneInstanceIds = [...scenes.values()].map((scene) => scene.sceneInstanceId);
           scenes.clear();
           globalHistoryOrder.clear();
+          knownVideoDimensions.clear();
           videoAccess.clear();
           persistenceByVideo.clear();
           latestPersistenceVideoIdentity = null;
@@ -16705,6 +16814,10 @@ void main() {
           deleteSelection,
           clearSession,
           applyFrameOperation,
+          applyPassiveStructuralHistory,
+          getHeldSceneFrame,
+          getContentRevision,
+          getOnionSkinScenes,
           applyLayerObjectsOperation,
           setObjectRanks,
           getPersistenceFence,
@@ -17150,6 +17263,16 @@ void main() {
         let lastError = null;
         let appliedSourceWidth = null;
         let appliedSourceHeight = null;
+        let onionSkin = { ...DEFAULT_ONION_SKIN };
+        let onionCanvasElement = null;
+        let onionScratchCanvas = null;
+        let onionSkinControls = null;
+        let onionSkinPlaying = false;
+        let onionSkinQuickKey = null;
+        let onionSkinDrawnKey = null;
+        let onionSkinUncachedSequence = 0;
+        let onionSkinDrawn = { previous: [], next: [] };
+        let onionSkinLayerViewRevision = 0;
         const strokeFillGeometryCache = /* @__PURE__ */ new Map();
         let strokeFillGeometryCacheWeight = 0;
         function resolveFabric() {
@@ -18207,6 +18330,312 @@ void main() {
               )
             }
           };
+        }
+        function getOnionSkinState() {
+          return {
+            enabled: onionSkin.enabled,
+            before: onionSkin.before,
+            after: onionSkin.after,
+            opacityPercent: onionSkin.opacityPercent,
+            playing: onionSkinPlaying,
+            drawnPrevious: [...onionSkinDrawn.previous],
+            drawnNext: [...onionSkinDrawn.next]
+          };
+        }
+        function onionSkinView() {
+          if (inputEnabled && currentSession) {
+            const armed = activeFrameState.sessionId === currentSession.sessionId && Number.isSafeInteger(activeFrameState.targetFrame);
+            return {
+              stableVideoIdentity: currentSession.stableVideoIdentity,
+              frame: armed ? activeFrameState.targetFrame : currentSession.targetFrame
+            };
+          }
+          if (passiveDisplaySession && Number.isSafeInteger(passiveDisplaySession.targetFrame)) {
+            return {
+              stableVideoIdentity: passiveDisplaySession.stableVideoIdentity,
+              frame: passiveDisplaySession.targetFrame
+            };
+          }
+          return null;
+        }
+        function hideOnionSkinCanvas() {
+          onionSkinDrawn = { previous: [], next: [] };
+          if (!onionCanvasElement) return;
+          try {
+            const context = onionCanvasElement.getContext?.("2d");
+            context?.clearRect?.(0, 0, onionCanvasElement.width, onionCanvasElement.height);
+          } catch (_error) {
+          }
+          setStyles(onionCanvasElement, { display: "none" });
+        }
+        function ensureOnionScratchContext(width, height) {
+          if (!onionScratchCanvas) onionScratchCanvas = documentRef.createElement("canvas");
+          if (onionScratchCanvas.width !== width) onionScratchCanvas.width = width;
+          if (onionScratchCanvas.height !== height) onionScratchCanvas.height = height;
+          return onionScratchCanvas.getContext?.("2d") || null;
+        }
+        function makeOnionSkinPath(record, color) {
+          const { Path } = resolveFabric();
+          const path = new Path(record.renderGeometry?.pathData || record.pathData, {
+            fill: color,
+            fillRule: record.renderGeometry?.fillRule || "nonzero",
+            opacity: 1,
+            stroke: null,
+            strokeWidth: 0,
+            objectCaching: false,
+            selectable: false,
+            evented: false
+          });
+          if (record.transform) path.set(record.transform);
+          return path;
+        }
+        function drawOnionSkin(scenes) {
+          const context = onionCanvasElement.getContext?.("2d");
+          const width = Math.trunc(finiteNumber(onionCanvasElement.width));
+          const height = Math.trunc(finiteNumber(onionCanvasElement.height));
+          if (!context || width <= 0 || height <= 0) {
+            hideOnionSkinCanvas();
+            return;
+          }
+          const scratch = ensureOnionScratchContext(width, height);
+          if (!scratch) {
+            hideOnionSkinCanvas();
+            return;
+          }
+          const opacity = onionSkin.opacityPercent / 100;
+          const sheets = [
+            ...scenes.previous.map((scene, index) => ({
+              scene,
+              side: "previous",
+              color: ONION_SKIN_PREVIOUS_COLOR,
+              alpha: opacity * (1 - index / Math.max(onionSkin.before, 1))
+            })).reverse(),
+            ...scenes.next.map((scene, index) => ({
+              scene,
+              side: "next",
+              color: ONION_SKIN_NEXT_COLOR,
+              alpha: opacity * (1 - index / Math.max(onionSkin.after, 1))
+            })).reverse()
+          ];
+          context.clearRect(0, 0, width, height);
+          const drawn = { previous: [], next: [] };
+          for (const sheet of sheets) {
+            scratch.clearRect(0, 0, width, height);
+            let painted = false;
+            for (const record of sheet.scene.objects) {
+              if (hiddenObjectIds.has(record.id)) continue;
+              try {
+                makeOnionSkinPath(record, sheet.color).render(scratch);
+                painted = true;
+              } catch (_error) {
+              }
+            }
+            if (!painted) continue;
+            context.globalAlpha = sheet.alpha;
+            context.drawImage(onionScratchCanvas, 0, 0);
+            context.globalAlpha = 1;
+            drawn[sheet.side].push(sheet.scene.targetFrame);
+          }
+          onionSkinDrawn = {
+            previous: drawn.previous.sort((left, right) => right - left),
+            next: drawn.next.sort((left, right) => left - right)
+          };
+          setStyles(onionCanvasElement, {
+            display: drawn.previous.length + drawn.next.length > 0 ? "block" : "none"
+          });
+        }
+        function syncOnionSkin(options2 = {}) {
+          if (!onionCanvasElement) return;
+          const view = onionSkin.enabled && !onionSkinPlaying ? onionSkinView() : null;
+          const settingsKey = [
+            onionSkin.before,
+            onionSkin.after,
+            onionSkin.opacityPercent,
+            onionSkinLayerViewRevision,
+            onionCanvasElement.width,
+            onionCanvasElement.height
+          ].join("|");
+          const contentRevision = typeof sceneStore.getContentRevision === "function" ? sceneStore.getContentRevision() : `uncached-${onionSkinUncachedSequence += 1}`;
+          const quickKey = view ? [view.stableVideoIdentity, view.frame, contentRevision, settingsKey].join(SCENE_KEY_SEPARATOR) : "off";
+          if (options2.force !== true && quickKey === onionSkinQuickKey) return;
+          onionSkinQuickKey = quickKey;
+          if (!view || typeof sceneStore.getOnionSkinScenes !== "function") {
+            onionSkinDrawnKey = "off";
+            hideOnionSkinCanvas();
+            return;
+          }
+          let scenes;
+          try {
+            scenes = sceneStore.getOnionSkinScenes({
+              stableVideoIdentity: view.stableVideoIdentity,
+              frame: view.frame,
+              before: onionSkin.before,
+              after: onionSkin.after
+            });
+          } catch (_error) {
+            scenes = null;
+          }
+          if (!scenes || !Array.isArray(scenes.previous) || !Array.isArray(scenes.next)) {
+            onionSkinDrawnKey = "off";
+            hideOnionSkinCanvas();
+            return;
+          }
+          const sceneKey = (scene) => `${scene.sceneInstanceId}:${scene.mutationSequence}:${scene.targetFrame}`;
+          const drawnKey = [
+            view.stableVideoIdentity,
+            settingsKey,
+            ...scenes.previous.map(sceneKey),
+            "/",
+            ...scenes.next.map(sceneKey)
+          ].join(SCENE_KEY_SEPARATOR);
+          if (options2.force !== true && drawnKey === onionSkinDrawnKey) return;
+          onionSkinDrawnKey = drawnKey;
+          try {
+            drawOnionSkin(scenes);
+          } catch (error) {
+            lastError = error.message;
+            hideOnionSkinCanvas();
+          }
+        }
+        function resizeOnionSkinCanvas(session) {
+          if (!onionCanvasElement) return;
+          const width = Math.max(1, Math.trunc(finiteNumber(session?.sourceWidth, 1)));
+          const height = Math.max(1, Math.trunc(finiteNumber(session?.sourceHeight, 1)));
+          if (onionCanvasElement.width === width && onionCanvasElement.height === height) return;
+          onionCanvasElement.width = width;
+          onionCanvasElement.height = height;
+          onionSkinQuickKey = null;
+          onionSkinDrawnKey = null;
+        }
+        function normalizeOnionSkinPatch(patch = {}) {
+          const next = { ...onionSkin };
+          if (patch.toggle === true) next.enabled = !onionSkin.enabled;
+          if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+          if (patch.before !== void 0) {
+            next.before = boundedInteger(patch.before, 0, ONION_SKIN_MAX_SHEETS, onionSkin.before);
+          }
+          if (patch.after !== void 0) {
+            next.after = boundedInteger(patch.after, 0, ONION_SKIN_MAX_SHEETS, onionSkin.after);
+          }
+          if (patch.opacityPercent !== void 0) {
+            next.opacityPercent = boundedInteger(
+              patch.opacityPercent,
+              ONION_SKIN_MIN_OPACITY_PERCENT,
+              ONION_SKIN_MAX_OPACITY_PERCENT,
+              onionSkin.opacityPercent
+            );
+          }
+          return next;
+        }
+        function setOnionSkin(patch = {}) {
+          onionSkin = normalizeOnionSkinPatch(patch);
+          if (typeof patch.playing === "boolean") onionSkinPlaying = patch.playing;
+          syncOnionSkinControls();
+          syncOnionSkin();
+          return getOnionSkinState();
+        }
+        function updateOnionSkin(command = {}) {
+          if (destroyed || !prepared) {
+            return { accepted: false, reason: destroyed ? "destroyed" : "not-prepared" };
+          }
+          return { accepted: true, ...setOnionSkin(command) };
+        }
+        function createOnionSkinRangeRow({ label, setting, min, max }) {
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-field";
+          const top = documentRef.createElement("div");
+          top.className = "mpv-fabric-pilot-field-top";
+          const labelElement = documentRef.createElement("span");
+          labelElement.textContent = label;
+          const output = documentRef.createElement("b");
+          output.dataset.fabricPilotOutput = setting;
+          output.setAttribute?.("role", "status");
+          output.setAttribute?.("aria-live", "polite");
+          output.setAttribute?.("aria-atomic", "true");
+          top.appendChild(labelElement);
+          top.appendChild(output);
+          const input = documentRef.createElement("input");
+          input.type = "range";
+          input.tabIndex = -1;
+          input.min = String(min);
+          input.max = String(max);
+          input.step = "1";
+          input.dataset.fabricPilotSetting = setting;
+          input.setAttribute?.("aria-label", label);
+          row.appendChild(top);
+          row.appendChild(input);
+          return { row, input, output, min, max };
+        }
+        function createOnionSkinControls() {
+          const group = documentRef.createElement("div");
+          group.className = "mpv-fabric-pilot-onion";
+          group.setAttribute?.("role", "group");
+          group.setAttribute?.("aria-label", "\uC5B4\uB2C8\uC5B8 \uC2A4\uD0A8");
+          const toggle = labelToolbarButton(
+            createButton("\uC5B4\uB2C8\uC5B8 \uC2A4\uD0A8", "onion-toggle"),
+            "\uC5B4\uB2C8\uC5B8 \uC2A4\uD0A8 \uCF1C\uAE30/\uB044\uAE30 (1) \u2014 \uC55E\uB4A4 \uADF8\uB9BC\uC744 \uBC18\uD22C\uBA85\uC73C\uB85C \uAE54\uC544 \uBCF4\uC5EC \uC90D\uB2C8\uB2E4"
+          );
+          toggle.dataset.active = "false";
+          toggle.setAttribute?.("aria-pressed", "false");
+          const panel = documentRef.createElement("div");
+          panel.className = "mpv-fabric-pilot-onion-panel";
+          panel.dataset.fabricPilotPanel = "onion-skin";
+          setStyles(panel, { display: "none" });
+          const before = createOnionSkinRangeRow({
+            label: "\uC774\uC804 \uADF8\uB9BC",
+            setting: "onion-before",
+            min: 0,
+            max: ONION_SKIN_MAX_SHEETS
+          });
+          const after = createOnionSkinRangeRow({
+            label: "\uC774\uD6C4 \uADF8\uB9BC",
+            setting: "onion-after",
+            min: 0,
+            max: ONION_SKIN_MAX_SHEETS
+          });
+          const opacity = createOnionSkinRangeRow({
+            label: "\uC9C4\uD558\uAE30",
+            setting: "onion-opacity",
+            min: ONION_SKIN_MIN_OPACITY_PERCENT,
+            max: ONION_SKIN_MAX_OPACITY_PERCENT
+          });
+          before.row.dataset.fabricPilotOnionSide = "previous";
+          after.row.dataset.fabricPilotOnionSide = "next";
+          panel.appendChild(before.row);
+          panel.appendChild(after.row);
+          panel.appendChild(opacity.row);
+          group.appendChild(toggle);
+          group.appendChild(panel);
+          addDomListener(toggle, "click", () => setOnionSkin({ toggle: true }));
+          addDomListener(before.input, "input", () => setOnionSkin({ before: before.input.value }));
+          addDomListener(after.input, "input", () => setOnionSkin({ after: after.input.value }));
+          addDomListener(opacity.input, "input", () => setOnionSkin({ opacityPercent: opacity.input.value }));
+          return { group, toggle, panel, before, after, opacity };
+        }
+        function syncOnionSkinControls() {
+          if (!onionSkinControls) return;
+          const { toggle, panel, before, after, opacity } = onionSkinControls;
+          toggle.dataset.active = String(onionSkin.enabled);
+          toggle.setAttribute?.("aria-pressed", String(onionSkin.enabled));
+          setStyles(panel, { display: onionSkin.enabled ? "flex" : "none" });
+          for (const [control, value, text] of [
+            [before, onionSkin.before, `${onionSkin.before}\uC7A5`],
+            [after, onionSkin.after, `${onionSkin.after}\uC7A5`],
+            [opacity, onionSkin.opacityPercent, `${onionSkin.opacityPercent}%`]
+          ]) {
+            control.input.value = String(value);
+            control.output.textContent = text;
+            const span = control.max - control.min;
+            const ratio = span > 0 ? (value - control.min) / span : 0;
+            control.input.style?.setProperty?.(
+              "--fabric-range-fill",
+              `${Math.max(0, Math.min(1, ratio)) * 100}%`
+            );
+          }
+          paletteShell?.restore?.();
+        }
+        function onCanvasAfterRender() {
+          syncOnionSkin();
         }
         function createId(prefix) {
           localSequence += 1;
@@ -21918,6 +22347,7 @@ void main() {
           addFabricListener("before:transform", onBeforeTransform);
           addFabricListener("object:moving", onObjectMoving);
           addFabricListener("object:modified", onObjectModified);
+          addFabricListener("after:render", onCanvasAfterRender);
         }
         function configureLongTaskObserver() {
           const Observer = options.PerformanceObserver || windowRef?.PerformanceObserver;
@@ -21982,6 +22412,7 @@ void main() {
             { width: rect.width, height: rect.height },
             { cssOnly: true }
           );
+          resizeOnionSkinCanvas(session);
           refreshSelectionInteractionPolicy(session);
           const viewportTransform = normalizeViewportTransform(session.viewportTransform);
           setStyles(viewportElement, {
@@ -22130,6 +22561,12 @@ void main() {
           resetPassivePresentationState();
           viewportElement = null;
           canvasElement = null;
+          onionCanvasElement = null;
+          onionScratchCanvas = null;
+          onionSkinControls = null;
+          onionSkinQuickKey = null;
+          onionSkinDrawnKey = null;
+          onionSkinDrawn = { previous: [], next: [] };
           toolbar = null;
           paletteShell = null;
           brushControls = null;
@@ -22173,6 +22610,17 @@ void main() {
             viewportElement = documentRef.createElement("div");
             viewportElement.className = "mpv-fabric-pilot-viewport";
             setStyles(viewportElement, { position: "absolute", pointerEvents: "none" });
+            onionCanvasElement = documentRef.createElement("canvas");
+            onionCanvasElement.className = "mpv-fabric-onion-canvas";
+            setStyles(onionCanvasElement, {
+              position: "absolute",
+              left: "0",
+              top: "0",
+              width: "100%",
+              height: "100%",
+              pointerEvents: "none",
+              display: "none"
+            });
             canvasElement = documentRef.createElement("canvas");
             canvasElement.className = "mpv-fabric-delta-canvas";
             toolbar = documentRef.createElement("div");
@@ -22223,6 +22671,7 @@ void main() {
             outlineControls = brushControls.outline;
             selectionControls = createSelectionControls();
             eraserModeControls = createEraserModeControls();
+            onionSkinControls = paletteDocked ? null : createOnionSkinControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
             badge.setAttribute?.("role", "status");
@@ -22272,6 +22721,8 @@ void main() {
                   labelAccessory: colorControls.current,
                   appended: [brushControls.panel]
                 },
+                // 어니언 스킨은 어떤 도구에서도 쓰므로 도구별 섹션과 따로 둔다.
+                ...onionSkinControls ? [{ id: "onion", wrap: true, items: [onionSkinControls.group] }] : [],
                 paletteDocked ? { id: "actions", wrap: true, items: [undoButton, redoButton, deleteButton, clearButton] } : {
                   id: "actions",
                   wrap: true,
@@ -22284,6 +22735,7 @@ void main() {
                 { id: "status", items: [badge] }
               ]
             });
+            viewportElement.appendChild(onionCanvasElement);
             viewportElement.appendChild(canvasElement);
             container.appendChild(viewportElement);
             container.appendChild(toolbar);
@@ -22350,6 +22802,7 @@ void main() {
             }));
             syncBrushControls();
             syncSelectionControls("brush");
+            syncOnionSkinControls();
             setSurfaceInput(false);
             configureLongTaskObserver();
             prepared = true;
@@ -22392,6 +22845,7 @@ void main() {
               resetPassivePresentationState();
             }
             resetActiveFrameState();
+            syncOnionSkin();
             metrics.recordToggleLatency(now() - startedAt);
             return { accepted: true, enabled: false, tool: lastTool };
           }
@@ -22434,6 +22888,7 @@ void main() {
           inputEnabled = true;
           setSurfaceInput(true);
           syncPersistenceBadge(session.targetFrame);
+          syncOnionSkin();
           metrics.recordToggleLatency(now() - startedAt);
           return { accepted: true, enabled: true, restored: activation.restored };
         }
@@ -22456,6 +22911,7 @@ void main() {
                 hiddenObjectIds = /* @__PURE__ */ new Set();
                 lockedObjectIds = /* @__PURE__ */ new Set();
                 activeLayerDrawable = true;
+                onionSkinLayerViewRevision += 1;
               }
               if (passiveDisplaySession && passiveDisplaySession.stableVideoIdentity !== String(request?.stableVideoIdentity || "")) {
                 resetPassivePresentationState();
@@ -22470,6 +22926,7 @@ void main() {
                   else fabricCanvas.requestRenderAll();
                 }
               }
+              syncOnionSkin();
             }
             return result;
           } catch (_error) {
@@ -22542,6 +22999,7 @@ void main() {
               stableVideoIdentity: request.stableVideoIdentity,
               targetFrame: request.sourceFrame
             };
+            syncOnionSkin();
             return {
               accepted: true,
               targetFrame: request.targetFrame,
@@ -22585,6 +23043,7 @@ void main() {
           const preview = renderArmedFramePreview(stagedFrameState);
           if (!preview?.accepted) return preview;
           publishActiveFramePreview(stagedFrameState, preview);
+          syncOnionSkin();
           return {
             accepted: true,
             frameRevision: request.frameRevision,
@@ -22657,6 +23116,7 @@ void main() {
         function updateDrawingTool(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
           const normalized = { ...command, tool: command.tool === "V" ? "select" : command.tool };
+          const previousTool = normalizeFabricDrawingTool(currentSession?.tool);
           const result = sceneStore.updateTool(normalized);
           if (!result.accepted) {
             metrics.recordStaleMessageDrop();
@@ -22664,7 +23124,7 @@ void main() {
           }
           currentSession.tool = result.tool;
           setToolMode(result.tool);
-          return result;
+          return { ...result, previousTool };
         }
         function updateDrawingBrush(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
@@ -22694,6 +23154,8 @@ void main() {
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
           layerHistoryBusy = command.layerHistoryBusy === true;
+          onionSkinLayerViewRevision += 1;
+          syncOnionSkin();
           syncTempErase();
           if (command.objectRanks !== void 0) {
             sceneStore.setObjectRanks?.({
@@ -22758,8 +23220,63 @@ void main() {
           setToolMode(result.tool);
           return result;
         }
+        function applyPassiveDrawingAction(command = {}) {
+          const stale = { applied: false, reason: "stale-session" };
+          if (inputEnabled || currentSession || command.sessionId !== null && command.sessionId !== void 0) {
+            return stale;
+          }
+          const stableVideoIdentity = String(command.stableVideoIdentity || "");
+          if (!stableVideoIdentity) return stale;
+          const action = command.action || command.type;
+          const isHistory = action === "undo" || action === "redo";
+          if (!isHistory && !FRAME_STRUCTURE_ACTIONS.has(action)) return stale;
+          if (typeof sceneStore.applyFrameOperation !== "function" || typeof sceneStore.applyPassiveStructuralHistory !== "function") {
+            return stale;
+          }
+          const frame = Number(command.targetFrame);
+          if (!isHistory && (!Number.isSafeInteger(frame) || frame < 0)) {
+            return { applied: false, reason: "invalid-action-target" };
+          }
+          if (!actionDeduper.accept(command.actionId)) {
+            metrics.recordDuplicateAction();
+            return { applied: false, duplicate: true };
+          }
+          const result = isHistory ? sceneStore.applyPassiveStructuralHistory({
+            direction: action,
+            stableVideoIdentity,
+            historyToken: command.historyToken
+          }) : sceneStore.applyFrameOperation({
+            operation: action,
+            frame,
+            stableVideoIdentity,
+            sourceWidth: command.sourceWidth,
+            sourceHeight: command.sourceHeight
+          });
+          if (!result.applied) {
+            actionDeduper.release?.(command.actionId);
+            return result;
+          }
+          if (result.keyframeSetChanged !== true) return { ...result, repainted: false };
+          const display = passiveDisplaySession;
+          if (display && display.stableVideoIdentity === stableVideoIdentity && Number.isSafeInteger(display.targetFrame) && typeof sceneStore.getHeldSceneFrame === "function") {
+            const sourceFrame = sceneStore.getHeldSceneFrame(stableVideoIdentity, display.targetFrame);
+            display.sourceFrame = sourceFrame;
+            presentationState.sourceFrame = sourceFrame;
+            presentationState.storeRevision = -1;
+            lastPaintedScene = sourceFrame === null ? null : { stableVideoIdentity, targetFrame: sourceFrame };
+            if (lastPaintedScene) {
+              repaintLastPaintedScene({ force: true, clearWhenMissing: true });
+            } else if (fabricCanvas) {
+              fabricCanvas.clear();
+              if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+              else fabricCanvas.requestRenderAll();
+            }
+          }
+          return { ...result, repainted: true };
+        }
         function applyDrawingAction(command = {}) {
-          if (!inputEnabled || command.sessionId !== currentSession?.sessionId) {
+          if (!inputEnabled) return applyPassiveDrawingAction(command);
+          if (command.sessionId !== currentSession?.sessionId) {
             return { applied: false, reason: "stale-session" };
           }
           const action = command.action || command.type;
@@ -23008,6 +23525,8 @@ void main() {
           updateDrawingTool,
           updateDrawingBrush,
           applyPalettePrefs,
+          updateOnionSkin,
+          getOnionSkinState,
           updateDrawingLayerView,
           updateViewport,
           applyDrawingAction,

@@ -2040,6 +2040,52 @@ test('패널을 닫아 둔 채 받는 액션 목록은 컨트롤러와 호스트
   }
 });
 
+test('어니언 스킨 토글은 액션 id 로 컨트롤러에 이어지고 세 계층에 통로가 있다', () => {
+  // 구형 도구를 걷어내며 사라졌던 기능이다. 키가 아니라 액션 id 로 판정해야
+  // 사용자가 1 을 다른 키로 바꿔도 따라간다.
+  assert.match(userSettingsSource, /onionSkinToggle: \{ key: 'Digit1', ctrl: false, shift: false, alt: false/);
+  assert.match(
+    appSource,
+    /matchesOnionSkinShortcut: event => userSettings\.matchShortcut\('onionSkinToggle', event\)/
+  );
+  // 패널을 닫아 둔 채로 켜고 끄면 화면에 버튼이 없으므로 결과를 알려야 한다.
+  assert.match(appSource, /onOnionSkinChanged: \(\{ enabled \}\) => \{[\s\S]{0,160}?showToast\(/);
+  assert.match(pilotControllerSource, /const isOnionSkinShortcut = matchesOnionSkinShortcut\(event\);/);
+  assert.match(
+    preloadSource,
+    /mpvUpdateOverlayOnionSkin: \(request\) => ipcRenderer\.invoke\('mpv:update-overlay-onion-skin', request\)/
+  );
+  assert.match(
+    ipcHandlersSource,
+    /ipcMain\.handle\('mpv:update-overlay-onion-skin', \(event, request\) =>\s+invokeFabricDrawingHost\(event, \(\) => mpvOverlayHost\.updateDrawingOnionSkin\(request\)\)\);/
+  );
+  assert.match(overlayHostSource, /this\._executeFabricMethod\('updateOnionSkin', payload\)/);
+
+  // 재생 중에는 깔지 않는다. 재생 상태가 바뀌는 네 곳이 모두 알려야 한다.
+  for (const eventName of ['bufferingchange', 'play', 'pause', 'ended']) {
+    const start = appSource.indexOf(`videoPlayer.addEventListener('${eventName}', () => {`);
+    assert.ok(start > 0, `${eventName} 핸들러를 찾지 못했다`);
+    assert.ok(
+      appSource.slice(start, start + 900).includes('syncFabricOnionSkinPlayback();'),
+      `${eventName} 에서 어니언 스킨에 재생 여부를 알려야 한다`
+    );
+  }
+
+  // 팔레트의 색 점은 실제로 깔리는 색과 같아야 한다(오버레이는 main.css 를 쓰지 않아
+  // 호스트의 CSS 문자열에 따로 적혀 있다).
+  for (const [constant, side] of [
+    ['ONION_SKIN_PREVIOUS_COLOR', 'previous'],
+    ['ONION_SKIN_NEXT_COLOR', 'next']
+  ]) {
+    const color = fabricRuntimeSource.match(new RegExp(`const ${constant} = '(#[0-9a-f]{6})';`))?.[1];
+    assert.ok(color, `${constant} 를 찾지 못했다`);
+    assert.match(
+      overlayHostSource,
+      new RegExp(`\\[data-fabric-pilot-onion-side="${side}"\\][^{]+\\{\\s+background: ${color};`)
+    );
+  }
+});
+
 test('shape and pen tools are registered as assignable shortcut actions without default keys', () => {
   const toolActions = [
     'drawingToolBrush',
@@ -2253,7 +2299,9 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
   assert.deepEqual(listed.sort(), [
     'brushSizeDown', 'brushSizeUp',
     'drawingToolArrow', 'drawingToolBrush', 'drawingToolCircle', 'drawingToolEraser',
-    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect'
+    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect',
+    // 어니언 스킨 토글(1)도 에디터 포커스가 남아 있으면 글자로 들어간다.
+    'onionSkinToggle'
   ]);
   // 프레임·키프레임 조작 7종도 우회해야 한다. 목록을 손으로 베끼면 배선과 어긋나므로
   // 매핑을 통째로 펼쳐 넣고, 그 펼침이 실제로 있는지 확인한다. 빼면 에디터 포커스가

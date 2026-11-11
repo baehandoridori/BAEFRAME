@@ -8330,6 +8330,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'destroy',
     'exportDrawingVideo',
     'getDiagnostics',
+    'getOnionSkinState',
     'hydrateDrawingVideo',
     'prepare',
     'presentDrawingFrame',
@@ -8338,6 +8339,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'updateDrawingFrame',
     'updateDrawingLayerView',
     'updateDrawingTool',
+    'updateOnionSkin',
     'updateViewport'
   ]);
   assert.equal(FakeCanvas.instances.length, 0);
@@ -19228,4 +19230,395 @@ test('updateDrawingTool 은 바꾸기 직전 도구를 함께 돌려준다', asy
   } finally {
     await harness.destroy();
   }
+});
+
+// ── 어니언 스킨 ─────────────────────────────────────────────────────────────
+//
+// 이웃 키프레임의 그림을 Fabric 캔버스 아래의 별도 캔버스에 반투명으로 깐다.
+// 구형 도구를 걷어내며 사라졌던 기능이다(단축키 1 · 팔레트 버튼).
+
+function createOnionSkinHarness() {
+  const base = createPassiveStructureHarness();
+  const { harness, setInput, hydrate } = base;
+  let frameRevision = 0;
+  const gotoFrame = frame => harness.runtime.updateDrawingFrame({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    inputRevision: 3,
+    sessionId: 'real-fabric-session',
+    frameRevision: (frameRevision += 1),
+    targetFrame: frame
+  });
+  const onionCanvas = () => harness.root.querySelector('.mpv-fabric-onion-canvas');
+  // 소스 좌표의 한 점이 어니언 캔버스에서 어떤 색인지.
+  const onionPixel = (x, y) => {
+    const data = onionCanvas().getContext('2d').getImageData(x, y, 1, 1).data;
+    return { r: data[0], g: data[1], b: data[2], a: data[3] };
+  };
+  // 프레임 0·4·8 에 서로 다른 높이의 가로 획을 하나씩 둔다. 홀드 모델이라 그냥
+  // 그으면 뒤 키프레임이 앞 키프레임의 획을 물려받는다. 애니메이터가 하듯 **빈
+  // 키프레임을 먼저 넣고**(단축키 2) 그려, 키프레임마다 자기 그림만 갖게 한다.
+  let seedSequence = 0;
+  const blankKeyframeHere = () => {
+    const result = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: `onion-seed-${(seedSequence += 1)}`,
+      action: 'frame-insert-blank-keyframe'
+    });
+    assert.equal(result.applied, true);
+  };
+  const seedThreeKeyframes = () => {
+    setInput(2, false);
+    assert.equal(hydrate().accepted, true);
+    assert.equal(setInput(3, true).accepted, true);
+    harness.drawStroke([{ x: 20, y: 20 }, { x: 80, y: 20 }], 7501);
+    assert.equal(gotoFrame(4).accepted, true);
+    blankKeyframeHere();
+    harness.drawStroke([{ x: 20, y: 50 }, { x: 80, y: 50 }], 7502);
+    assert.equal(gotoFrame(8).accepted, true);
+    blankKeyframeHere();
+    harness.drawStroke([{ x: 20, y: 80 }, { x: 80, y: 80 }], 7503);
+  };
+  return { ...base, gotoFrame, onionCanvas, onionPixel, seedThreeKeyframes };
+}
+
+test('어니언 스킨은 앞 그림을 파랑, 뒤 그림을 초록으로 깐다', async () => {
+  const { harness, gotoFrame, onionCanvas, onionPixel, seedThreeKeyframes } =
+    createOnionSkinHarness();
+  try {
+    seedThreeKeyframes();
+    assert.equal(gotoFrame(4).accepted, true);
+
+    // 꺼져 있는 동안에는 아무것도 깔지 않는다.
+    assert.equal(harness.runtime.getOnionSkinState().enabled, false);
+    assert.equal(onionCanvas().style.display, 'none');
+
+    const toggled = harness.runtime.updateOnionSkin({ toggle: true });
+    assert.equal(toggled.accepted, true);
+    assert.equal(toggled.enabled, true);
+    assert.deepEqual(toggled.drawnPrevious, [0], '바로 앞 키프레임');
+    assert.deepEqual(toggled.drawnNext, [8], '바로 뒤 키프레임');
+    assert.equal(onionCanvas().style.display, 'block');
+
+    // 프레임 0 의 획(y=20)은 앞 그림이다 — 파랑이 우세하다.
+    const previous = onionPixel(50, 20);
+    assert.ok(previous.a > 0, '앞 그림이 깔려 있다');
+    assert.ok(previous.b > previous.r && previous.b > previous.g, '앞 그림은 파랑');
+    // 프레임 8 의 획(y=80)은 뒤 그림이다 — 초록이 우세하다.
+    const next = onionPixel(50, 80);
+    assert.ok(next.a > 0, '뒤 그림이 깔려 있다');
+    assert.ok(next.g > next.r && next.g > next.b, '뒤 그림은 초록');
+    // 반투명이다(기본 30%). 겹친 자리만 진해지지 않도록 한 장을 통째로 겹친다.
+    assert.ok(previous.a < 140, `앞 그림은 반투명이어야 한다: ${previous.a}`);
+    // 아무 그림도 없는 자리는 비어 있다.
+    assert.equal(onionPixel(150, 150).a, 0);
+
+    // 어니언 스킨은 씬에 들어가지 않는다 — 선택·지우개·저장 어디에도 섞이지 않는다.
+    assert.equal(
+      harness.canvas.getObjects().every(object => typeof object.__baeframeObjectId === 'string'),
+      true
+    );
+    assert.equal(harness.sceneStore.getSceneSnapshot('real-fabric-video', 4).objects.length, 1);
+
+    // 끄면 사라진다.
+    const off = harness.runtime.updateOnionSkin({ toggle: true });
+    assert.equal(off.enabled, false);
+    assert.equal(onionCanvas().style.display, 'none');
+    assert.equal(onionPixel(50, 20).a, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('어니언 스킨은 프레임이 아니라 그림(키프레임)을 세고 빈 키프레임은 건너뛴다', async () => {
+  const { harness, gotoFrame, seedThreeKeyframes } = createOnionSkinHarness();
+  try {
+    seedThreeKeyframes();
+    harness.runtime.updateOnionSkin({ enabled: true });
+
+    // 홀드 구간 한가운데(프레임 6): 보이는 그림은 프레임 4 의 것이다. 한 칸 앞 프레임을
+    // 세면 같은 그림이 나오지만, 그림을 세므로 그 **앞 그림**인 프레임 0 이 깔린다.
+    assert.equal(gotoFrame(6).accepted, true);
+    let state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, [0]);
+    assert.deepEqual(state.drawnNext, [8]);
+
+    // 마지막 키프레임에서는 앞 그림 두 장(기본값)이 가까운 순서로 깔린다.
+    assert.equal(gotoFrame(8).accepted, true);
+    state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, [4, 0]);
+    assert.deepEqual(state.drawnNext, []);
+
+    // 장수를 줄이면 가까운 것만 남는다.
+    assert.deepEqual(harness.runtime.updateOnionSkin({ before: 1 }).drawnPrevious, [4]);
+    assert.deepEqual(harness.runtime.updateOnionSkin({ before: 0 }).drawnPrevious, []);
+    harness.runtime.updateOnionSkin({ before: 2 });
+
+    // 첫 키프레임에서는 뒤 그림만 있다.
+    assert.equal(gotoFrame(0).accepted, true);
+    state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, []);
+    assert.deepEqual(state.drawnNext, [4], '기본값은 뒤 그림 1장');
+    assert.deepEqual(harness.runtime.updateOnionSkin({ after: 2 }).drawnNext, [4, 8]);
+
+    // 빈 키프레임(홀드를 끊으려고 넣은 자리)은 그림이 아니므로 세지 않는다.
+    // 프레임 2 에 빈 키프레임을 넣으면 뒤가 한 칸씩 밀린다: [0, 2(빈), 5, 9].
+    assert.equal(gotoFrame(2).accepted, true);
+    const inserted = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session',
+      actionId: 'onion-blank-keyframe',
+      action: 'frame-insert-blank-keyframe'
+    });
+    assert.deepEqual(inserted.keyframeFrames, [0, 2, 5, 9]);
+    state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, [0], '빈 키프레임 위에서는 그 앞 그림이 깔린다');
+    assert.deepEqual(state.drawnNext, [5, 9]);
+    assert.equal(gotoFrame(5).accepted, true);
+    state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, [0], '빈 키프레임은 건너뛰고 그 앞 그림을 센다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('어니언 스킨은 그리기 패널을 닫아도 유지되고 재생 중에는 숨는다', async () => {
+  const { harness, setInput, gotoFrame, onionCanvas, seedThreeKeyframes } =
+    createOnionSkinHarness();
+  try {
+    seedThreeKeyframes();
+    assert.equal(gotoFrame(4).accepted, true);
+    assert.equal(harness.runtime.updateOnionSkin({ toggle: true }).enabled, true);
+
+    // 패널을 닫는다(보기만 하는 중). 마지막으로 보던 프레임 기준으로 그대로 깔려 있다.
+    assert.equal(setInput(4, false).accepted, true);
+    let state = harness.runtime.getOnionSkinState();
+    assert.equal(state.enabled, true);
+    assert.deepEqual(state.drawnPrevious, [0]);
+    assert.deepEqual(state.drawnNext, [8]);
+
+    // 패널이 닫힌 채로도 끄고 켤 수 있다(단축키 1).
+    assert.equal(harness.runtime.updateOnionSkin({ toggle: true }).enabled, false);
+    assert.equal(onionCanvas().style.display, 'none');
+    assert.equal(harness.runtime.updateOnionSkin({ toggle: true }).enabled, true);
+    assert.equal(onionCanvas().style.display, 'block');
+
+    // 재생 중에는 깔지 않는다 — 잔상이 움직임을 가린다. 설정은 그대로 켜져 있다.
+    const playing = harness.runtime.updateOnionSkin({ playing: true });
+    assert.equal(playing.enabled, true);
+    assert.equal(playing.playing, true);
+    assert.deepEqual(playing.drawnPrevious, []);
+    assert.equal(onionCanvas().style.display, 'none');
+    const paused = harness.runtime.updateOnionSkin({ playing: false });
+    assert.deepEqual(paused.drawnPrevious, [0]);
+    assert.equal(onionCanvas().style.display, 'block');
+
+    // 보는 프레임이 바뀌면 따라온다.
+    const presented = harness.runtime.presentDrawingFrame({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      presentationRevision: 1,
+      stableVideoIdentity: 'real-fabric-video',
+      storeRevision: 1,
+      targetFrame: 8,
+      sourceFrame: 8,
+      sourceWidth: 200,
+      sourceHeight: 120,
+      canvasRect: { left: 0, top: 0, width: 200, height: 120 },
+      viewportRevision: 0,
+      viewportTransform: { scale: 1, panX: 0, panY: 0 }
+    });
+    assert.equal(presented.accepted, true);
+    state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, [4, 0]);
+    assert.deepEqual(state.drawnNext, []);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('숨긴 레이어의 그림은 어니언 스킨에도 깔지 않는다', async () => {
+  const { harness, gotoFrame, onionPixel, seedThreeKeyframes } = createOnionSkinHarness();
+  try {
+    seedThreeKeyframes();
+    assert.equal(gotoFrame(4).accepted, true);
+    harness.runtime.updateOnionSkin({ enabled: true });
+    assert.ok(onionPixel(50, 20).a > 0);
+
+    // 프레임 0 의 획이 속한 레이어를 숨긴다(렌더러가 id 집합으로 알려 준다).
+    const hiddenIds = harness.sceneStore
+      .getSceneSnapshot('real-fabric-video', 0).objects.map(record => record.id);
+    const view = harness.runtime.updateDrawingLayerView({
+      sessionId: 'real-fabric-session',
+      hiddenObjectIds: hiddenIds,
+      lockedObjectIds: [],
+      activeLayerDrawable: true
+    });
+    assert.equal(view.accepted, true);
+    const state = harness.runtime.getOnionSkinState();
+    assert.deepEqual(state.drawnPrevious, [], '숨긴 그림뿐인 장은 깔리지 않는다');
+    assert.equal(onionPixel(50, 20).a, 0);
+    // 다른 레이어의 그림(프레임 8)은 그대로 깔린다.
+    assert.deepEqual(state.drawnNext, [8]);
+    assert.ok(onionPixel(50, 80).a > 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('팔레트의 어니언 스킨 줄로 켜고 끄고 장수·진하기를 바꾼다', async () => {
+  const { harness, gotoFrame, onionCanvas, seedThreeKeyframes } = createOnionSkinHarness();
+  try {
+    seedThreeKeyframes();
+    assert.equal(gotoFrame(8).accepted, true);
+
+    const section = paletteSection(harness.root, 'onion');
+    assert.ok(section, '팔레트에 어니언 스킨 섹션이 있다');
+    const toggle = paletteButton(harness.root, 'onion-toggle');
+    assert.ok(toggle);
+    assert.match(toggle.getAttribute('title'), /\(1\)/, '단축키를 알려 준다');
+    const panel = findOne(harness.root, node => node.dataset?.fabricPilotPanel === 'onion-skin');
+    assert.equal(panel.style.display, 'none', '꺼져 있으면 설정 줄을 접어 둔다');
+    assert.equal(toggle.getAttribute('aria-pressed'), 'false');
+
+    realClick(harness, toggle);
+    assert.equal(harness.runtime.getOnionSkinState().enabled, true);
+    assert.equal(toggle.dataset.active, 'true');
+    assert.equal(toggle.getAttribute('aria-pressed'), 'true');
+    assert.equal(panel.style.display, 'flex');
+
+    const input = setting => findOne(harness.root, node =>
+      node.dataset?.fabricPilotSetting === setting);
+    const output = setting => findOne(harness.root, node =>
+      node.dataset?.fabricPilotOutput === setting);
+    const change = (setting, value) => {
+      const element = input(setting);
+      element.value = String(value);
+      element.dispatchEvent(new harness.environment.window.Event('input', { bubbles: true }));
+    };
+    assert.equal(output('onion-before').textContent, '2장');
+    assert.equal(output('onion-after').textContent, '1장');
+    assert.equal(output('onion-opacity').textContent, '30%');
+
+    change('onion-before', 1);
+    assert.equal(harness.runtime.getOnionSkinState().before, 1);
+    assert.deepEqual(harness.runtime.getOnionSkinState().drawnPrevious, [4]);
+    assert.equal(output('onion-before').textContent, '1장');
+
+    change('onion-opacity', 60);
+    assert.equal(harness.runtime.getOnionSkinState().opacityPercent, 60);
+    assert.equal(output('onion-opacity').textContent, '60%');
+    // 범위를 벗어난 값은 가장자리로 자른다.
+    change('onion-opacity', 500);
+    assert.equal(harness.runtime.getOnionSkinState().opacityPercent, 80);
+    change('onion-before', 99);
+    assert.equal(harness.runtime.getOnionSkinState().before, 5);
+
+    // 단축키(렌더러가 보내는 토글)로 바꿔도 팔레트 표시가 따라온다.
+    harness.runtime.updateOnionSkin({ toggle: true });
+    assert.equal(toggle.dataset.active, 'false');
+    assert.equal(panel.style.display, 'none');
+    assert.equal(onionCanvas().style.display, 'none');
+
+    // 어니언 캔버스는 Fabric 캔버스보다 먼저 붙어 그 아래에 깔리고, 입력을 가로채지 않는다.
+    const viewport = harness.root.querySelector('.mpv-fabric-pilot-viewport');
+    assert.equal(viewport.firstElementChild, onionCanvas());
+    assert.equal(onionCanvas().style.pointerEvents, 'none');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('어니언 스킨은 조건이 그대로면 이웃 씬을 다시 훑지 않는다', async () => {
+  // 획을 긋는 동안 캔버스가 매 프레임 다시 그려진다. 그때마다 이웃 씬을 훑고 다시
+  // 칠하면 그리기가 무거워진다.
+  const { harness, gotoFrame, seedThreeKeyframes } = createOnionSkinHarness();
+  try {
+    seedThreeKeyframes();
+    assert.equal(gotoFrame(4).accepted, true);
+    harness.runtime.updateOnionSkin({ enabled: true });
+
+    let lookups = 0;
+    const original = harness.sceneStore.getOnionSkinScenes;
+    harness.sceneStore.getOnionSkinScenes = request => {
+      lookups += 1;
+      return original(request);
+    };
+    for (let index = 0; index < 5; index += 1) harness.canvas.renderAll();
+    assert.equal(lookups, 0, '다시 그려도 조건이 같으면 조회하지 않는다');
+
+    // 그림이 바뀌면 그때 한 번 다시 본다.
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 80, y: 100 }], 7591);
+    assert.ok(lookups >= 1, '씬이 바뀌면 다시 조회한다');
+    const afterStroke = lookups;
+    for (let index = 0; index < 5; index += 1) harness.canvas.renderAll();
+    assert.equal(lookups, afterStroke);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('어니언 스킨 조회는 가까운 그림부터 돌려주고 잘못된 요청에는 비어 있다', () => {
+  const store = createSessionSceneStore();
+  const stroke = (id, y) => makeHistoryStroke(id, {
+    sourcePoints: [
+      { x: 10, y, pressure: 0.5, time: 0 },
+      { x: 60, y, pressure: 0.5, time: 1 }
+    ]
+  });
+  const keyframe = (frame, objects) => ({
+    id: `keyframe-${frame}`,
+    frame,
+    sourceWidth: 200,
+    sourceHeight: 120,
+    mutationSequence: 1,
+    objects
+  });
+  const hydrated = store.hydrateVideo(makePersistenceHydration({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    stableVideoIdentity: 'onion-video',
+    keyframes: [
+      keyframe(2, [stroke('a', 10)]),
+      keyframe(5, []),
+      keyframe(9, [stroke('b', 20)]),
+      keyframe(14, [stroke('c', 30)]),
+      keyframe(20, [stroke('d', 40)])
+    ]
+  }));
+  assert.equal(hydrated.accepted, true);
+  const frames = (frame, before, after) => {
+    const result = store.getOnionSkinScenes({
+      stableVideoIdentity: 'onion-video', frame, before, after
+    });
+    return {
+      previous: result.previous.map(scene => scene.targetFrame),
+      next: result.next.map(scene => scene.targetFrame)
+    };
+  };
+  // 프레임 16 에서 보이는 그림은 프레임 14 의 것이다.
+  assert.deepEqual(frames(16, 2, 1), { previous: [9, 2], next: [20] });
+  assert.deepEqual(frames(16, 5, 5), { previous: [9, 2], next: [20] });
+  // 빈 키프레임(5) 위에서도 그 앞의 그림이 이전 그림이다.
+  assert.deepEqual(frames(6, 1, 2), { previous: [2], next: [9, 14] });
+  // 첫 키프레임보다 앞에서는 이전 그림이 없다.
+  assert.deepEqual(frames(0, 3, 1), { previous: [], next: [2] });
+  assert.deepEqual(frames(16, 0, 0), { previous: [], next: [] });
+  // 잘못된 요청에는 비어 있는 결과를 돌려준다.
+  for (const request of [
+    {},
+    { stableVideoIdentity: 'onion-video', frame: -1, before: 1, after: 1 },
+    { stableVideoIdentity: '', frame: 3, before: 1, after: 1 },
+    { stableVideoIdentity: 'other-video', frame: 3, before: 1, after: 1 }
+  ]) {
+    assert.deepEqual(store.getOnionSkinScenes(request), { previous: [], next: [] });
+  }
+  // 씬이 바뀌면 내용 리비전이 오른다 — 어니언 스킨이 다시 그릴지 가리는 값이다.
+  const before = store.getContentRevision();
+  store.hydrateVideo(makePersistenceHydration({
+    hostGeneration: 1,
+    videoGeneration: 1,
+    stableVideoIdentity: 'onion-video',
+    keyframes: []
+  }));
+  assert.ok(store.getContentRevision() > before);
 });

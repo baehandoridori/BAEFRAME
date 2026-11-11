@@ -167,6 +167,20 @@ const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
 const MAX_SELECTION_HIT_TOLERANCE = 96;
 const SOURCE_INTERVAL_EPSILON = 1e-7;
+// 어니언 스킨 — 이웃 키프레임의 그림을 반투명으로 깔아 보여 준다.
+// 장수·투명도 범위와 기본값은 구형 도구의 것을 그대로 잇는다(이전 2장·이후 1장·30%).
+const ONION_SKIN_MAX_SHEETS = 5;
+const ONION_SKIN_MIN_OPACITY_PERCENT = 10;
+const ONION_SKIN_MAX_OPACITY_PERCENT = 80;
+const DEFAULT_ONION_SKIN = Object.freeze({
+  enabled: false,
+  before: 2,
+  after: 1,
+  opacityPercent: 30
+});
+// 이전 그림은 파랑, 이후 그림은 초록(구형 도구와 같은 구분).
+const ONION_SKIN_PREVIOUS_COLOR = '#6495ed';
+const ONION_SKIN_NEXT_COLOR = '#32cd32';
 const DRAWING_ACTIONS = new Set([
   'delete-selection',
   'clear-session',
@@ -777,6 +791,9 @@ function createSessionSceneStore(options = {}) {
   let persistenceObserverFailureCount = 0;
   let persistenceUnboundCommitCount = 0;
   let destroyed = false;
+  // 커밋된 씬의 집합이나 내용이 바뀔 때마다 오른다. 어니언 스킨처럼 "이웃 키프레임이
+  // 달라졌는가" 를 매 렌더마다 물어야 하는 쪽이 씬을 다 훑지 않고 이 숫자만 본다.
+  let contentRevision = 0;
 
   function sourceDimension(value) {
     const number = Number(value);
@@ -1090,6 +1107,7 @@ function createSessionSceneStore(options = {}) {
     // 씬이 사라지면 그 영상의 전역 실행취소 순서도 함께 사라진다.
     globalHistoryOrder.delete(stableVideoIdentity);
     knownVideoDimensions.delete(stableVideoIdentity);
+    contentRevision += 1;
     if (latestPersistenceVideoIdentity === stableVideoIdentity) {
       latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
     }
@@ -1169,6 +1187,7 @@ function createSessionSceneStore(options = {}) {
     scene.dirty = true;
     scene.mutationCount += 1;
     scene.mutationSequence += 1;
+    contentRevision += 1;
   }
 
   function estimateObjectsBytes(objects) {
@@ -1355,6 +1374,7 @@ function createSessionSceneStore(options = {}) {
     if (scene?.provisional !== true) return;
     scene.provisional = false;
     scene.provisionalSourceFrame = null;
+    contentRevision += 1;
     if (scene.objects.size === 0) return;
 
     const objectIds = [...scene.objects.keys()];
@@ -1608,6 +1628,7 @@ function createSessionSceneStore(options = {}) {
     }
     // 씬이 통째로 교체되므로 이 영상의 전역 실행취소 순서는 전부 무효다.
     globalHistoryOrder.delete(request.stableVideoIdentity);
+    contentRevision += 1;
     for (const scene of hydratedScenes) scenes.set(scene.key, scene);
     persistenceByVideo.set(request.stableVideoIdentity, {
       hostGeneration: request.hostGeneration,
@@ -2274,6 +2295,7 @@ function createSessionSceneStore(options = {}) {
         // 다시 "키프레임 아님"이 되어 이후 프레임이 앞 키프레임을 따라간다.
         if (entry.materializesScene === true) {
           entryMaterializesScene = true;
+          contentRevision += 1;
           scene.provisional = direction === 'undo';
           scene.provisionalSourceFrame = direction === 'undo'
             ? (entry.provisionalSourceFrame ?? null)
@@ -2672,6 +2694,7 @@ function createSessionSceneStore(options = {}) {
       scenes.set(nextKey, scene);
     }
     notifyScenesDropped(droppedInstanceIds);
+    if (moved.length > 0) contentRevision += 1;
     if (order) {
       for (const list of [order.undo, order.redo]) {
         for (const entry of list) {
@@ -2695,6 +2718,7 @@ function createSessionSceneStore(options = {}) {
       order.redo = order.redo.filter(entry => entry.sceneKey !== scene.key);
     }
     scenes.delete(scene.key);
+    contentRevision += 1;
     // 알리지 않으면 그림자 어댑터가 사라진 씬의 문서를 계속 들고 있어, 씬 수와
     // 패리티 진단에 **존재하지 않는 그림**이 섞인다.
     notifyScenesDropped([scene.sceneInstanceId]);
@@ -2739,6 +2763,7 @@ function createSessionSceneStore(options = {}) {
       provisionalSourceFrame: null
     };
     scenes.set(key, scene);
+    contentRevision += 1;
     return scene;
   }
 
@@ -3394,6 +3419,53 @@ function createSessionSceneStore(options = {}) {
     };
   }
 
+  function getContentRevision() {
+    return contentRevision;
+  }
+
+  // 어니언 스킨에 깔 이웃 그림.
+  //
+  // 기준은 **지금 보이는 그림**(프레임 F 에서 홀드 중인 키프레임)이다. 그 앞의 그림
+  // before 장과 F 뒤의 그림 after 장을 **가까운 것부터** 돌려준다. 프레임이 아니라
+  // 키프레임을 센다 — 홀드 구간 안에서 앞 프레임을 보면 지금과 같은 그림이라, 한
+  // 칸씩 세면 "이전 2장" 이 같은 그림 두 번이 된다. 빈 키프레임은 그림이 아니므로
+  // 세지 않는다(홀드를 끊으려고 넣은 자리다).
+  //
+  // 레코드는 복제하지 않고 그대로 넘긴다. 받는 쪽은 읽기만 한다.
+  function getOnionSkinScenes(request = {}) {
+    const empty = { previous: [], next: [] };
+    const stableVideoIdentity = request.stableVideoIdentity;
+    const frame = Number(request.frame);
+    if (destroyed || typeof stableVideoIdentity !== 'string' || stableVideoIdentity.length === 0 ||
+        !Number.isSafeInteger(frame) || frame < 0) {
+      return empty;
+    }
+    const before = Math.max(0, Math.trunc(Number(request.before) || 0));
+    const after = Math.max(0, Math.trunc(Number(request.after) || 0));
+    if (before === 0 && after === 0) return empty;
+    const ordered = committedScenesForVideo(stableVideoIdentity);
+    let heldIndex = -1;
+    for (let index = 0; index < ordered.length; index += 1) {
+      if (ordered[index].targetFrame > frame) break;
+      heldIndex = index;
+    }
+    const describe = scene => ({
+      targetFrame: scene.targetFrame,
+      sceneInstanceId: scene.sceneInstanceId,
+      mutationSequence: scene.mutationSequence,
+      objects: [...scene.objects.values()]
+    });
+    const previous = [];
+    for (let index = heldIndex - 1; index >= 0 && previous.length < before; index -= 1) {
+      if (ordered[index].objects.size > 0) previous.push(describe(ordered[index]));
+    }
+    const next = [];
+    for (let index = heldIndex + 1; index < ordered.length && next.length < after; index += 1) {
+      if (ordered[index].objects.size > 0) next.push(describe(ordered[index]));
+    }
+    return { previous, next };
+  }
+
   // 프레임 F 에서 보이는 커밋된 키프레임의 프레임 번호(없으면 null).
   // 세션 없는 구조 조작 뒤, 떠 있는 화면을 새 키프레임 집합에 맞출 때 쓴다.
   function getHeldSceneFrame(stableVideoIdentity, frame) {
@@ -3479,6 +3551,8 @@ function createSessionSceneStore(options = {}) {
     applyFrameOperation,
     applyPassiveStructuralHistory,
     getHeldSceneFrame,
+    getContentRevision,
+    getOnionSkinScenes,
     applyLayerObjectsOperation,
     setObjectRanks,
     getPersistenceFence,
@@ -4081,6 +4155,25 @@ function createFabricOverlayRuntime(options = {}) {
   let lastError = null;
   let appliedSourceWidth = null;
   let appliedSourceHeight = null;
+  // ── 어니언 스킨 ───────────────────────────────────────────────────────────
+  //
+  // 이웃 키프레임의 그림을 Fabric 캔버스 **아래**의 별도 캔버스에 깐다. 씬에 넣지
+  // 않으므로 선택·지우개·저장 어디에도 섞이지 않는다. 문서를 바꾸지 않는 뷰 상태라
+  // 설정은 이 창 안에만 있고(브러시 굵기와 같다), 렌더러는 토글만 보낸다.
+  let onionSkin = { ...DEFAULT_ONION_SKIN };
+  let onionCanvasElement = null;
+  let onionScratchCanvas = null;
+  let onionSkinControls = null;
+  // 재생 중에는 깔지 않는다(잔상이 움직임을 가린다). 렌더러가 알려 준다.
+  let onionSkinPlaying = false;
+  // 마지막으로 확인한 조건과 실제로 그린 내용의 서명. 같으면 다시 그리지 않는다.
+  let onionSkinQuickKey = null;
+  let onionSkinDrawnKey = null;
+  let onionSkinUncachedSequence = 0;
+  // 지금 깔려 있는 그림의 프레임 번호(진단·테스트용).
+  let onionSkinDrawn = { previous: [], next: [] };
+  // 숨김 집합이 바뀔 때마다 오른다. 숨긴 레이어의 그림은 어니언 스킨에도 깔지 않는다.
+  let onionSkinLayerViewRevision = 0;
   const strokeFillGeometryCache = new Map();
   let strokeFillGeometryCacheWeight = 0;
 
@@ -5320,6 +5413,356 @@ function createFabricOverlayRuntime(options = {}) {
         )
       }
     };
+  }
+
+  // ── 어니언 스킨 ───────────────────────────────────────────────────────────
+
+  function getOnionSkinState() {
+    return {
+      enabled: onionSkin.enabled,
+      before: onionSkin.before,
+      after: onionSkin.after,
+      opacityPercent: onionSkin.opacityPercent,
+      playing: onionSkinPlaying,
+      drawnPrevious: [...onionSkinDrawn.previous],
+      drawnNext: [...onionSkinDrawn.next]
+    };
+  }
+
+  // 지금 화면에 떠 있는 프레임. 그리기 모드에서는 재생헤드가 선 프레임(미리보기
+  // 포함)이고, 보기만 하는 중에는 마지막으로 표시한 프레임이다.
+  function onionSkinView() {
+    if (inputEnabled && currentSession) {
+      const armed = activeFrameState.sessionId === currentSession.sessionId &&
+        Number.isSafeInteger(activeFrameState.targetFrame);
+      return {
+        stableVideoIdentity: currentSession.stableVideoIdentity,
+        frame: armed ? activeFrameState.targetFrame : currentSession.targetFrame
+      };
+    }
+    if (passiveDisplaySession && Number.isSafeInteger(passiveDisplaySession.targetFrame)) {
+      return {
+        stableVideoIdentity: passiveDisplaySession.stableVideoIdentity,
+        frame: passiveDisplaySession.targetFrame
+      };
+    }
+    return null;
+  }
+
+  function hideOnionSkinCanvas() {
+    onionSkinDrawn = { previous: [], next: [] };
+    if (!onionCanvasElement) return;
+    try {
+      const context = onionCanvasElement.getContext?.('2d');
+      context?.clearRect?.(0, 0, onionCanvasElement.width, onionCanvasElement.height);
+    } catch (_error) { /* 표시 전용이다. 지우지 못해도 아래에서 감춘다. */ }
+    setStyles(onionCanvasElement, { display: 'none' });
+  }
+
+  // 한 장을 따로 그린 뒤 통째로 겹친다. 획마다 투명도를 주면 겹친 자리만 진해진다.
+  function ensureOnionScratchContext(width, height) {
+    if (!onionScratchCanvas) onionScratchCanvas = documentRef.createElement('canvas');
+    if (onionScratchCanvas.width !== width) onionScratchCanvas.width = width;
+    if (onionScratchCanvas.height !== height) onionScratchCanvas.height = height;
+    return onionScratchCanvas.getContext?.('2d') || null;
+  }
+
+  function makeOnionSkinPath(record, color) {
+    const { Path } = resolveFabric();
+    const path = new Path(record.renderGeometry?.pathData || record.pathData, {
+      fill: color,
+      fillRule: record.renderGeometry?.fillRule || 'nonzero',
+      opacity: 1,
+      stroke: null,
+      strokeWidth: 0,
+      objectCaching: false,
+      selectable: false,
+      evented: false
+    });
+    if (record.transform) path.set(record.transform);
+    return path;
+  }
+
+  function drawOnionSkin(scenes) {
+    const context = onionCanvasElement.getContext?.('2d');
+    const width = Math.trunc(finiteNumber(onionCanvasElement.width));
+    const height = Math.trunc(finiteNumber(onionCanvasElement.height));
+    if (!context || width <= 0 || height <= 0) {
+      hideOnionSkinCanvas();
+      return;
+    }
+    const scratch = ensureOnionScratchContext(width, height);
+    if (!scratch) {
+      hideOnionSkinCanvas();
+      return;
+    }
+    const opacity = onionSkin.opacityPercent / 100;
+    // 가까운 장일수록 진하다(구형 도구와 같은 감쇠). 먼 장부터 그려 가까운 장이 위에 온다.
+    const sheets = [
+      ...scenes.previous.map((scene, index) => ({
+        scene,
+        side: 'previous',
+        color: ONION_SKIN_PREVIOUS_COLOR,
+        alpha: opacity * (1 - index / Math.max(onionSkin.before, 1))
+      })).reverse(),
+      ...scenes.next.map((scene, index) => ({
+        scene,
+        side: 'next',
+        color: ONION_SKIN_NEXT_COLOR,
+        alpha: opacity * (1 - index / Math.max(onionSkin.after, 1))
+      })).reverse()
+    ];
+    context.clearRect(0, 0, width, height);
+    const drawn = { previous: [], next: [] };
+    for (const sheet of sheets) {
+      scratch.clearRect(0, 0, width, height);
+      let painted = false;
+      for (const record of sheet.scene.objects) {
+        if (hiddenObjectIds.has(record.id)) continue;
+        try {
+          makeOnionSkinPath(record, sheet.color).render(scratch);
+          painted = true;
+        } catch (_error) {
+          // 한 획이 그려지지 않아도 나머지는 깐다. 보조 표시가 그리기를 막아서는 안 된다.
+        }
+      }
+      if (!painted) continue;
+      context.globalAlpha = sheet.alpha;
+      context.drawImage(onionScratchCanvas, 0, 0);
+      context.globalAlpha = 1;
+      drawn[sheet.side].push(sheet.scene.targetFrame);
+    }
+    onionSkinDrawn = {
+      previous: drawn.previous.sort((left, right) => right - left),
+      next: drawn.next.sort((left, right) => left - right)
+    };
+    setStyles(onionCanvasElement, {
+      display: drawn.previous.length + drawn.next.length > 0 ? 'block' : 'none'
+    });
+  }
+
+  // 조건이 그대로면 아무것도 하지 않는다. 획을 긋는 동안에도 캔버스가 매 프레임
+  // 다시 그려지므로, 그때마다 이웃 씬을 훑거나 다시 칠하면 그리기가 무거워진다.
+  function syncOnionSkin(options = {}) {
+    if (!onionCanvasElement) return;
+    const view = onionSkin.enabled && !onionSkinPlaying ? onionSkinView() : null;
+    const settingsKey = [
+      onionSkin.before,
+      onionSkin.after,
+      onionSkin.opacityPercent,
+      onionSkinLayerViewRevision,
+      onionCanvasElement.width,
+      onionCanvasElement.height
+    ].join('|');
+    const contentRevision = typeof sceneStore.getContentRevision === 'function'
+      ? sceneStore.getContentRevision()
+      : `uncached-${(onionSkinUncachedSequence += 1)}`;
+    const quickKey = view
+      ? [view.stableVideoIdentity, view.frame, contentRevision, settingsKey]
+        .join(SCENE_KEY_SEPARATOR)
+      : 'off';
+    if (options.force !== true && quickKey === onionSkinQuickKey) return;
+    onionSkinQuickKey = quickKey;
+    if (!view || typeof sceneStore.getOnionSkinScenes !== 'function') {
+      onionSkinDrawnKey = 'off';
+      hideOnionSkinCanvas();
+      return;
+    }
+    let scenes;
+    try {
+      scenes = sceneStore.getOnionSkinScenes({
+        stableVideoIdentity: view.stableVideoIdentity,
+        frame: view.frame,
+        before: onionSkin.before,
+        after: onionSkin.after
+      });
+    } catch (_error) {
+      scenes = null;
+    }
+    if (!scenes || !Array.isArray(scenes.previous) || !Array.isArray(scenes.next)) {
+      onionSkinDrawnKey = 'off';
+      hideOnionSkinCanvas();
+      return;
+    }
+    // 재생헤드가 같은 홀드 구간 안에서 움직이면 이웃 그림은 그대로다. 프레임이
+    // 아니라 **실제로 깔 그림**이 달라졌을 때만 다시 칠한다.
+    const sceneKey = scene =>
+      `${scene.sceneInstanceId}:${scene.mutationSequence}:${scene.targetFrame}`;
+    const drawnKey = [
+      view.stableVideoIdentity,
+      settingsKey,
+      ...scenes.previous.map(sceneKey),
+      '/',
+      ...scenes.next.map(sceneKey)
+    ].join(SCENE_KEY_SEPARATOR);
+    if (options.force !== true && drawnKey === onionSkinDrawnKey) return;
+    onionSkinDrawnKey = drawnKey;
+    try {
+      drawOnionSkin(scenes);
+    } catch (error) {
+      lastError = error.message;
+      hideOnionSkinCanvas();
+    }
+  }
+
+  // 어니언 캔버스의 픽셀 격자를 Fabric 캔버스의 소스 크기에 맞춘다. 화면 크기는
+  // 뷰포트 요소가 정하므로(100%) 확대·이동은 CSS 변형이 함께 처리한다.
+  function resizeOnionSkinCanvas(session) {
+    if (!onionCanvasElement) return;
+    const width = Math.max(1, Math.trunc(finiteNumber(session?.sourceWidth, 1)));
+    const height = Math.max(1, Math.trunc(finiteNumber(session?.sourceHeight, 1)));
+    if (onionCanvasElement.width === width && onionCanvasElement.height === height) return;
+    // 크기를 바꾸면 캔버스가 비워진다. 서명을 버려 다음 동기화에서 다시 칠하게 한다.
+    onionCanvasElement.width = width;
+    onionCanvasElement.height = height;
+    onionSkinQuickKey = null;
+    onionSkinDrawnKey = null;
+  }
+
+  function normalizeOnionSkinPatch(patch = {}) {
+    const next = { ...onionSkin };
+    if (patch.toggle === true) next.enabled = !onionSkin.enabled;
+    if (typeof patch.enabled === 'boolean') next.enabled = patch.enabled;
+    if (patch.before !== undefined) {
+      next.before = boundedInteger(patch.before, 0, ONION_SKIN_MAX_SHEETS, onionSkin.before);
+    }
+    if (patch.after !== undefined) {
+      next.after = boundedInteger(patch.after, 0, ONION_SKIN_MAX_SHEETS, onionSkin.after);
+    }
+    if (patch.opacityPercent !== undefined) {
+      next.opacityPercent = boundedInteger(
+        patch.opacityPercent,
+        ONION_SKIN_MIN_OPACITY_PERCENT,
+        ONION_SKIN_MAX_OPACITY_PERCENT,
+        onionSkin.opacityPercent
+      );
+    }
+    return next;
+  }
+
+  function setOnionSkin(patch = {}) {
+    onionSkin = normalizeOnionSkinPatch(patch);
+    if (typeof patch.playing === 'boolean') onionSkinPlaying = patch.playing;
+    syncOnionSkinControls();
+    syncOnionSkin();
+    return getOnionSkinState();
+  }
+
+  // 렌더러가 보내는 변경. 단축키(1)는 **토글만** 보낸다 — 켜짐 여부의 진실은 이
+  // 창에 있고(팔레트 버튼도 이 값을 바꾼다), 렌더러가 절대값을 들면 낡는다.
+  // 그리기 입력이 꺼져 있어도 받는다: 보기만 하는 중에도 어니언 스킨은 켤 수 있다.
+  function updateOnionSkin(command = {}) {
+    if (destroyed || !prepared) {
+      return { accepted: false, reason: destroyed ? 'destroyed' : 'not-prepared' };
+    }
+    return { accepted: true, ...setOnionSkin(command) };
+  }
+
+  // 팔레트의 값 한 줄(라벨·수치 + 트랙). 브러시 설정의 줄과 같은 꼴이라 같은
+  // 클래스를 쓴다 — 모양은 호스트 CSS 가 한 곳에서 정한다.
+  function createOnionSkinRangeRow({ label, setting, min, max }) {
+    const row = documentRef.createElement('div');
+    row.className = 'mpv-fabric-pilot-field';
+    const top = documentRef.createElement('div');
+    top.className = 'mpv-fabric-pilot-field-top';
+    const labelElement = documentRef.createElement('span');
+    labelElement.textContent = label;
+    const output = documentRef.createElement('b');
+    output.dataset.fabricPilotOutput = setting;
+    output.setAttribute?.('role', 'status');
+    output.setAttribute?.('aria-live', 'polite');
+    output.setAttribute?.('aria-atomic', 'true');
+    top.appendChild(labelElement);
+    top.appendChild(output);
+    const input = documentRef.createElement('input');
+    input.type = 'range';
+    input.tabIndex = -1;
+    input.min = String(min);
+    input.max = String(max);
+    input.step = '1';
+    input.dataset.fabricPilotSetting = setting;
+    input.setAttribute?.('aria-label', label);
+    row.appendChild(top);
+    row.appendChild(input);
+    return { row, input, output, min, max };
+  }
+
+  function createOnionSkinControls() {
+    const group = documentRef.createElement('div');
+    group.className = 'mpv-fabric-pilot-onion';
+    group.setAttribute?.('role', 'group');
+    group.setAttribute?.('aria-label', '어니언 스킨');
+    const toggle = labelToolbarButton(
+      createButton('어니언 스킨', 'onion-toggle'),
+      '어니언 스킨 켜기/끄기 (1) — 앞뒤 그림을 반투명으로 깔아 보여 줍니다'
+    );
+    toggle.dataset.active = 'false';
+    toggle.setAttribute?.('aria-pressed', 'false');
+    const panel = documentRef.createElement('div');
+    panel.className = 'mpv-fabric-pilot-onion-panel';
+    panel.dataset.fabricPilotPanel = 'onion-skin';
+    setStyles(panel, { display: 'none' });
+    const before = createOnionSkinRangeRow({
+      label: '이전 그림',
+      setting: 'onion-before',
+      min: 0,
+      max: ONION_SKIN_MAX_SHEETS
+    });
+    const after = createOnionSkinRangeRow({
+      label: '이후 그림',
+      setting: 'onion-after',
+      min: 0,
+      max: ONION_SKIN_MAX_SHEETS
+    });
+    const opacity = createOnionSkinRangeRow({
+      label: '진하기',
+      setting: 'onion-opacity',
+      min: ONION_SKIN_MIN_OPACITY_PERCENT,
+      max: ONION_SKIN_MAX_OPACITY_PERCENT
+    });
+    // 어느 색이 앞 그림이고 어느 색이 뒤 그림인지 한 줄로 알려 준다.
+    before.row.dataset.fabricPilotOnionSide = 'previous';
+    after.row.dataset.fabricPilotOnionSide = 'next';
+    panel.appendChild(before.row);
+    panel.appendChild(after.row);
+    panel.appendChild(opacity.row);
+    group.appendChild(toggle);
+    group.appendChild(panel);
+
+    addDomListener(toggle, 'click', () => setOnionSkin({ toggle: true }));
+    addDomListener(before.input, 'input', () => setOnionSkin({ before: before.input.value }));
+    addDomListener(after.input, 'input', () => setOnionSkin({ after: after.input.value }));
+    addDomListener(opacity.input, 'input', () =>
+      setOnionSkin({ opacityPercent: opacity.input.value }));
+    return { group, toggle, panel, before, after, opacity };
+  }
+
+  function syncOnionSkinControls() {
+    if (!onionSkinControls) return;
+    const { toggle, panel, before, after, opacity } = onionSkinControls;
+    toggle.dataset.active = String(onionSkin.enabled);
+    toggle.setAttribute?.('aria-pressed', String(onionSkin.enabled));
+    setStyles(panel, { display: onionSkin.enabled ? 'flex' : 'none' });
+    for (const [control, value, text] of [
+      [before, onionSkin.before, `${onionSkin.before}장`],
+      [after, onionSkin.after, `${onionSkin.after}장`],
+      [opacity, onionSkin.opacityPercent, `${onionSkin.opacityPercent}%`]
+    ]) {
+      control.input.value = String(value);
+      control.output.textContent = text;
+      const span = control.max - control.min;
+      const ratio = span > 0 ? (value - control.min) / span : 0;
+      control.input.style?.setProperty?.(
+        '--fabric-range-fill',
+        `${Math.max(0, Math.min(1, ratio)) * 100}%`
+      );
+    }
+    // 켜면 줄이 늘어나 팔레트가 길어진다. 화면 밖으로 나가지 않게 자리를 다시 잡는다.
+    paletteShell?.restore?.();
+  }
+
+  function onCanvasAfterRender() {
+    syncOnionSkin();
   }
 
   function createId(prefix) {
@@ -9676,6 +10119,9 @@ function createFabricOverlayRuntime(options = {}) {
     addFabricListener('before:transform', onBeforeTransform);
     addFabricListener('object:moving', onObjectMoving);
     addFabricListener('object:modified', onObjectModified);
+    // 씬이 다시 그려질 때마다 이웃 그림이 달라졌는지 본다. 그리는 경로가 여럿이라
+    // (프레임 미리보기·재도색·실행취소…) 한 곳에서 받는다.
+    addFabricListener('after:render', onCanvasAfterRender);
   }
 
   function configureLongTaskObserver() {
@@ -9755,6 +10201,7 @@ function createFabricOverlayRuntime(options = {}) {
       { width: rect.width, height: rect.height },
       { cssOnly: true }
     );
+    resizeOnionSkinCanvas(session);
     refreshSelectionInteractionPolicy(session);
     const viewportTransform = normalizeViewportTransform(session.viewportTransform);
     setStyles(viewportElement, {
@@ -9927,6 +10374,12 @@ function createFabricOverlayRuntime(options = {}) {
     resetPassivePresentationState();
     viewportElement = null;
     canvasElement = null;
+    onionCanvasElement = null;
+    onionScratchCanvas = null;
+    onionSkinControls = null;
+    onionSkinQuickKey = null;
+    onionSkinDrawnKey = null;
+    onionSkinDrawn = { previous: [], next: [] };
     toolbar = null;
     paletteShell = null;
     brushControls = null;
@@ -9974,6 +10427,18 @@ function createFabricOverlayRuntime(options = {}) {
       viewportElement = documentRef.createElement('div');
       viewportElement.className = 'mpv-fabric-pilot-viewport';
       setStyles(viewportElement, { position: 'absolute', pointerEvents: 'none' });
+      // 어니언 스킨은 Fabric 캔버스보다 **먼저** 붙여 그 아래에 깔리게 한다.
+      onionCanvasElement = documentRef.createElement('canvas');
+      onionCanvasElement.className = 'mpv-fabric-onion-canvas';
+      setStyles(onionCanvasElement, {
+        position: 'absolute',
+        left: '0',
+        top: '0',
+        width: '100%',
+        height: '100%',
+        pointerEvents: 'none',
+        display: 'none'
+      });
       canvasElement = documentRef.createElement('canvas');
       canvasElement.className = 'mpv-fabric-delta-canvas';
       toolbar = documentRef.createElement('div');
@@ -10016,6 +10481,8 @@ function createFabricOverlayRuntime(options = {}) {
       outlineControls = brushControls.outline;
       selectionControls = createSelectionControls();
       eraserModeControls = createEraserModeControls();
+      // 편집창(가로 도크)은 자기 타임라인을 쓰므로 어니언 스킨 줄을 두지 않는다.
+      onionSkinControls = paletteDocked ? null : createOnionSkinControls();
       badge = documentRef.createElement('span');
       badge.className = 'mpv-fabric-pilot-badge';
       badge.setAttribute?.('role', 'status');
@@ -10065,6 +10532,10 @@ function createFabricOverlayRuntime(options = {}) {
               labelAccessory: colorControls.current,
               appended: [brushControls.panel]
             },
+          // 어니언 스킨은 어떤 도구에서도 쓰므로 도구별 섹션과 따로 둔다.
+          ...(onionSkinControls
+            ? [{ id: 'onion', wrap: true, items: [onionSkinControls.group] }]
+            : []),
           paletteDocked
             ? { id: 'actions', wrap: true, items: [undoButton, redoButton, deleteButton, clearButton] }
             : {
@@ -10079,6 +10550,7 @@ function createFabricOverlayRuntime(options = {}) {
           { id: 'status', items: [badge] }
         ]
       });
+      viewportElement.appendChild(onionCanvasElement);
       viewportElement.appendChild(canvasElement);
       container.appendChild(viewportElement);
       container.appendChild(toolbar);
@@ -10152,6 +10624,7 @@ function createFabricOverlayRuntime(options = {}) {
       }));
       syncBrushControls();
       syncSelectionControls('brush');
+      syncOnionSkinControls();
       setSurfaceInput(false);
       configureLongTaskObserver();
       prepared = true;
@@ -10198,6 +10671,7 @@ function createFabricOverlayRuntime(options = {}) {
         resetPassivePresentationState();
       }
       resetActiveFrameState();
+      syncOnionSkin();
       metrics.recordToggleLatency(now() - startedAt);
       return { accepted: true, enabled: false, tool: lastTool };
     }
@@ -10245,6 +10719,7 @@ function createFabricOverlayRuntime(options = {}) {
     inputEnabled = true;
     setSurfaceInput(true);
     syncPersistenceBadge(session.targetFrame);
+    syncOnionSkin();
     metrics.recordToggleLatency(now() - startedAt);
     return { accepted: true, enabled: true, restored: activation.restored };
   }
@@ -10277,6 +10752,7 @@ function createFabricOverlayRuntime(options = {}) {
           hiddenObjectIds = new Set();
           lockedObjectIds = new Set();
           activeLayerDrawable = true;
+          onionSkinLayerViewRevision += 1;
         }
         if (passiveDisplaySession &&
             passiveDisplaySession.stableVideoIdentity !==
@@ -10298,6 +10774,7 @@ function createFabricOverlayRuntime(options = {}) {
             else fabricCanvas.requestRenderAll();
           }
         }
+        syncOnionSkin();
       }
       return result;
     } catch (_error) {
@@ -10383,6 +10860,7 @@ function createFabricOverlayRuntime(options = {}) {
           stableVideoIdentity: request.stableVideoIdentity,
           targetFrame: request.sourceFrame
         };
+      syncOnionSkin();
       return {
         accepted: true,
         targetFrame: request.targetFrame,
@@ -10431,6 +10909,7 @@ function createFabricOverlayRuntime(options = {}) {
     const preview = renderArmedFramePreview(stagedFrameState);
     if (!preview?.accepted) return preview;
     publishActiveFramePreview(stagedFrameState, preview);
+    syncOnionSkin();
     return {
       accepted: true,
       frameRevision: request.frameRevision,
@@ -10571,6 +11050,9 @@ function createFabricOverlayRuntime(options = {}) {
     lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
     activeLayerDrawable = command.activeLayerDrawable !== false;
     layerHistoryBusy = command.layerHistoryBusy === true;
+    // 숨긴 레이어의 그림은 어니언 스킨에도 깔지 않는다.
+    onionSkinLayerViewRevision += 1;
+    syncOnionSkin();
     // 활성 레이어가 잠기거나 풀리면 Ctrl 임시 지우개가 실제로 될지도 달라진다.
     syncTempErase();
     // 겹침 순서 랭크도 같은 경로로 온다. 새 획이 **그리는 순간** 제 층에 들어가야
@@ -11049,6 +11531,8 @@ function createFabricOverlayRuntime(options = {}) {
     updateDrawingTool,
     updateDrawingBrush,
     applyPalettePrefs,
+    updateOnionSkin,
+    getOnionSkinState,
     updateDrawingLayerView,
     updateViewport,
     applyDrawingAction,
