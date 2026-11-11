@@ -97,6 +97,7 @@ function createHarness(options = {}) {
     persistenceSessionIdFactory: options.persistenceSessionIdFactory,
     getHistoryRevision: options.getHistoryRevision,
     onHistoryFallback: options.onHistoryFallback,
+    ...(typeof options.wallNow === 'function' ? { wallNow: options.wallNow } : {}),
     uuid: () => `uuid-${++id}`
   });
 
@@ -2541,8 +2542,8 @@ test('a second quick Ctrl+Z goes to global undo and drops the passive redo mark'
   );
 });
 
-test('a passive undo the overlay refuses falls back to global undo, a transport failure does not', async () => {
-  let answer = { success: false, applied: false, reason: 'history-mismatch' };
+test('a passive undo falls back to global undo only when the overlay history is empty', async () => {
+  let answer = { success: false, applied: false, reason: 'history-empty' };
   const fallbacks = [];
   const harness = createFrameOperationHarness({
     onAction: request => (request.action === 'undo'
@@ -2562,18 +2563,86 @@ test('a passive undo the overlay refuses falls back to global undo, a transport 
     return routed;
   };
 
-  // 오버레이가 "그 조작은 맨 위가 아니다" 라고 답했다. 키를 삼키고 끝내지 않는다.
+  // 오버레이의 히스토리가 비어 있다(창이 새로 만들어졌다). 키를 삼키고 끝내지 않고
+  // 전역 실행취소로 넘긴다 — 그리기 패널이 열려 있을 때와 같은 규칙이다.
   await pressFrame();
   assert.equal(await pressUndo(), true);
   assert.deepEqual(fallbacks, ['undo']);
 
-  // 전송 실패는 넘기지 않는다 — 오버레이가 실제로는 되돌렸을 수 있다.
+  // 맨 위에 다른 항목이 있다는 답에는 넘기지 않는다 — 더 최근의 편집을 둔 채 그 앞의
+  // 전역 편집을 되돌리게 된다.
+  answer = { success: false, applied: false, reason: 'history-mismatch' };
+  await pressFrame();
+  assert.equal(await pressUndo(), true);
+  assert.deepEqual(fallbacks, ['undo'], '전역 실행취소를 부르지 않는다');
+  assert.equal(await pressUndo(), false, '표식은 버려져 있다');
+
+  // 전송 실패도 넘기지 않는다 — 오버레이가 실제로는 되돌렸을 수 있다.
   answer = { success: false, applied: false };
   await pressFrame();
   assert.equal(await pressUndo(), true);
   assert.deepEqual(fallbacks, ['undo'], '전역 실행취소를 한 번 더 부르지 않는다');
-  // 어느 쪽이든 표식은 버려져 있다.
-  assert.equal(await pressUndo(), false);
+  assert.equal(await pressUndo(), false, '표식은 버려져 있다');
+});
+
+test('Ctrl+Y pressed right after a passive frame operation keeps that operation undoable', async () => {
+  const pending = deferred();
+  const fallbacks = [];
+  const harness = createFrameOperationHarness({
+    onAction: request => (request.action === 'undo'
+      ? { success: true, applied: true, keyframeSetChanged: true }
+      : pending.promise),
+    // 전역에 다시 실행할 것이 없다.
+    onHistoryFallback: action => { fallbacks.push(action); return false; }
+  });
+  await preparePassive(harness);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('4', { code: 'Digit4' })), true);
+  await settle();
+
+  // 응답 전에 Ctrl+Y 를 눌렀다. 다시 실행할 것이 없어 아무 일도 일어나지 않는다 —
+  // 그렇다고 방금 한 프레임 조작의 되돌리기까지 지우면 안 된다.
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('y', { code: 'KeyY', ctrlKey: true })),
+    true
+  );
+  pending.resolve({
+    success: true, applied: true, keyframeSetChanged: true, historyToken: 'frame-op:21'
+  });
+  await settle();
+  assert.deepEqual(fallbacks, ['redo']);
+
+  const undo = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(undo), true, '프레임 조작을 여전히 되돌릴 수 있다');
+  await settle();
+  const undoRequest = harness.calls.action.at(-1);
+  assert.equal(undoRequest.action, 'undo');
+  assert.equal(undoRequest.historyToken, 'frame-op:21');
+});
+
+test('a passive frame operation that never answers stops holding Ctrl+Z after a moment', async () => {
+  let clock = 1_000_000_000;
+  const fallbacks = [];
+  const harness = createFrameOperationHarness({
+    onAction: () => new Promise(() => {}),
+    onHistoryFallback: action => { fallbacks.push(action); return true; },
+    wallNow: () => clock
+  });
+  await preparePassive(harness);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+
+  // 방금 보낸 조작의 응답을 기다리는 동안에는 키를 받아 둔다.
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true })),
+    true
+  );
+  // 오버레이가 끝내 답하지 않는다. 계속 받아 두면 전역 실행취소(댓글 등)까지 막히므로,
+  // 잠시 뒤부터는 지금까지처럼 누른 자리에서 넘긴다.
+  clock += 2_500_000;
+  const later = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(later), false);
+  assert.deepEqual(later.calls, []);
+  assert.deepEqual(fallbacks, []);
 });
 
 test('a passive Ctrl+Z queued before the panel opens is dropped once drawing starts', async () => {

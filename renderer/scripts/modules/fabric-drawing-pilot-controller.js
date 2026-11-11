@@ -37,6 +37,8 @@ const PASSIVE_DRAWING_ACTIONS = new Set([
 // 세션 없이 한 구조 조작의 되돌리기 표식을 몇 개까지 기억할지. 오버레이의 구조
 // 히스토리 상한(32)과 같은 자릿수면 충분하다.
 const PASSIVE_HISTORY_LIMIT = 32;
+// 방금 보낸 프레임 조작의 응답을 기다리며 Ctrl+Z 판정을 미루는 시간의 상한.
+const PASSIVE_FRAME_OPERATION_HOLD_MS = 2000;
 // shared/fabric-drawing-tools.js 의 FABRIC_DRAWING_TOOLS 와 같아야 한다.
 // 이 파일은 브라우저 네이티브 ES 모듈이라 CommonJS 를 import 할 수 없어 리터럴을 둔다
 // (shared/fabric-drawing-limits.js ↔ fabric-drawing-persistence-store.js 와 같은 구조).
@@ -273,6 +275,8 @@ export function createFabricDrawingPilotController(options = {}) {
   // 패널을 닫은 채 보낸 프레임 조작 가운데 아직 응답을 받지 못한 것의 수. 그 조작의
   // 표식은 응답이 와야 알 수 있으므로, 그 사이에 눌린 Ctrl+Z 는 조작이 끝난 뒤에 판정한다.
   let passiveFrameOperationsInFlight = 0;
+  // 가장 최근에 보낸 시각(wallNow, 마이크로초).
+  let passiveFrameOperationSentAt = 0;
   // 오버레이에 마지막으로 알린 재생 여부와 그 호스트 세대. 오버레이 창이 새로
   // 만들어지면 그쪽 값은 기본(정지)으로 돌아가 있으므로 세대가 다르면 다시 보낸다.
   let onionSkinPlayingSent = { hostGeneration: 0, playing: false };
@@ -1774,8 +1778,19 @@ export function createFabricDrawingPilotController(options = {}) {
   function trackPassiveFrameOperation(request, operation) {
     if (request.sessionId !== null) return;
     passiveFrameOperationsInFlight += 1;
+    passiveFrameOperationSentAt = Number(wallNow());
     const settle = () => { passiveFrameOperationsInFlight -= 1; };
     operation.then(settle, settle);
+  }
+
+  // 방금 보낸 프레임 조작의 응답을 기다리는 중인가. 오버레이가 끝내 답하지 않으면
+  // 닫힌 상태의 Ctrl+Z 가 전부 그 뒤에 줄을 서 전역 실행취소(댓글 등)까지 막힌다.
+  // 기다리는 시간을 잘라, 그 뒤의 키는 지금까지처럼 누른 자리에서 판정한다.
+  function awaitingPassiveFrameOperation() {
+    if (passiveFrameOperationsInFlight <= 0) return false;
+    const elapsed = Number(wallNow()) - passiveFrameOperationSentAt;
+    return Number.isFinite(elapsed) && elapsed >= 0 &&
+      elapsed < PASSIVE_FRAME_OPERATION_HOLD_MS * 1000;
   }
 
   function enqueueHistoryFallback(historyAction, historyRevision) {
@@ -1842,25 +1857,32 @@ export function createFabricDrawingPilotController(options = {}) {
         if (response.duplicate !== true) clearPassiveHistory();
         return response;
       }
-      // 오버레이가 "그 조작은 맨 위가 아니다" 라고 분명히 답했을 때만 전역으로 넘긴다.
-      // 전송 실패·낡은 토큰은 넘기지 않는다 — 오버레이가 실제로는 되돌렸을 수 있어
-      // 한 번 누른 키로 두 번 되돌리게 된다. 표식은 어긋난 것이므로 어느 쪽이든 버린다.
-      if (response?.reason === 'history-mismatch' || response?.reason === 'history-empty') {
+      // 표식이 오버레이와 어긋났다. 남은 것도 믿을 수 없으므로 전부 버린다.
+      clearPassiveHistory();
+      // 오버레이의 히스토리가 **비어 있다**고 분명히 답했을 때만 전역으로 넘긴다(그리기
+      // 패널이 열려 있을 때의 규칙과 같다). 맨 위에 다른 항목이 있다는 답(history-
+      // mismatch)에는 넘기지 않는다 — 더 최근의 편집을 둔 채 그 앞의 전역 편집을
+      // 되돌리게 된다. 전송 실패·낡은 토큰도 넘기지 않는다 — 오버레이가 실제로는
+      // 되돌렸을 수 있어 한 번 누른 키로 두 번 되돌리게 된다.
+      if (response?.reason === 'history-empty') {
         return fallbackPassiveHistory(direction, historyRevision, response);
       }
-      clearPassiveHistory();
       return response;
     });
     drawingActionQueue = operation.then(r => r?.success === true, () => false);
     return operation;
   }
 
-  // 전역 히스토리로 넘어가면 닫은 채 한 조작은 더 이상 "마지막으로 한 일"이 아니다.
-  // 표식을 버리지 않으면 뒤이은 Ctrl+Y 가 방금 전역에서 되돌린 편집보다 그 조작을
-  // 먼저 되살린다(순서가 뒤집힌다).
+  // 전역 히스토리가 **실제로 움직였으면** 닫은 채 한 조작은 더 이상 "마지막으로 한 일"이
+  // 아니다. 표식을 버리지 않으면 뒤이은 Ctrl+Y 가 방금 전역에서 되돌린 편집보다 그
+  // 조작을 먼저 되살린다(순서가 뒤집힌다). 전역에 되돌릴 것이 없어 아무 일도 없었으면
+  // 표식을 그대로 둔다 — 버리면 프레임 조작 직후에 누른 Ctrl+Y 하나가 그 조작의
+  // 되돌리기까지 지운다.
   async function fallbackPassiveHistory(direction, historyRevision, response = null) {
-    clearPassiveHistory();
-    if (historyRevision === readHistoryRevision()) await onHistoryFallback(direction);
+    if (historyRevision === readHistoryRevision() &&
+        (await onHistoryFallback(direction)) === true) {
+      clearPassiveHistory();
+    }
     return response || { success: false, applied: false, reason: 'not-passive-history' };
   }
 
@@ -3202,7 +3224,7 @@ export function createFabricDrawingPilotController(options = {}) {
         // 방금 보낸 조작의 응답이 아직 오지 않았으면 표식을 모른다. 그때는 키를 받아
         // 두고 조작이 끝난 뒤에 판정한다 — 여기서 넘겨 버리면 방금 한 프레임 조작
         // 대신 그 앞의 다른 편집(댓글 등)이 되돌려진다.
-        if (passiveFrameOperationsInFlight === 0 &&
+        if (!awaitingPassiveFrameOperation() &&
             peekPassiveHistory(historyAction) === null) {
           return false;
         }
