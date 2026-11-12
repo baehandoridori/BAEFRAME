@@ -67,6 +67,13 @@ const {
   FABRIC_PALETTE_MIN_OPACITY_PERCENT: MIN_BRUSH_OPACITY_PERCENT,
   FABRIC_PALETTE_MAX_OPACITY_PERCENT: MAX_BRUSH_OPACITY_PERCENT
 } = require('../../../shared/fabric-palette-prefs.js');
+// 어니언 스킨 설정의 한도와 기본값도 경계의 검증기와 한 곳에서 나온다.
+const {
+  FABRIC_ONION_SKIN_MAX_SHEETS: ONION_SKIN_MAX_SHEETS,
+  FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT: ONION_SKIN_MIN_OPACITY_PERCENT,
+  FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT: ONION_SKIN_MAX_OPACITY_PERCENT,
+  FABRIC_ONION_SKIN_DEFAULT_PREFS: DEFAULT_ONION_SKIN
+} = require('../../../shared/fabric-onion-skin-prefs.js');
 
 const SCENE_KEY_SEPARATOR = '\u0000';
 const DEFAULT_MAX_VIDEOS = 10;
@@ -197,17 +204,8 @@ const SELECTION_HIT_MARGIN_CSS_PX = 6;
 const MIN_SELECTION_HIT_TOLERANCE = 2;
 const MAX_SELECTION_HIT_TOLERANCE = 96;
 const SOURCE_INTERVAL_EPSILON = 1e-7;
-// 어니언 스킨 — 이웃 키프레임의 그림을 반투명으로 깔아 보여 준다.
-// 장수·투명도 범위와 기본값은 구형 도구의 것을 그대로 잇는다(이전 2장·이후 1장·30%).
-const ONION_SKIN_MAX_SHEETS = 5;
-const ONION_SKIN_MIN_OPACITY_PERCENT = 10;
-const ONION_SKIN_MAX_OPACITY_PERCENT = 80;
-const DEFAULT_ONION_SKIN = Object.freeze({
-  enabled: false,
-  before: 2,
-  after: 1,
-  opacityPercent: 30
-});
+// 어니언 스킨 — 이웃 키프레임의 그림을 반투명으로 깔아 보여 준다. 장수·투명도
+// 범위와 기본값은 shared/fabric-onion-skin-prefs.js 에 있다.
 // 이전 그림은 파랑, 이후 그림은 초록(구형 도구와 같은 구분).
 const ONION_SKIN_PREVIOUS_COLOR = '#6495ed';
 const ONION_SKIN_NEXT_COLOR = '#32cd32';
@@ -397,6 +395,16 @@ function clonePlain(value) {
 function finiteNumber(value, fallback = 0) {
   const number = Number(value);
   return Number.isFinite(number) ? number : fallback;
+}
+
+// fabric 의 기준점(originX·originY)이 오브젝트 한가운데에서 얼마나 떨어져 있는가.
+// 크기에 대한 비율이다(왼쪽·위 -0.5, 한가운데 0, 오른쪽·아래 0.5). fabric 의
+// resolveOrigin 과 같다.
+function transformOriginFraction(origin) {
+  if (typeof origin === 'number') return Number.isFinite(origin) ? origin - 0.5 : 0;
+  if (origin === 'left' || origin === 'top') return -0.5;
+  if (origin === 'right' || origin === 'bottom') return 0.5;
+  return 0;
 }
 
 function boundedInteger(value, min, max, fallback) {
@@ -4184,6 +4192,9 @@ function createFabricOverlayRuntime(options = {}) {
   let selectionTransformControls = null;
   let selectionTransformControlsUnit = null;
   const ignoredModifiedTargets = new WeakSet();
+  // 크기 손잡이를 한가운데에서 얼마나 벗어나 잡았는지. 조작(fabric 의 transform) 하나에
+  // 하나씩이고, 조작이 끝나면 함께 사라진다.
+  const scaleGrabOffsets = new WeakMap();
   let deferredViewport = null;
   let longTaskObserver = null;
   let localSequence = 0;
@@ -4194,8 +4205,13 @@ function createFabricOverlayRuntime(options = {}) {
   //
   // 이웃 키프레임의 그림을 Fabric 캔버스 **아래**의 별도 캔버스에 깐다. 씬에 넣지
   // 않으므로 선택·지우개·저장 어디에도 섞이지 않는다. 문서를 바꾸지 않는 뷰 상태라
-  // 설정은 이 창 안에만 있고(브러시 굵기와 같다), 렌더러는 토글만 보낸다.
+  // 원본은 이 창이고(브러시 굵기와 같다), 렌더러는 토글만 보낸다. 앱을 껐다 켜도
+  // 남도록 바뀔 때마다 onionSkinPrefsBridge 로 알려 메인 창의 사용자 설정이 보존한다.
   let onionSkin = { ...DEFAULT_ONION_SKIN };
+  const onionSkinPrefsBridge = options.onionSkinPrefsBridge || windowRef?.mpvOverlayOnionSkinPrefs;
+  // 사용자가 이 런타임에서 설정을 한 번이라도 바꿨으면 저장된 값으로 덮지 않는다.
+  let onionSkinPrefsTouched = false;
+  let lastNotifiedOnionSkinPrefsKey = null;
   let onionCanvasElement = null;
   let onionScratchCanvas = null;
   let onionSkinControls = null;
@@ -5675,12 +5691,55 @@ function createFabricOverlayRuntime(options = {}) {
     return next;
   }
 
+  function getOnionSkinPrefs() {
+    return {
+      enabled: onionSkin.enabled,
+      before: onionSkin.before,
+      after: onionSkin.after,
+      opacityPercent: onionSkin.opacityPercent
+    };
+  }
+
+  // 설정이 바뀌면 그 자리에서 알린다(팔레트 값과 같은 이유다 — 이 창은 예고 없이
+  // 사라질 수 있다). 모아서 저장하는 일은 메인 창이 맡는다.
+  function notifyOnionSkinPrefsChanged() {
+    onionSkinPrefsTouched = true;
+    if (typeof onionSkinPrefsBridge?.notify !== 'function') return;
+    const prefs = getOnionSkinPrefs();
+    const key = JSON.stringify(prefs);
+    if (key === lastNotifiedOnionSkinPrefsKey) return;
+    lastNotifiedOnionSkinPrefsKey = key;
+    try {
+      onionSkinPrefsBridge.notify(prefs);
+    } catch (_error) { /* 보조 신호다. 다음 변경에서 다시 알린다. */ }
+  }
+
   function setOnionSkin(patch = {}) {
+    const before = JSON.stringify(getOnionSkinPrefs());
     onionSkin = normalizeOnionSkinPatch(patch);
     if (typeof patch.playing === 'boolean') onionSkinPlaying = patch.playing;
+    // 재생 여부는 설정이 아니다. 켜짐·장수·진하기가 실제로 달라졌을 때만 알린다.
+    if (JSON.stringify(getOnionSkinPrefs()) !== before) notifyOnionSkinPrefsChanged();
     syncOnionSkinControls();
     syncOnionSkin();
     return getOnionSkinState();
+  }
+
+  // 저장돼 있던 설정을 받는다. 사용자가 이 런타임에서 이미 값을 바꿨다면 그쪽이 더
+  // 새 값이므로 덮지 않는다. 받은 값은 저장 쪽이 이미 알고 있으니 되받아 알리지 않는다.
+  function applyOnionSkinPrefs(prefs = {}) {
+    if (destroyed) return { accepted: false, reason: 'destroyed' };
+    if (onionSkinPrefsTouched) return { accepted: false, reason: 'local-changes' };
+    onionSkin = normalizeOnionSkinPatch({
+      enabled: prefs?.enabled,
+      before: prefs?.before,
+      after: prefs?.after,
+      opacityPercent: prefs?.opacityPercent
+    });
+    lastNotifiedOnionSkinPrefsKey = JSON.stringify(getOnionSkinPrefs());
+    syncOnionSkinControls();
+    syncOnionSkin();
+    return { accepted: true, ...getOnionSkinPrefs() };
   }
 
   // 렌더러가 보내는 변경. 단축키(1)는 **토글만** 보낸다 — 켜짐 여부의 진실은 이
@@ -5898,19 +5957,116 @@ function createFabricOverlayRuntime(options = {}) {
   // 같은 변형을 얹으므로 어디서나 같은 모양으로 보인다. 올가미·지우개도 오브젝트의
   // 행렬을 거꾸로 적용해 판정하므로 변형한 획을 그대로 다룬다.
 
-  // 지금 고른 것에 변형 상자를 줄 수 있는가. 부분 선택으로 세워 둔 조각은 아직
-  // 문서에 없는 프록시라 옮기기만 받는다(옮겨서 확정한 뒤에 변형할 수 있다).
+  // 지금 고른 것에 변형 상자를 줄 수 있는가.
   function selectionAllowsTransform(activeObject) {
-    if (!inputEnabled || !activeObject || pendingLassoSelection) return false;
+    if (!inputEnabled || !activeObject) return false;
     if (sceneStore.getDiagnostics().tool !== 'select') return false;
     const children = typeof activeObject.getObjects === 'function'
       ? activeObject.getObjects()
       : [activeObject];
-    return children.length > 0 && children.every(object =>
+    if (children.length === 0) return false;
+    // 부분 선택으로 세워 둔 조각도 변형할 수 있다. 조각은 아직 문서에 없는 프록시라,
+    // **지금 세워 둔 선택과 정확히 같은 묶음**일 때만 받는다. 저장은 옮길 때와 같이
+    // 획을 조각으로 갈라 넣으면서 한 번에 한다(commitPendingLassoTransform).
+    if (pendingLassoSelection) {
+      // 숨기거나 잠근 레이어의 획은 조각으로도 변형하지 않는다. 레이어가 잠기면 세워 둔
+      // 선택이 걷히지만(updateDrawingLayerView), 그 순서에 기대지 않고 여기서도 본다.
+      // 조각의 id 는 새로 지은 것이라 원본 획의 id 로 묻는다.
+      return pendingLassoIsFresh(pendingLassoSelection) &&
+        pendingTargetMatches(activeObject, pendingLassoSelection.selectedIds) &&
+        children.every(object => !isLayerRestricted(object?.__baeframeObjectId)) &&
+        pendingLassoSelection.replacements.every(
+          replacement => !isLayerRestricted(replacement.removeId)
+        );
+    }
+    return children.every(object =>
       !!object?.__baeframeObjectId &&
       !object.__baeframeTransient &&
       !object.__baeframePendingLasso &&
       !isLayerRestricted(object.__baeframeObjectId));
+  }
+
+  // 크기 손잡이의 포인터 좌표를 fabric 의 크기 계산에 넘기기 전에 다듬는다.
+  //
+  // fabric 은 포인터의 **절대 위치**를 크기로 바꾼다 — (고정점에서 포인터까지의 거리 −
+  // 선택 상자의 여백) ÷ 원래 크기. 여기에 걸리는 것이 셋 있다.
+  //
+  // 1. 여백을 걷어내는 세로 방향의 한 줄이 잘못돼 있다(7.4.0 getLocalPoint 의
+  //    `localPoint.y <= padding` — 음수 부호가 빠졌다). 높이가 여백보다 작은 획은 여백이
+  //    도로 더해져, 가는 가로선의 아래쪽 손잡이를 잡으면 굵기가 몇 배로 튄다.
+  // 2. 고정점에서 여백 안쪽으로 들어온 포인터는 건드리지 않는다. 그래서 크기가 0 까지
+  //    줄었다가 그 구간에서 도로 커진다. 가는 선은 손잡이를 몇 픽셀만 당겨도 그 구간이다.
+  // 3. 손잡이의 **어디를 잡았는지**를 보지 않는다. 한가운데에서 벗어나 잡은 만큼 첫
+  //    걸음에 크기가 튄다. 작은 획일수록 크게 튀고, 가는 선은 굵기가 몇 배로 바뀐다.
+  //
+  // 그래서 여기서 직접 계산한다. 잡은 자리와 손잡이 한가운데의 차이를 빼고(3), 여백을
+  // 걷어내되 그 안쪽은 크기 0 으로 붙인다(1·2). 0 을 그대로 주지는 않는다 — fabric 이 첫
+  // 걸음의 부호를 "원래 방향"으로 기억하므로 부호는 남긴다. 호출부는 이 좌표를 넘기는
+  // 동안 오브젝트의 padding 을 0 으로 두어 fabric 이 한 번 더 건드리지 않게 한다.
+  //
+  // 계산할 수 없으면 null 을 돌려준다. 호출부는 그때 fabric 의 계산에 맡긴다.
+  function resolveScalePointer(transform, control, x, y, grabLimit) {
+    const { controlsUtils } = resolveFabric();
+    const target = transform.target;
+    if (typeof controlsUtils?.getLocalPoint !== 'function' ||
+        typeof target?._getTransformedDimensions !== 'function') {
+      return null;
+    }
+    const padding = finiteNumber(target.padding);
+    const margin = Math.max(0, padding) / (finiteNumber(fabricCanvas?.getZoom?.(), 1) || 1);
+    // 여백을 뺀 적 없는, 고정점 기준의 좌표(오브젝트의 회전을 푼 축).
+    const localOf = (pointerX, pointerY) => {
+      target.padding = 0;
+      try {
+        return controlsUtils.getLocalPoint(
+          transform, transform.originX, transform.originY, pointerX, pointerY
+        );
+      } finally {
+        target.padding = padding;
+      }
+    };
+    let grab = scaleGrabOffsets.get(transform);
+    let local;
+    try {
+      if (!grab) {
+        // 이 조작의 첫 걸음이다. 오브젝트는 아직 잡기 전 그대로이므로, 손잡이 한가운데가
+        // 고정점에서 얼마나 떨어져 있는지(크기 + 여백)를 지금 잴 수 있다.
+        const size = target._getTransformedDimensions();
+        const grabbed = localOf(transform.ex, transform.ey);
+        const offsetAlong = (grabbedValue, controlFraction, origin, extent) => {
+          // 이 손잡이가 바꾸지 않는 방향(변 손잡이의 긴 쪽)은 그대로 둔다.
+          if (!controlFraction || !(extent > 0)) return 0;
+          const centre = (controlFraction - transformOriginFraction(origin)) * extent;
+          if (!centre) return 0;
+          const offset = grabbedValue - (centre + Math.sign(centre) * margin);
+          // 손잡이의 판정 영역보다 멀리 벗어날 수는 없다. 그보다 크면 잰 값을 믿지 않는다.
+          return Number.isFinite(offset) && Math.abs(offset) <= grabLimit ? offset : 0;
+        };
+        grab = {
+          x: offsetAlong(grabbed?.x, finiteNumber(control?.x), transform.originX, size?.x),
+          y: offsetAlong(grabbed?.y, finiteNumber(control?.y), transform.originY, size?.y)
+        };
+        scaleGrabOffsets.set(transform, grab);
+      }
+      local = localOf(x, y);
+    } catch (_error) {
+      // 첫 걸음에 재지 못했다면 나중에 재지 않는다 — 그때는 오브젝트가 이미 변해 있어
+      // 잰 값이 틀린다. 어긋남이 없는 것으로 둔다.
+      if (!grab) scaleGrabOffsets.set(transform, { x: 0, y: 0 });
+      return null;
+    }
+    if (!Number.isFinite(local?.x) || !Number.isFinite(local?.y)) return null;
+    const collapsed = margin * 1e-6;
+    const withoutMargin = value => (value === 0
+      ? 0
+      : Math.sign(value) * Math.max(Math.abs(value) - margin, collapsed));
+    const dx = withoutMargin(local.x - grab.x) - local.x;
+    const dy = withoutMargin(local.y - grab.y) - local.y;
+    // 회전을 푼 축에서의 이동량을 화면 좌표로 되돌린다.
+    const radians = finiteNumber(target.angle) * Math.PI / 180;
+    const cos = Math.cos(radians);
+    const sin = Math.sin(radians);
+    return { x: x + dx * cos - dy * sin, y: y + dx * sin + dy * cos };
   }
 
   // Fabric 기본 손잡이(모서리·변·회전)에 **모서리 바깥의 회전 영역**을 더한다.
@@ -5968,7 +6124,32 @@ function createFabricOverlayRuntime(options = {}) {
         render: () => {}
       });
     }
-    Object.assign(controls, controlsUtils.createObjectDefaultControls());
+    const scaleControls = controlsUtils.createObjectDefaultControls();
+    // 잡은 자리가 손잡이 한가운데에서 벗어날 수 있는 한도. 가장 넓은 판정 영역(터치)의
+    // 너비로 넉넉히 둔다 — 실제로는 그 절반을 넘지 않는다.
+    const grabLimit = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+    for (const control of Object.values(scaleControls)) {
+      const scale = control.actionHandler;
+      if (typeof scale !== 'function') continue;
+      // 포인터 좌표는 여기서 다듬어 넘긴다(resolveScalePointer). 여러 개를 고른 묶음에는
+      // 여백이 없지만 잡은 자리의 어긋남은 똑같이 덜어 낸다.
+      control.actionHandler = (eventData, transform, x, y) => {
+        const target = transform?.target;
+        if (!target) return scale(eventData, transform, x, y);
+        const pointer = resolveScalePointer(transform, control, x, y, grabLimit);
+        if (!pointer) return scale(eventData, transform, x, y);
+        const padding = target.padding;
+        target.padding = 0;
+        try {
+          return scale(eventData, transform, pointer.x, pointer.y);
+        } finally {
+          // 크기 계산은 scaling 이벤트를 내고, 그 처리 중에 선택 정책이 여백을 다시 정할
+          // 수 있다. 그동안 누가 값을 바꿨으면 그 값을 덮지 않는다.
+          if (target.padding === 0) target.padding = padding;
+        }
+      };
+    }
+    Object.assign(controls, scaleControls);
     controls.mtr = new Control({
       x: 0,
       y: -0.5,
@@ -7942,6 +8123,17 @@ function createFabricOverlayRuntime(options = {}) {
     }
   }
 
+  // 세워 둔 조각의 저장을 그만둔다(제자리에 놓았다, 저장할 수 없는 변형이다, 스토어가
+  // 거절했다, 그 사이 문서가 바뀌었다). 화면을 조작 전으로 되돌리고 — 함께 따라오던
+  // 외곽선도 — 세워 둔 선택을 걷는다. 걷는 동안 fabric 이 진행 중인 변형을 끝내며
+  // object:modified 를 한 번 더 내는데, 그 알림은 받지 않는다. 받아도 지금은 "고른 것
+  // 없음"으로 끝나지만 그 우연에 기대지 않는다.
+  function abandonPendingLassoCommit(activeTarget, options = {}) {
+    rollbackSelectTransform(undefined, false);
+    ignoreLateModifiedEvents(activeTarget);
+    abortPendingLassoSelection(options);
+  }
+
   function commitPendingLassoMove(target = fabricCanvas?.getActiveObject?.()) {
     const pending = pendingLassoSelection;
     if (!pending) return { applied: false, reason: 'no-pending-lasso' };
@@ -7957,11 +8149,11 @@ function createFabricOverlayRuntime(options = {}) {
     const dx = finiteNumber(activeTarget?.left) - finiteNumber(start.left);
     const dy = finiteNumber(activeTarget?.top) - finiteNumber(start.top);
     if (Math.abs(dx) <= 1e-7 && Math.abs(dy) <= 1e-7) {
-      abortPendingLassoSelection();
+      abandonPendingLassoCommit(activeTarget);
       return { applied: false, reason: 'no-op-transform' };
     }
     if (!pendingLassoIsFresh(pending)) {
-      abortPendingLassoSelection({ authoritative: true });
+      abandonPendingLassoCommit(activeTarget, { authoritative: true });
       return { applied: false, reason: 'stale-pending-lasso' };
     }
     const selectedObjectIds = [...pending.selectedIds];
@@ -7973,26 +8165,92 @@ function createFabricOverlayRuntime(options = {}) {
       kind: 'split-stroke'
     });
     if (!result.applied) {
-      abortPendingLassoSelection();
+      abandonPendingLassoCommit(activeTarget);
       return result;
     }
     pendingLassoSelection = null;
+    // 아래에서 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를
+    // 한 번 더 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
+    ignoreLateModifiedEvents(activeTarget);
     renderActiveScene();
-    if (selectedObjectIds.length === 1) activateObjectIds(selectedObjectIds);
-    else {
-      fabricCanvas.discardActiveObject();
-      sceneStore.selectObjects([]);
-      refreshSelectionInteractionPolicy();
-      fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || 'default');
-      fabricCanvas.requestRenderAll();
-      const sessionId = currentSession?.sessionId;
-      const inputRevision = tokenState.inputRevision;
-      queueMicrotaskRef(() => {
-        if (destroyed || !inputEnabled || !fabricCanvas || fabricCanvas.getActiveObject?.()) return;
-        if (currentSession?.sessionId !== sessionId || tokenState.inputRevision !== inputRevision) return;
-        fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || 'default');
-      });
+    // 옮긴 조각은 몇 개든 고른 채로 둔다 — 이어서 크기를 바꾸거나 돌릴 수 있다.
+    activateObjectIds(selectedObjectIds);
+    updateObjectMetric();
+    return { ...result, selectedObjectIds };
+  }
+
+  // 부분 선택으로 세워 둔 조각을 변형 상자로 크기를 바꾸거나 돌렸다. 옮길 때와 같이
+  // 획을 조각으로 갈라 넣으면서 고른 조각에 새 변형을 한 번에 얹는다 — 실행취소 한
+  // 단계이고, 되돌리면 자르기 전의 획으로 돌아간다.
+  function commitPendingLassoTransform(target = fabricCanvas?.getActiveObject?.()) {
+    const pending = pendingLassoSelection;
+    if (!pending) return { applied: false, reason: 'no-pending-lasso' };
+    if (!pendingLassoIsFresh(pending)) {
+      abandonPendingLassoCommit(target, { authoritative: true });
+      return { applied: false, reason: 'stale-pending-lasso' };
     }
+    // 이 조작의 출발 기록이 있어야 한다. 없으면(다른 것을 끌던 기록이거나 이미 치워졌다)
+    // 외곽선 짝을 지을 수 없어, 조각만 변형되고 그 외곽선은 옛 모양으로 저장된다.
+    if (!transformStart || transformStart.target !== target) {
+      abandonPendingLassoCommit(target);
+      return { applied: false, reason: 'missing-transform-start' };
+    }
+    if (!materializePendingLassoForTransform(target)) {
+      return { applied: false, reason: 'pending-lasso-materialize-failed' };
+    }
+    const activeTarget = target || pending.activeTarget;
+    const children = typeof activeTarget?.getObjects === 'function'
+      ? activeTarget.getObjects()
+      : [activeTarget];
+    syncTransformedOutlinePairs();
+    const outlineObjects = (transformStart?.outlinePairs || []).map(pair => pair.object);
+    // 조각은 아직 문서에 없다. 변형 전의 값은 세워 둔 레코드에서, 통째로 고른 획의
+    // 값은 문서에서 읽는다.
+    const stagedTransforms = new Map();
+    for (const replacement of pending.replacements) {
+      for (const record of replacement.addObjects) {
+        stagedTransforms.set(record.id, record.transform || null);
+      }
+    }
+    for (const record of sceneStore.getActiveSceneSnapshot()?.objects || []) {
+      if (!stagedTransforms.has(record.id)) stagedTransforms.set(record.id, record.transform || null);
+    }
+    const transforms = [];
+    let changed = false;
+    for (const object of [...children, ...outlineObjects]) {
+      const id = object?.__baeframeObjectId;
+      const stored = id ? stagedTransforms.get(id) : null;
+      const unchanged = objectMatchesStoredTransform(object, stored);
+      const transform = unchanged ? clonePlain(stored) : absoluteObjectTransform(object);
+      if (!id || !transform || !selectionTransformIsStorable(transform)) {
+        abandonPendingLassoCommit(activeTarget);
+        return { applied: false, reason: 'invalid-selection-transform' };
+      }
+      if (!unchanged) changed = true;
+      transforms.push({ id, transform });
+    }
+    // 끌었다가 제자리에 놓았다. 획을 가를 이유가 없다(옮기기의 no-op 과 같다).
+    if (!changed) {
+      abandonPendingLassoCommit(activeTarget);
+      return { applied: false, reason: 'no-op-transform' };
+    }
+    const selectedObjectIds = [...pending.selectedIds];
+    const result = sceneStore.replaceObjects({
+      replacements: pending.replacements,
+      selectedObjectIds,
+      transforms,
+      kind: 'split-stroke'
+    });
+    if (!result.applied) {
+      abandonPendingLassoCommit(activeTarget);
+      return result;
+    }
+    pendingLassoSelection = null;
+    // 아래에서 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를
+    // 한 번 더 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
+    ignoreLateModifiedEvents(activeTarget);
+    renderActiveScene({ immediate: true });
+    activateObjectIds(selectedObjectIds);
     updateObjectMetric();
     return { ...result, selectedObjectIds };
   }
@@ -10228,21 +10486,16 @@ function createFabricOverlayRuntime(options = {}) {
     return objects.map(object => object.__baeframeObjectId).filter(Boolean);
   }
 
-  function scheduleMovedMultiSelectionRelease(target, selectedIds) {
-    const sessionId = currentSession?.sessionId;
-    const inputRevision = tokenState.inputRevision;
-    const expectedSelection = [...selectedIds].sort().join(SCENE_KEY_SEPARATOR);
-    queueMicrotaskRef(() => {
-      if (destroyed || !inputEnabled || !fabricCanvas) return;
-      if (currentSession?.sessionId !== sessionId || tokenState.inputRevision !== inputRevision) return;
-      if (fabricCanvas.getActiveObject?.() !== target) return;
-      if (selectionIds().sort().join(SCENE_KEY_SEPARATOR) !== expectedSelection) return;
-      fabricCanvas.discardActiveObject();
-      sceneStore.selectObjects([]);
-      refreshSelectionInteractionPolicy();
-      fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || 'default');
-      fabricCanvas.requestRenderAll();
-    });
+  // 여러 획을 함께 옮긴 뒤에도 **고른 채로 둔다.** 이어서 크기를 바꾸거나 돌릴 수
+  // 있어야 한다(옮기고 → 돌리고 → 키우기). fabric 의 묶음은 자식 좌표를 묶음 기준으로
+  // 들고 있어, 그대로 두면 다음 조작이 낡은 기준에서 시작한다. 씬을 다시 세우고 같은
+  // 것을 다시 고른다 — 크기·회전을 저장한 뒤와 같은 처리다(commitSelectionTransform).
+  function reselectMovedMultiSelection(target, selectedIds) {
+    // 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를 한 번 더
+    // 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
+    ignoreLateModifiedEvents(target);
+    renderActiveScene({ immediate: true });
+    activateObjectIds(selectedIds);
   }
 
   function onSelectionChanged() {
@@ -10287,7 +10540,53 @@ function createFabricOverlayRuntime(options = {}) {
     if (pendingLassoSelection) {
       pendingLassoSelection.activeTarget = target;
       pendingLassoSelection.startTargetTransform = clonePlain(transformStart.transform);
+      // 조각의 외곽선 프록시는 처음 변형될 때에야 캔버스에 올라온다. 그때 짝을 지으려면
+      // 본체가 **변형되기 전**의 행렬이 필요하다. 지금 적어 둔다.
+      transformStart.pendingBodyStartMatrices = collectBodyMatrices(target);
     }
+  }
+
+  function collectBodyMatrices(target) {
+    const matrices = new Map();
+    const children = typeof target?.getObjects === 'function' ? target.getObjects() : [target];
+    for (const child of children) {
+      const id = child?.__baeframeObjectId;
+      if (!id || typeof child.calcTransformMatrix !== 'function') continue;
+      try {
+        matrices.set(id, Array.from(child.calcTransformMatrix()));
+      } catch (_error) { /* 행렬을 못 구한 짝은 따라가지 않을 뿐이다 */ }
+    }
+    return matrices;
+  }
+
+  // 세워 둔 조각을 처음 변형하는 순간의 외곽선 짝. 외곽선 프록시는 방금 캔버스에
+  // 올라와 변형 전 그대로지만, 본체는 이미 첫 걸음만큼 변형돼 있다. 본체의 출발
+  // 행렬은 변형이 시작되기 전에 적어 둔 것을 쓴다.
+  function collectPendingTransformOutlinePairs(target, bodyStartMatrices) {
+    const pairs = collectDraggedOutlinePairs(target);
+    for (const pair of pairs) {
+      const start = bodyStartMatrices?.get(pair.body?.__baeframeObjectId);
+      if (start) pair.bodyStartMatrix = start;
+    }
+    return pairs;
+  }
+
+  // 세워 둔 조각을 변형하기 시작한다: 원본 획을 조각들로 갈아 끼우고(옮길 때와 같다),
+  // 그 순간 처음 캔버스에 올라온 조각 외곽선을 본체와 짝짓는다. 이미 갈아 끼웠으면
+  // 아무것도 하지 않는다. 변형 중에도, 저장 직전에도 이 길 하나로 들어온다 — 어느 쪽이
+  // 먼저 오든 외곽선 짝이 빠지지 않는다.
+  function materializePendingLassoForTransform(target) {
+    const pending = pendingLassoSelection;
+    if (!pending) return false;
+    const wasMaterialized = pending.phase === 'moving';
+    if (!materializePendingLassoSelection(target)) return false;
+    if (!wasMaterialized && transformStart) {
+      transformStart.outlinePairs = collectPendingTransformOutlinePairs(
+        pending.activeTarget || transformStart.target,
+        transformStart.pendingBodyStartMatrices
+      );
+    }
+    return true;
   }
 
   // 이동 중인 타깃(단일 오브젝트 또는 ActiveSelection)에 딸린 외곽선들.
@@ -10404,8 +10703,23 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   // 변형 상자로 크기를 바꾸거나 돌리는 동안 짝인 외곽선이 함께 변하게 한다.
-  function onObjectTransforming() {
-    if (pendingLassoSelection) return;
+  function onObjectTransforming(event) {
+    if (!pendingLassoSelection) {
+      syncTransformedOutlinePairs();
+      return;
+    }
+    // 부분 선택으로 세워 둔 조각. 옮길 때와 같이 처음 움직이는 순간에 원본 획을
+    // 조각들로 갈아 끼운다(onObjectMoving 과 같은 순서다).
+    const target = event?.target;
+    if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
+      transformStart = null;
+      abortPendingLassoSelection();
+      return;
+    }
+    if (!materializePendingLassoForTransform(target)) {
+      transformStart = null;
+      return;
+    }
     syncTransformedOutlinePairs();
   }
 
@@ -10422,7 +10736,15 @@ function createFabricOverlayRuntime(options = {}) {
       return;
     }
     if (pendingLassoSelection) {
-      const result = commitPendingLassoMove(target);
+      // 세워 둔 조각을 옮겼는가, 변형 상자로 크기를 바꾸거나 돌렸는가.
+      const pendingAction = typeof event?.action === 'string'
+        ? event.action
+        : (typeof event?.transform?.action === 'string'
+          ? event.transform.action
+          : transformStart?.action);
+      const result = SELECTION_TRANSFORM_ACTIONS.has(pendingAction)
+        ? commitPendingLassoTransform(target)
+        : commitPendingLassoMove(target);
       transformStart = null;
       if (result.applied) updateObjectMetric();
       settleArmedFramePreview();
@@ -10471,10 +10793,9 @@ function createFabricOverlayRuntime(options = {}) {
       settleArmedFramePreview();
       return;
     }
-    const shouldReleaseMultiSelection = result.applied && children.length > 1;
     transformStart = null;
-    if (result.applied) updateObjectMetric();
-    if (shouldReleaseMultiSelection) scheduleMovedMultiSelectionRelease(target, ids);
+    if (children.length > 1) reselectMovedMultiSelection(target, ids);
+    updateObjectMetric();
     settleArmedFramePreview();
   }
 
@@ -11925,6 +12246,7 @@ function createFabricOverlayRuntime(options = {}) {
     updateDrawingTool,
     updateDrawingBrush,
     applyPalettePrefs,
+    applyOnionSkinPrefs,
     updateOnionSkin,
     getOnionSkinState,
     updateDrawingLayerView,

@@ -3464,3 +3464,31 @@ test('정규화는 손댄 씬을 그림자에서 다시 심게 한다', () => {
     '그 씬들을 떨어뜨린다'
   );
 });
+
+test('frame shortcut rejections are explained only for reasons the overlay really returns', () => {
+  const table = appSource.match(
+    /const FABRIC_PILOT_FRAME_OPERATION_REJECTIONS = Object\.freeze\(\{([\s\S]*?)\}\);/
+  );
+  assert.ok(table, '거절 사유 표가 있어야 한다');
+  const reasons = [...table[1].matchAll(/'([a-z-]+)':/g)].map(match => match[1]);
+  assert.ok(reasons.length >= 6);
+  // 오버레이가 돌려주지 않는 사유의 문구는 영영 뜨지 않는다. 표가 낡지 않게 묶는다.
+  for (const reason of reasons) {
+    assert.ok(
+      fabricRuntimeSource.includes(`reason: '${reason}'`),
+      `오버레이가 ${reason} 을 돌려줘야 한다`
+    );
+  }
+  // 프레임을 밀어 넣을 수 없는 경우는 가장 자주 만나는 거절이다.
+  assert.ok(reasons.includes('timeline-full'));
+  // 모르는 사유에는 아무것도 띄우지 않는다.
+  assert.match(
+    appSource,
+    /onFrameOperationRejected: \(\{ reason \}\) => \{\n\s+const message = FABRIC_PILOT_FRAME_OPERATION_REJECTIONS\[reason\];\n\s+if \(message\) showToast\(message, 'warn'\);\n\s+\},/
+  );
+  // 단축키 경로만 알린다. 사유는 오버레이의 응답에서 온다.
+  assert.match(
+    pilotControllerSource,
+    /runDetached\(applyFrameOperationFromShortcut\(frameOperation\)\);/
+  );
+});

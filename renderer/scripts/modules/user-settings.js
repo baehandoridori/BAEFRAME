@@ -17,6 +17,23 @@ const STORAGE_KEY = 'baeframe_user_settings';
 // import 할 수 없다 — scripts/tests/fabric-palette-prefs.test.js 가 값이 같음을 강제한다).
 const PALETTE_SAVED_COLOR_LIMIT = 7;
 
+// 어니언 스킨 설정의 한도와 기본값. shared/fabric-onion-skin-prefs.js 와 같아야 한다
+// (scripts/tests/fabric-onion-skin-prefs.test.js 가 값이 같음을 강제한다).
+const ONION_SKIN_MAX_SHEETS = 5;
+const ONION_SKIN_MIN_OPACITY_PERCENT = 10;
+const ONION_SKIN_MAX_OPACITY_PERCENT = 80;
+const ONION_SKIN_DEFAULT_PREFS = Object.freeze({
+  enabled: false,
+  before: 2,
+  after: 1,
+  opacityPercent: 30
+});
+
+function clampOnionSkinInteger(value, min, max, fallback) {
+  const number = parseInt(value);
+  return Number.isFinite(number) ? Math.min(max, Math.max(min, number)) : fallback;
+}
+
 function normalizePaletteColor(value) {
   return typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) ? value.toLowerCase() : null;
 }
@@ -272,7 +289,9 @@ export class UserSettings extends EventTarget {
         size: 3,
         opacity: 100,
         savedColors: []
-      }
+      },
+      // 이 PC의 어니언 스킨 설정(켜짐·앞뒤 장수·진하기). 마지막에 쓰던 값을 다음에도 쓴다.
+      drawingOnionSkin: { ...ONION_SKIN_DEFAULT_PREFS }
     };
 
     this._ready = false;
@@ -792,6 +811,56 @@ export class UserSettings extends EventTarget {
     this.settings.drawingPalette = this.getFabricPalettePrefs();
     this._save();
     this._emit('drawingPaletteChanged', { drawingPalette: this.settings.drawingPalette });
+  }
+
+  /**
+   * 오버레이에 다시 심을 어니언 스킨 설정(켜짐·앞뒤 장수·진하기).
+   * 넘기는 형식은 shared/fabric-onion-skin-prefs.js 의 검증기와 같다.
+   */
+  getFabricOnionSkinPrefs() {
+    // 손으로 고친 설정 파일이나 일부만 남은 값이 들어 있어도, 꺼내 줄 때는 오버레이가
+    // 받는 형식이어야 한다. 하나라도 어긋나면 통째로 거절돼 아무것도 심기지 않는다.
+    const stored = this.settings.drawingOnionSkin || {};
+    return {
+      enabled: stored.enabled === true,
+      before: clampOnionSkinInteger(
+        stored.before, 0, ONION_SKIN_MAX_SHEETS, ONION_SKIN_DEFAULT_PREFS.before
+      ),
+      after: clampOnionSkinInteger(
+        stored.after, 0, ONION_SKIN_MAX_SHEETS, ONION_SKIN_DEFAULT_PREFS.after
+      ),
+      opacityPercent: clampOnionSkinInteger(
+        stored.opacityPercent,
+        ONION_SKIN_MIN_OPACITY_PERCENT,
+        ONION_SKIN_MAX_OPACITY_PERCENT,
+        ONION_SKIN_DEFAULT_PREFS.opacityPercent
+      )
+    };
+  }
+
+  /**
+   * 어니언 스킨 설정이 기본값과 다른가. 기본값 그대로면 새로 만들어진 오버레이와
+   * 같으므로 심을 것이 없다.
+   */
+  hasCustomFabricOnionSkinPrefs() {
+    const prefs = this.getFabricOnionSkinPrefs();
+    return Object.keys(ONION_SKIN_DEFAULT_PREFS)
+      .some(key => prefs[key] !== ONION_SKIN_DEFAULT_PREFS[key]);
+  }
+
+  /**
+   * 오버레이에서 바뀐 어니언 스킨 설정을 보존한다. 값은 preload 가 이미 검증했다.
+   */
+  setFabricOnionSkinPrefs(prefs) {
+    this.settings.drawingOnionSkin = {
+      enabled: prefs?.enabled,
+      before: prefs?.before,
+      after: prefs?.after,
+      opacityPercent: prefs?.opacityPercent
+    };
+    this.settings.drawingOnionSkin = this.getFabricOnionSkinPrefs();
+    this._save();
+    this._emit('drawingOnionSkinChanged', { drawingOnionSkin: this.settings.drawingOnionSkin });
   }
 
   getLightMode() {

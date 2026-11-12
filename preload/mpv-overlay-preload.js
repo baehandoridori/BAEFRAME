@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require('../shared/viewport-pan-message');
 const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
+const { normalizeFabricOnionSkinPrefs } = require('../shared/fabric-onion-skin-prefs');
 contextBridge.exposeInMainWorld('mpvOverlayViewportPan', {
   send(value) {
     const normalized = normalizeViewportPanMessage(value);
@@ -22,6 +23,7 @@ const COLLABORATION_DRAG_RESET_CHANNEL = 'mpv-overlay:collaboration-drag-reset';
 const DRAWING_POINTERDOWN_FRAME_REQUEST_CHANNEL =
   'mpv-overlay:drawing-pointerdown-frame-request';
 const PALETTE_PREFS_CHANNEL = 'mpv-overlay:palette-prefs';
+const ONION_SKIN_PREFS_CHANNEL = 'mpv-overlay:onion-skin-prefs';
 const TEXT_ENTRY_CHANNEL = 'mpv-overlay:text-entry';
 const DRAWING_POINTERDOWN_FRAME_REQUEST_KEYS = Object.freeze([
   'hostGeneration',
@@ -604,6 +606,20 @@ contextBridge.exposeInMainWorld('mpvOverlayPalettePrefs', Object.freeze({
     if (!prefs) return false;
     try {
       ipcRenderer.send(PALETTE_PREFS_CHANNEL, prefs);
+      return true;
+    } catch (_error) {
+      return false;
+    }
+  }
+}));
+
+// 어니언 스킨 설정(켜짐·장수·진하기)도 같은 길로 메인 창의 사용자 설정에 보존한다.
+contextBridge.exposeInMainWorld('mpvOverlayOnionSkinPrefs', Object.freeze({
+  notify(value) {
+    const prefs = normalizeFabricOnionSkinPrefs(value);
+    if (!prefs) return false;
+    try {
+      ipcRenderer.send(ONION_SKIN_PREFS_CHANNEL, prefs);
       return true;
     } catch (_error) {
       return false;

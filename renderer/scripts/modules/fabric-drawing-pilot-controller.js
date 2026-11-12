@@ -167,6 +167,11 @@ export function createFabricDrawingPilotController(options = {}) {
   const onHistoryFallback = typeof options.onHistoryFallback === 'function'
     ? options.onHistoryFallback
     : () => {};
+  // 단축키로 한 프레임 조작을 오버레이가 거절하면 사유를 알린다. 화면에 아무 반응이
+  // 없으면 키가 먹지 않은 것인지 조작이 거절된 것인지 알 수 없다.
+  const onFrameOperationRejected = typeof options.onFrameOperationRejected === 'function'
+    ? options.onFrameOperationRejected
+    : () => {};
   const getHistoryRevision = typeof options.getHistoryRevision === 'function'
     ? options.getHistoryRevision
     : null;
@@ -1793,6 +1798,23 @@ export function createFabricDrawingPilotController(options = {}) {
       elapsed < PASSIVE_FRAME_OPERATION_HOLD_MS * 1000;
   }
 
+  // 단축키로 한 프레임 조작. 오버레이가 "할 수 없다"고 사유를 붙여 답했을 때만
+  // 알린다 — 전송 실패나 낡은 요청에는 사유가 없고, 사용자가 할 수 있는 일도 없다.
+  // 요청을 만들지 못해 보내지도 않은 경우(invalid-request)는 오버레이의 답이 아니다.
+  async function applyFrameOperationFromShortcut(action) {
+    const response = await applyDrawingActionDetailed(action);
+    if (response?.applied !== true && response?.duplicate !== true &&
+        typeof response?.reason === 'string' && response.reason.length > 0 &&
+        response.reason !== 'invalid-request') {
+      try {
+        onFrameOperationRejected({ action, reason: response.reason });
+      } catch {
+        // 안내는 보조 표시다. 실패해도 조작 결과는 그대로다.
+      }
+    }
+    return response?.success === true;
+  }
+
   function enqueueHistoryFallback(historyAction, historyRevision) {
     const operation = drawingActionQueue.then(async () => {
       if (historyRevision !== readHistoryRevision()) return false;
@@ -3293,7 +3315,7 @@ export function createFabricDrawingPilotController(options = {}) {
       }
       consumeKeyEvent(event);
       if (event.repeat === true) return true;
-      runDetached(applyDrawingAction(frameOperation));
+      runDetached(applyFrameOperationFromShortcut(frameOperation));
       return true;
     }
     if (brushSizeStep !== 0) {
