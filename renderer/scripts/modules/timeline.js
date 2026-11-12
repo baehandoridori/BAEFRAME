@@ -264,7 +264,8 @@ export class Timeline extends EventTarget {
     this.timelineRuler?.addEventListener('pointerdown', (e) => {
       if (e.button !== 0) return;
       e.preventDefault();
-      this._beginScrubbing(e);
+      // 시작하지 못한 누름(두 번째 손가락 등)이 진행 중인 끌기의 자리를 옮기지 않게 한다.
+      if (!this._beginScrubbing(e)) return;
       this._scrubFromClick(e);
       document.body.style.cursor = 'ew-resize';
     });
@@ -322,7 +323,7 @@ export class Timeline extends EventTarget {
 
     const handleTimelinePointerUp = (e) => {
       if (this.isDraggingPlayhead) {
-        if (e.pointerId !== this._scrubPointerId) return;
+        if (!this._isScrubPointer(e)) return;
         // 드래그 종료 시 실제 seek 수행
         this._finishScrubbing(e);
         this.isDraggingPlayhead = false;
@@ -348,7 +349,17 @@ export class Timeline extends EventTarget {
     document.addEventListener('pointermove', handleTimelinePointerMove);
     document.addEventListener('pointerup', handleTimelinePointerUp);
     document.addEventListener('pointercancel', handleTimelinePointerUp);
-    const cancelScrubbing = e => { if (this.isDraggingPlayhead) this._finishScrubbing(e); };
+    // 묶음이 풀리거나 창이 포커스를 잃으면 끌기를 끝내고 시작한 자리로 되돌린다. 펜으로 시작한
+    // 끌기는 예외다(_isPenScrub 의 설명). 펜이 닿아 있는 동안의 이동과 뗌은 문서의 리스너로
+    // 계속 들어오므로 그쪽에서 끝낸다.
+    const cancelScrubbing = e => {
+      if (!this.isDraggingPlayhead) return;
+      if (this._isPenScrub() && (e?.type === 'lostpointercapture' || e?.type === 'blur')) {
+        this._notePenScrubTolerance(e.type, e);
+        return;
+      }
+      this._finishScrubbing(e);
+    };
     this.playheadHandle?.addEventListener('lostpointercapture', cancelScrubbing);
     this.timelineRuler?.addEventListener('lostpointercapture', cancelScrubbing);
     window.addEventListener('blur', cancelScrubbing);
@@ -577,16 +588,74 @@ export class Timeline extends EventTarget {
     return { time: displayFrame / this.fps, displayFrame, localFrame: displayFrame, frameExact: true };
   }
 
+  // 펜으로 시작한 끌기인가.
+  //
+  // Windows 의 펜은 닿기 전(호버)에는 마우스와 같은 경로로, 닿은 뒤에는 터치와 같은 경로로
+  // 들어온다(Chromium 의 PenEventProcessor). 한 자루의 펜이 두 경로를 오가므로, 마우스·터치에
+  // 맞춘 엄격한 규칙 — 같은 pointerId 만 추적, 주 포인터만 시작, 묶음이 풀리거나 창이 포커스를
+  // 잃으면 취소하고 되돌리기 — 이 펜에서는 끌기를 끊을 수 있다. 버튼 없이 온 펜의 이동 하나가
+  // 브라우저에게 그 포인터의 묶음을 풀게 하는 것이 한 예다(Blink 의 SendMousePointerEvent).
+  // 그 규칙들이 들어간 뒤(v2.11) "펜으로는 프레임 바를 끌 수 없다"는 보고가 왔고, 실제 펜으로는
+  // 재현도 검증도 하지 못했다. 그래서 펜에는 그 규칙들을 적용하지 않는다: 펜이 보낸 이동과
+  // 뗌이면 받고, 묶음 풀림과 포커스 잃음은 무시하고, 취소되면 마지막으로 끈 자리에 둔다.
+  _isPenScrub() {
+    return this.isDraggingPlayhead === true && this._scrubPointerType === 'pen';
+  }
+
+  // 이 이벤트가 지금 끌고 있는 포인터의 것인가. pointerId 가 없는 이벤트(blur 등)는 받는다.
+  _isScrubPointer(e) {
+    const id = this._scrubPointerId;
+    if (id === undefined || id === null || e?.pointerId === undefined) return true;
+    if (e.pointerId === id) return true;
+    if (this._scrubPointerType === 'pen' && e.pointerType === 'pen') {
+      this._notePenScrubTolerance('pointer-id', e);
+      return true;
+    }
+    return false;
+  }
+
+  // 펜에서, 엄격한 규칙이었다면 끌기가 끊겼을 입력을 받아들였음을 종류마다 한 번만 남긴다
+  // (WARN 은 로그 파일에 적힌다). 실제 펜에서 어느 규칙에 걸리는지 확인하지 못해 두는 진단이다.
+  _notePenScrubTolerance(kind, e) {
+    this._penScrubToleranceNoted ||= new Set();
+    if (this._penScrubToleranceNoted.has(kind)) return;
+    this._penScrubToleranceNoted.add(kind);
+    try {
+      log.warn('펜으로 프레임 바를 끄는 중: 엄격한 규칙이면 끊겼을 입력', {
+        kind, type: e?.type, pointerId: e?.pointerId, scrubPointerId: this._scrubPointerId,
+        isPrimary: e?.isPrimary, buttons: e?.buttons
+      });
+    } catch { /* 진단 기록은 끌기에 영향을 주지 않는다 */ }
+  }
+
+  // 끌기를 시작했으면 true.
   _beginScrubbing(e) {
-    if (this.isDraggingPlayhead || e.isPrimary === false) return;
+    if (e.isPrimary === false) {
+      // 두 번째 손가락은 시작하지 않는다. 펜은 한 자루뿐이라 걸러 낼 이유가 없다.
+      if (e.pointerType !== 'pen') return false;
+      this._notePenScrubTolerance('not-primary', e);
+    }
+    if (this.isDraggingPlayhead) {
+      // 손가락 하나가 끄는 동안 다른 손가락의 누름은 무시한다.
+      if (this._scrubPointerType === 'touch' && e.pointerType === 'touch' &&
+          e.pointerId !== this._scrubPointerId) return false;
+      // 그 밖에 끄는 도중에 온 새 누름은 앞선 끌기가 뗌을 받지 못했다는 뜻이다(누른 채로 또 누를
+      // 수는 없다). 마지막으로 끈 자리에서 끝내고 새로 시작한다 — 그대로 두면 다음 창 포커스
+      // 변화까지 프레임 바를 끌 수 없다.
+      if (this._scrubPointerType === 'pen') this._notePenScrubTolerance('superseded', e);
+      this._finishScrubbing({ type: 'superseded' });
+    }
     this._scrubPointerId = e.pointerId;
+    this._scrubPointerType = e.pointerType;
     this._scrubCaptureTarget = e.currentTarget;
+    this._scrubLastDetail = null;
     const mapped = this._getDisplayFrameFromSegmentTime(this.currentTime);
     const raw = this.currentTime * this.fps;
     const frame = mapped ?? Math.floor(raw + 8 * Number.EPSILON * Math.max(1, Math.abs(raw)));
     this._scrubStartDetail = this._getSeekDetailFromDisplayFrame(frame);
     this.isDraggingPlayhead = true;
     try { e.currentTarget?.setPointerCapture?.(e.pointerId); } catch { /* capture may be unavailable */ }
+    return true;
   }
 
   _seekFromClick(e) {
@@ -598,10 +667,19 @@ export class Timeline extends EventTarget {
    * 스크러빙 중 (드래그 중 프리뷰만 표시, 실제 seek 없음)
    */
   _scrubFromClick(e) {
-    if (this._scrubPointerId !== undefined && this._scrubPointerId !== null && e.pointerId !== this._scrubPointerId) return;
+    // 펜이 닿지 않은 채(호버) 보낸 이동은 끌기가 아니다. 그 자리로 옮기지도, 끌기를 끝내지도 않는다.
+    // 눌린 버튼도 필압도 없을 때만 호버로 본다 — 닿아 있는데 버튼을 싣지 않는 경로가 있더라도
+    // 필압이 있으면 끌기로 받는다.
+    if (this._scrubPointerType === 'pen' && e.pointerType === 'pen' &&
+        e.type === 'pointermove' && e.buttons === 0 && !(e.pressure > 0)) {
+      this._notePenScrubTolerance('hover-move', e);
+      return;
+    }
+    if (!this._isScrubPointer(e)) return;
     const detail = this._getSeekDetailFromPointer(e);
     if (!detail) return;
     this.scrubTime = detail.time;
+    this._scrubLastDetail = detail;
     this._updatePlayheadPositionDirect(detail.time);
     this._autoScrollWhileDragging(e.clientX);
     this._emit('scrubbing', detail);
@@ -640,16 +718,24 @@ export class Timeline extends EventTarget {
    * 스크러빙 완료 (실제 seek 수행)
    */
   _finishScrubbing(e) {
-    if (this._scrubPointerId !== undefined && this._scrubPointerId !== null &&
-        e?.pointerId !== undefined && e.pointerId !== this._scrubPointerId) return;
-    const cancelled = ['pointercancel', 'lostpointercapture', 'blur', 'dispose'].includes(e?.type);
-    const detail = cancelled ? this._scrubStartDetail : this._getSeekDetailFromPointer(e);
+    if (!this._isScrubPointer(e)) return;
+    const type = e?.type;
+    // 펜의 취소는 되돌리지 않는다(_isPenScrub 의 설명). 새 누름에 밀려난 끌기도 그렇다.
+    const keepsLast = type === 'superseded' || (type === 'pointercancel' && this._scrubPointerType === 'pen');
+    if (type === 'pointercancel' && keepsLast) this._notePenScrubTolerance('pointercancel', e);
+    const cancelled = !keepsLast && ['pointercancel', 'lostpointercapture', 'blur', 'dispose'].includes(type);
+    let detail;
+    if (cancelled) detail = this._scrubStartDetail;
+    else if (keepsLast) detail = this._scrubLastDetail || this._scrubStartDetail;
+    else detail = this._getSeekDetailFromPointer(e);
     const pointerId = this._scrubPointerId;
     const target = this._scrubCaptureTarget;
     this.isDraggingPlayhead = false;
     this._scrubPointerId = null;
+    this._scrubPointerType = null;
     this._scrubCaptureTarget = null;
     this._scrubStartDetail = null;
+    this._scrubLastDetail = null;
     this.scrubTime = undefined;
     if (this.tracksContainer?.ownerDocument?.body) this.tracksContainer.ownerDocument.body.style.cursor = '';
     // Clear ownership before release: its lostcapture event cannot commit twice.
