@@ -20,6 +20,7 @@ const {
   normalizeFabricDrawingPersistenceMessage
 } = require('./mpv-overlay-host');
 const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
+const { normalizeFabricOnionSkinPrefs } = require('../shared/fabric-onion-skin-prefs');
 const {
   readReviewSnapshot,
   saveReviewFile
@@ -427,10 +428,14 @@ function setupIpcHandlers({
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingTool(request)));
   ipcMain.handle('mpv:update-overlay-drawing-brush', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingBrush(request)));
+  ipcMain.handle('mpv:apply-overlay-onion-skin-prefs', (event, prefs) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingOnionSkinPrefs(prefs)));
   ipcMain.handle('mpv:apply-overlay-drawing-palette-prefs', (event, prefs) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.applyDrawingPalettePrefs(prefs)));
   ipcMain.handle('mpv:update-overlay-drawing-layer-view', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingLayerView(request)));
+  ipcMain.handle('mpv:update-overlay-onion-skin', (event, request) =>
+    invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingOnionSkin(request)));
   ipcMain.handle('mpv:update-overlay-drawing-frame', (event, request) =>
     invokeFabricDrawingHost(event, () => mpvOverlayHost.updateDrawingFrame(request)));
   ipcMain.handle('mpv:apply-overlay-drawing-action', (event, request) =>
@@ -481,6 +486,24 @@ function setupIpcHandlers({
   // 팔레트의 글자 입력칸 포커스. 호스트가 그동안 키 릴레이를 멈춘다(발신자는 호스트가 확인한다).
   ipcMain.on('mpv-overlay:text-entry', (event, active) => {
     if (isFabricDrawingPilotEnabled) mpvOverlayHost.setTextEntryActive(event, active);
+  });
+  // 어니언 스킨 설정(켜짐·장수·진하기)을 메인 렌더러의 사용자 설정으로 넘긴다.
+  ipcMain.on('mpv-overlay:onion-skin-prefs', (event, value) => {
+    if (!isFabricDrawingPilotEnabled ||
+        !mpvOverlayHost.isCurrentOverlaySender(event)) {
+      return;
+    }
+    const normalized = normalizeFabricOnionSkinPrefs(value);
+    if (!normalized) return;
+    const mainWindow = getMainWindow();
+    if (!mainWindow || mainWindow.isDestroyed?.()) return;
+    const mainWebContents = mainWindow.webContents;
+    if (!mainWebContents || mainWebContents.isDestroyed?.()) return;
+    try {
+      mainWebContents.send('fabric-drawing:onion-skin-prefs', normalized);
+    } catch (_error) {
+      // 보존용 보조 신호다. 놓쳐도 다음 변경 때 다시 온다.
+    }
   });
   // 팔레트 값(마지막 색·굵기·불투명도·내 색)을 메인 렌더러의 사용자 설정으로 넘긴다.
   ipcMain.on('mpv-overlay:palette-prefs', (event, value) => {

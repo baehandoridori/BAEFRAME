@@ -6,6 +6,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 const { PAN_CHANNEL, PAN_COMMAND_CHANNEL, normalizeViewportPanMessage, normalizeViewportPanCommand } = require('../shared/viewport-pan-message');
 const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
+const { normalizeFabricOnionSkinPrefs } = require('../shared/fabric-onion-skin-prefs');
 
 const MPV_OVERLAY_KEYBOARD_CHANNEL = 'mpv-overlay:keyboard-input';
 const MPV_OVERLAY_POINTER_PRESENCE_CHANNEL = 'mpv-overlay:pointer-presence';
@@ -368,6 +369,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   mpvUpdateOverlayDrawingBrush: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-brush', request),
   mpvUpdateOverlayDrawingLayerView: (request) =>
     ipcRenderer.invoke('mpv:update-overlay-drawing-layer-view', request),
+  // 어니언 스킨 켜기/끄기와 재생 여부. 문서를 바꾸지 않는 뷰 상태다.
+  mpvUpdateOverlayOnionSkin: (request) => ipcRenderer.invoke('mpv:update-overlay-onion-skin', request),
   mpvUpdateOverlayDrawingFrame: (request) => ipcRenderer.invoke('mpv:update-overlay-drawing-frame', request),
   mpvApplyOverlayDrawingAction: (request) => ipcRenderer.invoke('mpv:apply-overlay-drawing-action', request),
   mpvConfirmOverlayDrawingPointerdownFrame: (request) =>
@@ -457,6 +460,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
     const prefs = normalizeFabricPalettePrefs(value);
     if (!prefs) return Promise.resolve({ success: false, accepted: false, error: 'invalid drawing palette prefs' });
     return ipcRenderer.invoke('mpv:apply-overlay-drawing-palette-prefs', prefs);
+  },
+  // 어니언 스킨 설정(켜짐·장수·진하기)의 보존과 복원. 팔레트 값과 같은 방식이다.
+  onFabricDrawingOnionSkinPrefs: (callback) => {
+    if (typeof callback !== 'function') return () => {};
+    const listener = (_event, value) => {
+      const prefs = normalizeFabricOnionSkinPrefs(value);
+      if (prefs) callback(prefs);
+    };
+    ipcRenderer.on('fabric-drawing:onion-skin-prefs', listener);
+    return () => ipcRenderer.removeListener('fabric-drawing:onion-skin-prefs', listener);
+  },
+  mpvApplyOverlayOnionSkinPrefs: (value) => {
+    const prefs = normalizeFabricOnionSkinPrefs(value);
+    if (!prefs) return Promise.resolve({ success: false, accepted: false, error: 'invalid onion skin prefs' });
+    return ipcRenderer.invoke('mpv:apply-overlay-onion-skin-prefs', prefs);
   },
   mpvDestroyOverlay: () => ipcRenderer.invoke('mpv:destroy-overlay'),
 

@@ -34,6 +34,7 @@ const {
   normalizeFabricDrawingTool
 } = require('../shared/fabric-drawing-tools.js');
 const { normalizeFabricPalettePrefs } = require('../shared/fabric-palette-prefs');
+const { normalizeFabricOnionSkinPrefs } = require('../shared/fabric-onion-skin-prefs');
 
 // [ / ] 한 번에 허용하는 최대 증감. 실제 상한·하한은 오버레이 런타임이 자른다.
 const FABRIC_DRAWING_MAX_BRUSH_STEP = 64;
@@ -82,6 +83,21 @@ const HOST_DRAWING_ACTIONS = new Set([
   // 씬은 그대로 두고 짝 id 만 만드는 표식(페이로드 없음).
   'layer-model-marker'
 ]);
+// 그리기 패널을 닫아 둔 채(입력이 꺼진 passive 투영)로도 받는 액션.
+// 프레임·키프레임 구조 조작과, 그렇게 한 조작의 되돌리기·다시하기뿐이다.
+// 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다.
+const HOST_PASSIVE_DRAWING_ACTIONS = new Set([
+  'frame-insert-blank-keyframe',
+  'frame-insert',
+  'frame-remove',
+  'keyframe-to-frame',
+  'frame-to-keyframe',
+  'frame-copy',
+  'frame-paste',
+  'undo',
+  'redo'
+]);
+const MAX_DRAWING_HISTORY_TOKEN_LENGTH = 64;
 // 랭크는 레이어 순서 인덱스다. 레이어 상한이 훨씬 낮으므로 넉넉히 잡아도 충분하다.
 const MAX_LAYER_OBJECT_RANK = 4096;
 const MAX_MPV_REMOTE_CURSOR_HTML_BYTES = 256 * 1024;
@@ -610,6 +626,17 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-toolbar button:active {
       transform: scale(0.96);
     }
+    /* 지금 누를 수 없는 버튼(고른 것이 없을 때의 뒤집기). 흐리게 두고 반응하지 않는다. */
+    .mpv-fabric-pilot-toolbar button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    .mpv-fabric-pilot-toolbar button:disabled:hover {
+      background: var(--fabric-palette-button);
+    }
+    .mpv-fabric-pilot-toolbar button:disabled:active {
+      transform: none;
+    }
     /* 편집 줄: 아이콘 셋 + 글자가 붙은 전체 지우기. */
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-section="actions"] button {
       display: inline-flex;
@@ -808,6 +835,41 @@ const OVERLAY_HTML = String.raw`
       height: 20px;
       border-radius: 50%;
     }
+    /* 어니언 스킨: 켜기 버튼 한 줄, 켜면 그 아래 장수·진하기가 펼쳐진다(외곽선과 같은 꼴).
+       섹션 줄(flex)이 항목을 내용 폭으로 줄이므로 줄 전체를 쓰게 한다. */
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-onion {
+      display: flex;
+      flex: 1 1 100%;
+      flex-direction: column;
+      gap: 8px;
+      min-width: 0;
+    }
+    .mpv-fabric-pilot-toolbar .mpv-fabric-pilot-onion > button {
+      width: 100%;
+      min-height: 28px;
+      height: 28px;
+    }
+    .mpv-fabric-pilot-onion-panel {
+      flex-direction: column;
+      gap: 8px;
+    }
+    /* 어느 색이 앞 그림이고 어느 색이 뒤 그림인지 라벨 앞의 점으로 알려 준다.
+       런타임의 ONION_SKIN_PREVIOUS_COLOR / ONION_SKIN_NEXT_COLOR 와 같은 값이다. */
+    .mpv-fabric-pilot-onion-panel [data-fabric-pilot-onion-side] .mpv-fabric-pilot-field-top > span::before {
+      content: "";
+      display: inline-block;
+      width: 7px;
+      height: 7px;
+      margin-right: 5px;
+      border-radius: 50%;
+      vertical-align: 1px;
+    }
+    .mpv-fabric-pilot-onion-panel [data-fabric-pilot-onion-side="previous"] .mpv-fabric-pilot-field-top > span::before {
+      background: #6495ed;
+    }
+    .mpv-fabric-pilot-onion-panel [data-fabric-pilot-onion-side="next"] .mpv-fabric-pilot-field-top > span::before {
+      background: #32cd32;
+    }
     /* 목업(§0.3 시안)의 field 구성 — 라벨과 수치를 한 줄에, 그 아래 3px 트랙.
        버튼이 없으므로 트랙이 이 줄에서 가장 큰 요소가 된다. */
     .mpv-fabric-pilot-field {
@@ -885,7 +947,8 @@ const OVERLAY_HTML = String.raw`
       background: var(--fabric-palette-inset) !important;
     }
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-target"],
-    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-shape"] {
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-shape"],
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-flip"] {
       display: grid !important;
       grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr);
       align-items: center;
@@ -909,6 +972,10 @@ const OVERLAY_HTML = String.raw`
       margin-top: 2px;
       font-size: 10px !important;
       line-height: 1.5;
+      color: var(--fabric-palette-muted) !important;
+    }
+    /* 변형 상자가 뜬 동안의 조작 안내(Ctrl 조합). 값이 아니라 설명이라 더 흐리게 둔다. */
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="selection-transform-hint"] {
       color: var(--fabric-palette-muted) !important;
     }
     .mpv-fabric-pilot-badge {
@@ -3269,6 +3336,9 @@ class MPVOverlayHost {
     this.lastKeyboardRelayCode = null;
     this.drawModeShortcutDescriptor = null;
     this.commentModeShortcutDescriptor = null;
+    // 어니언 스킨 요청은 보낸 순서대로 적용한다(켜기/끄기는 토글이라 순서가 뒤집히면
+    // 결과가 반대가 된다).
+    this.onionSkinQueue = Promise.resolve();
     this.completedActionIds = new Map();
     this.inFlightDrawingActions = new Map();
     this.maxProcessedActionIds = 2048;
@@ -3697,7 +3767,17 @@ class MPVOverlayHost {
       if (this._canRaiseOverlay(hostWindow)) {
         hostWindow.focus?.();
       }
-      return { success: true, accepted: true, tool: normalizeFabricDrawingTool(result.tool) };
+      return {
+        success: true,
+        accepted: true,
+        tool: normalizeFabricDrawingTool(result.tool),
+        // 바꾸기 직전 도구. 그리기 단축키(B)가 "다른 도구였으면 브러시로, 이미
+        // 브러시였으면 끄기" 를 가리는 데 쓴다. 팔레트 클릭은 오버레이 안에서만
+        // 도구를 바꾸므로 이 응답이 아니면 렌더러는 지금 도구를 알 수 없다.
+        ...(isFabricDrawingTool(result.previousTool)
+          ? { previousTool: result.previousTool }
+          : {})
+      };
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
@@ -3744,6 +3824,123 @@ class MPVOverlayHost {
     } catch (error) {
       return { success: false, accepted: false, error: error.message };
     }
+  }
+
+  // 어니언 스킨(이웃 키프레임의 그림을 반투명으로 깐다)도 문서를 바꾸지 않는
+  // **뷰 상태**다. 그리기 패널이 닫혀 있어도 받는다 — 세션 토큰이 아니라 호스트
+  // 세대로만 맞춘다. 켜짐 여부의 진실은 오버레이에 있다(팔레트 버튼도 그 값을
+  // 바꾼다). 그래서 렌더러는 절대값이 아니라 **토글**과 재생 여부만 보낸다.
+  updateDrawingOnionSkin(request = {}) {
+    const hasToggle = request?.toggle !== undefined;
+    const hasPlaying = request?.playing !== undefined;
+    if (!isPlainPersistenceRecord(request) ||
+        request.hostGeneration !== this.hostGeneration ||
+        (!hasToggle && !hasPlaying) ||
+        (hasToggle && request.toggle !== true) ||
+        (hasPlaying && typeof request.playing !== 'boolean')) {
+      return Promise.resolve({
+        success: false,
+        accepted: false,
+        error: 'stale or invalid onion skin request'
+      });
+    }
+    const payload = {
+      ...(hasToggle ? { toggle: true } : {}),
+      ...(hasPlaying ? { playing: request.playing } : {})
+    };
+    const hostGeneration = this.hostGeneration;
+    const operation = this.onionSkinQueue.then(
+      () => this._performOnionSkinUpdate(payload, hostGeneration)
+    );
+    this.onionSkinQueue = operation.catch(() => undefined);
+    return operation.catch(error => ({ success: false, accepted: false, error: error.message }));
+  }
+
+  async _performOnionSkinUpdate(payload, hostGeneration) {
+    const stale = { success: false, accepted: false, error: 'stale onion skin request' };
+    const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    // 보기만 하는 동안에는 Fabric 런타임이 아직 주입되지 않았을 수 있다.
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return { success: false, accepted: false, error: prepared.error };
+    }
+    if (this.window !== hostWindow || hostWindow.isDestroyed?.() ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    const result = await this._executeFabricMethod('updateOnionSkin', payload);
+    if (this.window !== hostWindow || hostGeneration !== this.hostGeneration) return stale;
+    if (result?.accepted !== true) {
+      return {
+        success: false,
+        accepted: false,
+        error: typeof result?.reason === 'string' ? result.reason : 'onion skin update rejected'
+      };
+    }
+    // 어니언 스킨은 별도 캔버스에 깔린다. 투명 창은 다음 입력까지 합성을 미룰 수
+    // 있으므로 켜고 끈 결과가 바로 보이게 합성을 강제한다.
+    hostWindow.webContents?.invalidate?.();
+    return {
+      success: true,
+      accepted: true,
+      enabled: result.enabled === true,
+      playing: result.playing === true
+    };
+  }
+
+  // 메인 창이 보존해 둔 어니언 스킨 설정(켜짐·장수·진하기)을 오버레이에 심는다.
+  // 세션과 무관한 뷰 상태라 그리기 패널이 닫혀 있어도 받는다. 사용자가 그 사이
+  // 값을 바꿨는지는 런타임이 판단해 거절한다. 토글·재생 알림과 같은 줄을 서서
+  // 순서가 뒤바뀌지 않게 한다.
+  applyDrawingOnionSkinPrefs(value) {
+    const prefs = normalizeFabricOnionSkinPrefs(value);
+    if (!prefs) {
+      return Promise.resolve({
+        success: false,
+        accepted: false,
+        error: 'invalid onion skin prefs'
+      });
+    }
+    const hostGeneration = this.hostGeneration;
+    const operation = this.onionSkinQueue.then(
+      () => this._performOnionSkinPrefsApply(prefs, hostGeneration)
+    );
+    this.onionSkinQueue = operation.catch(() => undefined);
+    return operation.catch(error => ({ success: false, accepted: false, error: error.message }));
+  }
+
+  async _performOnionSkinPrefsApply(prefs, hostGeneration) {
+    const stale = { success: false, accepted: false, error: 'stale onion skin prefs' };
+    const hostWindow = this.window;
+    if (!hostWindow || hostWindow.isDestroyed?.() || !this.contentLoaded ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    // 보기만 하는 동안에는 Fabric 런타임이 아직 주입되지 않았을 수 있다.
+    const prepared = await this._ensureFabricRuntime();
+    if (!prepared.success) {
+      return { success: false, accepted: false, error: prepared.error };
+    }
+    if (this.window !== hostWindow || hostWindow.isDestroyed?.() ||
+        hostGeneration !== this.hostGeneration) {
+      return stale;
+    }
+    const result = await this._executeFabricMethod('applyOnionSkinPrefs', prefs);
+    if (this.window !== hostWindow || hostGeneration !== this.hostGeneration) return stale;
+    if (result?.accepted !== true) {
+      return {
+        success: true,
+        accepted: false,
+        reason: typeof result?.reason === 'string' ? result.reason : 'rejected'
+      };
+    }
+    // 켜진 채로 복원되면 바로 보이게 합성을 강제한다(토글과 같다).
+    hostWindow.webContents?.invalidate?.();
+    return { success: true, accepted: true };
   }
 
   // 레이어 표시·잠금은 **뷰 상태**다. 문서를 바꾸지 않으므로 프레임 왕복이나
@@ -4026,9 +4223,14 @@ class MPVOverlayHost {
     const layerObjectsPayload = validAction
       ? this._normalizeLayerObjectsPayload(request)
       : null;
-    if (!this._drawingTokensMatch(request) ||
+    // 세션 id 가 null 이면 그리기 패널을 닫아 둔 채로 보낸 구조 조작이다.
+    const passivePayload = request.sessionId === null
+      ? this._normalizePassiveDrawingActionPayload(request)
+      : {};
+    if (!this._drawingActionTokensMatch(request) ||
         !validAction ||
         layerObjectsPayload === null ||
+        passivePayload === null ||
         typeof request.actionId !== 'string' ||
         request.actionId.length === 0 || request.actionId.length > 256 ||
         (request.targetFrame !== undefined && !isSafePersistenceCount(request.targetFrame))) {
@@ -4052,6 +4254,7 @@ class MPVOverlayHost {
       actionId: request.actionId,
       action: request.action,
       ...layerObjectsPayload,
+      ...passivePayload,
       ...(request.targetFrame === undefined ? {} : { targetFrame: request.targetFrame })
     };
     const executionContext = {
@@ -4089,7 +4292,7 @@ class MPVOverlayHost {
       this.hostGeneration === executionContext.hostGeneration &&
       this.fabricReadyGeneration === executionContext.fabricReadyGeneration &&
       this.fabricReadyGeneration === this.hostGeneration &&
-      this._drawingTokensMatch(request);
+      this._drawingActionTokensMatch(request);
   }
 
   async _performDrawingAction(request, executionContext) {
@@ -4119,6 +4322,13 @@ class MPVOverlayHost {
           : {}),
         ...(result?.historyDirection === 'undo' || result?.historyDirection === 'redo'
           ? { historyDirection: result.historyDirection }
+          : {}),
+        // 구조 조작의 되돌리기 표식. 세션 없이 한 조작을 세션 없이 되돌릴 때
+        // 렌더러가 이 값을 되보내 "그 항목이 맞는지" 대조하게 한다.
+        ...(typeof result?.historyToken === 'string' &&
+            result.historyToken.length > 0 &&
+            result.historyToken.length <= MAX_DRAWING_HISTORY_TOKEN_LENGTH
+          ? { historyToken: result.historyToken }
           : {}),
         deletedCount: Math.max(0, Math.trunc(finiteDiagnosticNumber(result?.deletedCount))),
         keyframeSetChanged: result?.keyframeSetChanged === true,
@@ -4768,6 +4978,50 @@ class MPVOverlayHost {
       request.inputRevision === this.currentInputRevision &&
       request.sessionId === this.activeSessionId &&
       this.desiredInputEnabled;
+  }
+
+  // 그리기 액션의 토큰 대조. 세션이 있는 요청은 기존 술어 그대로이고, 세션 id 가
+  // null 인 요청(패널을 닫아 둔 채 보낸 구조 조작)은 **영상 정체**로 맞춘다 —
+  // passive 레이어 뷰 갱신과 같은 규약이다. 입력이 켜져 있는 동안에는 받지 않는다.
+  _drawingActionTokensMatch(request = {}) {
+    if (request.sessionId !== null) return this._drawingTokensMatch(request);
+    return request.hostGeneration === this.hostGeneration &&
+      request.videoGeneration === this.currentVideoGeneration &&
+      request.inputRevision === this.currentInputRevision &&
+      !this.desiredInputEnabled &&
+      this.activeSessionId === null &&
+      this.currentStableVideoIdentity !== null &&
+      request.stableVideoIdentity === this.currentStableVideoIdentity;
+  }
+
+  // 세션 없는 구조 조작의 페이로드를 검사해 **새 객체로** 돌려준다(형식이 어긋나면 null).
+  _normalizePassiveDrawingActionPayload(request = {}) {
+    if (!HOST_PASSIVE_DRAWING_ACTIONS.has(request.action) ||
+        !isBoundedPersistenceString(request.stableVideoIdentity)) {
+      return null;
+    }
+    const payload = { stableVideoIdentity: request.stableVideoIdentity };
+    if (request.action === 'undo' || request.action === 'redo') {
+      // 표식 없는 되돌리기는 받지 않는다. 세션이 없는 동안에는 "방금 한 그 구조
+      // 조작" 만 되돌릴 수 있어야 한다.
+      if (typeof request.historyToken !== 'string' ||
+          request.historyToken.length === 0 ||
+          request.historyToken.length > MAX_DRAWING_HISTORY_TOKEN_LENGTH) {
+        return null;
+      }
+      payload.historyToken = request.historyToken;
+      return payload;
+    }
+    if (!isSafePersistenceCount(request.targetFrame) ||
+        !Number.isFinite(request.sourceWidth) || request.sourceWidth <= 0 ||
+        request.sourceWidth > FABRIC_DRAWING_MAX_SOURCE_DIMENSION ||
+        !Number.isFinite(request.sourceHeight) || request.sourceHeight <= 0 ||
+        request.sourceHeight > FABRIC_DRAWING_MAX_SOURCE_DIMENSION) {
+      return null;
+    }
+    payload.sourceWidth = request.sourceWidth;
+    payload.sourceHeight = request.sourceHeight;
+    return payload;
   }
 
   _drawingFrameRequestIsCurrent(hostWindow, request = {}) {
