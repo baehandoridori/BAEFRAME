@@ -3,7 +3,8 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-  createDrawingEngineAdapter
+  createDrawingEngineAdapter,
+  fabricTransformMatrix
 } = require('../../renderer/scripts/modules/drawing-v3/drawing-engine-adapter.js');
 const {
   createDrawingDocumentV3
@@ -821,7 +822,106 @@ test('warm activation accepts the authoritative state already represented by pen
   );
 });
 
-test('quarantines duplicate, gap, field, order and unsupported transform events', () => {
+test('applies scale, rotation and skew transforms as an affine matrix relative to the baseline', () => {
+  // 선택 도구의 변형 상자가 크기·회전을 바꾼다. 문서는 오브젝트의 점을 기준 변형 때의
+  // 것으로 들고 있으므로, 지금 모양은 (지금 행렬) × (기준 행렬)⁻¹ 이어야 한다.
+  const realFabric = require('fabric/node');
+  const fabricMatrix = transform => {
+    const path = new realFabric.Path('M 0 0 L 40 0 L 40 20 Z');
+    path.set(transform);
+    return Array.from(path.calcTransformMatrix());
+  };
+  const assertMatrixClose = (actual, expected, message) => {
+    assert.equal(actual.length, 6, message);
+    for (let index = 0; index < 6; index += 1) {
+      assert.ok(
+        Math.abs(actual[index] - expected[index]) < 1e-9,
+        `${message}: [${index}] ${actual[index]} != ${expected[index]}`
+      );
+    }
+  };
+
+  // 필드에서 만든 행렬이 Fabric 이 실제로 그리는 행렬과 같아야 한다.
+  for (const transform of [
+    makeTransform(),
+    makeTransform({ scaleX: 2, scaleY: 0.5 }),
+    makeTransform({ angle: 30 }),
+    makeTransform({ angle: 90 }),
+    makeTransform({ angle: -135, scaleX: 1.5, scaleY: 3 }),
+    makeTransform({ angle: 12, scaleX: 0.8, scaleY: 1.7, skewX: 18 }),
+    makeTransform({ angle: 200, scaleX: 1.2, scaleY: 3.5, skewX: 18, skewY: -7, flipX: true }),
+    makeTransform({ flipY: true, scaleY: 2 })
+  ]) {
+    assertMatrixClose(
+      fabricTransformMatrix(transform),
+      fabricMatrix(transform),
+      JSON.stringify(transform)
+    );
+  }
+
+  const harness = makeHarness();
+  const scene = makeScene({ sceneInstanceId: 'affine', targetFrame: 0 });
+  const baseline = makeTransform({ left: 40, top: 30 });
+  harness.adapter.activateScene(
+    scene,
+    new Map([['a', makeRecord('a', { transform: baseline })]])
+  );
+
+  const rotated = makeTransform({ left: 55, top: 20, angle: 30, scaleX: 2, scaleY: 0.5 });
+  const applied = harness.adapter.applyTransition(
+    transformEvent(scene, 1, 'a', baseline, rotated)
+  );
+  assert.equal(applied.applied, true, '크기·회전 전이를 받아들인다');
+  const expected = realFabric.util.multiplyTransformMatrices(
+    fabricMatrix(rotated),
+    realFabric.util.invertTransform(fabricMatrix(baseline))
+  );
+  assertMatrixClose(
+    projectionObjects(harness.adapter, scene.sceneInstanceId)[0].transform,
+    expected,
+    '기준 변형 대비 행렬'
+  );
+  assert.equal(harness.adapter.getDiagnostics(scene.sceneInstanceId).status, 'synced');
+
+  // 이어지는 이동은 크기·회전을 유지한 채 자리만 옮긴다.
+  const moved = { ...rotated, left: 80, top: 5 };
+  assert.equal(
+    harness.adapter.applyTransition(transformEvent(scene, 2, 'a', rotated, moved)).applied,
+    true
+  );
+  assertMatrixClose(
+    projectionObjects(harness.adapter, scene.sceneInstanceId)[0].transform,
+    realFabric.util.multiplyTransformMatrices(
+      fabricMatrix(moved),
+      realFabric.util.invertTransform(fabricMatrix(baseline))
+    ),
+    '변형 뒤의 이동'
+  );
+
+  // 처음부터 회전돼 있던 레코드는 그 변형이 기준이다. 이동뿐이면 오차 없는 형태를 쓴다.
+  const seeded = makeHarness();
+  const seededScene = makeScene({ sceneInstanceId: 'affine-seeded', targetFrame: 0 });
+  seeded.adapter.activateScene(
+    seededScene,
+    new Map([['b', makeRecord('b', { transform: rotated })]])
+  );
+  assert.deepEqual(
+    projectionObjects(seeded.adapter, seededScene.sceneInstanceId)[0].transform,
+    [1, 0, 0, 1, 0, 0]
+  );
+  assert.equal(
+    seeded.adapter.applyTransition(
+      transformEvent(seededScene, 1, 'b', rotated, moved)
+    ).applied,
+    true
+  );
+  assert.deepEqual(
+    projectionObjects(seeded.adapter, seededScene.sceneInstanceId)[0].transform,
+    [1, 0, 0, 1, 25, -15]
+  );
+});
+
+test('quarantines duplicate, gap, field, order and mismatched transform events', () => {
   const cases = [
     {
       id: 'duplicate',
@@ -848,17 +948,6 @@ test('quarantines duplicate, gap, field, order and unsupported transform events'
         unsupportedReason: 'unsupported-order-mutation'
       }),
       reason: 'unsupported-order-mutation'
-    },
-    {
-      id: 'transform',
-      event: scene => transformEvent(
-        scene,
-        1,
-        'a',
-        makeTransform(),
-        makeTransform({ scaleX: 2 })
-      ),
-      reason: 'unsupported-transform'
     },
     {
       id: 'before-mismatch',

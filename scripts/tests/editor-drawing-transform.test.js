@@ -193,3 +193,111 @@ test('cached layer masks track selection, hidden layers, drawing undo and reopen
     assert.equal(visible(), 3);
   } finally { await h.dispose(); }
 });
+
+test('변형 상자로 바꾼 크기와 회전이 편집창 문서와 PNG 내보내기에 그대로 실린다', async () => {
+  const h = harness();
+  // 캔버스(1920×1080)는 화면의 640×360 영역에 떠 있다. 손잡이의 캔버스 좌표를 화면 좌표로 옮긴다.
+  const handle = key => {
+    const target = h.canvas.getActiveObject();
+    assert.ok(target, '고른 획이 있어야 한다');
+    target.setCoords();
+    return [211 + target.oCoords[key].x / 3, 113 + target.oCoords[key].y / 3];
+  };
+  const dragHandle = async (key, dx, dy, id) => {
+    const [x, y] = handle(key);
+    await h.drag([x, y], [x + dx, y + dy], id);
+  };
+  const objects = () => h.drawing.snapshot().drawingsV3.keyframes[0].objects;
+  try {
+    await h.drawing.loadClip(clip, project);
+    await h.drawing.setTool('brush', { size: 24 });
+    await h.paint(240, 21);
+    const before = objects()[0];
+    await h.drawing.setTool('select');
+    await h.drag([320, 220], [530, 290], 22);
+    assert.equal(h.canvas.getActiveObjects().length, 1);
+    assert.equal(h.canvas.getActiveObject().hasControls, true, '편집창에서도 변형 상자가 뜬다');
+
+    await dragHandle('br', 30, 20, 23);
+    const scaled = objects()[0];
+    assert.equal(scaled.id, before.id);
+    assert.ok(scaled.transform.scaleX > 1.1, `가로: ${scaled.transform.scaleX}`);
+    assert.ok(scaled.transform.scaleY > 1.1, `세로: ${scaled.transform.scaleY}`);
+    assert.equal(scaled.pathData, before.pathData);
+
+    await dragHandle('mtr', 60, 30, 24);
+    const turned = objects()[0];
+    assert.ok(Math.abs(turned.transform.angle) > 10, `회전: ${turned.transform.angle}`);
+    assert.equal(turned.transform.scaleX, scaled.transform.scaleX);
+
+    // 실행취소·다시 실행이 변형 한 단계씩 오간다.
+    await h.drawing.action('undo');
+    assert.deepEqual(objects()[0].transform, scaled.transform);
+    await h.drawing.action('undo');
+    assert.deepEqual(objects()[0].transform, before.transform);
+    await h.drawing.action('redo');
+    await h.drawing.action('redo');
+    assert.deepEqual(objects()[0].transform, turned.transform);
+
+    // 다시 열어도 같은 모양이고, PNG 내보내기에도 같은 변형이 실린다.
+    const saved = h.drawing.snapshot();
+    await h.drawing.loadClip({ ...clip, ...saved }, project);
+    const reopened = h.canvas.getObjects()[0];
+    for (const field of ['left', 'top', 'scaleX', 'scaleY', 'angle']) {
+      closeTo(reopened[field], turned.transform[field], `다시 연 ${field}`);
+    }
+    const [overlay] = await h.drawing.exportOverlays({ ...clip, ...saved }, project);
+    const image = await loadImage(overlay.dataUrl);
+    const context = createCanvas(project.width, project.height).getContext('2d');
+    context.drawImage(image, 0, 0);
+    const alphaAt = point => context.getImageData(Math.round(point.x), Math.round(point.y), 1, 1).data[3];
+    // 획의 축을 따라 중심에서 60% 나간 점. 변형을 얹은 자리에는 잉크가 있고,
+    // 변형 전의 자리에는 없다.
+    const first = before.sourcePoints[0];
+    const last = before.sourcePoints.at(-1);
+    const local = new fabric.Point((last.x - first.x) * 0.3, (last.y - first.y) * 0.3);
+    const transformed = fabric.util.transformPoint(local, reopened.calcTransformMatrix());
+    assert.ok(alphaAt(transformed) > 0, 'PNG 에 변형한 획이 그려진다');
+    assert.ok(alphaAt({ x: turned.transform.left, y: turned.transform.top }) > 0, '중심은 그대로다');
+    assert.equal(
+      alphaAt({ x: before.transform.left + local.x, y: before.transform.top + local.y }),
+      0,
+      '변형 전의 자리에는 남아 있지 않다'
+    );
+  } finally { await h.dispose(); }
+});
+
+test('뒤집고 돌린 획을 화면 비율이 다른 출력 크기에 맞춰 늘여도 뒤집힌 모양 그대로다', async () => {
+  const h = harness();
+  try {
+    await h.drawing.loadClip(clip, project);
+    await h.drawing.setTool('brush', { size: 24 });
+    await h.paint(240, 31);
+    const saved = h.drawing.snapshot();
+    const record = saved.drawingsV3.keyframes[0].objects[0];
+    // 오버레이에서 회전 손잡이와 뒤집기 버튼으로 만든 것과 같은 꼴의 변형.
+    Object.assign(record.transform, { angle: 30, flipX: true });
+    const original = fabric.util.composeMatrix({
+      translateX: record.transform.left, translateY: record.transform.top,
+      angle: record.transform.angle, scaleX: record.transform.scaleX, scaleY: record.transform.scaleY,
+      skewX: record.transform.skewX, skewY: record.transform.skewY,
+      flipX: record.transform.flipX, flipY: record.transform.flipY
+    });
+
+    // 가로만 줄인 출력 크기 — 화면 비율이 달라져 돌린 획은 행렬로 다시 풀어야 한다.
+    // 분해는 뒤집힘을 음수 배율로 돌려준다. 그대로 적으면 뒤집히지 않은 모양으로 그려진다.
+    const narrow = { width: 1280, height: 1080, fps: 24 };
+    const expected = fabric.util.multiplyTransformMatrices(
+      [narrow.width / project.width, 0, 0, narrow.height / project.height, 0, 0], original
+    );
+    await h.drawing.loadClip({ ...clip, ...saved }, narrow);
+    const shown = Array.from(h.canvas.getObjects()[0].calcTransformMatrix());
+    for (let index = 0; index < 6; index += 1) {
+      closeTo(shown[index], expected[index], `늘인 뒤의 행렬 [${index}]`);
+    }
+    assert.ok(expected[0] * expected[3] - expected[1] * expected[2] < 0, '뒤집힌 모양이다');
+    const rescaled = h.drawing.snapshot().drawingsV3.keyframes[0].objects[0].transform;
+    assert.ok(rescaled.scaleX > 0 && rescaled.scaleY > 0, '배율은 양수로 적는다');
+    assert.notEqual(rescaled.flipX, rescaled.flipY, '뒤집힘은 flipX·flipY 로 적는다');
+  } finally { await h.dispose(); }
+});

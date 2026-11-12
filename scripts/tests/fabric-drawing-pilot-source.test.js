@@ -2006,6 +2006,86 @@ test('controller drawing tool literal matches the shared tool set', () => {
   assert.deepEqual([...literalTools].sort(), [...FABRIC_DRAWING_TOOLS].sort());
 });
 
+test('패널을 닫아 둔 채 받는 액션 목록은 컨트롤러와 호스트가 같다', () => {
+  // 컨트롤러는 브라우저 ES 모듈이고 호스트는 CommonJS 라 목록을 공유할 수 없다.
+  // 어긋나면 컨트롤러가 보낸 요청을 호스트가 조용히 거절하거나, 호스트가 받을
+  // 수 있는 것을 컨트롤러가 보내지 않는다.
+  const readSet = (source, name) => {
+    const match = source.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\);`));
+    assert.ok(match, `${name} 리터럴이 있어야 한다`);
+    return [...match[1].matchAll(/'([^']+)'/g)].map(entry => entry[1]).sort();
+  };
+  const controllerPassive = readSet(pilotControllerSource, 'PASSIVE_DRAWING_ACTIONS');
+  const hostPassive = readSet(overlayHostSource, 'HOST_PASSIVE_DRAWING_ACTIONS');
+  assert.deepEqual(controllerPassive, hostPassive);
+  // 획을 건드리는 것과 레이어 조작은 세션이 있어야 한다 — 프레임·키프레임 구조
+  // 조작 7종과 그 되돌리기·다시하기만 들어 있어야 한다.
+  assert.deepEqual(controllerPassive, [
+    'frame-copy',
+    'frame-insert',
+    'frame-insert-blank-keyframe',
+    'frame-paste',
+    'frame-remove',
+    'frame-to-keyframe',
+    'keyframe-to-frame',
+    'redo',
+    'undo'
+  ]);
+  // 둘 다 전체 액션 목록의 부분집합이어야 한다.
+  const controllerAll = new Set(readSet(pilotControllerSource, 'CONTROLLER_DRAWING_ACTIONS'));
+  const hostAll = new Set(readSet(overlayHostSource, 'HOST_DRAWING_ACTIONS'));
+  for (const action of controllerPassive) {
+    assert.ok(controllerAll.has(action), `컨트롤러 전체 목록에 ${action} 이 없다`);
+    assert.ok(hostAll.has(action), `호스트 전체 목록에 ${action} 이 없다`);
+  }
+});
+
+test('어니언 스킨 토글은 액션 id 로 컨트롤러에 이어지고 세 계층에 통로가 있다', () => {
+  // 구형 도구를 걷어내며 사라졌던 기능이다. 키가 아니라 액션 id 로 판정해야
+  // 사용자가 1 을 다른 키로 바꿔도 따라간다.
+  assert.match(userSettingsSource, /onionSkinToggle: \{ key: 'Digit1', ctrl: false, shift: false, alt: false/);
+  assert.match(
+    appSource,
+    /matchesOnionSkinShortcut: event => userSettings\.matchShortcut\('onionSkinToggle', event\)/
+  );
+  // 패널을 닫아 둔 채로 켜고 끄면 화면에 버튼이 없으므로 결과를 알려야 한다.
+  assert.match(appSource, /onOnionSkinChanged: \(\{ enabled \}\) => \{[\s\S]{0,160}?showToast\(/);
+  assert.match(pilotControllerSource, /const isOnionSkinShortcut = matchesOnionSkinShortcut\(event\);/);
+  assert.match(
+    preloadSource,
+    /mpvUpdateOverlayOnionSkin: \(request\) => ipcRenderer\.invoke\('mpv:update-overlay-onion-skin', request\)/
+  );
+  assert.match(
+    ipcHandlersSource,
+    /ipcMain\.handle\('mpv:update-overlay-onion-skin', \(event, request\) =>\s+invokeFabricDrawingHost\(event, \(\) => mpvOverlayHost\.updateDrawingOnionSkin\(request\)\)\);/
+  );
+  assert.match(overlayHostSource, /this\._executeFabricMethod\('updateOnionSkin', payload\)/);
+
+  // 재생 중에는 깔지 않는다. 재생 상태가 바뀌는 네 곳이 모두 알려야 한다.
+  for (const eventName of ['bufferingchange', 'play', 'pause', 'ended']) {
+    const start = appSource.indexOf(`videoPlayer.addEventListener('${eventName}', () => {`);
+    assert.ok(start > 0, `${eventName} 핸들러를 찾지 못했다`);
+    assert.ok(
+      appSource.slice(start, start + 900).includes('syncFabricOnionSkinPlayback();'),
+      `${eventName} 에서 어니언 스킨에 재생 여부를 알려야 한다`
+    );
+  }
+
+  // 팔레트의 색 점은 실제로 깔리는 색과 같아야 한다(오버레이는 main.css 를 쓰지 않아
+  // 호스트의 CSS 문자열에 따로 적혀 있다).
+  for (const [constant, side] of [
+    ['ONION_SKIN_PREVIOUS_COLOR', 'previous'],
+    ['ONION_SKIN_NEXT_COLOR', 'next']
+  ]) {
+    const color = fabricRuntimeSource.match(new RegExp(`const ${constant} = '(#[0-9a-f]{6})';`))?.[1];
+    assert.ok(color, `${constant} 를 찾지 못했다`);
+    assert.match(
+      overlayHostSource,
+      new RegExp(`\\[data-fabric-pilot-onion-side="${side}"\\][^{]+\\{\\s+background: ${color};`)
+    );
+  }
+});
+
 test('shape and pen tools are registered as assignable shortcut actions without default keys', () => {
   const toolActions = [
     'drawingToolBrush',
@@ -2219,7 +2299,9 @@ test('drawing shortcuts bypass the remembered-editor relay while the overlay own
   assert.deepEqual(listed.sort(), [
     'brushSizeDown', 'brushSizeUp',
     'drawingToolArrow', 'drawingToolBrush', 'drawingToolCircle', 'drawingToolEraser',
-    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect'
+    'drawingToolLine', 'drawingToolPen', 'drawingToolRect', 'drawingToolSelect',
+    // 어니언 스킨 토글(1)도 에디터 포커스가 남아 있으면 글자로 들어간다.
+    'onionSkinToggle'
   ]);
   // 프레임·키프레임 조작 7종도 우회해야 한다. 목록을 손으로 베끼면 배선과 어긋나므로
   // 매핑을 통째로 펼쳐 넣고, 그 펼침이 실제로 있는지 확인한다. 빼면 에디터 포커스가
@@ -3380,5 +3462,33 @@ test('정규화는 손댄 씬을 그림자에서 다시 심게 한다', () => {
   assert.ok(
     source.includes('notifyScenesDropped(reseededSceneInstanceIds);'),
     '그 씬들을 떨어뜨린다'
+  );
+});
+
+test('frame shortcut rejections are explained only for reasons the overlay really returns', () => {
+  const table = appSource.match(
+    /const FABRIC_PILOT_FRAME_OPERATION_REJECTIONS = Object\.freeze\(\{([\s\S]*?)\}\);/
+  );
+  assert.ok(table, '거절 사유 표가 있어야 한다');
+  const reasons = [...table[1].matchAll(/'([a-z-]+)':/g)].map(match => match[1]);
+  assert.ok(reasons.length >= 6);
+  // 오버레이가 돌려주지 않는 사유의 문구는 영영 뜨지 않는다. 표가 낡지 않게 묶는다.
+  for (const reason of reasons) {
+    assert.ok(
+      fabricRuntimeSource.includes(`reason: '${reason}'`),
+      `오버레이가 ${reason} 을 돌려줘야 한다`
+    );
+  }
+  // 프레임을 밀어 넣을 수 없는 경우는 가장 자주 만나는 거절이다.
+  assert.ok(reasons.includes('timeline-full'));
+  // 모르는 사유에는 아무것도 띄우지 않는다.
+  assert.match(
+    appSource,
+    /onFrameOperationRejected: \(\{ reason \}\) => \{\n\s+const message = FABRIC_PILOT_FRAME_OPERATION_REJECTIONS\[reason\];\n\s+if \(message\) showToast\(message, 'warn'\);\n\s+\},/
+  );
+  // 단축키 경로만 알린다. 사유는 오버레이의 응답에서 온다.
+  assert.match(
+    pilotControllerSource,
+    /runDetached\(applyFrameOperationFromShortcut\(frameOperation\)\);/
   );
 });

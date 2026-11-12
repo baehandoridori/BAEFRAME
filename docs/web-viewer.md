@@ -51,7 +51,7 @@ BAEFRAME Desktop은 Electron 기반으로, 앱 설치 없이는 사용할 수 �
 
 ### 미구현 / 제한 사항
 
-- 어니언 스킨 (Desktop에서도 BLOCKED 상태)
+- 어니언 스킨 (Desktop은 v2.14.0-beta부터 지원, 웹 뷰어는 미구현)
 - 실시간 협업 (WebSocket 서버 필요, 3단계 계획)
 - 키프레임 추가 편집 (3단계 계획)
 - 로컬 파일 직접 열기 (Desktop 전용)

@@ -5040,7 +5040,7 @@
         maxLatencySamples: 256
       });
       var LIMIT_KEYS = Object.freeze(Object.keys(DEFAULT_LIMITS));
-      var UNSUPPORTED_TRANSFORM_FIELDS = Object.freeze([
+      var NON_TRANSLATION_TRANSFORM_FIELDS = Object.freeze([
         "scaleX",
         "scaleY",
         "angle",
@@ -5052,7 +5052,7 @@
       var TRANSFORM_FIELDS = Object.freeze([
         "left",
         "top",
-        ...UNSUPPORTED_TRANSFORM_FIELDS
+        ...NON_TRANSLATION_TRANSFORM_FIELDS
       ]);
       var REASON_ALLOWLIST = Object.freeze(/* @__PURE__ */ new Set([
         "adapter-failed",
@@ -5165,18 +5165,89 @@
       function transformsEqual(left, right, fields = TRANSFORM_FIELDS) {
         return fields.every((field) => left[field] === right[field]);
       }
-      function canonicalTransform(finalTransform, baseline) {
-        if (!transformsEqual(finalTransform, baseline, UNSUPPORTED_TRANSFORM_FIELDS)) {
-          return null;
-        }
+      function multiplyAffine(left, right) {
         return [
-          1,
-          0,
-          0,
-          1,
-          finalTransform.left - baseline.left,
-          finalTransform.top - baseline.top
+          left[0] * right[0] + left[2] * right[1],
+          left[1] * right[0] + left[3] * right[1],
+          left[0] * right[2] + left[2] * right[3],
+          left[1] * right[2] + left[3] * right[3],
+          left[0] * right[4] + left[2] * right[5] + left[4],
+          left[1] * right[4] + left[3] * right[5] + left[5]
         ];
+      }
+      function invertAffine(matrix) {
+        const determinant = matrix[0] * matrix[3] - matrix[1] * matrix[2];
+        if (!Number.isFinite(determinant) || determinant === 0) return null;
+        return [
+          matrix[3] / determinant,
+          -matrix[1] / determinant,
+          -matrix[2] / determinant,
+          matrix[0] / determinant,
+          (matrix[2] * matrix[5] - matrix[3] * matrix[4]) / determinant,
+          (matrix[1] * matrix[4] - matrix[0] * matrix[5]) / determinant
+        ];
+      }
+      function exactCos(radians) {
+        if (radians === 0) return 1;
+        const slice = Math.abs(radians) / (Math.PI / 2);
+        if (slice === 1 || slice === 3) return 0;
+        if (slice === 2) return -1;
+        return Math.cos(radians);
+      }
+      function exactSin(radians) {
+        if (radians === 0) return 0;
+        const slice = radians / (Math.PI / 2);
+        const sign = Math.sign(radians);
+        if (slice === 1) return sign;
+        if (slice === 2) return 0;
+        if (slice === 3) return -sign;
+        return Math.sin(radians);
+      }
+      function fabricTransformMatrix(transform) {
+        let matrix = [1, 0, 0, 1, transform.left, transform.top];
+        if (transform.angle) {
+          const radians = transform.angle * Math.PI / 180;
+          const cos = exactCos(radians);
+          const sin = exactSin(radians);
+          matrix = multiplyAffine(matrix, [cos, sin, -sin, cos, 0, 0]);
+        }
+        let dimensions = [
+          transform.flipX ? -transform.scaleX : transform.scaleX,
+          0,
+          0,
+          transform.flipY ? -transform.scaleY : transform.scaleY,
+          0,
+          0
+        ];
+        if (transform.skewX) {
+          dimensions = multiplyAffine(
+            dimensions,
+            [1, 0, Math.tan(transform.skewX * Math.PI / 180), 1, 0, 0]
+          );
+        }
+        if (transform.skewY) {
+          dimensions = multiplyAffine(
+            dimensions,
+            [1, Math.tan(transform.skewY * Math.PI / 180), 0, 1, 0, 0]
+          );
+        }
+        return multiplyAffine(matrix, dimensions);
+      }
+      function canonicalTransform(finalTransform, baseline) {
+        if (transformsEqual(finalTransform, baseline, NON_TRANSLATION_TRANSFORM_FIELDS)) {
+          return [
+            1,
+            0,
+            0,
+            1,
+            finalTransform.left - baseline.left,
+            finalTransform.top - baseline.top
+          ];
+        }
+        const inverse = invertAffine(fabricTransformMatrix(baseline));
+        if (inverse === null) return null;
+        const matrix = multiplyAffine(fabricTransformMatrix(finalTransform), inverse);
+        return matrix.every(Number.isFinite) ? matrix : null;
       }
       function hashText(text, seed, multiplier) {
         let hash = seed >>> 0;
@@ -5756,9 +5827,6 @@
             if (!current || !transformsEqual(current, before)) {
               return { valid: false, reason: "transition-before-mismatch" };
             }
-            if (!transformsEqual(before, after, UNSUPPORTED_TRANSFORM_FIELDS)) {
-              return { valid: false, reason: "unsupported-transform" };
-            }
             const baseline = state.baselines.get(transform.id) || baselineAdds.get(transform.id);
             if (!baseline) return { valid: false, reason: "missing-baseline" };
             const projected = canonicalTransform(after, baseline);
@@ -6118,7 +6186,7 @@
           getDiagnostics
         };
       }
-      module.exports = { createDrawingEngineAdapter };
+      module.exports = { createDrawingEngineAdapter, fabricTransformMatrix };
     }
   });
 
@@ -6564,6 +6632,54 @@
         FABRIC_PALETTE_MIN_OPACITY_PERCENT,
         FABRIC_PALETTE_MAX_OPACITY_PERCENT,
         normalizeFabricPalettePrefs
+      };
+    }
+  });
+
+  // shared/fabric-onion-skin-prefs.js
+  var require_fabric_onion_skin_prefs = __commonJS({
+    "shared/fabric-onion-skin-prefs.js"(exports, module) {
+      "use strict";
+      var FABRIC_ONION_SKIN_MAX_SHEETS = 5;
+      var FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT = 10;
+      var FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT = 80;
+      var FABRIC_ONION_SKIN_DEFAULT_PREFS = Object.freeze({
+        enabled: false,
+        before: 2,
+        after: 1,
+        opacityPercent: 30
+      });
+      var FABRIC_ONION_SKIN_PREFS_KEYS = Object.freeze(["enabled", "before", "after", "opacityPercent"]);
+      function isIntegerInRange(value, min, max) {
+        return Number.isInteger(value) && value >= min && value <= max;
+      }
+      function normalizeFabricOnionSkinPrefs(value) {
+        if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+        try {
+          if (Object.getPrototypeOf(value) !== Object.prototype) return null;
+          const keys = Object.keys(value);
+          if (keys.length !== FABRIC_ONION_SKIN_PREFS_KEYS.length || !FABRIC_ONION_SKIN_PREFS_KEYS.every((key) => keys.includes(key))) {
+            return null;
+          }
+          const { enabled, before, after, opacityPercent } = value;
+          if (typeof enabled !== "boolean" || !isIntegerInRange(before, 0, FABRIC_ONION_SKIN_MAX_SHEETS) || !isIntegerInRange(after, 0, FABRIC_ONION_SKIN_MAX_SHEETS) || !isIntegerInRange(
+            opacityPercent,
+            FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT,
+            FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT
+          )) {
+            return null;
+          }
+          return { enabled, before, after, opacityPercent };
+        } catch (_error) {
+          return null;
+        }
+      }
+      module.exports = {
+        FABRIC_ONION_SKIN_MAX_SHEETS,
+        FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT,
+        FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT,
+        FABRIC_ONION_SKIN_DEFAULT_PREFS,
+        normalizeFabricOnionSkinPrefs
       };
     }
   });
@@ -13987,6 +14103,12 @@ void main() {
         FABRIC_PALETTE_MIN_OPACITY_PERCENT: MIN_BRUSH_OPACITY_PERCENT,
         FABRIC_PALETTE_MAX_OPACITY_PERCENT: MAX_BRUSH_OPACITY_PERCENT
       } = require_fabric_palette_prefs();
+      var {
+        FABRIC_ONION_SKIN_MAX_SHEETS: ONION_SKIN_MAX_SHEETS,
+        FABRIC_ONION_SKIN_MIN_OPACITY_PERCENT: ONION_SKIN_MIN_OPACITY_PERCENT,
+        FABRIC_ONION_SKIN_MAX_OPACITY_PERCENT: ONION_SKIN_MAX_OPACITY_PERCENT,
+        FABRIC_ONION_SKIN_DEFAULT_PREFS: DEFAULT_ONION_SKIN
+      } = require_fabric_onion_skin_prefs();
       var SCENE_KEY_SEPARATOR = "\0";
       var DEFAULT_MAX_VIDEOS = 10;
       var DEFAULT_MAX_BYTES = 128 * 1024 * 1024;
@@ -14000,7 +14122,39 @@ void main() {
       var MAX_STROKE_GEOMETRY_CACHE_WEIGHT = 25e4;
       var DEFAULT_MAX_OBJECTS = 1e4;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
-      var UNSUPPORTED_PHASE0_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
+      var NON_TRANSLATION_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
+      var SELECTION_TRANSFORM_ACTIONS = /* @__PURE__ */ new Set([
+        "scale",
+        "scaleX",
+        "scaleY",
+        "rotate",
+        "skewX",
+        "skewY",
+        "flip"
+      ]);
+      var SELECTION_PIVOT_ACTION = "pivot";
+      var SELECTION_ROTATE_ZONES = Object.freeze([
+        ["rotateTl", -0.5, -0.5],
+        ["rotateTr", 0.5, -0.5],
+        ["rotateBl", -0.5, 0.5],
+        ["rotateBr", 0.5, 0.5]
+      ]);
+      var SELECTION_ROTATE_ZONE_KEYS = new Set(SELECTION_ROTATE_ZONES.map(([key]) => key));
+      var TRANSFORM_HANDLE_CSS_PX = 9;
+      var TRANSFORM_TOUCH_HANDLE_CSS_PX = 26;
+      var TRANSFORM_ROTATE_OFFSET_CSS_PX = 26;
+      var TRANSFORM_ROTATE_ZONE_CSS_PX = 18;
+      var TRANSFORM_BORDER_CSS_PX = 1.25;
+      var TRANSFORM_ROTATE_SNAP_DEGREES = 15;
+      var TRANSFORM_MIN_GESTURE_SCALE = 0.02;
+      var TRANSFORM_MIN_RECORD_SCALE = 0.01;
+      var TRANSFORM_MAX_RECORD_SCALE = 100;
+      var TRANSFORM_MAX_SKEW_DEGREES = 80;
+      var TRANSFORM_PIVOT_HANDLE_CSS_PX = 11;
+      var TRANSFORM_PIVOT_RADIUS_CSS_PX = 4.5;
+      var TRANSFORM_PIVOT_SNAP_CSS_PX = 6;
+      var TRANSFORM_CTRL_LATCH_FRESH_MS = 2500;
+      var RESIZE_CURSOR_DIRECTIONS = ["e", "se", "s", "sw", "w", "nw", "n", "ne"];
       var BRUSH_COLORS = Object.freeze([
         "#ff4757",
         "#ffd000",
@@ -14043,6 +14197,10 @@ void main() {
       var ERASER_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
         '<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><circle cx="12" cy="12" r="6.5" fill="none" stroke="#000" stroke-opacity="0.65" stroke-width="3.5"/><circle cx="12" cy="12" r="6.5" fill="none" stroke="#fff" stroke-width="1.5"/><circle cx="12" cy="12" r="1.6" fill="#000" fill-opacity="0.65"/><circle cx="12" cy="12" r="0.9" fill="#fff"/></svg>'
       )}") 12 12, crosshair`;
+      var ROTATE_CURSOR_SHAPE = '<polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/>';
+      var ROTATE_CURSOR = `url("data:image/svg+xml,${encodeURIComponent(
+        `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24"><g transform="translate(2.4 2.4) scale(0.8)" fill="none" stroke-linecap="round" stroke-linejoin="round"><g stroke="#000" stroke-opacity="0.65" stroke-width="5">${ROTATE_CURSOR_SHAPE}</g><g stroke="#fff" stroke-width="2.2">${ROTATE_CURSOR_SHAPE}</g></g></svg>`
+      )}") 12 12, crosshair`;
       var TEMP_ERASE_TOOL_LABEL = "\uC9C0\uC6B0\uAC1C \xB7 Ctrl";
       var TOOL_STATUS_LABELS = Object.freeze({
         brush: "\uBE0C\uB7EC\uC2DC",
@@ -14071,11 +14229,19 @@ void main() {
       var MIN_SELECTION_HIT_TOLERANCE = 2;
       var MAX_SELECTION_HIT_TOLERANCE = 96;
       var SOURCE_INTERVAL_EPSILON = 1e-7;
+      var ONION_SKIN_PREVIOUS_COLOR = "#6495ed";
+      var ONION_SKIN_NEXT_COLOR = "#32cd32";
       var DRAWING_ACTIONS = /* @__PURE__ */ new Set([
         "delete-selection",
         "clear-session",
         "undo",
-        "redo"
+        "redo",
+        "flip-horizontal",
+        "flip-vertical"
+      ]);
+      var FLIP_ACTIONS = /* @__PURE__ */ new Map([
+        ["flip-horizontal", "horizontal"],
+        ["flip-vertical", "vertical"]
       ]);
       var FRAME_STRUCTURE_ACTIONS = /* @__PURE__ */ new Map([
         ["frame-insert-blank-keyframe", "frame-insert-blank-keyframe"],
@@ -14246,6 +14412,52 @@ void main() {
         const number = Number(value);
         return Number.isFinite(number) ? number : fallback;
       }
+      function transformOriginFraction(origin) {
+        if (typeof origin === "number") return Number.isFinite(origin) ? origin - 0.5 : 0;
+        if (origin === "left" || origin === "top") return -0.5;
+        if (origin === "right" || origin === "bottom") return 0.5;
+        return 0;
+      }
+      function resizeCursorForDirection(dx, dy, angleDegrees = 0) {
+        if (!Number.isFinite(dx) || !Number.isFinite(dy) || !dx && !dy) return null;
+        const degrees = Math.atan2(dy, dx) * 180 / Math.PI + finiteNumber(angleDegrees);
+        const index = (Math.round(degrees / 45) % 8 + 8) % 8;
+        return `${RESIZE_CURSOR_DIRECTIONS[index]}-resize`;
+      }
+      function storedTransformFromDecomposition(decomposed, preferred = null, flippedField = null) {
+        let angle = (finiteNumber(decomposed?.angle) % 360 + 360) % 360;
+        let scaleY = finiteNumber(decomposed?.scaleY, 1);
+        const mirrored = scaleY < 0;
+        if (mirrored) scaleY = -scaleY;
+        let flipX = false;
+        let flipY = mirrored;
+        const preferredFlipX = preferred?.flipX === true;
+        const preferredMirrored = !!preferred && preferredFlipX !== (preferred.flipY === true);
+        let turnHalf;
+        if (preferred && preferredMirrored === mirrored) {
+          turnHalf = preferredFlipX;
+        } else if (preferred && (flippedField === "flipX" || flippedField === "flipY")) {
+          turnHalf = flippedField === "flipX" ? !preferredFlipX : preferredFlipX;
+        } else {
+          turnHalf = mirrored && angle > 90 && angle < 270;
+        }
+        if (turnHalf) {
+          angle = (angle + 180) % 360;
+          flipX = true;
+          flipY = !mirrored;
+        }
+        return {
+          left: finiteNumber(decomposed?.translateX),
+          top: finiteNumber(decomposed?.translateY),
+          scaleX: finiteNumber(decomposed?.scaleX, 1),
+          scaleY,
+          angle,
+          skewX: finiteNumber(decomposed?.skewX),
+          skewY: finiteNumber(decomposed?.skewY),
+          flipX,
+          flipY
+        };
+      }
       function boundedInteger(value, min, max, fallback) {
         if (value === null || value === void 0 || value === "") return fallback;
         const parsed = Number.parseInt(value, 10);
@@ -14328,6 +14540,20 @@ void main() {
           MAX_SELECTION_HIT_TOLERANCE,
           Math.max(MIN_SELECTION_HIT_TOLERANCE, Math.ceil(SELECTION_HIT_MARGIN_CSS_PX * sourcePerCssPixel))
         );
+      }
+      function resolveSourcePerCssPixel(session = {}) {
+        const rect = session.canvasRect || {};
+        const sourceWidth = Math.max(0, finiteNumber(session.sourceWidth));
+        const sourceHeight = Math.max(0, finiteNumber(session.sourceHeight));
+        const displayWidth = Math.max(0, finiteNumber(rect.width));
+        const displayHeight = Math.max(0, finiteNumber(rect.height));
+        const scale = normalizeViewportTransform(session.viewportTransform).scale;
+        if (!sourceWidth || !sourceHeight || !displayWidth || !displayHeight) return 1;
+        const ratio = Math.max(
+          sourceWidth / displayWidth / scale,
+          sourceHeight / displayHeight / scale
+        );
+        return Number.isFinite(ratio) && ratio > 0 ? ratio : 1;
       }
       function resolveEffectiveCanvasRect(canvasRect = {}, viewportTransform = {}) {
         const left = finiteNumber(canvasRect.left, 0);
@@ -14580,6 +14806,7 @@ void main() {
         let persistenceObserverFailureCount = 0;
         let persistenceUnboundCommitCount = 0;
         let destroyed = false;
+        let contentRevision = 0;
         function sourceDimension(value) {
           const number = Number(value);
           return Number.isFinite(number) && number > 0 ? number : 1;
@@ -14829,6 +15056,8 @@ void main() {
           videoAccess.delete(stableVideoIdentity);
           persistenceByVideo.delete(stableVideoIdentity);
           globalHistoryOrder.delete(stableVideoIdentity);
+          knownVideoDimensions.delete(stableVideoIdentity);
+          contentRevision += 1;
           if (latestPersistenceVideoIdentity === stableVideoIdentity) {
             latestPersistenceVideoIdentity = [...videoAccess.keys()].at(-1) || null;
           }
@@ -14900,6 +15129,7 @@ void main() {
           scene.dirty = true;
           scene.mutationCount += 1;
           scene.mutationSequence += 1;
+          contentRevision += 1;
         }
         function estimateObjectsBytes(objects) {
           return [...objects.values()].reduce((total, object) => {
@@ -14946,13 +15176,6 @@ void main() {
               const beforeTransform = beforeTransforms.get(id);
               const afterTransform = afterTransforms.get(id);
               if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
-              if (!storedTransformsEqual(
-                beforeTransform,
-                afterTransform,
-                UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
-              )) {
-                event.unsupportedReason = "unsupported-transform";
-              }
               event.transforms.push({ id, beforeTransform, afterTransform });
             }
             event.kind = transitionKind(
@@ -14992,13 +15215,6 @@ void main() {
             const finalTransform = record?.transform || {};
             const insertionRecord = storedTransformsEqual(baseTransform, finalTransform) ? record : { ...record, transform: baseTransform };
             if (!storedTransformsEqual(baseTransform, finalTransform)) {
-              if (!storedTransformsEqual(
-                baseTransform,
-                finalTransform,
-                UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
-              )) {
-                event.unsupportedReason = "unsupported-transform";
-              }
               event.transforms.push({
                 id,
                 beforeTransform: baseTransform,
@@ -15016,13 +15232,6 @@ void main() {
             const beforeTransform = beforeObject?.transform || {};
             const afterTransform = afterObject?.transform || {};
             if (storedTransformsEqual(beforeTransform, afterTransform)) continue;
-            if (!storedTransformsEqual(
-              beforeTransform,
-              afterTransform,
-              UNSUPPORTED_PHASE0_TRANSFORM_FIELDS
-            )) {
-              event.unsupportedReason = "unsupported-transform";
-            }
             event.transforms.push({ id, beforeTransform, afterTransform });
           }
           const expectedOrder = beforeState.order.filter((id) => !removedIdSet.has(id));
@@ -15060,6 +15269,7 @@ void main() {
           if (scene?.provisional !== true) return;
           scene.provisional = false;
           scene.provisionalSourceFrame = null;
+          contentRevision += 1;
           if (scene.objects.size === 0) return;
           const objectIds = [...scene.objects.keys()];
           const emptyObjects = /* @__PURE__ */ new Map();
@@ -15260,6 +15470,7 @@ void main() {
             scenes.delete(key);
           }
           globalHistoryOrder.delete(request.stableVideoIdentity);
+          contentRevision += 1;
           for (const scene of hydratedScenes) scenes.set(scene.key, scene);
           persistenceByVideo.set(request.stableVideoIdentity, {
             hostGeneration: request.hostGeneration,
@@ -15574,7 +15785,7 @@ void main() {
                 skewY: 0,
                 ...outlineObject.transform || {}
               };
-              const outlineNext = {
+              const outlineNext = transformById.has(outlineId) ? { ...outlineCurrent, ...clonePlain(transformById.get(outlineId)) } : {
                 ...outlineCurrent,
                 left: finiteNumber(outlineCurrent.left) + (finiteNumber(next.left) - finiteNumber(current.left)),
                 top: finiteNumber(outlineCurrent.top) + (finiteNumber(next.top) - finiteNumber(current.top))
@@ -15812,6 +16023,7 @@ void main() {
             if (applied.applied) {
               if (entry.materializesScene === true) {
                 entryMaterializesScene = true;
+                contentRevision += 1;
                 scene.provisional = direction === "undo";
                 scene.provisionalSourceFrame = direction === "undo" ? entry.provisionalSourceFrame ?? null : null;
               }
@@ -16035,6 +16247,23 @@ void main() {
           "frame-paste"
         ]);
         let frameClipboard = null;
+        function passiveVideoIdentity(candidate) {
+          if (activeSession) return null;
+          if (typeof candidate !== "string" || candidate.length === 0) return null;
+          if (candidate !== latestPersistenceVideoIdentity || !persistenceByVideo.has(candidate)) {
+            return null;
+          }
+          return candidate;
+        }
+        const knownVideoDimensions = /* @__PURE__ */ new Map();
+        function rememberVideoDimensions(stableVideoIdentity, dimensions) {
+          const sourceWidth = Number(dimensions?.sourceWidth);
+          const sourceHeight = Number(dimensions?.sourceHeight);
+          if (typeof stableVideoIdentity !== "string" || stableVideoIdentity.length === 0 || !Number.isFinite(sourceWidth) || sourceWidth <= 0 || sourceWidth > MAX_PERSISTED_SOURCE_DIMENSION || !Number.isFinite(sourceHeight) || sourceHeight <= 0 || sourceHeight > MAX_PERSISTED_SOURCE_DIMENSION) {
+            return;
+          }
+          knownVideoDimensions.set(stableVideoIdentity, { sourceWidth, sourceHeight });
+        }
         function committedScenesForVideo(stableVideoIdentity) {
           return [...scenes.values()].filter((scene) => scene.stableVideoIdentity === stableVideoIdentity && scene.provisional !== true).sort((left, right) => left.targetFrame - right.targetFrame);
         }
@@ -16098,6 +16327,7 @@ void main() {
             scenes.set(nextKey, scene);
           }
           notifyScenesDropped(droppedInstanceIds);
+          if (moved.length > 0) contentRevision += 1;
           if (order) {
             for (const list of [order.undo, order.redo]) {
               for (const entry of list) {
@@ -16120,6 +16350,7 @@ void main() {
             order.redo = order.redo.filter((entry) => entry.sceneKey !== scene.key);
           }
           scenes.delete(scene.key);
+          contentRevision += 1;
           notifyScenesDropped([scene.sceneInstanceId]);
           return {
             targetFrame: scene.targetFrame,
@@ -16159,6 +16390,7 @@ void main() {
             provisionalSourceFrame: null
           };
           scenes.set(key, scene);
+          contentRevision += 1;
           return scene;
         }
         function committedKeyframeFrames(stableVideoIdentity) {
@@ -16285,7 +16517,8 @@ void main() {
         }
         function videoSourceDimensions(stableVideoIdentity) {
           const active = activeScene();
-          const reference = active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0];
+          const reference = (active?.stableVideoIdentity === stableVideoIdentity ? active : committedScenesForVideo(stableVideoIdentity)[0]) || // 세션도 키프레임도 없을 때(패널을 닫은 채 빈 영상에 첫 키프레임을 넣는 경우).
+          knownVideoDimensions.get(stableVideoIdentity);
           return {
             sourceWidth: reference?.sourceWidth,
             sourceHeight: reference?.sourceHeight
@@ -16303,8 +16536,11 @@ void main() {
           };
         }
         function recordStructural(stableVideoIdentity, operation, frame, shift, before, after, tailBlankFrame = null) {
+          commandSequence += 1;
+          const historyToken = `frame-op:${commandSequence}`;
           appendStructuralOrder(stableVideoIdentity, {
-            commandId: `frame-op:${stableVideoIdentity}:${commandSequence += 1}`,
+            commandId: `frame-op:${stableVideoIdentity}:${commandSequence}`,
+            historyToken,
             structural: {
               stableVideoIdentity,
               operation,
@@ -16315,6 +16551,7 @@ void main() {
               tailBlankFrame
             }
           });
+          return historyToken;
         }
         const LAYER_OBJECT_OPERATIONS = /* @__PURE__ */ new Set([
           "layer-objects-remove",
@@ -16456,7 +16693,7 @@ void main() {
           if (!FRAME_OPERATIONS.has(operation)) {
             return { applied: false, reason: "invalid-frame-operation" };
           }
-          const stableVideoIdentity = activeSession?.stableVideoIdentity;
+          const stableVideoIdentity = activeSession?.stableVideoIdentity || passiveVideoIdentity(command.stableVideoIdentity);
           if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
           const frame = Number(command.frame);
           if (!Number.isSafeInteger(frame) || frame < 0) {
@@ -16467,6 +16704,7 @@ void main() {
           if (totalFrames !== null && frame >= totalFrames) {
             return { applied: false, reason: "frame-out-of-range" };
           }
+          if (!activeSession) rememberVideoDimensions(stableVideoIdentity, command);
           const ordered = committedScenesForVideo(stableVideoIdentity);
           const committedAtFrame = ordered.find((scene) => scene.targetFrame === frame) || null;
           const shiftsRight = operation === "frame-insert" || operation === "frame-insert-blank-keyframe";
@@ -16509,13 +16747,14 @@ void main() {
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
             const pasted = materializeSceneAt(stableVideoIdentity, frame, frameClipboard);
-            recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, replaced, sceneBlueprint(pasted));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16524,13 +16763,14 @@ void main() {
             const removed = sceneBlueprint(committedAtFrame);
             dropProvisionalScenes(stableVideoIdentity);
             detachScene(committedAtFrame);
-            recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, removed, null);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16547,13 +16787,14 @@ void main() {
               sourceHeight: held.sourceHeight,
               objects: [...held.objects.values()].map(clonePlain)
             } : blankBlueprint(stableVideoIdentity));
-            recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, 0, null, sceneBlueprint(created));
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16580,13 +16821,14 @@ void main() {
               if (scene.targetFrame > frame) nextFrameByKey2.set(scene.key, scene.targetFrame - 1);
             }
             rekeyScenes(stableVideoIdentity, nextFrameByKey2);
-            recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
+            const historyToken2 = recordStructural(stableVideoIdentity, operation, frame, -1, removed, null, tailBlankFrame);
             rebuildActiveProvisionalScene(stableVideoIdentity);
             return {
               applied: true,
               operation,
               frame,
               keyframeSetChanged: true,
+              historyToken: historyToken2,
               keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
             };
           }
@@ -16598,15 +16840,75 @@ void main() {
           }
           rekeyScenes(stableVideoIdentity, nextFrameByKey);
           const inserted = operation === "frame-insert-blank-keyframe" ? materializeSceneAt(stableVideoIdentity, frame, blankBlueprint(stableVideoIdentity)) : null;
-          recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
+          const historyToken = recordStructural(stableVideoIdentity, operation, frame, 1, null, sceneBlueprint(inserted));
           rebuildActiveProvisionalScene(stableVideoIdentity);
           return {
             applied: true,
             operation,
             frame,
             keyframeSetChanged: true,
+            historyToken,
             keyframeFrames: committedKeyframeFrames(stableVideoIdentity)
           };
+        }
+        function applyPassiveStructuralHistory(command = {}) {
+          if (destroyed) return { applied: false, reason: "store-destroyed" };
+          const direction = command.direction;
+          if (direction !== "undo" && direction !== "redo") {
+            return { applied: false, reason: "invalid-history-direction" };
+          }
+          const stableVideoIdentity = passiveVideoIdentity(command.stableVideoIdentity);
+          if (!stableVideoIdentity) return { applied: false, reason: "no-active-session" };
+          const order = globalOrderFor(stableVideoIdentity);
+          const list = order ? direction === "undo" ? order.undo : order.redo : [];
+          const entry = list[list.length - 1];
+          if (!entry) return { applied: false, reason: "history-empty" };
+          if (!entry.structural || Array.isArray(entry.structural.frames) || typeof entry.historyToken !== "string" || entry.historyToken !== command.historyToken) {
+            return { applied: false, reason: "history-mismatch" };
+          }
+          return {
+            ...applyStructuralHistory(entry, order, direction),
+            historyToken: entry.historyToken
+          };
+        }
+        function getContentRevision() {
+          return contentRevision;
+        }
+        function getOnionSkinScenes(request = {}) {
+          const empty = { previous: [], next: [] };
+          const stableVideoIdentity = request.stableVideoIdentity;
+          const frame = Number(request.frame);
+          if (destroyed || typeof stableVideoIdentity !== "string" || stableVideoIdentity.length === 0 || !Number.isSafeInteger(frame) || frame < 0) {
+            return empty;
+          }
+          const before = Math.max(0, Math.trunc(Number(request.before) || 0));
+          const after = Math.max(0, Math.trunc(Number(request.after) || 0));
+          if (before === 0 && after === 0) return empty;
+          const ordered = committedScenesForVideo(stableVideoIdentity);
+          let heldIndex = -1;
+          for (let index = 0; index < ordered.length; index += 1) {
+            if (ordered[index].targetFrame > frame) break;
+            heldIndex = index;
+          }
+          const describe = (scene) => ({
+            targetFrame: scene.targetFrame,
+            sceneInstanceId: scene.sceneInstanceId,
+            mutationSequence: scene.mutationSequence,
+            objects: [...scene.objects.values()]
+          });
+          const previous = [];
+          for (let index = heldIndex - 1; index >= 0 && previous.length < before; index -= 1) {
+            if (ordered[index].objects.size > 0) previous.push(describe(ordered[index]));
+          }
+          const next = [];
+          for (let index = heldIndex + 1; index < ordered.length && next.length < after; index += 1) {
+            if (ordered[index].objects.size > 0) next.push(describe(ordered[index]));
+          }
+          return { previous, next };
+        }
+        function getHeldSceneFrame(stableVideoIdentity, frame) {
+          const held = heldSceneAt(stableVideoIdentity, frame);
+          return held ? held.targetFrame : null;
         }
         function hasScene(stableVideoIdentity, targetFrame) {
           return scenes.has(makeSceneKey(stableVideoIdentity, targetFrame));
@@ -16658,6 +16960,7 @@ void main() {
           const droppedSceneInstanceIds = [...scenes.values()].map((scene) => scene.sceneInstanceId);
           scenes.clear();
           globalHistoryOrder.clear();
+          knownVideoDimensions.clear();
           videoAccess.clear();
           persistenceByVideo.clear();
           latestPersistenceVideoIdentity = null;
@@ -16680,6 +16983,10 @@ void main() {
           deleteSelection,
           clearSession,
           applyFrameOperation,
+          applyPassiveStructuralHistory,
+          getHeldSceneFrame,
+          getContentRevision,
+          getOnionSkinScenes,
           applyLayerObjectsOperation,
           setObjectRanks,
           getPersistenceFence,
@@ -17054,6 +17361,7 @@ void main() {
         let sizeAdjustHudLabel = null;
         let sizeAdjustHudTimer = null;
         const overlayModifierState = { alt: false, ctrl: false };
+        let overlayCtrlPressedAt = null;
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
           overlayCtrlKeyDownCount: 0,
@@ -17118,13 +17426,35 @@ void main() {
         let tempEraseArmed = false;
         let transformStart = null;
         let selectGesture = null;
+        let selectionTransformControls = null;
+        let selectionTransformControlsUnit = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
+        const scaleGrabOffsets = /* @__PURE__ */ new WeakMap();
+        const skewStarts = /* @__PURE__ */ new WeakMap();
+        const selectionPivots = /* @__PURE__ */ new WeakMap();
+        let selectionPivotOwner = null;
+        const pivotGrabOffsets = /* @__PURE__ */ new WeakMap();
+        let pivotGesture = null;
+        let flipCommitField = null;
         let deferredViewport = null;
         let longTaskObserver = null;
         let localSequence = 0;
         let lastError = null;
         let appliedSourceWidth = null;
         let appliedSourceHeight = null;
+        let onionSkin = { ...DEFAULT_ONION_SKIN };
+        const onionSkinPrefsBridge = options.onionSkinPrefsBridge || windowRef?.mpvOverlayOnionSkinPrefs;
+        let onionSkinPrefsTouched = false;
+        let lastNotifiedOnionSkinPrefsKey = null;
+        let onionCanvasElement = null;
+        let onionScratchCanvas = null;
+        let onionSkinControls = null;
+        let onionSkinPlaying = false;
+        let onionSkinQuickKey = null;
+        let onionSkinDrawnKey = null;
+        let onionSkinUncachedSequence = 0;
+        let onionSkinDrawn = { previous: [], next: [] };
+        let onionSkinLayerViewRevision = 0;
         const strokeFillGeometryCache = /* @__PURE__ */ new Map();
         let strokeFillGeometryCacheWeight = 0;
         function resolveFabric() {
@@ -17816,6 +18146,60 @@ void main() {
             button.setAttribute?.("aria-pressed", "false");
             shapeGroup.appendChild(button);
           }
+          const flipGroup = documentRef.createElement("div");
+          flipGroup.dataset.fabricPilotGroup = "selection-flip";
+          flipGroup.setAttribute?.("role", "group");
+          flipGroup.setAttribute?.("aria-label", "\uB4A4\uC9D1\uAE30");
+          setStyles(flipGroup, {
+            display: "flex",
+            flexFlow: "row wrap",
+            alignItems: "center",
+            gap: "4px"
+          });
+          const flipLabel = documentRef.createElement("span");
+          flipLabel.dataset.fabricPilotLabel = "selection-flip";
+          flipLabel.textContent = "\uB4A4\uC9D1\uAE30";
+          setStyles(flipLabel, {
+            flex: "1 1 100%",
+            color: "rgba(255, 255, 255, 0.64)",
+            fontSize: "11px",
+            fontWeight: "600",
+            whiteSpace: "nowrap"
+          });
+          const flipButtons = /* @__PURE__ */ new Map([
+            ["flip-horizontal", labelToolbarButton(
+              createButton(paletteDocked ? "\uC88C\uC6B0 \uB4A4\uC9D1\uAE30" : "\uC88C\uC6B0", "flip-horizontal"),
+              "\uACE0\uB978 \uADF8\uB9BC\uC744 \uC88C\uC6B0\uB85C \uB4A4\uC9D1\uAE30"
+            )],
+            ["flip-vertical", labelToolbarButton(
+              createButton(paletteDocked ? "\uC0C1\uD558 \uB4A4\uC9D1\uAE30" : "\uC0C1\uD558", "flip-vertical"),
+              "\uACE0\uB978 \uADF8\uB9BC\uC744 \uC0C1\uD558\uB85C \uB4A4\uC9D1\uAE30"
+            )]
+          ]);
+          flipGroup.appendChild(flipLabel);
+          for (const [action, button] of flipButtons) {
+            button.disabled = true;
+            flipGroup.appendChild(button);
+            addDomListener(button, "click", () => {
+              applyDrawingAction({
+                sessionId: currentSession?.sessionId,
+                actionId: createId("flip"),
+                action
+              });
+            });
+          }
+          const transformHint = documentRef.createElement("span");
+          transformHint.dataset.fabricPilotOutput = "selection-transform-hint";
+          transformHint.textContent = "Ctrl+\uBCC0 \uC190\uC7A1\uC774: \uAE30\uC6B8\uC774\uAE30\nCtrl+\uD074\uB9AD: \uD68C\uC804 \uC911\uC2EC\uC810";
+          setStyles(transformHint, {
+            display: "none",
+            minWidth: "0",
+            color: "rgba(255, 255, 255, 0.64)",
+            fontSize: "10px",
+            lineHeight: "1.5",
+            whiteSpace: "pre-line",
+            wordBreak: "keep-all"
+          });
           const summary = documentRef.createElement("span");
           summary.dataset.fabricPilotOutput = "selection-summary";
           summary.setAttribute?.("role", "status");
@@ -17829,6 +18213,8 @@ void main() {
           });
           group.appendChild(targetGroup);
           group.appendChild(shapeGroup);
+          group.appendChild(flipGroup);
+          group.appendChild(transformHint);
           group.appendChild(summary);
           const bindSelectionControl = (button, action) => {
             addDomListener(button, "pointerdown", (event) => {
@@ -17845,10 +18231,22 @@ void main() {
             group,
             targetGroup,
             shapeGroup,
+            flipGroup,
             targetButtons,
             shapeButtons,
+            flipButtons,
+            transformHint,
             summary
           };
+        }
+        function syncSelectionFlipControls() {
+          if (!selectionControls?.flipButtons) return;
+          const enabled = selectionAllowsTransform(fabricCanvas?.getActiveObject?.());
+          for (const button of selectionControls.flipButtons.values()) {
+            button.disabled = !enabled;
+            button.setAttribute?.("aria-disabled", String(!enabled));
+          }
+          setStyles(selectionControls.transformHint, { display: enabled ? "block" : "none" });
         }
         function setOutlineEnabled(enabled) {
           outlineStyle = { ...outlineStyle, enabled: enabled === true };
@@ -18183,6 +18581,348 @@ void main() {
             }
           };
         }
+        function getOnionSkinState() {
+          return {
+            enabled: onionSkin.enabled,
+            before: onionSkin.before,
+            after: onionSkin.after,
+            opacityPercent: onionSkin.opacityPercent,
+            playing: onionSkinPlaying,
+            drawnPrevious: [...onionSkinDrawn.previous],
+            drawnNext: [...onionSkinDrawn.next]
+          };
+        }
+        function onionSkinView() {
+          if (inputEnabled && currentSession) {
+            const armed = activeFrameState.sessionId === currentSession.sessionId && Number.isSafeInteger(activeFrameState.targetFrame);
+            return {
+              stableVideoIdentity: currentSession.stableVideoIdentity,
+              frame: armed ? activeFrameState.targetFrame : currentSession.targetFrame
+            };
+          }
+          if (passiveDisplaySession && Number.isSafeInteger(passiveDisplaySession.targetFrame)) {
+            return {
+              stableVideoIdentity: passiveDisplaySession.stableVideoIdentity,
+              frame: passiveDisplaySession.targetFrame
+            };
+          }
+          return null;
+        }
+        function hideOnionSkinCanvas() {
+          onionSkinDrawn = { previous: [], next: [] };
+          if (!onionCanvasElement) return;
+          try {
+            const context = onionCanvasElement.getContext?.("2d");
+            context?.clearRect?.(0, 0, onionCanvasElement.width, onionCanvasElement.height);
+          } catch (_error) {
+          }
+          setStyles(onionCanvasElement, { display: "none" });
+        }
+        function ensureOnionScratchContext(width, height) {
+          if (!onionScratchCanvas) onionScratchCanvas = documentRef.createElement("canvas");
+          if (onionScratchCanvas.width !== width) onionScratchCanvas.width = width;
+          if (onionScratchCanvas.height !== height) onionScratchCanvas.height = height;
+          return onionScratchCanvas.getContext?.("2d") || null;
+        }
+        function makeOnionSkinPath(record, color) {
+          const { Path } = resolveFabric();
+          const path = new Path(record.renderGeometry?.pathData || record.pathData, {
+            fill: color,
+            fillRule: record.renderGeometry?.fillRule || "nonzero",
+            opacity: 1,
+            stroke: null,
+            strokeWidth: 0,
+            objectCaching: false,
+            selectable: false,
+            evented: false
+          });
+          if (record.transform) path.set(record.transform);
+          return path;
+        }
+        function drawOnionSkin(scenes) {
+          const context = onionCanvasElement.getContext?.("2d");
+          const width = Math.trunc(finiteNumber(onionCanvasElement.width));
+          const height = Math.trunc(finiteNumber(onionCanvasElement.height));
+          if (!context || width <= 0 || height <= 0) {
+            hideOnionSkinCanvas();
+            return;
+          }
+          const scratch = ensureOnionScratchContext(width, height);
+          if (!scratch) {
+            hideOnionSkinCanvas();
+            return;
+          }
+          const opacity = onionSkin.opacityPercent / 100;
+          const sheets = [
+            ...scenes.previous.map((scene, index) => ({
+              scene,
+              side: "previous",
+              color: ONION_SKIN_PREVIOUS_COLOR,
+              alpha: opacity * (1 - index / Math.max(onionSkin.before, 1))
+            })).reverse(),
+            ...scenes.next.map((scene, index) => ({
+              scene,
+              side: "next",
+              color: ONION_SKIN_NEXT_COLOR,
+              alpha: opacity * (1 - index / Math.max(onionSkin.after, 1))
+            })).reverse()
+          ];
+          context.clearRect(0, 0, width, height);
+          const drawn = { previous: [], next: [] };
+          for (const sheet of sheets) {
+            scratch.clearRect(0, 0, width, height);
+            let painted = false;
+            for (const record of sheet.scene.objects) {
+              if (hiddenObjectIds.has(record.id)) continue;
+              try {
+                makeOnionSkinPath(record, sheet.color).render(scratch);
+                painted = true;
+              } catch (_error) {
+              }
+            }
+            if (!painted) continue;
+            context.globalAlpha = sheet.alpha;
+            context.drawImage(onionScratchCanvas, 0, 0);
+            context.globalAlpha = 1;
+            drawn[sheet.side].push(sheet.scene.targetFrame);
+          }
+          onionSkinDrawn = {
+            previous: drawn.previous.sort((left, right) => right - left),
+            next: drawn.next.sort((left, right) => left - right)
+          };
+          setStyles(onionCanvasElement, {
+            display: drawn.previous.length + drawn.next.length > 0 ? "block" : "none"
+          });
+        }
+        function syncOnionSkin(options2 = {}) {
+          if (!onionCanvasElement) return;
+          const view = onionSkin.enabled && !onionSkinPlaying ? onionSkinView() : null;
+          const settingsKey = [
+            onionSkin.before,
+            onionSkin.after,
+            onionSkin.opacityPercent,
+            onionSkinLayerViewRevision,
+            onionCanvasElement.width,
+            onionCanvasElement.height
+          ].join("|");
+          const contentRevision = typeof sceneStore.getContentRevision === "function" ? sceneStore.getContentRevision() : `uncached-${onionSkinUncachedSequence += 1}`;
+          const quickKey = view ? [view.stableVideoIdentity, view.frame, contentRevision, settingsKey].join(SCENE_KEY_SEPARATOR) : "off";
+          if (options2.force !== true && quickKey === onionSkinQuickKey) return;
+          onionSkinQuickKey = quickKey;
+          if (!view || typeof sceneStore.getOnionSkinScenes !== "function") {
+            onionSkinDrawnKey = "off";
+            hideOnionSkinCanvas();
+            return;
+          }
+          let scenes;
+          try {
+            scenes = sceneStore.getOnionSkinScenes({
+              stableVideoIdentity: view.stableVideoIdentity,
+              frame: view.frame,
+              before: onionSkin.before,
+              after: onionSkin.after
+            });
+          } catch (_error) {
+            scenes = null;
+          }
+          if (!scenes || !Array.isArray(scenes.previous) || !Array.isArray(scenes.next)) {
+            onionSkinDrawnKey = "off";
+            hideOnionSkinCanvas();
+            return;
+          }
+          const sceneKey = (scene) => `${scene.sceneInstanceId}:${scene.mutationSequence}:${scene.targetFrame}`;
+          const drawnKey = [
+            view.stableVideoIdentity,
+            settingsKey,
+            ...scenes.previous.map(sceneKey),
+            "/",
+            ...scenes.next.map(sceneKey)
+          ].join(SCENE_KEY_SEPARATOR);
+          if (options2.force !== true && drawnKey === onionSkinDrawnKey) return;
+          onionSkinDrawnKey = drawnKey;
+          try {
+            drawOnionSkin(scenes);
+          } catch (error) {
+            lastError = error.message;
+            hideOnionSkinCanvas();
+          }
+        }
+        function resizeOnionSkinCanvas(session) {
+          if (!onionCanvasElement) return;
+          const width = Math.max(1, Math.trunc(finiteNumber(session?.sourceWidth, 1)));
+          const height = Math.max(1, Math.trunc(finiteNumber(session?.sourceHeight, 1)));
+          if (onionCanvasElement.width === width && onionCanvasElement.height === height) return;
+          onionCanvasElement.width = width;
+          onionCanvasElement.height = height;
+          onionSkinQuickKey = null;
+          onionSkinDrawnKey = null;
+        }
+        function normalizeOnionSkinPatch(patch = {}) {
+          const next = { ...onionSkin };
+          if (patch.toggle === true) next.enabled = !onionSkin.enabled;
+          if (typeof patch.enabled === "boolean") next.enabled = patch.enabled;
+          if (patch.before !== void 0) {
+            next.before = boundedInteger(patch.before, 0, ONION_SKIN_MAX_SHEETS, onionSkin.before);
+          }
+          if (patch.after !== void 0) {
+            next.after = boundedInteger(patch.after, 0, ONION_SKIN_MAX_SHEETS, onionSkin.after);
+          }
+          if (patch.opacityPercent !== void 0) {
+            next.opacityPercent = boundedInteger(
+              patch.opacityPercent,
+              ONION_SKIN_MIN_OPACITY_PERCENT,
+              ONION_SKIN_MAX_OPACITY_PERCENT,
+              onionSkin.opacityPercent
+            );
+          }
+          return next;
+        }
+        function getOnionSkinPrefs() {
+          return {
+            enabled: onionSkin.enabled,
+            before: onionSkin.before,
+            after: onionSkin.after,
+            opacityPercent: onionSkin.opacityPercent
+          };
+        }
+        function notifyOnionSkinPrefsChanged() {
+          onionSkinPrefsTouched = true;
+          if (typeof onionSkinPrefsBridge?.notify !== "function") return;
+          const prefs = getOnionSkinPrefs();
+          const key = JSON.stringify(prefs);
+          if (key === lastNotifiedOnionSkinPrefsKey) return;
+          lastNotifiedOnionSkinPrefsKey = key;
+          try {
+            onionSkinPrefsBridge.notify(prefs);
+          } catch (_error) {
+          }
+        }
+        function setOnionSkin(patch = {}) {
+          const before = JSON.stringify(getOnionSkinPrefs());
+          onionSkin = normalizeOnionSkinPatch(patch);
+          if (typeof patch.playing === "boolean") onionSkinPlaying = patch.playing;
+          if (JSON.stringify(getOnionSkinPrefs()) !== before) notifyOnionSkinPrefsChanged();
+          syncOnionSkinControls();
+          syncOnionSkin();
+          return getOnionSkinState();
+        }
+        function applyOnionSkinPrefs(prefs = {}) {
+          if (destroyed) return { accepted: false, reason: "destroyed" };
+          if (onionSkinPrefsTouched) return { accepted: false, reason: "local-changes" };
+          onionSkin = normalizeOnionSkinPatch({
+            enabled: prefs?.enabled,
+            before: prefs?.before,
+            after: prefs?.after,
+            opacityPercent: prefs?.opacityPercent
+          });
+          lastNotifiedOnionSkinPrefsKey = JSON.stringify(getOnionSkinPrefs());
+          syncOnionSkinControls();
+          syncOnionSkin();
+          return { accepted: true, ...getOnionSkinPrefs() };
+        }
+        function updateOnionSkin(command = {}) {
+          if (destroyed || !prepared) {
+            return { accepted: false, reason: destroyed ? "destroyed" : "not-prepared" };
+          }
+          return { accepted: true, ...setOnionSkin(command) };
+        }
+        function createOnionSkinRangeRow({ label, setting, min, max }) {
+          const row = documentRef.createElement("div");
+          row.className = "mpv-fabric-pilot-field";
+          const top = documentRef.createElement("div");
+          top.className = "mpv-fabric-pilot-field-top";
+          const labelElement = documentRef.createElement("span");
+          labelElement.textContent = label;
+          const output = documentRef.createElement("b");
+          output.dataset.fabricPilotOutput = setting;
+          output.setAttribute?.("role", "status");
+          output.setAttribute?.("aria-live", "polite");
+          output.setAttribute?.("aria-atomic", "true");
+          top.appendChild(labelElement);
+          top.appendChild(output);
+          const input = documentRef.createElement("input");
+          input.type = "range";
+          input.tabIndex = -1;
+          input.min = String(min);
+          input.max = String(max);
+          input.step = "1";
+          input.dataset.fabricPilotSetting = setting;
+          input.setAttribute?.("aria-label", label);
+          row.appendChild(top);
+          row.appendChild(input);
+          return { row, input, output, min, max };
+        }
+        function createOnionSkinControls() {
+          const group = documentRef.createElement("div");
+          group.className = "mpv-fabric-pilot-onion";
+          group.setAttribute?.("role", "group");
+          group.setAttribute?.("aria-label", "\uC5B4\uB2C8\uC5B8 \uC2A4\uD0A8");
+          const toggle = labelToolbarButton(
+            createButton("\uC5B4\uB2C8\uC5B8 \uC2A4\uD0A8", "onion-toggle"),
+            "\uC5B4\uB2C8\uC5B8 \uC2A4\uD0A8 \uCF1C\uAE30/\uB044\uAE30 (1) \u2014 \uC55E\uB4A4 \uADF8\uB9BC\uC744 \uBC18\uD22C\uBA85\uC73C\uB85C \uAE54\uC544 \uBCF4\uC5EC \uC90D\uB2C8\uB2E4"
+          );
+          toggle.dataset.active = "false";
+          toggle.setAttribute?.("aria-pressed", "false");
+          const panel = documentRef.createElement("div");
+          panel.className = "mpv-fabric-pilot-onion-panel";
+          panel.dataset.fabricPilotPanel = "onion-skin";
+          setStyles(panel, { display: "none" });
+          const before = createOnionSkinRangeRow({
+            label: "\uC774\uC804 \uADF8\uB9BC",
+            setting: "onion-before",
+            min: 0,
+            max: ONION_SKIN_MAX_SHEETS
+          });
+          const after = createOnionSkinRangeRow({
+            label: "\uC774\uD6C4 \uADF8\uB9BC",
+            setting: "onion-after",
+            min: 0,
+            max: ONION_SKIN_MAX_SHEETS
+          });
+          const opacity = createOnionSkinRangeRow({
+            label: "\uC9C4\uD558\uAE30",
+            setting: "onion-opacity",
+            min: ONION_SKIN_MIN_OPACITY_PERCENT,
+            max: ONION_SKIN_MAX_OPACITY_PERCENT
+          });
+          before.row.dataset.fabricPilotOnionSide = "previous";
+          after.row.dataset.fabricPilotOnionSide = "next";
+          panel.appendChild(before.row);
+          panel.appendChild(after.row);
+          panel.appendChild(opacity.row);
+          group.appendChild(toggle);
+          group.appendChild(panel);
+          addDomListener(toggle, "click", () => setOnionSkin({ toggle: true }));
+          addDomListener(before.input, "input", () => setOnionSkin({ before: before.input.value }));
+          addDomListener(after.input, "input", () => setOnionSkin({ after: after.input.value }));
+          addDomListener(opacity.input, "input", () => setOnionSkin({ opacityPercent: opacity.input.value }));
+          return { group, toggle, panel, before, after, opacity };
+        }
+        function syncOnionSkinControls() {
+          if (!onionSkinControls) return;
+          const { toggle, panel, before, after, opacity } = onionSkinControls;
+          toggle.dataset.active = String(onionSkin.enabled);
+          toggle.setAttribute?.("aria-pressed", String(onionSkin.enabled));
+          setStyles(panel, { display: onionSkin.enabled ? "flex" : "none" });
+          for (const [control, value, text] of [
+            [before, onionSkin.before, `${onionSkin.before}\uC7A5`],
+            [after, onionSkin.after, `${onionSkin.after}\uC7A5`],
+            [opacity, onionSkin.opacityPercent, `${onionSkin.opacityPercent}%`]
+          ]) {
+            control.input.value = String(value);
+            control.output.textContent = text;
+            const span = control.max - control.min;
+            const ratio = span > 0 ? (value - control.min) / span : 0;
+            control.input.style?.setProperty?.(
+              "--fabric-range-fill",
+              `${Math.max(0, Math.min(1, ratio)) * 100}%`
+            );
+          }
+          paletteShell?.restore?.();
+        }
+        function onCanvasAfterRender() {
+          syncOnionSkin();
+        }
         function createId(prefix) {
           localSequence += 1;
           const randomUUID = windowRef?.crypto?.randomUUID || globalThis.crypto?.randomUUID;
@@ -18244,13 +18984,677 @@ void main() {
         }
         function restoreUnsupportedTransform(object, persistedTransform = {}) {
           const values = {};
-          for (const field of UNSUPPORTED_PHASE0_TRANSFORM_FIELDS) {
+          for (const field of NON_TRANSLATION_TRANSFORM_FIELDS) {
             const fallback = field === "scaleX" || field === "scaleY" ? 1 : field === "flipX" || field === "flipY" ? false : 0;
             values[field] = persistedTransform[field] ?? fallback;
           }
           object.set(values);
           applyMoveOnlyConstraints(object);
+          if (object === fabricCanvas?.getActiveObject?.()) applySelectionTransformPolicy(object);
           object.setCoords?.();
+        }
+        function selectionAllowsTransform(activeObject) {
+          if (!inputEnabled || !activeObject) return false;
+          if (sceneStore.getDiagnostics().tool !== "select") return false;
+          const children = typeof activeObject.getObjects === "function" ? activeObject.getObjects() : [activeObject];
+          if (children.length === 0) return false;
+          if (pendingLassoSelection) {
+            return pendingLassoIsFresh(pendingLassoSelection) && pendingTargetMatches(activeObject, pendingLassoSelection.selectedIds) && children.every((object) => !isLayerRestricted(object?.__baeframeObjectId)) && pendingLassoSelection.replacements.every(
+              (replacement) => !isLayerRestricted(replacement.removeId)
+            );
+          }
+          return children.every((object) => !!object?.__baeframeObjectId && !object.__baeframeTransient && !object.__baeframePendingLasso && !isLayerRestricted(object.__baeframeObjectId));
+        }
+        function resolveScalePointer(transform, control, x, y, grabLimit) {
+          const { controlsUtils } = resolveFabric();
+          const target = transform.target;
+          if (typeof controlsUtils?.getLocalPoint !== "function" || typeof target?._getTransformedDimensions !== "function") {
+            return null;
+          }
+          const padding = finiteNumber(target.padding);
+          const margin = Math.max(0, padding) / (finiteNumber(fabricCanvas?.getZoom?.(), 1) || 1);
+          const localOf = (pointerX, pointerY) => {
+            target.padding = 0;
+            try {
+              return controlsUtils.getLocalPoint(
+                transform,
+                transform.originX,
+                transform.originY,
+                pointerX,
+                pointerY
+              );
+            } finally {
+              target.padding = padding;
+            }
+          };
+          let grab = scaleGrabOffsets.get(transform);
+          let local;
+          try {
+            if (!grab) {
+              const size = target._getTransformedDimensions();
+              const grabbed = localOf(transform.ex, transform.ey);
+              const offsetAlong = (grabbedValue, controlFraction, origin, extent) => {
+                if (!controlFraction || !(extent > 0)) return 0;
+                const centre = (controlFraction - transformOriginFraction(origin)) * extent;
+                if (!centre) return 0;
+                const offset = grabbedValue - (centre + Math.sign(centre) * margin);
+                return Number.isFinite(offset) && Math.abs(offset) <= grabLimit ? offset : 0;
+              };
+              grab = {
+                x: offsetAlong(grabbed?.x, finiteNumber(control?.x), transform.originX, size?.x),
+                y: offsetAlong(grabbed?.y, finiteNumber(control?.y), transform.originY, size?.y)
+              };
+              scaleGrabOffsets.set(transform, grab);
+            }
+            local = localOf(x, y);
+          } catch (_error) {
+            if (!grab) scaleGrabOffsets.set(transform, { x: 0, y: 0 });
+            return null;
+          }
+          if (!Number.isFinite(local?.x) || !Number.isFinite(local?.y)) return null;
+          const collapsed = margin * 1e-6;
+          const withoutMargin = (value) => value === 0 ? 0 : Math.sign(value) * Math.max(Math.abs(value) - margin, collapsed);
+          const dx = withoutMargin(local.x - grab.x) - local.x;
+          const dy = withoutMargin(local.y - grab.y) - local.y;
+          const radians = finiteNumber(target.angle) * Math.PI / 180;
+          const cos = Math.cos(radians);
+          const sin = Math.sin(radians);
+          return { x: x + dx * cos - dy * sin, y: y + dx * sin + dy * cos };
+        }
+        function selectionBoxSize(object) {
+          try {
+            const size = object?._getTransformedDimensions?.();
+            return { x: finiteNumber(size?.x), y: finiteNumber(size?.y) };
+          } catch (_error) {
+            return { x: 0, y: 0 };
+          }
+        }
+        function selectionMatrix(object) {
+          if (typeof object?.calcTransformMatrix !== "function") return null;
+          try {
+            const matrix = Array.from(object.calcTransformMatrix(), Number);
+            return matrix.length >= 6 && matrix.every(Number.isFinite) ? matrix : null;
+          } catch (_error) {
+            return null;
+          }
+        }
+        function selectionPivotPoint(object) {
+          const pivot = object ? selectionPivots.get(object) : null;
+          const matrix = pivot ? selectionMatrix(object) : null;
+          if (!matrix) return null;
+          return {
+            x: matrix[0] * pivot.x + matrix[2] * pivot.y + matrix[4],
+            y: matrix[1] * pivot.x + matrix[3] * pivot.y + matrix[5]
+          };
+        }
+        function clearSelectionPivot(object = selectionPivotOwner) {
+          if (!object) return;
+          selectionPivots.delete(object);
+          if (selectionPivotOwner === object) selectionPivotOwner = null;
+        }
+        function setSelectionPivotPoint(object, point, snapDistance = 0) {
+          if (!object || typeof object.getRelativeCenterPoint !== "function" || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+            return false;
+          }
+          const center = object.getRelativeCenterPoint();
+          if (Math.hypot(point.x - center.x, point.y - center.y) <= snapDistance) {
+            clearSelectionPivot(object);
+            return true;
+          }
+          const matrix = selectionMatrix(object);
+          const determinant = matrix ? matrix[0] * matrix[3] - matrix[1] * matrix[2] : 0;
+          if (!matrix || !(Math.abs(determinant) > 1e-12)) {
+            clearSelectionPivot(object);
+            return true;
+          }
+          const dx = point.x - matrix[4];
+          const dy = point.y - matrix[5];
+          const pivot = {
+            x: (matrix[3] * dx - matrix[2] * dy) / determinant,
+            y: (matrix[0] * dy - matrix[1] * dx) / determinant
+          };
+          if (!Number.isFinite(pivot.x) || !Number.isFinite(pivot.y) || !pivot.x && !pivot.y) {
+            clearSelectionPivot(object);
+            return true;
+          }
+          if (selectionPivotOwner && selectionPivotOwner !== object) {
+            selectionPivots.delete(selectionPivotOwner);
+          }
+          selectionPivots.set(object, pivot);
+          selectionPivotOwner = object;
+          return true;
+        }
+        function dropSelectionPivot() {
+          clearSelectionPivot(selectionPivotOwner);
+        }
+        function keepSelectionPivot(target, reselect) {
+          const kept = selectionPivotPoint(target);
+          reselect();
+          const active = fabricCanvas?.getActiveObject?.();
+          if (!kept || !active || active === target) return;
+          if (setSelectionPivotPoint(active, kept)) {
+            active.setCoords?.();
+            fabricCanvas?.requestRenderAll();
+          }
+        }
+        function placeSelectionPivot(target, point) {
+          if (!target || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+          let x = point.x;
+          let y = point.y;
+          const width = finiteNumber(currentSession?.sourceWidth);
+          const height = finiteNumber(currentSession?.sourceHeight);
+          if (width > 0 && height > 0) {
+            x = Math.min(width, Math.max(0, x));
+            y = Math.min(height, Math.max(0, y));
+          }
+          const unit = resolveSourcePerCssPixel(currentSession || {});
+          if (!setSelectionPivotPoint(target, { x, y }, TRANSFORM_PIVOT_SNAP_CSS_PX * unit)) return false;
+          target.setCoords?.();
+          fabricCanvas?.requestRenderAll();
+          return true;
+        }
+        function pivotPlacementTarget(event) {
+          if (!inputEnabled || !fabricCanvas || !isTransformCtrlActive(event)) return null;
+          const target = fabricCanvas.getActiveObject?.();
+          if (!target || target.lockRotation || target.hasControls !== true || !selectionAllowsTransform(target)) {
+            return null;
+          }
+          let handle = null;
+          try {
+            const point = fabricCanvas.getViewportPoint?.(event);
+            handle = point && typeof target.findControl === "function" ? target.findControl(point, event?.pointerType === "touch") : null;
+          } catch (_error) {
+            handle = null;
+          }
+          return handle && !SELECTION_ROTATE_ZONE_KEYS.has(handle.key) ? null : target;
+        }
+        function pivotGestureTarget(event) {
+          return event?.button === 0 ? pivotPlacementTarget(event) : null;
+        }
+        function onCanvasMouseMove(event) {
+          const pointerEvent = event?.e;
+          if (!pointerEvent || pointerEvent.buttons || pivotGesture) return;
+          if (pivotPlacementTarget(pointerEvent)) fabricCanvas?.setCursor?.("crosshair");
+        }
+        function updatePivotGesture(event) {
+          const gesture = pivotGesture;
+          if (!gesture) return false;
+          if (fabricCanvas?.getActiveObject?.() !== gesture.target) {
+            endPivotGesture(event);
+            return false;
+          }
+          let point = null;
+          try {
+            point = fabricCanvas.getScenePoint?.(event) || null;
+          } catch (_error) {
+          }
+          return placeSelectionPivot(gesture.target, point);
+        }
+        function beginPivotGesture(event, target) {
+          pivotGesture = { pointerId: event.pointerId, target };
+          try {
+            event.currentTarget?.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
+          updatePivotGesture(event);
+          event.preventDefault?.();
+          event.stopImmediatePropagation?.();
+        }
+        function endPivotGesture(event) {
+          const gesture = pivotGesture;
+          pivotGesture = null;
+          if (!gesture) return false;
+          releasePointerCapture(
+            event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+            gesture.pointerId
+          );
+          settleArmedFramePreview();
+          return true;
+        }
+        function captureSkewStart(transform, axis, control) {
+          const target = transform?.target;
+          const { util } = resolveFabric();
+          if (typeof util?.calcDimensionsMatrix !== "function" || typeof target?.getRelativeCenterPoint !== "function") {
+            return null;
+          }
+          const size = selectionBoxSize(target);
+          const side = Math.sign(finiteNumber(axis === "x" ? control?.y : control?.x));
+          const reach = side * (axis === "x" ? size.y : size.x);
+          if (!side || !(Math.abs(reach) > 1e-6)) return null;
+          let shape;
+          try {
+            shape = util.calcDimensionsMatrix({
+              scaleX: target.scaleX,
+              scaleY: target.scaleY,
+              flipX: target.flipX === true,
+              flipY: target.flipY === true,
+              skewX: finiteNumber(target.skewX),
+              skewY: finiteNumber(target.skewY)
+            });
+          } catch (_error) {
+            return null;
+          }
+          const [a, b, c, d] = Array.from(shape, Number);
+          const determinant = a * d - b * c;
+          if (![a, b, c, d].every(Number.isFinite) || !(Math.abs(determinant) > 1e-12) || !(Math.abs(d) > 1e-12)) {
+            return null;
+          }
+          const radians = finiteNumber(target.angle) * Math.PI / 180;
+          const center = target.getRelativeCenterPoint();
+          return {
+            reach,
+            cos: Math.cos(radians),
+            sin: Math.sin(radians),
+            a,
+            b,
+            c,
+            d,
+            determinant,
+            // 가로로만 밀면 가로 크기는 바뀌지 않는다. 걸음마다 다시 나누지 않고 여기서 정한다.
+            scaleX: determinant / d,
+            centerX: center.x,
+            centerY: center.y
+          };
+        }
+        function skewSelection(transform, x, y, axis, control) {
+          const target = transform?.target;
+          if (!target || target[axis === "x" ? "lockSkewingX" : "lockSkewingY"]) return false;
+          let start = skewStarts.get(transform);
+          if (start === void 0) {
+            start = captureSkewStart(transform, axis, control);
+            skewStarts.set(transform, start);
+          }
+          if (!start) return false;
+          const dx = x - finiteNumber(transform.ex);
+          const dy = y - finiteNumber(transform.ey);
+          const along = axis === "x" ? dx * start.cos + dy * start.sin : -dx * start.sin + dy * start.cos;
+          const shear = along / start.reach;
+          if (!Number.isFinite(shear)) return false;
+          const withinSkew = (degrees) => Number.isFinite(degrees) && Math.abs(degrees) <= TRANSFORM_MAX_SKEW_DEGREES;
+          const next = {};
+          if (axis === "x") {
+            next.skewX = Math.atan((start.c + shear * start.d) / start.scaleX) * 180 / Math.PI;
+            if (!withinSkew(next.skewX)) return false;
+          } else if (start.c === 0) {
+            next.skewY = Math.atan((start.b + shear * start.a) / start.d) * 180 / Math.PI;
+            if (!withinSkew(next.skewY)) return false;
+          } else {
+            const b = start.b + shear * start.a;
+            const d = start.d + shear * start.c;
+            if (!(Math.abs(d) > 1e-12)) return false;
+            const scaleX = start.determinant / d;
+            const withinScale = (scale) => Number.isFinite(scale) && Math.abs(scale) >= TRANSFORM_MIN_GESTURE_SCALE && Math.abs(scale) <= TRANSFORM_MAX_RECORD_SCALE;
+            next.skewX = Math.atan(start.c / scaleX) * 180 / Math.PI;
+            next.skewY = Math.atan(b / d) * 180 / Math.PI;
+            if (!withinScale(scaleX) || !withinScale(d) || !withinSkew(next.skewX) || !withinSkew(next.skewY)) {
+              return false;
+            }
+            next.flipX = scaleX < 0;
+            next.flipY = d < 0;
+            next.scaleX = Math.abs(scaleX);
+            next.scaleY = Math.abs(d);
+          }
+          const { Point } = resolveFabric();
+          if (typeof Point !== "function" || typeof target.setPositionByOrigin !== "function") return false;
+          const before = captureTransform(target);
+          target.set(next);
+          const half = along / 2;
+          target.setPositionByOrigin(new Point(
+            start.centerX + (axis === "x" ? half * start.cos : -half * start.sin),
+            start.centerY + (axis === "x" ? half * start.sin : half * start.cos)
+          ), "center", "center");
+          return TRANSFORM_FIELDS.some((field) => before[field] !== target[field]);
+        }
+        function createSelectionTransformControls(unit) {
+          const { Control, Point, controlsUtils } = resolveFabric();
+          if (typeof Control !== "function" || typeof controlsUtils?.createObjectDefaultControls !== "function" || typeof controlsUtils.rotationWithSnapping !== "function") {
+            return null;
+          }
+          const rotate = (eventData, transform, x, y) => {
+            const target = transform?.target;
+            if (target) {
+              target.snapAngle = eventData?.shiftKey === true ? TRANSFORM_ROTATE_SNAP_DEGREES : void 0;
+              const pivot = selectionPivotPoint(target);
+              const size = pivot ? selectionBoxSize(target) : null;
+              if (pivot && size.x > 1e-6 && size.y > 1e-6 && typeof target.getRelativeCenterPoint === "function") {
+                const center = target.getRelativeCenterPoint();
+                const radians = finiteNumber(target.angle) * Math.PI / 180;
+                const cos = Math.cos(radians);
+                const sin = Math.sin(radians);
+                const dx = pivot.x - center.x;
+                const dy = pivot.y - center.y;
+                transform.originX = 0.5 + (dx * cos + dy * sin) / size.x;
+                transform.originY = 0.5 + (-dx * sin + dy * cos) / size.y;
+              }
+            }
+            return controlsUtils.rotationWithSnapping(eventData, transform, x, y);
+          };
+          const rotateCursor = (_eventData, _control, fabricObject) => fabricObject?.lockRotation ? "not-allowed" : ROTATE_CURSOR;
+          const reach = TRANSFORM_ROTATE_ZONE_CSS_PX * unit;
+          const zone = TRANSFORM_HANDLE_CSS_PX * unit + reach;
+          const touchZone = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit + reach;
+          const zoneOffset = reach / 2;
+          const controls = {};
+          const rotateZoneCursor = (eventData, control, fabricObject) => !fabricObject?.lockRotation && isTransformCtrlActive(eventData) ? "crosshair" : rotateCursor(eventData, control, fabricObject);
+          for (const [key, x, y] of SELECTION_ROTATE_ZONES) {
+            controls[key] = new Control({
+              x,
+              y,
+              offsetX: Math.sign(x) * zoneOffset,
+              offsetY: Math.sign(y) * zoneOffset,
+              sizeX: zone,
+              sizeY: zone,
+              touchSizeX: touchZone,
+              touchSizeY: touchZone,
+              actionHandler: rotate,
+              cursorStyleHandler: rotateZoneCursor,
+              actionName: "rotate",
+              render: () => {
+              }
+            });
+          }
+          const scaleControls = controlsUtils.createObjectDefaultControls();
+          const grabLimit = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+          const totalAngle = (fabricObject) => finiteNumber(
+            typeof fabricObject?.getTotalAngle === "function" ? fabricObject.getTotalAngle() : fabricObject?.angle
+          );
+          for (const control of Object.values(scaleControls)) {
+            const scale = control.actionHandler;
+            if (typeof scale !== "function") continue;
+            const skewAxis = control.x === 0 && control.y !== 0 ? "x" : control.x !== 0 && control.y === 0 ? "y" : null;
+            const skewAction = skewAxis === "x" ? "skewX" : "skewY";
+            const skewLock = skewAxis === "x" ? "lockSkewingX" : "lockSkewingY";
+            const wantsSkew = (eventData, fabricObject) => !!skewAxis && fabricObject?.[skewLock] !== true && isTransformCtrlActive(eventData);
+            const skewStep = (_eventData, transform, x, y) => skewSelection(transform, x, y, skewAxis, control);
+            const skew = typeof controlsUtils.wrapWithFireEvent === "function" ? controlsUtils.wrapWithFireEvent("skewing", skewStep) : skewStep;
+            const baseActionName = control.getActionName;
+            control.getActionName = (eventData, handle, fabricObject) => wantsSkew(eventData, fabricObject) ? skewAction : typeof baseActionName === "function" ? baseActionName.call(control, eventData, handle, fabricObject) : control.actionName;
+            const baseCursor = control.cursorStyleHandler;
+            control.cursorStyleHandler = (eventData, handle, fabricObject, coord) => {
+              const fallback = typeof baseCursor === "function" ? baseCursor.call(control, eventData, handle, fabricObject, coord) : control.cursorStyle;
+              if (fallback === "not-allowed") return fallback;
+              const cursor = wantsSkew(eventData, fabricObject) ? resizeCursorForDirection(
+                skewAxis === "x" ? 1 : 0,
+                skewAxis === "x" ? 0 : 1,
+                totalAngle(fabricObject)
+              ) : resizeCursorForDirection(
+                Math.sign(control.x),
+                Math.sign(control.y),
+                totalAngle(fabricObject)
+              );
+              return cursor || fallback;
+            };
+            control.actionHandler = (eventData, transform, x, y) => {
+              const target = transform?.target;
+              if (skewAxis && transform?.action === skewAction) {
+                return skew(eventData, transform, x, y);
+              }
+              if (!target) return scale(eventData, transform, x, y);
+              const pointer = resolveScalePointer(transform, control, x, y, grabLimit);
+              if (!pointer) return scale(eventData, transform, x, y);
+              const padding = target.padding;
+              target.padding = 0;
+              try {
+                return scale(eventData, transform, pointer.x, pointer.y);
+              } finally {
+                if (target.padding === 0) target.padding = padding;
+              }
+            };
+          }
+          Object.assign(controls, scaleControls);
+          controls.mtr = new Control({
+            x: 0,
+            y: -0.5,
+            offsetY: -TRANSFORM_ROTATE_OFFSET_CSS_PX * unit,
+            actionHandler: rotate,
+            cursorStyleHandler: rotateCursor,
+            withConnection: true,
+            actionName: "rotate"
+          });
+          if (typeof Point !== "function") return controls;
+          const movePivot = (_eventData, transform, x, y) => {
+            const target = transform?.target;
+            if (!target) return false;
+            let grab = pivotGrabOffsets.get(transform);
+            if (!grab) {
+              const held = selectionPivotPoint(target) || target.getRelativeCenterPoint?.();
+              grab = {
+                x: finiteNumber(transform.ex) - finiteNumber(held?.x),
+                y: finiteNumber(transform.ey) - finiteNumber(held?.y)
+              };
+              if (!held || !(Math.hypot(grab.x, grab.y) <= grabLimit)) grab = { x: 0, y: 0 };
+              pivotGrabOffsets.set(transform, grab);
+            }
+            placeSelectionPivot(target, { x: x - grab.x, y: y - grab.y });
+            return false;
+          };
+          const pivotSize = TRANSFORM_PIVOT_HANDLE_CSS_PX * unit;
+          const pivotTouchSize = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+          const pivotRadius = TRANSFORM_PIVOT_RADIUS_CSS_PX * unit;
+          controls.pivot = new Control({
+            x: 0,
+            y: 0,
+            sizeX: pivotSize,
+            sizeY: pivotSize,
+            touchSizeX: pivotTouchSize,
+            touchSizeY: pivotTouchSize,
+            actionHandler: movePivot,
+            actionName: SELECTION_PIVOT_ACTION,
+            cursorStyle: "crosshair",
+            // 중심점의 자리(그림 좌표)를 화면 좌표로 옮긴다. 옮겨 둔 것이 없으면 상자의
+            // 한가운데다(그때는 보이지도 잡히지도 않는다).
+            positionHandler(_dim, finalMatrix, fabricObject) {
+              const pivot = selectionPivotPoint(fabricObject);
+              const viewport = pivot && typeof fabricObject?.getViewportTransform === "function" ? fabricObject.getViewportTransform() : null;
+              return viewport ? new Point(pivot.x, pivot.y).transform(viewport) : new Point(0, 0).transform(finalMatrix);
+            },
+            // 옮겨 둔 중심점이 있을 때만 보이고 잡힌다. 한가운데가 축인 동안에는 아무것도
+            // 띄우지 않는다 — 획의 한가운데를 잡아 옮기는 것을 가로채면 안 된다.
+            getVisibility(fabricObject) {
+              return !!fabricObject && fabricObject.lockRotation !== true && selectionPivots.has(fabricObject);
+            },
+            render(ctx, left, top) {
+              if (!ctx) return;
+              ctx.save();
+              ctx.translate(left, top);
+              ctx.beginPath();
+              ctx.arc(0, 0, pivotRadius, 0, Math.PI * 2);
+              ctx.fillStyle = "#ffffff";
+              ctx.fill();
+              ctx.lineWidth = Math.max(1, TRANSFORM_BORDER_CSS_PX * unit);
+              ctx.strokeStyle = "#1b1b1e";
+              ctx.stroke();
+              const arm = pivotRadius * 0.55;
+              ctx.beginPath();
+              ctx.moveTo(-arm, 0);
+              ctx.lineTo(arm, 0);
+              ctx.moveTo(0, -arm);
+              ctx.lineTo(0, arm);
+              ctx.stroke();
+              ctx.restore();
+            }
+          });
+          return controls;
+        }
+        function resolveSelectionTransformControls(unit) {
+          if (selectionTransformControlsUnit !== unit) {
+            selectionTransformControls = createSelectionTransformControls(unit);
+            selectionTransformControlsUnit = unit;
+          }
+          return selectionTransformControls;
+        }
+        function applySelectionTransformPolicy(activeObject, session = currentSession) {
+          if (!activeObject?.set || !selectionAllowsTransform(activeObject)) return false;
+          const unit = resolveSourcePerCssPixel(session || {});
+          activeObject.set({
+            hasControls: true,
+            lockScalingX: false,
+            lockScalingY: false,
+            // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다. 뒤집기는 팔레트의 버튼으로 한다.
+            lockScalingFlip: true,
+            lockRotation: false,
+            // 기울이기는 Ctrl + 변 손잡이다(skewSelection). fabric 의 기울이기 키는 꺼 두었다.
+            lockSkewingX: false,
+            lockSkewingY: false,
+            minScaleLimit: TRANSFORM_MIN_GESTURE_SCALE,
+            transparentCorners: false,
+            cornerStyle: "rect",
+            // 밝은 영상과 어두운 영상 어디서나 보이게 흰 손잡이에 어두운 테두리를 준다.
+            cornerColor: "#ffffff",
+            cornerStrokeColor: "#1b1b1e",
+            cornerSize: Math.max(3, Math.round(TRANSFORM_HANDLE_CSS_PX * unit)),
+            touchCornerSize: Math.max(6, Math.round(TRANSFORM_TOUCH_HANDLE_CSS_PX * unit)),
+            borderScaleFactor: Math.max(1, TRANSFORM_BORDER_CSS_PX * unit)
+          });
+          const controls = resolveSelectionTransformControls(unit);
+          if (controls) activeObject.controls = controls;
+          return true;
+        }
+        function absoluteObjectTransform(object, preferred = null) {
+          if (!object) return null;
+          if (!object.group || typeof object.calcTransformMatrix !== "function") {
+            return captureTransform(object);
+          }
+          const { util } = resolveFabric();
+          if (typeof util?.qrDecompose !== "function") return null;
+          let decomposed;
+          try {
+            decomposed = util.qrDecompose(object.calcTransformMatrix());
+          } catch (_error) {
+            return null;
+          }
+          return storedTransformFromDecomposition(decomposed, preferred, flipCommitField);
+        }
+        function selectionTransformIsStorable(transform) {
+          if (!validatePersistedTransform(transform)) return false;
+          return [transform.scaleX, transform.scaleY].every((scale) => {
+            const magnitude = Math.abs(scale);
+            return magnitude >= TRANSFORM_MIN_RECORD_SCALE && magnitude <= TRANSFORM_MAX_RECORD_SCALE;
+          });
+        }
+        function syncTransformedOutlinePairs() {
+          const start = transformStart;
+          if (!start?.outlinePairs?.length) return false;
+          const { util } = resolveFabric();
+          if (typeof util?.multiplyTransformMatrices !== "function" || typeof util.invertTransform !== "function" || typeof util.applyTransformToObject !== "function") {
+            return false;
+          }
+          for (const pair of start.outlinePairs) {
+            if (!pair.startMatrix || !pair.bodyStartMatrix || typeof pair.body?.calcTransformMatrix !== "function") {
+              continue;
+            }
+            try {
+              const delta = util.multiplyTransformMatrices(
+                pair.body.calcTransformMatrix(),
+                util.invertTransform(pair.bodyStartMatrix)
+              );
+              util.applyTransformToObject(
+                pair.object,
+                util.multiplyTransformMatrices(delta, pair.startMatrix)
+              );
+              pair.object.setCoords?.();
+            } catch (error) {
+              lastError = error.message;
+            }
+          }
+          fabricCanvas?.requestRenderAll();
+          return true;
+        }
+        function objectMatchesStoredTransform(object, stored) {
+          const { util } = resolveFabric();
+          if (!stored || typeof util?.composeMatrix !== "function" || typeof object?.calcTransformMatrix !== "function") {
+            return false;
+          }
+          let current;
+          let persisted;
+          try {
+            current = object.calcTransformMatrix();
+            persisted = util.composeMatrix({
+              translateX: stored.left,
+              translateY: stored.top,
+              angle: stored.angle,
+              scaleX: stored.scaleX,
+              scaleY: stored.scaleY,
+              skewX: stored.skewX,
+              skewY: stored.skewY,
+              flipX: stored.flipX,
+              flipY: stored.flipY
+            });
+          } catch (_error) {
+            return false;
+          }
+          for (let index = 0; index < 6; index += 1) {
+            const left = Number(current[index]);
+            const right = Number(persisted[index]);
+            if (!Number.isFinite(left) || !Number.isFinite(right)) return false;
+            if (Math.abs(left - right) > 1e-9 * Math.max(1, Math.abs(left), Math.abs(right))) {
+              return false;
+            }
+          }
+          return true;
+        }
+        function commitSelectionTransform(target, children, ids) {
+          syncTransformedOutlinePairs();
+          const outlineObjects = (transformStart?.outlinePairs || []).map((pair) => pair.object);
+          const storedTransforms = new Map(
+            (sceneStore.getActiveSceneSnapshot()?.objects || []).map((record) => [record.id, record.transform || null])
+          );
+          const transforms = [];
+          for (const object of [...children, ...outlineObjects]) {
+            const id = object?.__baeframeObjectId;
+            const stored = id ? storedTransforms.get(id) : null;
+            const transform = objectMatchesStoredTransform(object, stored) ? clonePlain(stored) : absoluteObjectTransform(object, stored);
+            if (!id || !transform || !selectionTransformIsStorable(transform)) {
+              return { applied: false, reason: "invalid-selection-transform" };
+            }
+            transforms.push({ id, transform });
+          }
+          const result = sceneStore.transformSelection({ transforms });
+          if (!result.applied) return result;
+          transformStart = null;
+          ignoreLateModifiedEvents(target);
+          keepSelectionPivot(target, () => {
+            renderActiveScene({ immediate: true });
+            activateObjectIds(ids);
+          });
+          updateObjectMetric();
+          return { applied: true, objectIds: result.objectIds };
+        }
+        function flipSelection(direction) {
+          const target = fabricCanvas?.getActiveObject?.();
+          if (!target || !selectionAllowsTransform(target)) {
+            return { applied: false, reason: "no-transformable-selection" };
+          }
+          if (selectGesture || activeLasso || fabricCanvas._currentTransform) {
+            return { applied: false, reason: "selection-busy" };
+          }
+          onBeforeTransform({ transform: { target, action: "flip" } });
+          if (transformStart?.target !== target) {
+            return { applied: false, reason: "selection-changed" };
+          }
+          const horizontal = direction !== "vertical";
+          const flipField = horizontal ? "flipX" : "flipY";
+          const angle = (finiteNumber(target.angle) % 360 + 360) % 360;
+          target.set({ [flipField]: target[flipField] !== true, angle: angle ? 360 - angle : 0 });
+          target.setCoords?.();
+          let result;
+          flipCommitField = flipField;
+          try {
+            if (pendingLassoSelection) {
+              result = commitPendingLassoTransform(target);
+            } else {
+              const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
+              const ids = children.map((object) => object.__baeframeObjectId).filter(Boolean);
+              sceneStore.selectObjects(ids);
+              result = commitSelectionTransform(target, children, ids);
+              if (!result.applied) rollbackSelectTransform(void 0, false);
+            }
+          } finally {
+            flipCommitField = null;
+          }
+          transformStart = null;
+          if (result.applied) updateObjectMetric();
+          return result;
         }
         function isLayerRestricted(objectId) {
           return typeof objectId === "string" && (hiddenObjectIds.has(objectId) || lockedObjectIds.has(objectId));
@@ -18344,7 +19748,7 @@ void main() {
           activeFrameState.previewed = false;
         }
         function activeFrameInteractionInProgress() {
-          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
+          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || pivotGesture || strokeEraseGesture || shapeGesture);
         }
         function renderedCandidateMatches(candidate) {
           return candidate.sourceFrame === activeFrameState.renderedSourceFrame && candidate.sceneInstanceId === activeFrameState.renderedSceneInstanceId && candidate.mutationSequence === activeFrameState.renderedMutationSequence;
@@ -19763,6 +21167,11 @@ void main() {
             return false;
           }
         }
+        function abandonPendingLassoCommit(activeTarget, options2 = {}) {
+          rollbackSelectTransform(void 0, false);
+          ignoreLateModifiedEvents(activeTarget);
+          abortPendingLassoSelection(options2);
+        }
         function commitPendingLassoMove(target = fabricCanvas?.getActiveObject?.()) {
           const pending = pendingLassoSelection;
           if (!pending) return { applied: false, reason: "no-pending-lasso" };
@@ -19778,11 +21187,11 @@ void main() {
           const dx = finiteNumber(activeTarget?.left) - finiteNumber(start.left);
           const dy = finiteNumber(activeTarget?.top) - finiteNumber(start.top);
           if (Math.abs(dx) <= 1e-7 && Math.abs(dy) <= 1e-7) {
-            abortPendingLassoSelection();
+            abandonPendingLassoCommit(activeTarget);
             return { applied: false, reason: "no-op-transform" };
           }
           if (!pendingLassoIsFresh(pending)) {
-            abortPendingLassoSelection({ authoritative: true });
+            abandonPendingLassoCommit(activeTarget, { authoritative: true });
             return { applied: false, reason: "stale-pending-lasso" };
           }
           const selectedObjectIds = [...pending.selectedIds];
@@ -19794,26 +21203,80 @@ void main() {
             kind: "split-stroke"
           });
           if (!result.applied) {
-            abortPendingLassoSelection();
+            abandonPendingLassoCommit(activeTarget);
             return result;
           }
           pendingLassoSelection = null;
-          renderActiveScene();
-          if (selectedObjectIds.length === 1) activateObjectIds(selectedObjectIds);
-          else {
-            fabricCanvas.discardActiveObject();
-            sceneStore.selectObjects([]);
-            refreshSelectionInteractionPolicy();
-            fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || "default");
-            fabricCanvas.requestRenderAll();
-            const sessionId = currentSession?.sessionId;
-            const inputRevision = tokenState.inputRevision;
-            queueMicrotaskRef(() => {
-              if (destroyed || !inputEnabled || !fabricCanvas || fabricCanvas.getActiveObject?.()) return;
-              if (currentSession?.sessionId !== sessionId || tokenState.inputRevision !== inputRevision) return;
-              fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || "default");
-            });
+          ignoreLateModifiedEvents(activeTarget);
+          keepSelectionPivot(activeTarget, () => {
+            renderActiveScene();
+            activateObjectIds(selectedObjectIds);
+          });
+          updateObjectMetric();
+          return { ...result, selectedObjectIds };
+        }
+        function commitPendingLassoTransform(target = fabricCanvas?.getActiveObject?.()) {
+          const pending = pendingLassoSelection;
+          if (!pending) return { applied: false, reason: "no-pending-lasso" };
+          if (!pendingLassoIsFresh(pending)) {
+            abandonPendingLassoCommit(target, { authoritative: true });
+            return { applied: false, reason: "stale-pending-lasso" };
           }
+          if (!transformStart || transformStart.target !== target) {
+            abandonPendingLassoCommit(target);
+            return { applied: false, reason: "missing-transform-start" };
+          }
+          if (!materializePendingLassoForTransform(target)) {
+            return { applied: false, reason: "pending-lasso-materialize-failed" };
+          }
+          const activeTarget = target || pending.activeTarget;
+          const children = typeof activeTarget?.getObjects === "function" ? activeTarget.getObjects() : [activeTarget];
+          syncTransformedOutlinePairs();
+          const outlineObjects = (transformStart?.outlinePairs || []).map((pair) => pair.object);
+          const stagedTransforms = /* @__PURE__ */ new Map();
+          for (const replacement of pending.replacements) {
+            for (const record of replacement.addObjects) {
+              stagedTransforms.set(record.id, record.transform || null);
+            }
+          }
+          for (const record of sceneStore.getActiveSceneSnapshot()?.objects || []) {
+            if (!stagedTransforms.has(record.id)) stagedTransforms.set(record.id, record.transform || null);
+          }
+          const transforms = [];
+          let changed = false;
+          for (const object of [...children, ...outlineObjects]) {
+            const id = object?.__baeframeObjectId;
+            const stored = id ? stagedTransforms.get(id) : null;
+            const unchanged = objectMatchesStoredTransform(object, stored);
+            const transform = unchanged ? clonePlain(stored) : absoluteObjectTransform(object, stored);
+            if (!id || !transform || !selectionTransformIsStorable(transform)) {
+              abandonPendingLassoCommit(activeTarget);
+              return { applied: false, reason: "invalid-selection-transform" };
+            }
+            if (!unchanged) changed = true;
+            transforms.push({ id, transform });
+          }
+          if (!changed) {
+            abandonPendingLassoCommit(activeTarget);
+            return { applied: false, reason: "no-op-transform" };
+          }
+          const selectedObjectIds = [...pending.selectedIds];
+          const result = sceneStore.replaceObjects({
+            replacements: pending.replacements,
+            selectedObjectIds,
+            transforms,
+            kind: "split-stroke"
+          });
+          if (!result.applied) {
+            abandonPendingLassoCommit(activeTarget);
+            return result;
+          }
+          pendingLassoSelection = null;
+          ignoreLateModifiedEvents(activeTarget);
+          keepSelectionPivot(activeTarget, () => {
+            renderActiveScene({ immediate: true });
+            activateObjectIds(selectedObjectIds);
+          });
           updateObjectMetric();
           return { ...result, selectedObjectIds };
         }
@@ -20352,9 +21815,19 @@ void main() {
           settleArmedFramePreview();
           return result;
         }
+        function pointerTargetsSelectionHandle(activeObject, event) {
+          if (!activeObject?.hasControls || typeof activeObject.findControl !== "function") return false;
+          try {
+            const point = fabricCanvas.getViewportPoint?.(event);
+            return !!point && !!activeObject.findControl(point, event?.pointerType === "touch");
+          } catch (_error) {
+            return false;
+          }
+        }
         function pointerTargetsActiveSelection(event) {
           const activeObject = fabricCanvas?.getActiveObject?.();
           if (!activeObject) return false;
+          if (pointerTargetsSelectionHandle(activeObject, event)) return true;
           try {
             const point = fabricCanvas.getScenePoint?.(event) || {
               x: finiteNumber(event?.clientX),
@@ -20444,6 +21917,11 @@ void main() {
           if (event?.pointerType === "mouse") return false;
           return overlayModifierState.ctrl === true;
         }
+        function isTransformCtrlActive(event) {
+          if (event?.ctrlKey === true) return true;
+          if (event?.pointerType === "mouse" || overlayModifierState.ctrl !== true) return false;
+          return Number.isFinite(overlayCtrlPressedAt) && now() - overlayCtrlPressedAt <= TRANSFORM_CTRL_LATCH_FRESH_MS;
+        }
         function recordPointerdownProbe(event) {
           gestureProbe.lastPointerdown = {
             pointerType: typeof event?.pointerType === "string" ? event.pointerType : null,
@@ -20459,11 +21937,15 @@ void main() {
         function syncOverlayModifierStateFromPointer(event) {
           if (event?.pointerType !== "mouse") return;
           if (event.altKey !== true) overlayModifierState.alt = false;
-          if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
+          if (event.ctrlKey !== true) {
+            overlayModifierState.ctrl = false;
+            overlayCtrlPressedAt = null;
+          }
         }
         function resetOverlayModifierState() {
           overlayModifierState.alt = false;
           overlayModifierState.ctrl = false;
+          overlayCtrlPressedAt = null;
         }
         function onOverlayKeyDown(event) {
           if (event?.key === "Alt") {
@@ -20473,6 +21955,7 @@ void main() {
           }
           if (event?.key === "Control") {
             overlayModifierState.ctrl = true;
+            overlayCtrlPressedAt = now();
             gestureProbe.overlayCtrlKeyDownCount += 1;
             syncTempErase();
           }
@@ -20488,6 +21971,7 @@ void main() {
           }
           if (event?.key === "Control") {
             overlayModifierState.ctrl = false;
+            overlayCtrlPressedAt = null;
             syncTempErase();
           }
         }
@@ -20500,6 +21984,7 @@ void main() {
           endTextEntry();
           syncTempErase();
           endSizeAdjustGesture(event);
+          endPivotGesture(event);
           cancelStrokeEraseGesture(event);
           cancelShapeGesture();
           onPointerCancel(event);
@@ -21040,12 +22525,18 @@ void main() {
           try {
             start.target.set?.(start.transform);
             applyMoveOnlyConstraints(start.target);
+            if (start.target === fabricCanvas?.getActiveObject?.()) {
+              applySelectionTransformPolicy(start.target);
+            }
             start.target.setCoords?.();
             for (const pair of start.outlinePairs || []) {
-              pair.object.set?.({ left: pair.startLeft, top: pair.startTop });
+              pair.object.set?.(pair.startTransform || { left: pair.startLeft, top: pair.startTop });
               pair.object.setCoords?.();
             }
-            if (shouldEndTransform) fabricCanvas?.endCurrentTransform?.(event);
+            if (shouldEndTransform) {
+              ignoreLateModifiedEvents(start.target);
+              fabricCanvas?.endCurrentTransform?.(event);
+            }
           } catch (error) {
             lastError = error.message;
             metrics.recordSurfaceError();
@@ -21380,7 +22871,14 @@ void main() {
             beginSizeAdjustGesture(event);
             return;
           }
-          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
+          if (!pivotGesture && !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
+            const pivotTarget = pivotGestureTarget(event);
+            if (pivotTarget) {
+              beginPivotGesture(event, pivotTarget);
+              return;
+            }
+          }
+          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || pivotGesture || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
             return;
           }
           if (!activeLayerDrawable && sceneStore.getDiagnostics().tool !== "select") {
@@ -21501,6 +22999,12 @@ void main() {
             event.preventDefault?.();
             return;
           }
+          if (pivotGesture) {
+            if (event.pointerId !== pivotGesture.pointerId) return;
+            updatePivotGesture(event);
+            event.preventDefault?.();
+            return;
+          }
           if (consumePendingPointerEvent(event)) return;
           if (strokeEraseGesture) {
             if (event.pointerId !== strokeEraseGesture.pointerId) return;
@@ -21541,6 +23045,13 @@ void main() {
           if (sizeAdjustGesture) {
             if (event.pointerId !== sizeAdjustGesture.pointerId) return;
             endSizeAdjustGesture(event);
+            event.preventDefault?.();
+            return;
+          }
+          if (pivotGesture) {
+            if (event.pointerId !== pivotGesture.pointerId) return;
+            updatePivotGesture(event);
+            endPivotGesture(event);
             event.preventDefault?.();
             return;
           }
@@ -21597,6 +23108,11 @@ void main() {
             endSizeAdjustGesture(event);
             return;
           }
+          if (pivotGesture) {
+            if (event.pointerId !== void 0 && event.pointerId !== pivotGesture.pointerId) return;
+            endPivotGesture(event);
+            return;
+          }
           if (strokeEraseGesture) {
             if (event.pointerId !== void 0 && event.pointerId !== strokeEraseGesture.pointerId) return;
             cancelStrokeEraseGesture(event);
@@ -21644,6 +23160,10 @@ void main() {
             onPointerUp(event);
             return;
           }
+          if (pivotGesture && event.pointerId === pivotGesture.pointerId) {
+            onPointerUp(event);
+            return;
+          }
           if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
             onPointerUp(event);
             return;
@@ -21666,6 +23186,10 @@ void main() {
         function onDocumentPointerCancel(event) {
           if (viewportPanInput?.cancel(event)) return;
           if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
+          if (pivotGesture && event.pointerId === pivotGesture.pointerId) {
             onPointerCancel(event);
             return;
           }
@@ -21692,23 +23216,15 @@ void main() {
           const objects = fabricCanvas?.getActiveObjects?.() || [];
           return objects.map((object) => object.__baeframeObjectId).filter(Boolean);
         }
-        function scheduleMovedMultiSelectionRelease(target, selectedIds) {
-          const sessionId = currentSession?.sessionId;
-          const inputRevision = tokenState.inputRevision;
-          const expectedSelection = [...selectedIds].sort().join(SCENE_KEY_SEPARATOR);
-          queueMicrotaskRef(() => {
-            if (destroyed || !inputEnabled || !fabricCanvas) return;
-            if (currentSession?.sessionId !== sessionId || tokenState.inputRevision !== inputRevision) return;
-            if (fabricCanvas.getActiveObject?.() !== target) return;
-            if (selectionIds().sort().join(SCENE_KEY_SEPARATOR) !== expectedSelection) return;
-            fabricCanvas.discardActiveObject();
-            sceneStore.selectObjects([]);
-            refreshSelectionInteractionPolicy();
-            fabricCanvas.setCursor?.(fabricCanvas.defaultCursor || "default");
-            fabricCanvas.requestRenderAll();
+        function reselectMovedMultiSelection(target, selectedIds) {
+          ignoreLateModifiedEvents(target);
+          keepSelectionPivot(target, () => {
+            renderActiveScene({ immediate: true });
+            activateObjectIds(selectedIds);
           });
         }
         function onSelectionChanged() {
+          dropSelectionPivot();
           if (preservingPendingLassoSelectionEvent) return;
           if (pendingLassoSelection && !pendingTargetMatches(fabricCanvas?.getActiveObject?.(), pendingLassoSelection.selectedIds)) {
             abortPendingLassoSelection();
@@ -21718,6 +23234,7 @@ void main() {
           sceneStore.selectObjects(selectionIds());
         }
         function onSelectionCleared() {
+          dropSelectionPivot();
           if (preservingPendingLassoSelectionEvent) return;
           if (pendingLassoSelection) {
             abortPendingLassoSelection();
@@ -21738,6 +23255,8 @@ void main() {
           transformStart = {
             target,
             transform: captureTransform(target),
+            // 끌어 옮기기('drag')인지 변형 상자의 크기·회전인지. 커밋 경로가 여기서 갈린다.
+            action: typeof event?.transform?.action === "string" ? event.transform.action : "drag",
             // 외곽선은 선택 대상이 아니라 fabric 의 이동 타깃에 들어가지 않는다.
             // 드래그 중에도 짝이 붙어 다니도록 출발 위치를 기억해 두고 같은 델타를 준다.
             outlinePairs: collectDraggedOutlinePairs(target)
@@ -21745,7 +23264,42 @@ void main() {
           if (pendingLassoSelection) {
             pendingLassoSelection.activeTarget = target;
             pendingLassoSelection.startTargetTransform = clonePlain(transformStart.transform);
+            transformStart.pendingBodyStartMatrices = collectBodyMatrices(target);
           }
+        }
+        function collectBodyMatrices(target) {
+          const matrices = /* @__PURE__ */ new Map();
+          const children = typeof target?.getObjects === "function" ? target.getObjects() : [target];
+          for (const child of children) {
+            const id = child?.__baeframeObjectId;
+            if (!id || typeof child.calcTransformMatrix !== "function") continue;
+            try {
+              matrices.set(id, Array.from(child.calcTransformMatrix()));
+            } catch (_error) {
+            }
+          }
+          return matrices;
+        }
+        function collectPendingTransformOutlinePairs(target, bodyStartMatrices) {
+          const pairs = collectDraggedOutlinePairs(target);
+          for (const pair of pairs) {
+            const start = bodyStartMatrices?.get(pair.body?.__baeframeObjectId);
+            if (start) pair.bodyStartMatrix = start;
+          }
+          return pairs;
+        }
+        function materializePendingLassoForTransform(target) {
+          const pending = pendingLassoSelection;
+          if (!pending) return false;
+          const wasMaterialized = pending.phase === "moving";
+          if (!materializePendingLassoSelection(target)) return false;
+          if (!wasMaterialized && transformStart) {
+            transformStart.outlinePairs = collectPendingTransformOutlinePairs(
+              pending.activeTarget || transformStart.target,
+              transformStart.pendingBodyStartMatrices
+            );
+          }
+          return true;
         }
         function collectDraggedOutlinePairs(target) {
           if (!fabricCanvas || !target) return [];
@@ -21758,10 +23312,23 @@ void main() {
             const outlineId = outlineIdFor(child?.__baeframeObjectId);
             const outlineObject = outlineId ? canvasObjects.get(outlineId) : null;
             if (!outlineObject) continue;
+            const matrixOf = (object) => {
+              try {
+                return typeof object?.calcTransformMatrix === "function" ? Array.from(object.calcTransformMatrix()) : null;
+              } catch (_error) {
+                return null;
+              }
+            };
             pairs.push({
               object: outlineObject,
               startLeft: finiteNumber(outlineObject.left),
-              startTop: finiteNumber(outlineObject.top)
+              startTop: finiteNumber(outlineObject.top),
+              // 크기·회전을 따라가려면 자리만으로는 모자란다. 본체와 외곽선의 출발
+              // 행렬을 함께 기억해 둔다(syncTransformedOutlinePairs).
+              body: child,
+              startTransform: captureTransform(outlineObject),
+              startMatrix: matrixOf(outlineObject),
+              bodyStartMatrix: matrixOf(child)
             });
           }
           return pairs;
@@ -21818,6 +23385,23 @@ void main() {
           }
           syncDraggedOutlinePairs();
         }
+        function onObjectTransforming(event) {
+          if (!pendingLassoSelection) {
+            syncTransformedOutlinePairs();
+            return;
+          }
+          const target = event?.target;
+          if (!pendingTargetMatches(target, pendingLassoSelection.selectedIds)) {
+            transformStart = null;
+            abortPendingLassoSelection();
+            return;
+          }
+          if (!materializePendingLassoForTransform(target)) {
+            transformStart = null;
+            return;
+          }
+          syncTransformedOutlinePairs();
+        }
         function onObjectModified(event) {
           const target = event?.target;
           if (!target) return;
@@ -21831,7 +23415,8 @@ void main() {
             return;
           }
           if (pendingLassoSelection) {
-            const result2 = commitPendingLassoMove(target);
+            const pendingAction = typeof event?.action === "string" ? event.action : typeof event?.transform?.action === "string" ? event.transform.action : transformStart?.action;
+            const result2 = SELECTION_TRANSFORM_ACTIONS.has(pendingAction) ? commitPendingLassoTransform(target) : commitPendingLassoMove(target);
             transformStart = null;
             if (result2.applied) updateObjectMetric();
             settleArmedFramePreview();
@@ -21840,6 +23425,13 @@ void main() {
           const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
           const ids = children.map((object) => object.__baeframeObjectId).filter(Boolean);
           sceneStore.selectObjects(ids);
+          const action = typeof event?.action === "string" ? event.action : typeof event?.transform?.action === "string" ? event.transform.action : transformStart?.action;
+          if (SELECTION_TRANSFORM_ACTIONS.has(action) && transformStart?.target === target && selectionAllowsTransform(target)) {
+            const transformed = commitSelectionTransform(target, children, ids);
+            if (!transformed.applied) rollbackSelectTransform(event, false);
+            settleArmedFramePreview();
+            return;
+          }
           let result;
           if (children.length > 1 && transformStart?.target === target) {
             restoreUnsupportedTransform(target, transformStart.transform);
@@ -21866,10 +23458,9 @@ void main() {
             settleArmedFramePreview();
             return;
           }
-          const shouldReleaseMultiSelection = result.applied && children.length > 1;
           transformStart = null;
-          if (result.applied) updateObjectMetric();
-          if (shouldReleaseMultiSelection) scheduleMovedMultiSelectionRelease(target, ids);
+          if (children.length > 1) reselectMovedMultiSelection(target, ids);
+          updateObjectMetric();
           settleArmedFramePreview();
         }
         function configureCanvasEvents() {
@@ -21887,12 +23478,17 @@ void main() {
           addDomListener(documentRef, "keyup", onOverlayKeyUp, true);
           addDomListener(windowRef, "blur", onOverlayWindowBlur);
           addFabricListener("mouse:down", onCanvasMouseDown);
+          addFabricListener("mouse:move", onCanvasMouseMove);
           addFabricListener("selection:created", onSelectionChanged);
           addFabricListener("selection:updated", onSelectionChanged);
           addFabricListener("selection:cleared", onSelectionCleared);
           addFabricListener("before:transform", onBeforeTransform);
           addFabricListener("object:moving", onObjectMoving);
+          addFabricListener("object:scaling", onObjectTransforming);
+          addFabricListener("object:rotating", onObjectTransforming);
+          addFabricListener("object:skewing", onObjectTransforming);
           addFabricListener("object:modified", onObjectModified);
+          addFabricListener("after:render", onCanvasAfterRender);
         }
         function configureLongTaskObserver() {
           const Observer = options.PerformanceObserver || windowRef?.PerformanceObserver;
@@ -21939,9 +23535,11 @@ void main() {
           if ((isPermanentPath || isPermanentActiveSelection) && !activeRestricted) {
             applyMoveOnlyConstraints(activeObject);
             applySelectedActivePolicy(activeObject);
+            applySelectionTransformPolicy(activeObject, session);
             activeObject.set?.({ selectable: true, evented: true });
             activeObject.setCoords?.();
           }
+          syncSelectionFlipControls();
         }
         function applyViewport(session) {
           const rect = session.canvasRect;
@@ -21957,6 +23555,7 @@ void main() {
             { width: rect.width, height: rect.height },
             { cssOnly: true }
           );
+          resizeOnionSkinCanvas(session);
           refreshSelectionInteractionPolicy(session);
           const viewportTransform = normalizeViewportTransform(session.viewportTransform);
           setStyles(viewportElement, {
@@ -22061,6 +23660,7 @@ void main() {
         }
         function releaseSurfaceResources() {
           endSizeAdjustGesture();
+          endPivotGesture();
           cancelStrokeEraseGesture();
           cancelShapeGesture();
           resetOverlayModifierState();
@@ -22099,12 +23699,20 @@ void main() {
           pendingLassoSelection = null;
           transformStart = null;
           selectGesture = null;
+          selectionTransformControls = null;
+          selectionTransformControlsUnit = null;
           deferredViewport = null;
           inputEnabled = false;
           currentSession = null;
           resetPassivePresentationState();
           viewportElement = null;
           canvasElement = null;
+          onionCanvasElement = null;
+          onionScratchCanvas = null;
+          onionSkinControls = null;
+          onionSkinQuickKey = null;
+          onionSkinDrawnKey = null;
+          onionSkinDrawn = { previous: [], next: [] };
           toolbar = null;
           paletteShell = null;
           brushControls = null;
@@ -22148,6 +23756,17 @@ void main() {
             viewportElement = documentRef.createElement("div");
             viewportElement.className = "mpv-fabric-pilot-viewport";
             setStyles(viewportElement, { position: "absolute", pointerEvents: "none" });
+            onionCanvasElement = documentRef.createElement("canvas");
+            onionCanvasElement.className = "mpv-fabric-onion-canvas";
+            setStyles(onionCanvasElement, {
+              position: "absolute",
+              left: "0",
+              top: "0",
+              width: "100%",
+              height: "100%",
+              pointerEvents: "none",
+              display: "none"
+            });
             canvasElement = documentRef.createElement("canvas");
             canvasElement.className = "mpv-fabric-delta-canvas";
             toolbar = documentRef.createElement("div");
@@ -22198,6 +23817,7 @@ void main() {
             outlineControls = brushControls.outline;
             selectionControls = createSelectionControls();
             eraserModeControls = createEraserModeControls();
+            onionSkinControls = paletteDocked ? null : createOnionSkinControls();
             badge = documentRef.createElement("span");
             badge.className = "mpv-fabric-pilot-badge";
             badge.setAttribute?.("role", "status");
@@ -22247,6 +23867,8 @@ void main() {
                   labelAccessory: colorControls.current,
                   appended: [brushControls.panel]
                 },
+                // 어니언 스킨은 어떤 도구에서도 쓰므로 도구별 섹션과 따로 둔다.
+                ...onionSkinControls ? [{ id: "onion", wrap: true, items: [onionSkinControls.group] }] : [],
                 paletteDocked ? { id: "actions", wrap: true, items: [undoButton, redoButton, deleteButton, clearButton] } : {
                   id: "actions",
                   wrap: true,
@@ -22259,6 +23881,7 @@ void main() {
                 { id: "status", items: [badge] }
               ]
             });
+            viewportElement.appendChild(onionCanvasElement);
             viewportElement.appendChild(canvasElement);
             container.appendChild(viewportElement);
             container.appendChild(toolbar);
@@ -22274,7 +23897,15 @@ void main() {
               defaultCursor: "default",
               hoverCursor: "grab",
               moveCursor: "grabbing",
-              freeDrawingCursor: "crosshair"
+              freeDrawingCursor: "crosshair",
+              // 변형 상자의 모서리는 가로·세로를 따로 늘이고, Shift 를 누르면 비율을
+              // 지킨다(애니메이트의 자유 변형과 같다).
+              uniformScaling: false,
+              uniScaleKey: "shiftKey",
+              // Alt 는 브러시 크기 조절 제스처가 쓴다. fabric 의 기울이기 키도 끈다 — 기울이기는
+              // 런타임이 Ctrl + 변 손잡이로 직접 한다(skewSelection).
+              centeredKey: "none",
+              altActionKey: "none"
             });
             configureCanvasEvents();
             for (const [toolButton, toolName] of [
@@ -22325,6 +23956,7 @@ void main() {
             }));
             syncBrushControls();
             syncSelectionControls("brush");
+            syncOnionSkinControls();
             setSurfaceInput(false);
             configureLongTaskObserver();
             prepared = true;
@@ -22347,6 +23979,7 @@ void main() {
             return { accepted: false, reason: "invalid-session" };
           }
           endSizeAdjustGesture();
+          endPivotGesture();
           cancelStrokeEraseGesture();
           cancelShapeGesture();
           resetOverlayModifierState();
@@ -22367,6 +24000,7 @@ void main() {
               resetPassivePresentationState();
             }
             resetActiveFrameState();
+            syncOnionSkin();
             metrics.recordToggleLatency(now() - startedAt);
             return { accepted: true, enabled: false, tool: lastTool };
           }
@@ -22409,6 +24043,7 @@ void main() {
           inputEnabled = true;
           setSurfaceInput(true);
           syncPersistenceBadge(session.targetFrame);
+          syncOnionSkin();
           metrics.recordToggleLatency(now() - startedAt);
           return { accepted: true, enabled: true, restored: activation.restored };
         }
@@ -22431,6 +24066,7 @@ void main() {
                 hiddenObjectIds = /* @__PURE__ */ new Set();
                 lockedObjectIds = /* @__PURE__ */ new Set();
                 activeLayerDrawable = true;
+                onionSkinLayerViewRevision += 1;
               }
               if (passiveDisplaySession && passiveDisplaySession.stableVideoIdentity !== String(request?.stableVideoIdentity || "")) {
                 resetPassivePresentationState();
@@ -22445,6 +24081,7 @@ void main() {
                   else fabricCanvas.requestRenderAll();
                 }
               }
+              syncOnionSkin();
             }
             return result;
           } catch (_error) {
@@ -22517,6 +24154,7 @@ void main() {
               stableVideoIdentity: request.stableVideoIdentity,
               targetFrame: request.sourceFrame
             };
+            syncOnionSkin();
             return {
               accepted: true,
               targetFrame: request.targetFrame,
@@ -22560,6 +24198,7 @@ void main() {
           const preview = renderArmedFramePreview(stagedFrameState);
           if (!preview?.accepted) return preview;
           publishActiveFramePreview(stagedFrameState, preview);
+          syncOnionSkin();
           return {
             accepted: true,
             frameRevision: request.frameRevision,
@@ -22632,6 +24271,7 @@ void main() {
         function updateDrawingTool(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
           const normalized = { ...command, tool: command.tool === "V" ? "select" : command.tool };
+          const previousTool = normalizeFabricDrawingTool(currentSession?.tool);
           const result = sceneStore.updateTool(normalized);
           if (!result.accepted) {
             metrics.recordStaleMessageDrop();
@@ -22639,7 +24279,7 @@ void main() {
           }
           currentSession.tool = result.tool;
           setToolMode(result.tool);
-          return result;
+          return { ...result, previousTool };
         }
         function updateDrawingBrush(command = {}) {
           if (!inputEnabled) return { accepted: false, reason: "input-disabled" };
@@ -22669,6 +24309,8 @@ void main() {
           lockedObjectIds = toLayerViewObjectIds(command.lockedObjectIds);
           activeLayerDrawable = command.activeLayerDrawable !== false;
           layerHistoryBusy = command.layerHistoryBusy === true;
+          onionSkinLayerViewRevision += 1;
+          syncOnionSkin();
           syncTempErase();
           if (command.objectRanks !== void 0) {
             sceneStore.setObjectRanks?.({
@@ -22733,8 +24375,63 @@ void main() {
           setToolMode(result.tool);
           return result;
         }
+        function applyPassiveDrawingAction(command = {}) {
+          const stale = { applied: false, reason: "stale-session" };
+          if (inputEnabled || currentSession || command.sessionId !== null && command.sessionId !== void 0) {
+            return stale;
+          }
+          const stableVideoIdentity = String(command.stableVideoIdentity || "");
+          if (!stableVideoIdentity) return stale;
+          const action = command.action || command.type;
+          const isHistory = action === "undo" || action === "redo";
+          if (!isHistory && !FRAME_STRUCTURE_ACTIONS.has(action)) return stale;
+          if (typeof sceneStore.applyFrameOperation !== "function" || typeof sceneStore.applyPassiveStructuralHistory !== "function") {
+            return stale;
+          }
+          const frame = Number(command.targetFrame);
+          if (!isHistory && (!Number.isSafeInteger(frame) || frame < 0)) {
+            return { applied: false, reason: "invalid-action-target" };
+          }
+          if (!actionDeduper.accept(command.actionId)) {
+            metrics.recordDuplicateAction();
+            return { applied: false, duplicate: true };
+          }
+          const result = isHistory ? sceneStore.applyPassiveStructuralHistory({
+            direction: action,
+            stableVideoIdentity,
+            historyToken: command.historyToken
+          }) : sceneStore.applyFrameOperation({
+            operation: action,
+            frame,
+            stableVideoIdentity,
+            sourceWidth: command.sourceWidth,
+            sourceHeight: command.sourceHeight
+          });
+          if (!result.applied) {
+            actionDeduper.release?.(command.actionId);
+            return result;
+          }
+          if (result.keyframeSetChanged !== true) return { ...result, repainted: false };
+          const display = passiveDisplaySession;
+          if (display && display.stableVideoIdentity === stableVideoIdentity && Number.isSafeInteger(display.targetFrame) && typeof sceneStore.getHeldSceneFrame === "function") {
+            const sourceFrame = sceneStore.getHeldSceneFrame(stableVideoIdentity, display.targetFrame);
+            display.sourceFrame = sourceFrame;
+            presentationState.sourceFrame = sourceFrame;
+            presentationState.storeRevision = -1;
+            lastPaintedScene = sourceFrame === null ? null : { stableVideoIdentity, targetFrame: sourceFrame };
+            if (lastPaintedScene) {
+              repaintLastPaintedScene({ force: true, clearWhenMissing: true });
+            } else if (fabricCanvas) {
+              fabricCanvas.clear();
+              if (typeof fabricCanvas.renderAll === "function") fabricCanvas.renderAll();
+              else fabricCanvas.requestRenderAll();
+            }
+          }
+          return { ...result, repainted: true };
+        }
         function applyDrawingAction(command = {}) {
-          if (!inputEnabled || command.sessionId !== currentSession?.sessionId) {
+          if (!inputEnabled) return applyPassiveDrawingAction(command);
+          if (command.sessionId !== currentSession?.sessionId) {
             return { applied: false, reason: "stale-session" };
           }
           const action = command.action || command.type;
@@ -22807,6 +24504,11 @@ void main() {
             actionDeduper.release?.(command.actionId);
             return { applied: false, reason: retargeted?.reason || "retarget-failed" };
           }
+          if (FLIP_ACTIONS.has(action)) {
+            const result2 = flipSelection(FLIP_ACTIONS.get(action));
+            settleArmedFramePreview();
+            return result2.applied ? { ...result2, repainted: true } : result2;
+          }
           if (pendingLassoSelection) {
             if (action === "delete-selection") {
               const result2 = commitPendingLassoDelete();
@@ -22878,6 +24580,17 @@ void main() {
           return emptyDrawingV3Diagnostics(
             drawingV3ShadowRequested && customSceneStore ? "not-connected" : "disabled"
           );
+        }
+        function getSelectionTransformState() {
+          const target = fabricCanvas?.getActiveObject?.() || null;
+          const transformable = selectionAllowsTransform(target);
+          const pivot = transformable ? selectionPivotPoint(target) : null;
+          return {
+            transformable,
+            // 옮겨 둔 회전 중심점의 자리(그림 좌표). 한가운데가 축이면 null.
+            pivot: pivot ? { x: pivot.x, y: pivot.y } : null,
+            pivotGestureActive: !!pivotGesture
+          };
         }
         function getDiagnostics() {
           const scene = sceneStore.getDiagnostics();
@@ -22983,6 +24696,10 @@ void main() {
           updateDrawingTool,
           updateDrawingBrush,
           applyPalettePrefs,
+          applyOnionSkinPrefs,
+          updateOnionSkin,
+          getOnionSkinState,
+          getSelectionTransformState,
           updateDrawingLayerView,
           updateViewport,
           applyDrawingAction,
