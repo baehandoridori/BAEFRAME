@@ -225,7 +225,7 @@ test('composition playback follows actual buffer state while preserving user pla
 });
 
 test('native mpv overlay composition payload pauses and resumes with the primary video buffer', () => {
-  const player = { currentTime: 12.5, isPlaying: true, isBuffering: true };
+  const player = { engine: 'mpv', currentTime: 12.5, isPlaying: true, isBuffering: true };
   const rect = { left: 0, top: 0, width: 640, height: 360 };
   const overlayState = loadFunction('getMpvOverlayState', {
     videoPlayer: player,
@@ -235,6 +235,8 @@ test('native mpv overlay composition payload pauses and resumes with the primary
     elements: { videoWrapper: { getBoundingClientRect: () => rect }, drawingCanvas: { getBoundingClientRect: () => rect } },
     compositionLayerManager: { getMpvOverlayLayers: options => options },
     shouldSuppressLegacyDrawingForFabricPilot: () => true,
+    // mpv 재생에서는 구형 그림을 늘 한 장으로 합쳐 싣는다(v2.12.7-beta). 이 검사의 대상은 아니다.
+    getCompositedDrawingOverlayDataUrl: () => '',
     remoteStrokeOverlayForMpv: null,
     getFabricDrawingPilotViewport: () => null,
     serializeMpvOverlayMarkerHtml: () => '',
