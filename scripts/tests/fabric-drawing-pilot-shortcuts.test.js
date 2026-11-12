@@ -2671,6 +2671,136 @@ test('a passive Ctrl+Z queued before the panel opens is dropped once drawing sta
   assert.deepEqual(fallbacks, [], '열린 뒤의 실행취소는 다른 경로가 맡는다');
 });
 
+// 표식은 조작을 **요청한 때**의 전역 히스토리에 붙는다. 응답을 기다리는 사이 다른 전역
+// 작업(댓글 편집 등)이 있었다면 그쪽이 더 나중에 한 일이다. 응답이 온 때의 값을 붙이면
+// 먼저 한 프레임 조작이 "마지막으로 한 일"로 보여 Ctrl+Z 의 순서가 뒤집힌다.
+test('a global edit made while a passive frame operation is answering stays the latest action', async () => {
+  const pending = deferred();
+  const fallbacks = [];
+  const harness = createFrameOperationHarness({
+    onAction: request => (request.action === 'undo' || request.action === 'redo'
+      ? { success: true, applied: true, keyframeSetChanged: true }
+      : pending.promise),
+    onHistoryFallback: action => { fallbacks.push(action); return true; }
+  });
+  await preparePassive(harness);
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+  assert.equal(harness.calls.action.length, 1, '프레임 조작이 나갔고 아직 응답이 없다');
+  // 그 사이에 전역 작업이 하나 생겼다.
+  harness.advanceHistoryRevision();
+  pending.resolve({
+    success: true, applied: true, keyframeSetChanged: true, historyToken: 'frame-op:31'
+  });
+  await settle();
+
+  // 더 나중에 한 전역 작업이 먼저 되돌려져야 한다. 키를 가로채지 않고 전역으로 넘긴다.
+  const undo = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(undo), false);
+  assert.deepEqual(undo.calls, []);
+  await settle();
+  assert.equal(harness.calls.action.filter(request => request.action === 'undo').length, 0,
+    '먼저 한 프레임 조작을 되돌리지 않는다');
+  assert.deepEqual(fallbacks, []);
+});
+
+test('Ctrl+Z held for a passive frame operation undoes a later global edit instead', async () => {
+  const pending = deferred();
+  const fallbacks = [];
+  const harness = createFrameOperationHarness({
+    onAction: request => (request.action === 'undo' || request.action === 'redo'
+      ? { success: true, applied: true, keyframeSetChanged: true }
+      : pending.promise),
+    onHistoryFallback: action => { fallbacks.push(action); return true; }
+  });
+  await preparePassive(harness);
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+  // 프레임 조작의 응답을 기다리는 사이에 전역 작업을 하고, 이어서 Ctrl+Z 를 눌렀다.
+  harness.advanceHistoryRevision();
+  const undo = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(undo), true, '응답 전이라 키를 받아 둔다');
+  pending.resolve({
+    success: true, applied: true, keyframeSetChanged: true, historyToken: 'frame-op:32'
+  });
+  await settle();
+  await settle();
+
+  assert.equal(harness.calls.action.filter(request => request.action === 'undo').length, 0,
+    '먼저 한 프레임 조작을 되돌리지 않는다');
+  assert.deepEqual(fallbacks, ['undo'], '나중에 한 전역 작업을 되돌린다');
+});
+
+// 받아 둔 Ctrl+Z 는 **키를 누른 때** 무엇이 마지막으로 한 일이었는지로 판정한다. 누른 뒤에
+// 생긴 전역 작업은 그 Ctrl+Z 보다 나중의 일이다.
+test('Ctrl+Z held for a passive frame operation still undoes it when a global edit follows the key press', async () => {
+  const pending = deferred();
+  const fallbacks = [];
+  const harness = createFrameOperationHarness({
+    onAction: request => (request.action === 'undo' || request.action === 'redo'
+      ? { success: true, applied: true, keyframeSetChanged: true }
+      : pending.promise),
+    onHistoryFallback: action => { fallbacks.push(action); return true; }
+  });
+  await preparePassive(harness);
+
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('3', { code: 'Digit3' })), true);
+  await settle();
+  // 프레임 조작 바로 뒤에 Ctrl+Z 를 눌렀고(응답 전), 그 다음에 전역 작업이 생겼다.
+  const undo = createKeyEvent('z', { code: 'KeyZ', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(undo), true);
+  harness.advanceHistoryRevision();
+  pending.resolve({
+    success: true, applied: true, keyframeSetChanged: true, historyToken: 'frame-op:33'
+  });
+  await settle();
+  await settle();
+
+  const undoRequests = harness.calls.action.filter(request => request.action === 'undo');
+  assert.equal(undoRequests.length, 1, '누를 때 마지막으로 한 일이던 프레임 조작을 되돌린다');
+  assert.equal(undoRequests[0].historyToken, 'frame-op:33');
+  assert.deepEqual(fallbacks, [], '키를 누른 뒤에 생긴 전역 작업은 건드리지 않는다');
+
+  // 그 되돌리기 뒤에 새 전역 작업이 있었으므로 Ctrl+Y 는 그것을 다시 실행하지 않는다.
+  const redo = createKeyEvent('y', { code: 'KeyY', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(redo), false);
+  assert.deepEqual(redo.calls, []);
+});
+
+test('a global edit made while a passive undo is answering invalidates its redo mark', async () => {
+  const pendingUndo = deferred();
+  const harness = createFrameOperationHarness({
+    onAction: request => {
+      if (request.action === 'undo') return pendingUndo.promise;
+      if (request.action === 'redo') return { success: true, applied: true, keyframeSetChanged: true };
+      return { success: true, applied: true, keyframeSetChanged: true, historyToken: 'frame-op:41' };
+    }
+  });
+  await preparePassive(harness);
+  assert.equal(harness.controller.routeKeydown(createKeyEvent('2', { code: 'Digit2' })), true);
+  await settle();
+
+  assert.equal(
+    harness.controller.routeKeydown(createKeyEvent('z', { code: 'KeyZ', ctrlKey: true })),
+    true
+  );
+  await settle();
+  assert.equal(harness.calls.action.at(-1).action, 'undo', '되돌리기가 나갔고 아직 응답이 없다');
+  // 되돌리기의 응답을 기다리는 사이에 새 전역 작업이 생겼다. 새 작업 뒤에는 그 앞의
+  // 되돌리기를 다시 실행할 수 없다(전역 히스토리의 다시 실행도 새 작업에서 비워진다).
+  harness.advanceHistoryRevision();
+  pendingUndo.resolve({ success: true, applied: true, keyframeSetChanged: true });
+  await settle();
+
+  const redo = createKeyEvent('y', { code: 'KeyY', ctrlKey: true });
+  assert.equal(harness.controller.routeKeydown(redo), false);
+  assert.deepEqual(redo.calls, []);
+  await settle();
+  assert.equal(harness.calls.action.filter(request => request.action === 'redo').length, 0);
+});
+
 test('a rejected frame operation shortcut reports why it did nothing', async () => {
   const rejections = [];
   let answer = { success: false, applied: false, reason: 'timeline-full' };
