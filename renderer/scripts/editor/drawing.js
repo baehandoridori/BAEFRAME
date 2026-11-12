@@ -38,9 +38,11 @@ function rescaleRecordTransform(transform, sx, sy) {
     scaleX: transform.scaleX, scaleY: transform.scaleY, skewX: transform.skewX, skewY: transform.skewY,
     flipX: transform.flipX, flipY: transform.flipY
   })));
+  // 분해는 뒤집힌 획을 음수 세로 배율로 돌려준다. 레코드는 배율을 양수로, 뒤집힘을 flipY 로
+  // 적는다 — 음수 배율을 그대로 두면 뒤따르는 flipY(false)가 덮어 뒤집히지 않은 모양이 된다.
   Object.assign(transform, { left: scaled.translateX, top: scaled.translateY, angle: scaled.angle,
-    scaleX: scaled.scaleX, scaleY: scaled.scaleY, skewX: scaled.skewX, skewY: scaled.skewY,
-    flipX: false, flipY: false });
+    scaleX: scaled.scaleX, scaleY: Math.abs(scaled.scaleY), skewX: scaled.skewX, skewY: scaled.skewY,
+    flipX: false, flipY: scaled.scaleY < 0 });
 }
 function clipDocument(clip, project) {
   const geometry = projectGeometry(project);

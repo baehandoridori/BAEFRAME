@@ -14148,7 +14148,23 @@ void main() {
       var DEFAULT_MAX_OBJECTS = 1e4;
       var TRANSFORM_FIELDS = ["left", "top", "scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
       var NON_TRANSLATION_TRANSFORM_FIELDS = ["scaleX", "scaleY", "angle", "skewX", "skewY", "flipX", "flipY"];
-      var SELECTION_TRANSFORM_ACTIONS = /* @__PURE__ */ new Set(["scale", "scaleX", "scaleY", "rotate"]);
+      var SELECTION_TRANSFORM_ACTIONS = /* @__PURE__ */ new Set([
+        "scale",
+        "scaleX",
+        "scaleY",
+        "rotate",
+        "skewX",
+        "skewY",
+        "flip"
+      ]);
+      var SELECTION_PIVOT_ACTION = "pivot";
+      var SELECTION_ROTATE_ZONES = Object.freeze([
+        ["rotateTl", -0.5, -0.5],
+        ["rotateTr", 0.5, -0.5],
+        ["rotateBl", -0.5, 0.5],
+        ["rotateBr", 0.5, 0.5]
+      ]);
+      var SELECTION_ROTATE_ZONE_KEYS = new Set(SELECTION_ROTATE_ZONES.map(([key]) => key));
       var TRANSFORM_HANDLE_CSS_PX = 9;
       var TRANSFORM_TOUCH_HANDLE_CSS_PX = 26;
       var TRANSFORM_ROTATE_OFFSET_CSS_PX = 26;
@@ -14158,6 +14174,12 @@ void main() {
       var TRANSFORM_MIN_GESTURE_SCALE = 0.02;
       var TRANSFORM_MIN_RECORD_SCALE = 0.01;
       var TRANSFORM_MAX_RECORD_SCALE = 100;
+      var TRANSFORM_MAX_SKEW_DEGREES = 80;
+      var TRANSFORM_PIVOT_HANDLE_CSS_PX = 11;
+      var TRANSFORM_PIVOT_RADIUS_CSS_PX = 4.5;
+      var TRANSFORM_PIVOT_SNAP_CSS_PX = 6;
+      var TRANSFORM_CTRL_LATCH_FRESH_MS = 2500;
+      var RESIZE_CURSOR_DIRECTIONS = ["e", "se", "s", "sw", "w", "nw", "n", "ne"];
       var BRUSH_COLORS = Object.freeze([
         "#ff4757",
         "#ffd000",
@@ -14238,7 +14260,13 @@ void main() {
         "delete-selection",
         "clear-session",
         "undo",
-        "redo"
+        "redo",
+        "flip-horizontal",
+        "flip-vertical"
+      ]);
+      var FLIP_ACTIONS = /* @__PURE__ */ new Map([
+        ["flip-horizontal", "horizontal"],
+        ["flip-vertical", "vertical"]
       ]);
       var FRAME_STRUCTURE_ACTIONS = /* @__PURE__ */ new Map([
         ["frame-insert-blank-keyframe", "frame-insert-blank-keyframe"],
@@ -14414,6 +14442,46 @@ void main() {
         if (origin === "left" || origin === "top") return -0.5;
         if (origin === "right" || origin === "bottom") return 0.5;
         return 0;
+      }
+      function resizeCursorForDirection(dx, dy, angleDegrees = 0) {
+        if (!Number.isFinite(dx) || !Number.isFinite(dy) || !dx && !dy) return null;
+        const degrees = Math.atan2(dy, dx) * 180 / Math.PI + finiteNumber(angleDegrees);
+        const index = (Math.round(degrees / 45) % 8 + 8) % 8;
+        return `${RESIZE_CURSOR_DIRECTIONS[index]}-resize`;
+      }
+      function storedTransformFromDecomposition(decomposed, preferred = null, flippedField = null) {
+        let angle = (finiteNumber(decomposed?.angle) % 360 + 360) % 360;
+        let scaleY = finiteNumber(decomposed?.scaleY, 1);
+        const mirrored = scaleY < 0;
+        if (mirrored) scaleY = -scaleY;
+        let flipX = false;
+        let flipY = mirrored;
+        const preferredFlipX = preferred?.flipX === true;
+        const preferredMirrored = !!preferred && preferredFlipX !== (preferred.flipY === true);
+        let turnHalf;
+        if (preferred && preferredMirrored === mirrored) {
+          turnHalf = preferredFlipX;
+        } else if (preferred && (flippedField === "flipX" || flippedField === "flipY")) {
+          turnHalf = flippedField === "flipX" ? !preferredFlipX : preferredFlipX;
+        } else {
+          turnHalf = mirrored && angle > 90 && angle < 270;
+        }
+        if (turnHalf) {
+          angle = (angle + 180) % 360;
+          flipX = true;
+          flipY = !mirrored;
+        }
+        return {
+          left: finiteNumber(decomposed?.translateX),
+          top: finiteNumber(decomposed?.translateY),
+          scaleX: finiteNumber(decomposed?.scaleX, 1),
+          scaleY,
+          angle,
+          skewX: finiteNumber(decomposed?.skewX),
+          skewY: finiteNumber(decomposed?.skewY),
+          flipX,
+          flipY
+        };
       }
       function boundedInteger(value, min, max, fallback) {
         if (value === null || value === void 0 || value === "") return fallback;
@@ -17318,6 +17386,7 @@ void main() {
         let sizeAdjustHudLabel = null;
         let sizeAdjustHudTimer = null;
         const overlayModifierState = { alt: false, ctrl: false };
+        let overlayCtrlPressedAt = null;
         const gestureProbe = {
           overlayAltKeyDownCount: 0,
           overlayCtrlKeyDownCount: 0,
@@ -17386,6 +17455,12 @@ void main() {
         let selectionTransformControlsUnit = null;
         const ignoredModifiedTargets = /* @__PURE__ */ new WeakSet();
         const scaleGrabOffsets = /* @__PURE__ */ new WeakMap();
+        const skewStarts = /* @__PURE__ */ new WeakMap();
+        const selectionPivots = /* @__PURE__ */ new WeakMap();
+        let selectionPivotOwner = null;
+        const pivotGrabOffsets = /* @__PURE__ */ new WeakMap();
+        let pivotGesture = null;
+        let flipCommitField = null;
         let deferredViewport = null;
         let longTaskObserver = null;
         let localSequence = 0;
@@ -18096,6 +18171,60 @@ void main() {
             button.setAttribute?.("aria-pressed", "false");
             shapeGroup.appendChild(button);
           }
+          const flipGroup = documentRef.createElement("div");
+          flipGroup.dataset.fabricPilotGroup = "selection-flip";
+          flipGroup.setAttribute?.("role", "group");
+          flipGroup.setAttribute?.("aria-label", "\uB4A4\uC9D1\uAE30");
+          setStyles(flipGroup, {
+            display: "flex",
+            flexFlow: "row wrap",
+            alignItems: "center",
+            gap: "4px"
+          });
+          const flipLabel = documentRef.createElement("span");
+          flipLabel.dataset.fabricPilotLabel = "selection-flip";
+          flipLabel.textContent = "\uB4A4\uC9D1\uAE30";
+          setStyles(flipLabel, {
+            flex: "1 1 100%",
+            color: "rgba(255, 255, 255, 0.64)",
+            fontSize: "11px",
+            fontWeight: "600",
+            whiteSpace: "nowrap"
+          });
+          const flipButtons = /* @__PURE__ */ new Map([
+            ["flip-horizontal", labelToolbarButton(
+              createButton(paletteDocked ? "\uC88C\uC6B0 \uB4A4\uC9D1\uAE30" : "\uC88C\uC6B0", "flip-horizontal"),
+              "\uACE0\uB978 \uADF8\uB9BC\uC744 \uC88C\uC6B0\uB85C \uB4A4\uC9D1\uAE30"
+            )],
+            ["flip-vertical", labelToolbarButton(
+              createButton(paletteDocked ? "\uC0C1\uD558 \uB4A4\uC9D1\uAE30" : "\uC0C1\uD558", "flip-vertical"),
+              "\uACE0\uB978 \uADF8\uB9BC\uC744 \uC0C1\uD558\uB85C \uB4A4\uC9D1\uAE30"
+            )]
+          ]);
+          flipGroup.appendChild(flipLabel);
+          for (const [action, button] of flipButtons) {
+            button.disabled = true;
+            flipGroup.appendChild(button);
+            addDomListener(button, "click", () => {
+              applyDrawingAction({
+                sessionId: currentSession?.sessionId,
+                actionId: createId("flip"),
+                action
+              });
+            });
+          }
+          const transformHint = documentRef.createElement("span");
+          transformHint.dataset.fabricPilotOutput = "selection-transform-hint";
+          transformHint.textContent = "Ctrl+\uBCC0 \uC190\uC7A1\uC774: \uAE30\uC6B8\uC774\uAE30\nCtrl+\uD074\uB9AD: \uD68C\uC804 \uC911\uC2EC\uC810";
+          setStyles(transformHint, {
+            display: "none",
+            minWidth: "0",
+            color: "rgba(255, 255, 255, 0.64)",
+            fontSize: "10px",
+            lineHeight: "1.5",
+            whiteSpace: "pre-line",
+            wordBreak: "keep-all"
+          });
           const summary = documentRef.createElement("span");
           summary.dataset.fabricPilotOutput = "selection-summary";
           summary.setAttribute?.("role", "status");
@@ -18109,6 +18238,8 @@ void main() {
           });
           group.appendChild(targetGroup);
           group.appendChild(shapeGroup);
+          group.appendChild(flipGroup);
+          group.appendChild(transformHint);
           group.appendChild(summary);
           const bindSelectionControl = (button, action) => {
             addDomListener(button, "pointerdown", (event) => {
@@ -18125,10 +18256,22 @@ void main() {
             group,
             targetGroup,
             shapeGroup,
+            flipGroup,
             targetButtons,
             shapeButtons,
+            flipButtons,
+            transformHint,
             summary
           };
+        }
+        function syncSelectionFlipControls() {
+          if (!selectionControls?.flipButtons) return;
+          const enabled = selectionAllowsTransform(fabricCanvas?.getActiveObject?.());
+          for (const button of selectionControls.flipButtons.values()) {
+            button.disabled = !enabled;
+            button.setAttribute?.("aria-disabled", String(!enabled));
+          }
+          setStyles(selectionControls.transformHint, { display: enabled ? "block" : "none" });
         }
         function setOutlineEnabled(enabled) {
           outlineStyle = { ...outlineStyle, enabled: enabled === true };
@@ -18943,14 +19086,271 @@ void main() {
           const sin = Math.sin(radians);
           return { x: x2 + dx * cos - dy * sin, y: y2 + dx * sin + dy * cos };
         }
+        function selectionBoxSize(object) {
+          try {
+            const size = object?._getTransformedDimensions?.();
+            return { x: finiteNumber(size?.x), y: finiteNumber(size?.y) };
+          } catch (_error) {
+            return { x: 0, y: 0 };
+          }
+        }
+        function selectionMatrix(object) {
+          if (typeof object?.calcTransformMatrix !== "function") return null;
+          try {
+            const matrix = Array.from(object.calcTransformMatrix(), Number);
+            return matrix.length >= 6 && matrix.every(Number.isFinite) ? matrix : null;
+          } catch (_error) {
+            return null;
+          }
+        }
+        function selectionPivotPoint(object) {
+          const pivot = object ? selectionPivots.get(object) : null;
+          const matrix = pivot ? selectionMatrix(object) : null;
+          if (!matrix) return null;
+          return {
+            x: matrix[0] * pivot.x + matrix[2] * pivot.y + matrix[4],
+            y: matrix[1] * pivot.x + matrix[3] * pivot.y + matrix[5]
+          };
+        }
+        function clearSelectionPivot(object = selectionPivotOwner) {
+          if (!object) return;
+          selectionPivots.delete(object);
+          if (selectionPivotOwner === object) selectionPivotOwner = null;
+        }
+        function setSelectionPivotPoint(object, point, snapDistance = 0) {
+          if (!object || typeof object.getRelativeCenterPoint !== "function" || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+            return false;
+          }
+          const center = object.getRelativeCenterPoint();
+          if (Math.hypot(point.x - center.x, point.y - center.y) <= snapDistance) {
+            clearSelectionPivot(object);
+            return true;
+          }
+          const matrix = selectionMatrix(object);
+          const determinant = matrix ? matrix[0] * matrix[3] - matrix[1] * matrix[2] : 0;
+          if (!matrix || !(Math.abs(determinant) > 1e-12)) {
+            clearSelectionPivot(object);
+            return true;
+          }
+          const dx = point.x - matrix[4];
+          const dy = point.y - matrix[5];
+          const pivot = {
+            x: (matrix[3] * dx - matrix[2] * dy) / determinant,
+            y: (matrix[0] * dy - matrix[1] * dx) / determinant
+          };
+          if (!Number.isFinite(pivot.x) || !Number.isFinite(pivot.y) || !pivot.x && !pivot.y) {
+            clearSelectionPivot(object);
+            return true;
+          }
+          if (selectionPivotOwner && selectionPivotOwner !== object) {
+            selectionPivots.delete(selectionPivotOwner);
+          }
+          selectionPivots.set(object, pivot);
+          selectionPivotOwner = object;
+          return true;
+        }
+        function dropSelectionPivot() {
+          clearSelectionPivot(selectionPivotOwner);
+        }
+        function keepSelectionPivot(target, reselect) {
+          const kept = selectionPivotPoint(target);
+          reselect();
+          const active = fabricCanvas?.getActiveObject?.();
+          if (!kept || !active || active === target) return;
+          if (setSelectionPivotPoint(active, kept)) {
+            active.setCoords?.();
+            fabricCanvas?.requestRenderAll();
+          }
+        }
+        function placeSelectionPivot(target, point) {
+          if (!target || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+          let x2 = point.x;
+          let y2 = point.y;
+          const width = finiteNumber(currentSession?.sourceWidth);
+          const height = finiteNumber(currentSession?.sourceHeight);
+          if (width > 0 && height > 0) {
+            x2 = Math.min(width, Math.max(0, x2));
+            y2 = Math.min(height, Math.max(0, y2));
+          }
+          const unit = resolveSourcePerCssPixel(currentSession || {});
+          if (!setSelectionPivotPoint(target, { x: x2, y: y2 }, TRANSFORM_PIVOT_SNAP_CSS_PX * unit)) return false;
+          target.setCoords?.();
+          fabricCanvas?.requestRenderAll();
+          return true;
+        }
+        function pivotPlacementTarget(event) {
+          if (!inputEnabled || !fabricCanvas || !isTransformCtrlActive(event)) return null;
+          const target = fabricCanvas.getActiveObject?.();
+          if (!target || target.lockRotation || target.hasControls !== true || !selectionAllowsTransform(target)) {
+            return null;
+          }
+          let handle = null;
+          try {
+            const point = fabricCanvas.getViewportPoint?.(event);
+            handle = point && typeof target.findControl === "function" ? target.findControl(point, event?.pointerType === "touch") : null;
+          } catch (_error) {
+            handle = null;
+          }
+          return handle && !SELECTION_ROTATE_ZONE_KEYS.has(handle.key) ? null : target;
+        }
+        function pivotGestureTarget(event) {
+          return event?.button === 0 ? pivotPlacementTarget(event) : null;
+        }
+        function onCanvasMouseMove(event) {
+          const pointerEvent = event?.e;
+          if (!pointerEvent || pointerEvent.buttons || pivotGesture) return;
+          if (pivotPlacementTarget(pointerEvent)) fabricCanvas?.setCursor?.("crosshair");
+        }
+        function updatePivotGesture(event) {
+          const gesture = pivotGesture;
+          if (!gesture) return false;
+          if (fabricCanvas?.getActiveObject?.() !== gesture.target) {
+            endPivotGesture(event);
+            return false;
+          }
+          let point = null;
+          try {
+            point = fabricCanvas.getScenePoint?.(event) || null;
+          } catch (_error) {
+          }
+          return placeSelectionPivot(gesture.target, point);
+        }
+        function beginPivotGesture(event, target) {
+          pivotGesture = { pointerId: event.pointerId, target };
+          try {
+            event.currentTarget?.setPointerCapture?.(event.pointerId);
+          } catch (_error) {
+          }
+          updatePivotGesture(event);
+          event.preventDefault?.();
+          event.stopImmediatePropagation?.();
+        }
+        function endPivotGesture(event) {
+          const gesture = pivotGesture;
+          pivotGesture = null;
+          if (!gesture) return false;
+          releasePointerCapture(
+            event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+            gesture.pointerId
+          );
+          settleArmedFramePreview();
+          return true;
+        }
+        function captureSkewStart(transform, axis, control) {
+          const target = transform?.target;
+          const { util } = resolveFabric();
+          if (typeof util?.calcDimensionsMatrix !== "function" || typeof target?.getRelativeCenterPoint !== "function") {
+            return null;
+          }
+          const size = selectionBoxSize(target);
+          const side = Math.sign(finiteNumber(axis === "x" ? control?.y : control?.x));
+          const reach = side * (axis === "x" ? size.y : size.x);
+          if (!side || !(Math.abs(reach) > 1e-6)) return null;
+          let shape;
+          try {
+            shape = util.calcDimensionsMatrix({
+              scaleX: target.scaleX,
+              scaleY: target.scaleY,
+              flipX: target.flipX === true,
+              flipY: target.flipY === true,
+              skewX: finiteNumber(target.skewX),
+              skewY: finiteNumber(target.skewY)
+            });
+          } catch (_error) {
+            return null;
+          }
+          const [a2, b2, c2, d2] = Array.from(shape, Number);
+          const determinant = a2 * d2 - b2 * c2;
+          if (![a2, b2, c2, d2].every(Number.isFinite) || !(Math.abs(determinant) > 1e-12) || !(Math.abs(d2) > 1e-12)) {
+            return null;
+          }
+          const radians = finiteNumber(target.angle) * Math.PI / 180;
+          const center = target.getRelativeCenterPoint();
+          return {
+            reach,
+            cos: Math.cos(radians),
+            sin: Math.sin(radians),
+            a: a2,
+            b: b2,
+            c: c2,
+            d: d2,
+            determinant,
+            // 가로로만 밀면 가로 크기는 바뀌지 않는다. 걸음마다 다시 나누지 않고 여기서 정한다.
+            scaleX: determinant / d2,
+            centerX: center.x,
+            centerY: center.y
+          };
+        }
+        function skewSelection(transform, x2, y2, axis, control) {
+          const target = transform?.target;
+          if (!target || target[axis === "x" ? "lockSkewingX" : "lockSkewingY"]) return false;
+          let start = skewStarts.get(transform);
+          if (start === void 0) {
+            start = captureSkewStart(transform, axis, control);
+            skewStarts.set(transform, start);
+          }
+          if (!start) return false;
+          const dx = x2 - finiteNumber(transform.ex);
+          const dy = y2 - finiteNumber(transform.ey);
+          const along = axis === "x" ? dx * start.cos + dy * start.sin : -dx * start.sin + dy * start.cos;
+          const shear = along / start.reach;
+          if (!Number.isFinite(shear)) return false;
+          const withinSkew = (degrees) => Number.isFinite(degrees) && Math.abs(degrees) <= TRANSFORM_MAX_SKEW_DEGREES;
+          const next = {};
+          if (axis === "x") {
+            next.skewX = Math.atan((start.c + shear * start.d) / start.scaleX) * 180 / Math.PI;
+            if (!withinSkew(next.skewX)) return false;
+          } else if (start.c === 0) {
+            next.skewY = Math.atan((start.b + shear * start.a) / start.d) * 180 / Math.PI;
+            if (!withinSkew(next.skewY)) return false;
+          } else {
+            const b2 = start.b + shear * start.a;
+            const d2 = start.d + shear * start.c;
+            if (!(Math.abs(d2) > 1e-12)) return false;
+            const scaleX = start.determinant / d2;
+            const withinScale = (scale) => Number.isFinite(scale) && Math.abs(scale) >= TRANSFORM_MIN_GESTURE_SCALE && Math.abs(scale) <= TRANSFORM_MAX_RECORD_SCALE;
+            next.skewX = Math.atan(start.c / scaleX) * 180 / Math.PI;
+            next.skewY = Math.atan(b2 / d2) * 180 / Math.PI;
+            if (!withinScale(scaleX) || !withinScale(d2) || !withinSkew(next.skewX) || !withinSkew(next.skewY)) {
+              return false;
+            }
+            next.flipX = scaleX < 0;
+            next.flipY = d2 < 0;
+            next.scaleX = Math.abs(scaleX);
+            next.scaleY = Math.abs(d2);
+          }
+          const { Point } = resolveFabric();
+          if (typeof Point !== "function" || typeof target.setPositionByOrigin !== "function") return false;
+          const before = captureTransform(target);
+          target.set(next);
+          const half = along / 2;
+          target.setPositionByOrigin(new Point(
+            start.centerX + (axis === "x" ? half * start.cos : -half * start.sin),
+            start.centerY + (axis === "x" ? half * start.sin : half * start.cos)
+          ), "center", "center");
+          return TRANSFORM_FIELDS.some((field) => before[field] !== target[field]);
+        }
         function createSelectionTransformControls(unit) {
-          const { Control, controlsUtils } = resolveFabric();
+          const { Control, Point, controlsUtils } = resolveFabric();
           if (typeof Control !== "function" || typeof controlsUtils?.createObjectDefaultControls !== "function" || typeof controlsUtils.rotationWithSnapping !== "function") {
             return null;
           }
           const rotate = (eventData, transform, x2, y2) => {
-            if (transform?.target) {
-              transform.target.snapAngle = eventData?.shiftKey === true ? TRANSFORM_ROTATE_SNAP_DEGREES : void 0;
+            const target = transform?.target;
+            if (target) {
+              target.snapAngle = eventData?.shiftKey === true ? TRANSFORM_ROTATE_SNAP_DEGREES : void 0;
+              const pivot = selectionPivotPoint(target);
+              const size = pivot ? selectionBoxSize(target) : null;
+              if (pivot && size.x > 1e-6 && size.y > 1e-6 && typeof target.getRelativeCenterPoint === "function") {
+                const center = target.getRelativeCenterPoint();
+                const radians = finiteNumber(target.angle) * Math.PI / 180;
+                const cos = Math.cos(radians);
+                const sin = Math.sin(radians);
+                const dx = pivot.x - center.x;
+                const dy = pivot.y - center.y;
+                transform.originX = 0.5 + (dx * cos + dy * sin) / size.x;
+                transform.originY = 0.5 + (-dx * sin + dy * cos) / size.y;
+              }
             }
             return controlsUtils.rotationWithSnapping(eventData, transform, x2, y2);
           };
@@ -18960,12 +19360,8 @@ void main() {
           const touchZone = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit + reach;
           const zoneOffset = reach / 2;
           const controls = {};
-          for (const [key, x2, y2] of [
-            ["rotateTl", -0.5, -0.5],
-            ["rotateTr", 0.5, -0.5],
-            ["rotateBl", -0.5, 0.5],
-            ["rotateBr", 0.5, 0.5]
-          ]) {
+          const rotateZoneCursor = (eventData, control, fabricObject) => !fabricObject?.lockRotation && isTransformCtrlActive(eventData) ? "crosshair" : rotateCursor(eventData, control, fabricObject);
+          for (const [key, x2, y2] of SELECTION_ROTATE_ZONES) {
             controls[key] = new Control({
               x: x2,
               y: y2,
@@ -18976,7 +19372,7 @@ void main() {
               touchSizeX: touchZone,
               touchSizeY: touchZone,
               actionHandler: rotate,
-              cursorStyleHandler: rotateCursor,
+              cursorStyleHandler: rotateZoneCursor,
               actionName: "rotate",
               render: () => {
               }
@@ -18984,11 +19380,40 @@ void main() {
           }
           const scaleControls = controlsUtils.createObjectDefaultControls();
           const grabLimit = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+          const totalAngle = (fabricObject) => finiteNumber(
+            typeof fabricObject?.getTotalAngle === "function" ? fabricObject.getTotalAngle() : fabricObject?.angle
+          );
           for (const control of Object.values(scaleControls)) {
             const scale = control.actionHandler;
             if (typeof scale !== "function") continue;
+            const skewAxis = control.x === 0 && control.y !== 0 ? "x" : control.x !== 0 && control.y === 0 ? "y" : null;
+            const skewAction = skewAxis === "x" ? "skewX" : "skewY";
+            const skewLock = skewAxis === "x" ? "lockSkewingX" : "lockSkewingY";
+            const wantsSkew = (eventData, fabricObject) => !!skewAxis && fabricObject?.[skewLock] !== true && isTransformCtrlActive(eventData);
+            const skewStep = (_eventData, transform, x2, y2) => skewSelection(transform, x2, y2, skewAxis, control);
+            const skew = typeof controlsUtils.wrapWithFireEvent === "function" ? controlsUtils.wrapWithFireEvent("skewing", skewStep) : skewStep;
+            const baseActionName = control.getActionName;
+            control.getActionName = (eventData, handle, fabricObject) => wantsSkew(eventData, fabricObject) ? skewAction : typeof baseActionName === "function" ? baseActionName.call(control, eventData, handle, fabricObject) : control.actionName;
+            const baseCursor = control.cursorStyleHandler;
+            control.cursorStyleHandler = (eventData, handle, fabricObject, coord) => {
+              const fallback = typeof baseCursor === "function" ? baseCursor.call(control, eventData, handle, fabricObject, coord) : control.cursorStyle;
+              if (fallback === "not-allowed") return fallback;
+              const cursor = wantsSkew(eventData, fabricObject) ? resizeCursorForDirection(
+                skewAxis === "x" ? 1 : 0,
+                skewAxis === "x" ? 0 : 1,
+                totalAngle(fabricObject)
+              ) : resizeCursorForDirection(
+                Math.sign(control.x),
+                Math.sign(control.y),
+                totalAngle(fabricObject)
+              );
+              return cursor || fallback;
+            };
             control.actionHandler = (eventData, transform, x2, y2) => {
               const target = transform?.target;
+              if (skewAxis && transform?.action === skewAction) {
+                return skew(eventData, transform, x2, y2);
+              }
               if (!target) return scale(eventData, transform, x2, y2);
               const pointer = resolveScalePointer(transform, control, x2, y2, grabLimit);
               if (!pointer) return scale(eventData, transform, x2, y2);
@@ -19011,6 +19436,69 @@ void main() {
             withConnection: true,
             actionName: "rotate"
           });
+          if (typeof Point !== "function") return controls;
+          const movePivot = (_eventData, transform, x2, y2) => {
+            const target = transform?.target;
+            if (!target) return false;
+            let grab = pivotGrabOffsets.get(transform);
+            if (!grab) {
+              const held = selectionPivotPoint(target) || target.getRelativeCenterPoint?.();
+              grab = {
+                x: finiteNumber(transform.ex) - finiteNumber(held?.x),
+                y: finiteNumber(transform.ey) - finiteNumber(held?.y)
+              };
+              if (!held || !(Math.hypot(grab.x, grab.y) <= grabLimit)) grab = { x: 0, y: 0 };
+              pivotGrabOffsets.set(transform, grab);
+            }
+            placeSelectionPivot(target, { x: x2 - grab.x, y: y2 - grab.y });
+            return false;
+          };
+          const pivotSize = TRANSFORM_PIVOT_HANDLE_CSS_PX * unit;
+          const pivotTouchSize = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+          const pivotRadius = TRANSFORM_PIVOT_RADIUS_CSS_PX * unit;
+          controls.pivot = new Control({
+            x: 0,
+            y: 0,
+            sizeX: pivotSize,
+            sizeY: pivotSize,
+            touchSizeX: pivotTouchSize,
+            touchSizeY: pivotTouchSize,
+            actionHandler: movePivot,
+            actionName: SELECTION_PIVOT_ACTION,
+            cursorStyle: "crosshair",
+            // 중심점의 자리(그림 좌표)를 화면 좌표로 옮긴다. 옮겨 둔 것이 없으면 상자의
+            // 한가운데다(그때는 보이지도 잡히지도 않는다).
+            positionHandler(_dim, finalMatrix, fabricObject) {
+              const pivot = selectionPivotPoint(fabricObject);
+              const viewport = pivot && typeof fabricObject?.getViewportTransform === "function" ? fabricObject.getViewportTransform() : null;
+              return viewport ? new Point(pivot.x, pivot.y).transform(viewport) : new Point(0, 0).transform(finalMatrix);
+            },
+            // 옮겨 둔 중심점이 있을 때만 보이고 잡힌다. 한가운데가 축인 동안에는 아무것도
+            // 띄우지 않는다 — 획의 한가운데를 잡아 옮기는 것을 가로채면 안 된다.
+            getVisibility(fabricObject) {
+              return !!fabricObject && fabricObject.lockRotation !== true && selectionPivots.has(fabricObject);
+            },
+            render(ctx, left, top) {
+              if (!ctx) return;
+              ctx.save();
+              ctx.translate(left, top);
+              ctx.beginPath();
+              ctx.arc(0, 0, pivotRadius, 0, Math.PI * 2);
+              ctx.fillStyle = "#ffffff";
+              ctx.fill();
+              ctx.lineWidth = Math.max(1, TRANSFORM_BORDER_CSS_PX * unit);
+              ctx.strokeStyle = "#1b1b1e";
+              ctx.stroke();
+              const arm = pivotRadius * 0.55;
+              ctx.beginPath();
+              ctx.moveTo(-arm, 0);
+              ctx.lineTo(arm, 0);
+              ctx.moveTo(0, -arm);
+              ctx.lineTo(0, arm);
+              ctx.stroke();
+              ctx.restore();
+            }
+          });
           return controls;
         }
         function resolveSelectionTransformControls(unit) {
@@ -19027,11 +19515,12 @@ void main() {
             hasControls: true,
             lockScalingX: false,
             lockScalingY: false,
-            // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다.
+            // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다. 뒤집기는 팔레트의 버튼으로 한다.
             lockScalingFlip: true,
             lockRotation: false,
-            lockSkewingX: true,
-            lockSkewingY: true,
+            // 기울이기는 Ctrl + 변 손잡이다(skewSelection). fabric 의 기울이기 키는 꺼 두었다.
+            lockSkewingX: false,
+            lockSkewingY: false,
             minScaleLimit: TRANSFORM_MIN_GESTURE_SCALE,
             transparentCorners: false,
             cornerStyle: "rect",
@@ -19046,7 +19535,7 @@ void main() {
           if (controls) activeObject.controls = controls;
           return true;
         }
-        function absoluteObjectTransform(object) {
+        function absoluteObjectTransform(object, preferred = null) {
           if (!object) return null;
           if (!object.group || typeof object.calcTransformMatrix !== "function") {
             return captureTransform(object);
@@ -19059,19 +19548,7 @@ void main() {
           } catch (_error) {
             return null;
           }
-          const angle = (finiteNumber(decomposed.angle) % 360 + 360) % 360;
-          return {
-            left: finiteNumber(decomposed.translateX),
-            top: finiteNumber(decomposed.translateY),
-            scaleX: finiteNumber(decomposed.scaleX, 1),
-            scaleY: finiteNumber(decomposed.scaleY, 1),
-            angle,
-            skewX: finiteNumber(decomposed.skewX),
-            skewY: finiteNumber(decomposed.skewY),
-            // 뒤집힘은 분해에서 음수 배율로 나온다.
-            flipX: false,
-            flipY: false
-          };
+          return storedTransformFromDecomposition(decomposed, preferred, flipCommitField);
         }
         function selectionTransformIsStorable(transform) {
           if (!validatePersistedTransform(transform)) return false;
@@ -19151,7 +19628,7 @@ void main() {
           for (const object of [...children, ...outlineObjects]) {
             const id = object?.__baeframeObjectId;
             const stored = id ? storedTransforms.get(id) : null;
-            const transform = objectMatchesStoredTransform(object, stored) ? clonePlain2(stored) : absoluteObjectTransform(object);
+            const transform = objectMatchesStoredTransform(object, stored) ? clonePlain2(stored) : absoluteObjectTransform(object, stored);
             if (!id || !transform || !selectionTransformIsStorable(transform)) {
               return { applied: false, reason: "invalid-selection-transform" };
             }
@@ -19161,10 +19638,48 @@ void main() {
           if (!result.applied) return result;
           transformStart = null;
           ignoreLateModifiedEvents(target);
-          renderActiveScene({ immediate: true });
-          activateObjectIds(ids);
+          keepSelectionPivot(target, () => {
+            renderActiveScene({ immediate: true });
+            activateObjectIds(ids);
+          });
           updateObjectMetric();
           return { applied: true, objectIds: result.objectIds };
+        }
+        function flipSelection(direction) {
+          const target = fabricCanvas?.getActiveObject?.();
+          if (!target || !selectionAllowsTransform(target)) {
+            return { applied: false, reason: "no-transformable-selection" };
+          }
+          if (selectGesture || activeLasso || fabricCanvas._currentTransform) {
+            return { applied: false, reason: "selection-busy" };
+          }
+          onBeforeTransform({ transform: { target, action: "flip" } });
+          if (transformStart?.target !== target) {
+            return { applied: false, reason: "selection-changed" };
+          }
+          const horizontal = direction !== "vertical";
+          const flipField = horizontal ? "flipX" : "flipY";
+          const angle = (finiteNumber(target.angle) % 360 + 360) % 360;
+          target.set({ [flipField]: target[flipField] !== true, angle: angle ? 360 - angle : 0 });
+          target.setCoords?.();
+          let result;
+          flipCommitField = flipField;
+          try {
+            if (pendingLassoSelection) {
+              result = commitPendingLassoTransform(target);
+            } else {
+              const children = typeof target.getObjects === "function" ? target.getObjects() : [target];
+              const ids = children.map((object) => object.__baeframeObjectId).filter(Boolean);
+              sceneStore.selectObjects(ids);
+              result = commitSelectionTransform(target, children, ids);
+              if (!result.applied) rollbackSelectTransform(void 0, false);
+            }
+          } finally {
+            flipCommitField = null;
+          }
+          transformStart = null;
+          if (result.applied) updateObjectMetric();
+          return result;
         }
         function isLayerRestricted(objectId) {
           return typeof objectId === "string" && (hiddenObjectIds.has(objectId) || lockedObjectIds.has(objectId));
@@ -19258,7 +19773,7 @@ void main() {
           activeFrameState.previewed = false;
         }
         function activeFrameInteractionInProgress() {
-          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
+          return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || transformStart || sizeAdjustGesture || pivotGesture || strokeEraseGesture || shapeGesture);
         }
         function renderedCandidateMatches(candidate) {
           return candidate.sourceFrame === activeFrameState.renderedSourceFrame && candidate.sceneInstanceId === activeFrameState.renderedSceneInstanceId && candidate.mutationSequence === activeFrameState.renderedMutationSequence;
@@ -20718,8 +21233,10 @@ void main() {
           }
           pendingLassoSelection = null;
           ignoreLateModifiedEvents(activeTarget);
-          renderActiveScene();
-          activateObjectIds(selectedObjectIds);
+          keepSelectionPivot(activeTarget, () => {
+            renderActiveScene();
+            activateObjectIds(selectedObjectIds);
+          });
           updateObjectMetric();
           return { ...result, selectedObjectIds };
         }
@@ -20756,7 +21273,7 @@ void main() {
             const id = object?.__baeframeObjectId;
             const stored = id ? stagedTransforms.get(id) : null;
             const unchanged = objectMatchesStoredTransform(object, stored);
-            const transform = unchanged ? clonePlain2(stored) : absoluteObjectTransform(object);
+            const transform = unchanged ? clonePlain2(stored) : absoluteObjectTransform(object, stored);
             if (!id || !transform || !selectionTransformIsStorable(transform)) {
               abandonPendingLassoCommit(activeTarget);
               return { applied: false, reason: "invalid-selection-transform" };
@@ -20781,8 +21298,10 @@ void main() {
           }
           pendingLassoSelection = null;
           ignoreLateModifiedEvents(activeTarget);
-          renderActiveScene({ immediate: true });
-          activateObjectIds(selectedObjectIds);
+          keepSelectionPivot(activeTarget, () => {
+            renderActiveScene({ immediate: true });
+            activateObjectIds(selectedObjectIds);
+          });
           updateObjectMetric();
           return { ...result, selectedObjectIds };
         }
@@ -21423,6 +21942,11 @@ void main() {
           if (event?.pointerType === "mouse") return false;
           return overlayModifierState.ctrl === true;
         }
+        function isTransformCtrlActive(event) {
+          if (event?.ctrlKey === true) return true;
+          if (event?.pointerType === "mouse" || overlayModifierState.ctrl !== true) return false;
+          return Number.isFinite(overlayCtrlPressedAt) && now() - overlayCtrlPressedAt <= TRANSFORM_CTRL_LATCH_FRESH_MS;
+        }
         function recordPointerdownProbe(event) {
           gestureProbe.lastPointerdown = {
             pointerType: typeof event?.pointerType === "string" ? event.pointerType : null,
@@ -21438,11 +21962,15 @@ void main() {
         function syncOverlayModifierStateFromPointer(event) {
           if (event?.pointerType !== "mouse") return;
           if (event.altKey !== true) overlayModifierState.alt = false;
-          if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
+          if (event.ctrlKey !== true) {
+            overlayModifierState.ctrl = false;
+            overlayCtrlPressedAt = null;
+          }
         }
         function resetOverlayModifierState() {
           overlayModifierState.alt = false;
           overlayModifierState.ctrl = false;
+          overlayCtrlPressedAt = null;
         }
         function onOverlayKeyDown(event) {
           if (event?.key === "Alt") {
@@ -21452,6 +21980,7 @@ void main() {
           }
           if (event?.key === "Control") {
             overlayModifierState.ctrl = true;
+            overlayCtrlPressedAt = now();
             gestureProbe.overlayCtrlKeyDownCount += 1;
             syncTempErase();
           }
@@ -21467,6 +21996,7 @@ void main() {
           }
           if (event?.key === "Control") {
             overlayModifierState.ctrl = false;
+            overlayCtrlPressedAt = null;
             syncTempErase();
           }
         }
@@ -21479,6 +22009,7 @@ void main() {
           endTextEntry();
           syncTempErase();
           endSizeAdjustGesture(event);
+          endPivotGesture(event);
           cancelStrokeEraseGesture(event);
           cancelShapeGesture();
           onPointerCancel(event);
@@ -22365,7 +22896,14 @@ void main() {
             beginSizeAdjustGesture(event);
             return;
           }
-          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
+          if (!pivotGesture && !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture && !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
+            const pivotTarget = pivotGestureTarget(event);
+            if (pivotTarget) {
+              beginPivotGesture(event, pivotTarget);
+              return;
+            }
+          }
+          if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || pivotGesture || activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
             return;
           }
           if (!activeLayerDrawable && sceneStore.getDiagnostics().tool !== "select") {
@@ -22486,6 +23024,12 @@ void main() {
             event.preventDefault?.();
             return;
           }
+          if (pivotGesture) {
+            if (event.pointerId !== pivotGesture.pointerId) return;
+            updatePivotGesture(event);
+            event.preventDefault?.();
+            return;
+          }
           if (consumePendingPointerEvent(event)) return;
           if (strokeEraseGesture) {
             if (event.pointerId !== strokeEraseGesture.pointerId) return;
@@ -22526,6 +23070,13 @@ void main() {
           if (sizeAdjustGesture) {
             if (event.pointerId !== sizeAdjustGesture.pointerId) return;
             endSizeAdjustGesture(event);
+            event.preventDefault?.();
+            return;
+          }
+          if (pivotGesture) {
+            if (event.pointerId !== pivotGesture.pointerId) return;
+            updatePivotGesture(event);
+            endPivotGesture(event);
             event.preventDefault?.();
             return;
           }
@@ -22582,6 +23133,11 @@ void main() {
             endSizeAdjustGesture(event);
             return;
           }
+          if (pivotGesture) {
+            if (event.pointerId !== void 0 && event.pointerId !== pivotGesture.pointerId) return;
+            endPivotGesture(event);
+            return;
+          }
           if (strokeEraseGesture) {
             if (event.pointerId !== void 0 && event.pointerId !== strokeEraseGesture.pointerId) return;
             cancelStrokeEraseGesture(event);
@@ -22629,6 +23185,10 @@ void main() {
             onPointerUp(event);
             return;
           }
+          if (pivotGesture && event.pointerId === pivotGesture.pointerId) {
+            onPointerUp(event);
+            return;
+          }
           if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
             onPointerUp(event);
             return;
@@ -22651,6 +23211,10 @@ void main() {
         function onDocumentPointerCancel(event) {
           if (viewportPanInput?.cancel(event)) return;
           if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+            onPointerCancel(event);
+            return;
+          }
+          if (pivotGesture && event.pointerId === pivotGesture.pointerId) {
             onPointerCancel(event);
             return;
           }
@@ -22679,10 +23243,13 @@ void main() {
         }
         function reselectMovedMultiSelection(target, selectedIds) {
           ignoreLateModifiedEvents(target);
-          renderActiveScene({ immediate: true });
-          activateObjectIds(selectedIds);
+          keepSelectionPivot(target, () => {
+            renderActiveScene({ immediate: true });
+            activateObjectIds(selectedIds);
+          });
         }
         function onSelectionChanged() {
+          dropSelectionPivot();
           if (preservingPendingLassoSelectionEvent) return;
           if (pendingLassoSelection && !pendingTargetMatches(fabricCanvas?.getActiveObject?.(), pendingLassoSelection.selectedIds)) {
             abortPendingLassoSelection();
@@ -22692,6 +23259,7 @@ void main() {
           sceneStore.selectObjects(selectionIds());
         }
         function onSelectionCleared() {
+          dropSelectionPivot();
           if (preservingPendingLassoSelectionEvent) return;
           if (pendingLassoSelection) {
             abortPendingLassoSelection();
@@ -22935,6 +23503,7 @@ void main() {
           addDomListener(documentRef, "keyup", onOverlayKeyUp, true);
           addDomListener(windowRef, "blur", onOverlayWindowBlur);
           addFabricListener("mouse:down", onCanvasMouseDown);
+          addFabricListener("mouse:move", onCanvasMouseMove);
           addFabricListener("selection:created", onSelectionChanged);
           addFabricListener("selection:updated", onSelectionChanged);
           addFabricListener("selection:cleared", onSelectionCleared);
@@ -22942,6 +23511,7 @@ void main() {
           addFabricListener("object:moving", onObjectMoving);
           addFabricListener("object:scaling", onObjectTransforming);
           addFabricListener("object:rotating", onObjectTransforming);
+          addFabricListener("object:skewing", onObjectTransforming);
           addFabricListener("object:modified", onObjectModified);
           addFabricListener("after:render", onCanvasAfterRender);
         }
@@ -22994,6 +23564,7 @@ void main() {
             activeObject.set?.({ selectable: true, evented: true });
             activeObject.setCoords?.();
           }
+          syncSelectionFlipControls();
         }
         function applyViewport(session) {
           const rect = session.canvasRect;
@@ -23114,6 +23685,7 @@ void main() {
         }
         function releaseSurfaceResources() {
           endSizeAdjustGesture();
+          endPivotGesture();
           cancelStrokeEraseGesture();
           cancelShapeGesture();
           resetOverlayModifierState();
@@ -23355,7 +23927,8 @@ void main() {
               // 지킨다(애니메이트의 자유 변형과 같다).
               uniformScaling: false,
               uniScaleKey: "shiftKey",
-              // Alt 는 브러시 크기 조절 제스처가 쓰고, Shift+변 손잡이의 기울이기는 잠가 뒀다.
+              // Alt 는 브러시 크기 조절 제스처가 쓴다. fabric 의 기울이기 키도 끈다 — 기울이기는
+              // 런타임이 Ctrl + 변 손잡이로 직접 한다(skewSelection).
               centeredKey: "none",
               altActionKey: "none"
             });
@@ -23431,6 +24004,7 @@ void main() {
             return { accepted: false, reason: "invalid-session" };
           }
           endSizeAdjustGesture();
+          endPivotGesture();
           cancelStrokeEraseGesture();
           cancelShapeGesture();
           resetOverlayModifierState();
@@ -23955,6 +24529,11 @@ void main() {
             actionDeduper.release?.(command.actionId);
             return { applied: false, reason: retargeted?.reason || "retarget-failed" };
           }
+          if (FLIP_ACTIONS.has(action)) {
+            const result2 = flipSelection(FLIP_ACTIONS.get(action));
+            settleArmedFramePreview();
+            return result2.applied ? { ...result2, repainted: true } : result2;
+          }
           if (pendingLassoSelection) {
             if (action === "delete-selection") {
               const result2 = commitPendingLassoDelete();
@@ -24026,6 +24605,17 @@ void main() {
           return emptyDrawingV3Diagnostics(
             drawingV3ShadowRequested && customSceneStore ? "not-connected" : "disabled"
           );
+        }
+        function getSelectionTransformState() {
+          const target = fabricCanvas?.getActiveObject?.() || null;
+          const transformable = selectionAllowsTransform(target);
+          const pivot = transformable ? selectionPivotPoint(target) : null;
+          return {
+            transformable,
+            // 옮겨 둔 회전 중심점의 자리(그림 좌표). 한가운데가 축이면 null.
+            pivot: pivot ? { x: pivot.x, y: pivot.y } : null,
+            pivotGestureActive: !!pivotGesture
+          };
         }
         function getDiagnostics() {
           const scene = sceneStore.getDiagnostics();
@@ -24134,6 +24724,7 @@ void main() {
           applyOnionSkinPrefs,
           updateOnionSkin,
           getOnionSkinState,
+          getSelectionTransformState,
           updateDrawingLayerView,
           updateViewport,
           applyDrawingAction,
@@ -33339,11 +33930,11 @@ void main() {
       top: scaled.translateY,
       angle: scaled.angle,
       scaleX: scaled.scaleX,
-      scaleY: scaled.scaleY,
+      scaleY: Math.abs(scaled.scaleY),
       skewX: scaled.skewX,
       skewY: scaled.skewY,
       flipX: false,
-      flipY: false
+      flipY: scaled.scaleY < 0
     });
   }
   function clipDocument(clip, project) {

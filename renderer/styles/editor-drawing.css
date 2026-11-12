@@ -281,7 +281,8 @@
   flex-shrink: 0;
 }
 .editor-drawing-palette [data-fabric-pilot-group='selection-target'],
-.editor-drawing-palette [data-fabric-pilot-group='selection-shape'] {
+.editor-drawing-palette [data-fabric-pilot-group='selection-shape'],
+.editor-drawing-palette [data-fabric-pilot-group='selection-flip'] {
   flex-flow: row nowrap !important;
   gap: 3px !important;
   padding: 0 !important;
@@ -289,8 +290,14 @@
 }
 .editor-drawing-palette [data-fabric-pilot-label='selection-target'],
 .editor-drawing-palette [data-fabric-pilot-label='selection-shape'],
+.editor-drawing-palette [data-fabric-pilot-label='selection-flip'],
+.editor-drawing-palette [data-fabric-pilot-output='selection-transform-hint'],
 .editor-drawing-palette [data-fabric-pilot-output='selection-summary'] {
   display: none !important;
+}
+.editor-drawing-palette [data-fabric-pilot-group='selection-controls'] button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 .editor-drawing-palette [data-fabric-pilot-group='selection-controls'] button {
   width: auto !important;
