@@ -50,6 +50,8 @@ v2.12.6-beta부터 현재 mpv/Fabric 기능은 프로필 누락 여부와 무관
 | mpv·오버레이 호스트·키 입력·실행 프로필 | `test:mpv` |
 | 배포 복사본 실행·파일 연결·백업 보관 | `test:release-paths` (PowerShell 검사는 임시 파일만 사용) |
 | 재생목록·연속 재생·영상 전환 | `test:playlist` |
+| 재생 이벤트(재생·정지·끝·버퍼 대기)와 mpv 오버레이에 싣는 상태 | `test:playback-buffering`, `test:playlist` |
+| 댓글·그리기 모드의 진입·종료와 준비중 표시 | `test:hybrid`(제거한 하이브리드 엔진이 되살아나지 않는지도 본다), `test:comment-input` |
 | 타임라인·키프레임 표시 | `test:frame-grid`, 드로잉 변경이면 위 드로잉 테스트 추가 |
 | 합성 레이어 | `test:composition` |
 | 편집기·영상 출력 | `test:editor` (로컬 FFmpeg 필요) |
@@ -57,6 +59,8 @@ v2.12.6-beta부터 현재 mpv/Fabric 기능은 프로필 누락 여부와 무관
 | 댓글·협업 | `test:comment-input`, `test:cluster`, `test:collaboration` 중 관련 항목 |
 | 댓글 분리창·작성자 색·창 사이 입력 | `test:comment-popout`, `test:comment-input`, `test:ux` |
 | Drawing V3 문서·어댑터·관찰자 | `test:drawing-v3-hardening`, `test:drawing-v3-adapter`, `test:drawing-v3-store-observer` 중 관련 항목 |
+
+`renderer/scripts/app.js`를 고쳤으면 위 표와 별개로, 고친 함수나 이벤트 처리기의 이름을 `scripts/tests/`에서 찾아 그것이 든 묶음도 함께 실행한다. app.js의 함수 소스를 뽑아 가짜 의존 대상과 함께 실행하는 검사가 여러 묶음에 흩어져 있어서, 함수가 새 이름을 부르기 시작하면 그 이름을 모르는 검사가 `… is not defined`로 실패한다. 그때는 검사의 의존 대상에 그 이름을 더하고, 새 호출이 그 검사가 지키는 동작이면 단언도 더한다.
 
 전체 회귀 검증이 필요하면 package.json의 현재 `test:*` 목록을 기준으로 실행한다. 테스트 수를 고정하지 않는다. 성능 변경은 관련 `benchmark:*`도 검토한다.
 

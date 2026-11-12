@@ -1969,6 +1969,7 @@ function createActualLoadRaceScenario({
     playlistStatusChanges: [],
     toasts: [],
     fabricAfterVideoReady: 0,
+    onionSkinPlaybackSyncs: 0,
     loadReadinessEvents: []
   };
   const queuedFabricFlushResults = Array.isArray(fabricFlushResults)
@@ -2319,6 +2320,8 @@ function createActualLoadRaceScenario({
     CONTINUOUS_STATUS: { ERROR: 'error' },
     playIconSVG: '',
     syncCompositionLayerPlaybackState: () => {},
+    // 'ended' 처리기는 재생이 끝난 것을 어니언 스킨에도 알린다(v2.14.0-beta).
+    syncFabricOnionSkinPlayback: () => { effects.onionSkinPlaybackSyncs += 1; },
     restoreMpvDrawFreezeAfterPlayback: () => {},
     cutlistUIState: { active: false },
     getCutlistManager: () => ({ isActive: () => false }),
@@ -3762,6 +3765,7 @@ test('a pending normal production intent fences the actual ended autoplay callba
   const endedMatch = appSource.match(/videoPlayer\.addEventListener\('ended', \(\) => \{([\s\S]*?)\n  \}\);/);
   assert.ok(endedMatch, 'videoPlayer ended handler should exist');
   let nextCalls = 0;
+  let onionSkinPlaybackSyncs = 0;
   const playlistManager = {
     isActive: () => true,
     hasNext: () => true,
@@ -3785,6 +3789,7 @@ test('a pending normal production intent fences the actual ended autoplay callba
     drawingManager: { setPlaying: () => {} },
     timeline: { setPlayingState: () => {} },
     syncCompositionLayerPlaybackState: () => {},
+    syncFabricOnionSkinPlayback: () => { onionSkinPlaybackSyncs += 1; },
     videoPlayer: { currentTime: 0 },
     getAudioWaveform: () => ({ setPlaying: () => {} }),
     state: { isDrawMode: false },
@@ -3809,9 +3814,12 @@ test('a pending normal production intent fences the actual ended autoplay callba
 
   runtime.handleEnded();
   assert.equal(nextCalls, 0);
+  // 다음 항목으로 넘어가는 것만 막는다. 재생이 끝났다는 화면 갱신(어니언 스킨 포함)은 그대로 한다.
+  assert.equal(onionSkinPlaybackSyncs, 1);
   runtime.clearPendingIntent();
   runtime.handleEnded();
   assert.equal(nextCalls, 1);
+  assert.equal(onionSkinPlaybackSyncs, 2);
 });
 
 test('a normal production load fences old-media EOF but releases it at the new media claim', async () => {
@@ -3826,12 +3834,14 @@ test('a normal production load fences old-media EOF but releases it at the new m
   await scenario.firstFileExistsStarted;
   scenario.runtime.handleEnded();
   assert.equal(scenario.effects.normalAutoNext, 0, 'old media EOF must stay fenced during preflight');
+  assert.equal(scenario.effects.onionSkinPlaybackSyncs, 1, 'a fenced EOF still reports the stopped playback state');
 
   scenario.releaseFirstFileExists();
   await scenario.oldTailStarted;
   assert.equal(scenario.state.currentFile, scenario.items[1].videoPath);
   scenario.runtime.handleEnded();
   assert.equal(scenario.effects.normalAutoNext, 1, 'new media EOF must be live after ownership is claimed');
+  assert.equal(scenario.effects.onionSkinPlaybackSyncs, 2);
 
   scenario.releaseOldTail();
   assert.equal(await normalLoad, true);
