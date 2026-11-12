@@ -1007,20 +1007,26 @@ export function createFabricDrawingPilotController(options = {}) {
     passiveHistory = { undo: [], redo: [] };
   }
 
-  function rememberPassiveHistory(historyToken) {
+  // revision 은 조작을 **요청한 때**의 전역 히스토리 리비전이다. 응답이 온 때의 값을
+  // 붙이면, 기다리는 사이에 한 전역 작업(댓글 편집 등)보다 먼저 한 이 조작이 "마지막으로
+  // 한 일"로 보여 Ctrl+Z 의 순서가 뒤집힌다. 그 사이 전역 히스토리가 움직였다면 이
+  // 표식은 넣는 순간부터 낡은 것이고, peekPassiveHistory 가 걸러 낸다.
+  function rememberPassiveHistory(historyToken, revision) {
     if (typeof historyToken !== 'string' || historyToken.length === 0) return;
     passiveHistory.redo = [];
-    passiveHistory.undo.push({ token: historyToken, revision: readHistoryRevision() });
+    passiveHistory.undo.push({ token: historyToken, revision });
     while (passiveHistory.undo.length > PASSIVE_HISTORY_LIMIT) passiveHistory.undo.shift();
   }
 
-  // 지금 Ctrl+Z / Ctrl+Y 가 세션 없는 구조 조작을 되돌려야 하는지. 맨 위 표식이
-  // **지금의** 전역 히스토리 리비전에서 만들어진 것일 때만 그렇다.
-  function peekPassiveHistory(direction) {
+  // Ctrl+Z / Ctrl+Y 가 세션 없는 구조 조작을 되돌려야 하는지. 맨 위 표식을 만든 조작을
+  // 요청한 뒤로 **키를 누른 때까지** 전역 히스토리가 그대로였을 때만 그렇다. revision 은
+  // 키를 누른 때의 리비전이다. 큐에서 차례를 기다린 키는 그때 읽어 둔 값을 넘긴다 —
+  // 누른 뒤에 생긴 전역 작업은 그 키보다 나중의 일이라 판정에 넣지 않는다.
+  function peekPassiveHistory(direction, revision = readHistoryRevision()) {
     if (state !== 'passive' || !canSendPassiveDrawingAction()) return null;
     const stack = direction === 'undo' ? passiveHistory.undo : passiveHistory.redo;
     const entry = stack[stack.length - 1];
-    if (!entry || entry.revision !== readHistoryRevision()) return null;
+    if (!entry || entry.revision !== revision) return null;
     return entry;
   }
 
@@ -1688,10 +1694,10 @@ export function createFabricDrawingPilotController(options = {}) {
   // 세션 없이 한 구조 조작은 표식을 기억해 둔다 — 이어지는 Ctrl+Z 가 이 조작을
   // 되돌릴 수 있게 한다. 기다리는 사이 passive 를 벗어났으면 clearPassiveHistory 가
   // 이미 비웠고, 그 뒤에 넣으면 낡은 표식이 남으므로 상태를 다시 본다.
-  function notePassiveFrameOperation(request, response) {
+  function notePassiveFrameOperation(request, response, requestedRevision) {
     if (request.sessionId !== null || response?.applied !== true) return;
     if (state !== 'passive' || !canSendPassiveDrawingAction()) return;
-    rememberPassiveHistory(response.historyToken);
+    rememberPassiveHistory(response.historyToken, requestedRevision);
   }
 
   function makeDrawingActionRequest(action, payload = null) {
@@ -1763,9 +1769,11 @@ export function createFabricDrawingPilotController(options = {}) {
     if (!request) {
       return Promise.resolve({ success: false, applied: false, reason: 'invalid-request' });
     }
+    // 세션 없이 한 조작의 표식에 붙일 리비전. 응답 때가 아니라 조작을 한 지금 읽는다.
+    const requestedRevision = readHistoryRevision();
     const operation = drawingActionQueue.then(async () => {
       const response = await sendDrawingActionRequest(request);
-      notePassiveFrameOperation(request, response);
+      notePassiveFrameOperation(request, response, requestedRevision);
       if (typeof options.finalize === 'function') {
         try {
           await options.finalize(response);
@@ -1861,7 +1869,7 @@ export function createFabricDrawingPilotController(options = {}) {
       // 기다리는 사이 패널을 열었으면 이 키는 낡았다. 표식은 이미 버려졌고, 열린 뒤의
       // 실행취소는 다른 경로가 맡는다.
       if (state !== 'passive') return { success: false, applied: false, reason: 'stale' };
-      const entry = peekPassiveHistory(direction);
+      const entry = peekPassiveHistory(direction, historyRevision);
       if (entry === null) return fallbackPassiveHistory(direction, historyRevision);
       const request = makePassiveDrawingActionRequest(direction, { historyToken: entry.token });
       if (!request) {
@@ -1871,8 +1879,11 @@ export function createFabricDrawingPilotController(options = {}) {
       (direction === 'undo' ? passiveHistory.undo : passiveHistory.redo).pop();
       const response = await sendDrawingActionRequest(request);
       if (response?.applied === true && state === 'passive' && canSendPassiveDrawingAction()) {
+        // 반대쪽 스택으로 옮기는 표식에는 **키를 누른 때**의 리비전을 그대로 둔다(위의
+        // peek 가 historyRevision 과 같음을 확인한 값이다). 그 뒤에 새 전역 작업이
+        // 생겼다면 이 되돌리기·다시 실행은 더 이상 마지막으로 한 일이 아니다.
         const to = direction === 'undo' ? passiveHistory.redo : passiveHistory.undo;
-        to.push({ token: entry.token, revision: readHistoryRevision() });
+        to.push({ token: entry.token, revision: entry.revision });
         return response;
       }
       if (response?.applied === true || response?.duplicate === true) {
