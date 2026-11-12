@@ -8274,6 +8274,7 @@ test('pure exports load without constructing a DOM or Fabric canvas', () => {
     'exportDrawingVideo',
     'getDiagnostics',
     'getOnionSkinState',
+    'getSelectionTransformState',
     'hydrateDrawingVideo',
     'prepare',
     'presentDrawingFrame',
@@ -10300,7 +10301,7 @@ test('an active stroke keeps the pointerdown style while controls change', () =>
   assert.equal(observedSizes.every(size => size === 3), true);
 });
 
-test('the active selection gets a scale and rotate box while skew and unselected strokes stay locked', () => {
+test('the active selection gets a scale, rotate and skew box while unselected strokes stay locked', () => {
   FakeCanvas.instances = [];
   const document = new FakeDocument();
   const root = document.createElement('div');
@@ -10322,20 +10323,23 @@ test('the active selection gets a scale and rotate box while skew and unselected
   canvas.activeObject = activeSelection;
   canvas.emit('selection:created', { selected: [selected], deselected: [] });
 
-  // 고른 것(여기서는 묶음)에는 크기·회전 손잡이가 달린다. 묶음 안의 획은 fabric 이
-  // 묶음의 손잡이로 다루므로 자기 손잡이를 갖지 않는다. 기울이기는 어디서도 잠겨 있다.
+  // 고른 것(여기서는 묶음)에는 크기·회전 손잡이가 달리고 기울이기가 풀린다(Ctrl + 변
+  // 손잡이). 묶음 안의 획은 fabric 이 묶음의 손잡이로 다루므로 자기 손잡이를 갖지 않고
+  // 기울이기도 잠겨 있다.
   assert.equal(activeSelection.hasControls, true);
   assert.equal(activeSelection.lockScalingX, false);
   assert.equal(activeSelection.lockScalingY, false);
   assert.equal(activeSelection.lockRotation, false);
+  assert.equal(activeSelection.lockSkewingX, false);
+  assert.equal(activeSelection.lockSkewingY, false);
   assert.equal(activeSelection.lockScalingFlip, true, '손잡이를 반대편 너머로 끌어도 뒤집히지 않는다');
   assert.equal(selected.hasControls, false);
   assert.equal(selected.lockScalingX, true);
   assert.equal(selected.lockScalingY, true);
   assert.equal(selected.lockRotation, true);
+  assert.equal(selected.lockSkewingX, true);
+  assert.equal(selected.lockSkewingY, true);
   for (const target of [selected, activeSelection]) {
-    assert.equal(target.lockSkewingX, true);
-    assert.equal(target.lockSkewingY, true);
     assert.notEqual(target.lockMovementX, true);
     assert.notEqual(target.lockMovementY, true);
     assert.equal(target.moveCursor, 'grabbing');
@@ -19792,17 +19796,21 @@ test('변형 상자의 모서리 손잡이로 크기를 바꾸면 transform 만 
     selectTool();
     await click(0, 8102);
 
-    // 고른 획에 손잡이가 달린다: 모서리 넷·변 넷·회전 손잡이, 모서리 바깥의 회전 영역 넷.
+    // 고른 획에 손잡이가 달린다: 모서리 넷·변 넷·회전 손잡이, 모서리 바깥의 회전 영역 넷,
+    // 그리고 회전 중심점(옮겨 두기 전에는 보이지 않는다).
     const selected = active();
     assert.equal(selected.__baeframeObjectId, before.id);
     assert.equal(selected.hasControls, true);
     assert.deepEqual(Object.keys(selected.controls).sort(), [
-      'bl', 'br', 'mb', 'ml', 'mr', 'mt', 'mtr',
+      'bl', 'br', 'mb', 'ml', 'mr', 'mt', 'mtr', 'pivot',
       'rotateBl', 'rotateBr', 'rotateTl', 'rotateTr',
       'tl', 'tr'
     ]);
-    assert.equal(selected.lockSkewingX, true, '기울이기는 잠겨 있다');
-    assert.equal(selected.lockSkewingY, true);
+    assert.equal(selected.isControlVisible('pivot'), false, '한가운데가 축인 동안에는 표시가 없다');
+    // 기울이기는 Ctrl + 변 손잡이로 한다. 손잡이를 반대편으로 넘겨 뒤집는 것은 잠겨 있다.
+    assert.equal(selected.lockSkewingX, false);
+    assert.equal(selected.lockSkewingY, false);
+    assert.equal(selected.lockScalingFlip, true);
 
     events.length = 0;
     const depth = undoDepth();
@@ -21052,6 +21060,1710 @@ test('누르기를 호스트가 확정한 뒤 되살려 보내는 경로에서�
     assert.ok(Math.abs(records()[0].transform.angle) > 5, '회전도 저장된다');
     assert.deepEqual(activeIds(), [before.id]);
     assert.equal(requests.length, 0);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+// ── 변형 상자: 손잡이 커서 · 기울이기 · 뒤집기 · 회전 중심점 ───────────────────
+//
+// 기울이기는 Ctrl + 변 손잡이, 뒤집기는 팔레트의 버튼, 회전 중심점은 Ctrl+클릭이다.
+// 셋 다 레코드의 transform(skewX·skewY·flipX·flipY·angle·left·top)만 바꾼다.
+
+// 조작 전후의 레코드에서 "화면에서 무엇이 일어났는가"를 구한다: 뒤 × 앞⁻¹.
+function sceneDeltaOf(matrixOf, afterTransform, beforeTransform) {
+  const { util } = require('fabric/node');
+  return util.multiplyTransformMatrices(
+    matrixOf(afterTransform),
+    util.invertTransform(matrixOf(beforeTransform))
+  );
+}
+
+function applyMatrix(matrix, point) {
+  return {
+    x: matrix[0] * point.x + matrix[2] * point.y + matrix[4],
+    y: matrix[1] * point.x + matrix[3] * point.y + matrix[5]
+  };
+}
+
+function assertPointClose(actual, expected, tolerance, message) {
+  assert.ok(
+    actual && Math.abs(actual.x - expected.x) < tolerance &&
+      Math.abs(actual.y - expected.y) < tolerance,
+    `${message}: (${actual?.x}, ${actual?.y}) != (${expected.x}, ${expected.y})`
+  );
+}
+
+// 고른 것의 상자(여백을 뺀, 오브젝트의 축에 맞춘 상자)에서 비율로 짚은 자리의 화면 좌표.
+// (0, 0) 이 한가운데, (±0.5, ±0.5) 가 모서리다.
+function boxPoint(target, fx, fy) {
+  const center = target.getCenterPoint();
+  const size = target._getTransformedDimensions();
+  const radians = target.angle * Math.PI / 180;
+  const x = fx * size.x;
+  const y = fy * size.y;
+  return {
+    x: center.x + x * Math.cos(radians) - y * Math.sin(radians),
+    y: center.y + x * Math.sin(radians) + y * Math.cos(radians)
+  };
+}
+
+// 선택을 걷고 그린 화면의 잉크 지도. 선택 상자와 손잡이가 섞이지 않게 브러시로 바꾼 뒤 찍는다.
+function inkMapOf(harness) {
+  harness.canvas.renderAll();
+  const { width, height } = harness.canvas.lowerCanvasEl;
+  const { data } = harness.canvas.lowerCanvasEl.getContext('2d').getImageData(0, 0, width, height);
+  return {
+    width,
+    height,
+    alpha: (x, y) => (x < 0 || y < 0 || x >= width || y >= height
+      ? 0
+      : data[(y * width + x) * 4 + 3])
+  };
+}
+
+// source 의 진한 픽셀마다, mapPoint 로 옮긴 자리(±1px)에 target 의 잉크가 있는지 센다.
+// 반 픽셀 어긋남은 가장자리의 농도만 바꾸므로 이웃까지 본다. include 를 주면 그 조건에
+// 맞는 픽셀만 견준다.
+function countUnmatchedInk(source, target, mapPoint, include = null) {
+  let solid = 0;
+  let unmatched = 0;
+  for (let y = 0; y < source.height; y += 1) {
+    for (let x = 0; x < source.width; x += 1) {
+      if (source.alpha(x, y) < 200) continue;
+      if (include && !include({ x, y })) continue;
+      solid += 1;
+      const mapped = mapPoint({ x, y });
+      const mx = Math.round(mapped.x);
+      const my = Math.round(mapped.y);
+      let found = false;
+      for (let dy = -1; dy <= 1 && !found; dy += 1) {
+        for (let dx = -1; dx <= 1 && !found; dx += 1) {
+          if (target.alpha(mx + dx, my + dy) >= 50) found = true;
+        }
+      }
+      if (!found) unmatched += 1;
+    }
+  }
+  return { solid, unmatched };
+}
+
+test('손잡이 커서는 손잡이가 움직이는 방향을 가리킨다 — 길쭉한 획의 모서리도 대각선이다', async () => {
+  const { harness, selectTool, records, click, handle, dragHandle } = createTransformBoxHarness();
+  try {
+    // 가는 가로선. fabric 은 손잡이가 한가운데에서 보이는 방향으로 커서를 골라, 이런
+    // 획의 모서리에 대각선이 아니라 가로 화살표를 준다.
+    harness.drawStroke([{ x: 30, y: 100 }, { x: 170, y: 100 }], 8401);
+    selectTool();
+    await click(0, 8402);
+    const cursorAt = (key, modifiers = {}) => {
+      const point = handle(key);
+      harness.dispatchPointer(harness.element, 'pointermove', point.x, point.y, 0, 0, modifiers);
+      return harness.canvas.upperCanvasEl.style.cursor;
+    };
+    assert.equal(cursorAt('br'), 'se-resize');
+    assert.equal(cursorAt('tl'), 'nw-resize');
+    assert.equal(cursorAt('tr'), 'ne-resize');
+    assert.equal(cursorAt('bl'), 'sw-resize');
+    assert.equal(cursorAt('mr'), 'e-resize');
+    assert.equal(cursorAt('ml'), 'w-resize');
+    assert.equal(cursorAt('mb'), 's-resize');
+    assert.equal(cursorAt('mt'), 'n-resize');
+    // Ctrl 을 누르면 변 손잡이는 기울이기다 — 변을 따라 움직인다. 모서리는 그대로다.
+    assert.equal(cursorAt('mb', { ctrlKey: true }), 'e-resize');
+    assert.equal(cursorAt('mr', { ctrlKey: true }), 's-resize');
+    assert.equal(cursorAt('br', { ctrlKey: true }), 'se-resize');
+
+    // 90° 돌리면 커서도 함께 돈다(Shift 는 15° 단위로 내림한다 — 95° 를 돌려 90° 에 붙인다).
+    const center = harness.canvas.getActiveObject().getCenterPoint();
+    const top = handle('mtr');
+    const radius = Math.hypot(top.x - center.x, top.y - center.y);
+    const toward = 5 * Math.PI / 180;
+    await dragHandle(
+      'mtr',
+      center.x + radius * Math.cos(toward) - top.x,
+      center.y + radius * Math.sin(toward) - top.y,
+      { shiftKey: true }
+    );
+    assert.equal(records()[0].transform.angle, 90);
+    assert.equal(cursorAt('br'), 'sw-resize', '오른쪽 아래 모서리는 화면의 왼쪽 아래로 갔다');
+    assert.equal(cursorAt('mr'), 's-resize');
+    assert.equal(cursorAt('mb', { ctrlKey: true }), 's-resize', '기울이기는 돌아간 변을 따라간다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Ctrl 을 누르고 변 손잡이를 끌면 기울고 맞은편 변은 제자리에 있다', async () => {
+  const {
+    harness, events, selectTool, records, active, activeIds, click, dragHandle, matrixOf, undoDepth
+  } = createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 70 }, { x: 140, y: 130 }], 8411);
+    const before = records()[0];
+    selectTool();
+    await click(0, 8412);
+    let target = active();
+    let size = target._getTransformedDimensions();
+    let anchors = [boxPoint(target, -0.5, 0.5), boxPoint(target, 0.5, 0.5)];
+    let grabbed = boxPoint(target, 0, -0.5);
+
+    // 위쪽 변을 오른쪽으로 24 민다. 높이에 대한 그 비율만큼 기운다.
+    events.length = 0;
+    const depth = undoDepth();
+    await dragHandle('mt', 24, 0, { ctrlKey: true });
+    const skewedX = records()[0];
+    const expectedSkewX = -Math.atan(24 / size.y) * 180 / Math.PI;
+    assert.ok(
+      Math.abs(skewedX.transform.skewX - expectedSkewX) < 1e-6,
+      `skewX: ${skewedX.transform.skewX} != ${expectedSkewX}`
+    );
+    for (const field of ['scaleX', 'scaleY', 'angle', 'skewY', 'flipX', 'flipY']) {
+      assert.equal(skewedX.transform[field], before.transform[field], `${field} 는 그대로다`);
+    }
+    let delta = sceneDeltaOf(matrixOf, skewedX.transform, before.transform);
+    for (const anchor of anchors) {
+      assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '맞은편(아래) 변은 제자리다');
+    }
+    assertPointClose(
+      applyMatrix(delta, grabbed), { x: grabbed.x + 24, y: grabbed.y }, 1e-6, '잡은 변은 끈 만큼 간다'
+    );
+    assert.equal(skewedX.id, before.id);
+    assert.equal(skewedX.pathData, before.pathData, '획의 모양 데이터는 그대로다');
+    assert.deepEqual(skewedX.sourcePoints, before.sourcePoints);
+    // 저장으로 가는 전이는 크기·회전과 같은 꼴이고, 실행취소 한 단계다.
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'transform-objects');
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(undoDepth(), depth + 1);
+    assert.deepEqual(activeIds(), [before.id]);
+    assert.equal(active().skewX, skewedX.transform.skewX, '화면의 오브젝트도 같은 값이다');
+
+    // Ctrl 없이 같은 손잡이를 끌면 크기만 바뀐다(기울임은 그대로).
+    await dragHandle('mt', 0, -10);
+    const scaled = records()[0];
+    assert.ok(scaled.transform.scaleY > skewedX.transform.scaleY, 'Ctrl 이 없으면 크기 조절이다');
+    assert.equal(scaled.transform.skewX, skewedX.transform.skewX);
+
+    // 처음으로 돌아가 이번에는 오른쪽 변을 아래로 18 민다 — 세로로 기운다(skewY).
+    for (const actionId of ['skew-undo-1', 'skew-undo-2']) {
+      assert.equal(harness.runtime.applyDrawingAction({
+        sessionId: 'real-fabric-session', actionId, action: 'undo'
+      }).applied, true);
+    }
+    assert.deepEqual(records()[0].transform, before.transform);
+    await click(0, 8413);
+    target = active();
+    size = target._getTransformedDimensions();
+    anchors = [boxPoint(target, -0.5, -0.5), boxPoint(target, -0.5, 0.5)];
+    grabbed = boxPoint(target, 0.5, 0);
+    await dragHandle('mr', 0, 18, { ctrlKey: true });
+    const skewedY = records()[0];
+    const expectedSkewY = Math.atan(18 / size.x) * 180 / Math.PI;
+    assert.ok(
+      Math.abs(skewedY.transform.skewY - expectedSkewY) < 1e-6,
+      `skewY: ${skewedY.transform.skewY} != ${expectedSkewY}`
+    );
+    for (const field of ['scaleX', 'scaleY', 'angle', 'skewX', 'flipX', 'flipY']) {
+      assert.equal(skewedY.transform[field], before.transform[field], `${field} 는 그대로다`);
+    }
+    delta = sceneDeltaOf(matrixOf, skewedY.transform, before.transform);
+    for (const anchor of anchors) {
+      assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '맞은편(왼쪽) 변은 제자리다');
+    }
+    assertPointClose(
+      applyMatrix(delta, grabbed), { x: grabbed.x, y: grabbed.y + 18 }, 1e-6, '잡은 변은 끈 만큼 간다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('돌려 둔 획은 변을 따라 끌어야 기울고, 이미 기운 획을 다른 방향으로 밀어도 화면대로 저장된다', async () => {
+  const { harness, selectTool, records, active, click, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 140, y: 120 }], 8421);
+    selectTool();
+    await click(0, 8422);
+    await dragHandle('mtr', 45, 30);
+    const turned = records()[0];
+    assert.ok(turned.transform.angle > 5, `돌려 둔다: ${turned.transform.angle}`);
+    const radians = turned.transform.angle * Math.PI / 180;
+    // 위쪽 변이 뻗은 방향과 그에 수직인 방향(화면 좌표).
+    const along = { x: Math.cos(radians), y: Math.sin(radians) };
+    const across = { x: -Math.sin(radians), y: Math.cos(radians) };
+
+    // 변에 수직으로 끌면 기울지 않는다(fabric 의 기울이기는 화면 축으로만 읽어, 돌려 둔
+    // 획에서는 여기서 기울고 변을 따라 끌면 기울지 않았다).
+    await dragHandle('mt', across.x * -20, across.y * -20, { ctrlKey: true });
+    assert.ok(
+      Math.abs(records()[0].transform.skewX) < 1e-6,
+      `변에 수직으로는 기울지 않는다: ${records()[0].transform.skewX}`
+    );
+
+    // 변을 따라 20 끌면 높이에 대한 그 비율만큼 기운다. 각도는 그대로라 상자가 돌지 않는다.
+    let target = active();
+    let before = records()[0];
+    let size = target._getTransformedDimensions();
+    let anchors = [boxPoint(target, -0.5, 0.5), boxPoint(target, 0.5, 0.5)];
+    let grabbed = boxPoint(target, 0, -0.5);
+    await dragHandle('mt', along.x * 20, along.y * 20, { ctrlKey: true });
+    let after = records()[0];
+    assert.ok(
+      Math.abs(after.transform.skewX + Math.atan(20 / size.y) * 180 / Math.PI) < 1e-6,
+      `skewX: ${after.transform.skewX}`
+    );
+    assert.equal(after.transform.angle, before.transform.angle, '각도는 그대로다');
+    let delta = sceneDeltaOf(matrixOf, after.transform, before.transform);
+    for (const anchor of anchors) {
+      assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '맞은편 변은 제자리다');
+    }
+    assertPointClose(
+      applyMatrix(delta, grabbed),
+      { x: grabbed.x + along.x * 20, y: grabbed.y + along.y * 20 },
+      1e-6,
+      '잡은 변은 끈 만큼 간다'
+    );
+
+    // 가로로 기운 획의 오른쪽 변을 그 변의 방향으로 15 민다. 크기와 기울임 둘이 함께
+    // 바뀌는 경우다 — 화면에서 일어난 일은 여전히 "왼쪽 변을 고정한 밀림"이어야 한다.
+    target = active();
+    before = records()[0];
+    anchors = [boxPoint(target, -0.5, -0.5), boxPoint(target, -0.5, 0.5)];
+    grabbed = boxPoint(target, 0.5, 0);
+    const observed = [];
+    const capture = () => observed.push(Array.from(active().calcTransformMatrix()));
+    harness.canvas.on('object:skewing', capture);
+    await dragHandle('mr', across.x * 15, across.y * 15, { ctrlKey: true });
+    harness.canvas.off('object:skewing', capture);
+    after = records()[0];
+    assert.ok(observed.length > 0, '끄는 동안 기울이기 이벤트가 나간다');
+    assertMatrixClose(matrixOf(after.transform), observed.at(-1), 1e-6, '저장값과 화면');
+    assert.equal(after.transform.angle, before.transform.angle, '각도는 그대로다');
+    assert.ok(Math.abs(after.transform.skewY) > 1, `세로 기울임이 생긴다: ${after.transform.skewY}`);
+    delta = sceneDeltaOf(matrixOf, after.transform, before.transform);
+    for (const anchor of anchors) {
+      assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '맞은편(왼쪽) 변은 제자리다');
+    }
+    assertPointClose(
+      applyMatrix(delta, grabbed),
+      { x: grabbed.x + across.x * 15, y: grabbed.y + across.y * 15 },
+      1e-6,
+      '잡은 변은 끈 만큼 간다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('기울이기는 한계에서 멈추고, 끄는 도중에 취소하면 제자리로 돌아온다', async () => {
+  const { harness, selectTool, records, active, click, pressHandle, settle, undoDepth } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 70 }, { x: 140, y: 130 }], 8431);
+    const before = records()[0];
+    selectTool();
+    await click(0, 8432);
+    const depth = undoDepth();
+
+    // 조금 민 뒤 한계를 훌쩍 넘겨 끈다. 넘긴 걸음은 받지 않고 마지막으로 받은 모양에 머문다.
+    let press = pressHandle('mt', { ctrlKey: true });
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x + 10, press.from.y, press.id, 1, { ctrlKey: true }
+    );
+    const partial = active().skewX;
+    assert.ok(Math.abs(partial) > 1, `먼저 조금 기운다: ${partial}`);
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x + 5000, press.from.y, press.id, 1, { ctrlKey: true }
+    );
+    assert.equal(active().skewX, partial, '한계를 넘는 걸음은 받지 않는다');
+    harness.dispatchCapturedPointerUp(press.from.x + 5000, press.from.y, press.id);
+    await settle();
+    assert.ok(Math.abs(records()[0].transform.skewX) <= 80, '저장된 기울임은 한계 안이다');
+    assert.equal(records()[0].transform.skewX, partial);
+    assert.equal(undoDepth(), depth + 1);
+
+    // 끄는 도중에 취소되면 아무것도 저장되지 않고 화면도 돌아온다.
+    const stable = records();
+    press = pressHandle('mr', { ctrlKey: true });
+    const dragged = active();
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x, press.from.y + 20, press.id, 1, { ctrlKey: true }
+    );
+    assert.notEqual(dragged.skewY, 0, '끄는 동안 기운다');
+    harness.dispatchPointer(
+      harness.element, 'pointercancel', press.from.x, press.from.y + 20, press.id, 0
+    );
+    await settle();
+    assert.deepEqual(records(), stable, '저장된 값은 그대로다');
+    assert.equal(undoDepth(), depth + 1, '실행취소 단계가 생기지 않는다');
+    assert.equal(dragged.skewY, 0, '화면도 돌아온다');
+    assert.equal(dragged.skewX, partial);
+    assert.notDeepEqual(records()[0].transform, before.transform);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('여러 획을 함께 기울이면 각 획이 화면과 같게 저장되고 실행취소 한 번에 돌아온다', async () => {
+  const { harness, events, selectTool, records, active, activeIds, settle, dragHandle, matrixOf, undoDepth } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 40, y: 50 }, { x: 90, y: 70 }], 8441);
+    harness.drawStroke([{ x: 70, y: 120 }, { x: 150, y: 140 }], 8442);
+    const before = records();
+    selectTool();
+    harness.dragMarquee({ x: 20, y: 30 }, { x: 180, y: 170 }, 8443);
+    await settle();
+    assert.equal(activeIds().length, 2);
+    const group = active();
+    const anchors = [boxPoint(group, -0.5, 0.5), boxPoint(group, 0.5, 0.5)];
+
+    const observed = new Map();
+    const capture = () => {
+      for (const object of harness.canvas.getActiveObjects()) {
+        observed.set(object.__baeframeObjectId, Array.from(object.calcTransformMatrix()));
+      }
+    };
+    harness.canvas.on('object:skewing', capture);
+    events.length = 0;
+    const depth = undoDepth();
+    await dragHandle('mt', 30, 0, { ctrlKey: true });
+    harness.canvas.off('object:skewing', capture);
+
+    const after = records();
+    assert.equal(events.length, 1, '한 번의 전이로 나간다');
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(undoDepth(), depth + 1);
+    for (const record of after) {
+      const was = before.find(candidate => candidate.id === record.id);
+      assertMatrixClose(matrixOf(record.transform), observed.get(record.id), 1e-6, `${record.id} 저장값과 화면`);
+      assert.ok(Math.abs(record.transform.skewX) > 1, `${record.id} 가 기운다`);
+      // 묶음의 아래 변을 고정한 밀림이다 — 두 획 모두 같은 변화를 겪는다.
+      const delta = sceneDeltaOf(matrixOf, record.transform, was.transform);
+      for (const anchor of anchors) {
+        assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '묶음의 맞은편 변은 제자리다');
+      }
+    }
+    assert.deepEqual(activeIds().sort(), before.map(record => record.id).sort(), '고른 채로 남는다');
+    for (const object of harness.canvas.getObjects()) {
+      const record = after.find(candidate => candidate.id === object.__baeframeObjectId);
+      assertMatrixClose(
+        Array.from(object.calcTransformMatrix()), matrixOf(record.transform), 1e-6, '다시 세운 화면과 저장값'
+      );
+    }
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'group-skew-undo', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(
+      records().map(record => record.transform),
+      before.map(record => record.transform)
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('뒤집기 버튼은 고른 그림을 화면에서 본 좌우·상하로 뒤집는다', async () => {
+  const {
+    harness, events, selectTool, records, active, activeIds, settle, dragHandle, pressHandle, matrixOf,
+    undoDepth
+  } = createTransformBoxHarness();
+  try {
+    const flipHorizontal = paletteButton(harness.root, 'flip-horizontal');
+    const flipVertical = paletteButton(harness.root, 'flip-vertical');
+    assert.ok(flipHorizontal && flipVertical, '뒤집기 버튼이 있다');
+    assert.equal(flipHorizontal.disabled, true, '고른 것이 없으면 누를 수 없다');
+
+    // ㄴ 자 획 — 뒤집힌 것이 눈에 보이는 모양이다.
+    harness.drawStroke([{ x: 70, y: 60 }, { x: 70, y: 130 }, { x: 140, y: 130 }], 8451);
+    const original = records()[0];
+    selectTool();
+    assert.equal(flipHorizontal.disabled, true);
+    // 고르지 않은 채 눌러도 아무 일도 없다(버튼이 꺼져 있지만 그 길에 기대지 않는다).
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'flip-nothing', action: 'flip-horizontal'
+    }).applied, false);
+    // ㄴ 자의 상자 한가운데는 비어 있다. 획 위(세로 줄기)를 눌러 고른다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 70, 95, 8452, 1);
+    harness.dispatchCapturedPointerUp(70, 95, 8452);
+    await settle();
+    assert.deepEqual(activeIds(), [original.id]);
+    assert.equal(flipHorizontal.disabled, false, '고르면 켜진다');
+    assert.equal(flipVertical.disabled, false);
+    // 손잡이를 끄는 중에는 뒤집지 않는다 — 진행 중인 조작이 자기 출발점을 들고 있다.
+    const held = pressHandle('br');
+    harness.dispatchPointer(harness.element, 'pointermove', held.from.x + 8, held.from.y + 6, held.id, 1);
+    const busy = harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'flip-while-dragging', action: 'flip-horizontal'
+    });
+    assert.equal(busy.applied, false);
+    assert.equal(busy.reason, 'selection-busy');
+    assert.equal(active().flipX, false, '끄는 중인 그림은 뒤집히지 않는다');
+    harness.dispatchPointer(harness.element, 'pointercancel', held.from.x + 8, held.from.y + 6, held.id, 0);
+    await settle();
+    assert.deepEqual(records()[0].transform, original.transform, '취소했으므로 그대로다');
+    await dragHandle('mtr', 35, 25);
+    const before = records()[0];
+    assert.ok(before.transform.angle > 5, `돌려 둔다: ${before.transform.angle}`);
+    const center = active().getCenterPoint();
+
+    events.length = 0;
+    const depth = undoDepth();
+    realClick(harness, flipHorizontal);
+    await settle();
+    const flipped = records()[0];
+    assert.equal(flipped.transform.flipX, true);
+    assert.equal(flipped.transform.flipY, false);
+    assert.ok(
+      Math.abs(flipped.transform.angle - (360 - before.transform.angle)) < 1e-9,
+      `돌려 둔 각도는 반대 방향이 된다: ${flipped.transform.angle}`
+    );
+    for (const field of ['left', 'top', 'scaleX', 'scaleY', 'skewX', 'skewY']) {
+      assert.equal(flipped.transform[field], before.transform[field], `${field} 는 그대로다`);
+    }
+    // 화면에서 일어난 일은 상자 한가운데를 지나는 세로선에 대한 거울상이다.
+    assertMatrixClose(
+      sceneDeltaOf(matrixOf, flipped.transform, before.transform),
+      [-1, 0, 0, 1, 2 * center.x, 0],
+      1e-6,
+      '좌우 거울상'
+    );
+    assert.equal(flipped.pathData, before.pathData);
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'transform-objects');
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(undoDepth(), depth + 1, '실행취소 한 단계다');
+    assert.deepEqual(activeIds(), [before.id], '뒤집은 뒤에도 고른 채로 남는다');
+    assert.equal(active().hasControls, true);
+    assertMatrixClose(
+      Array.from(active().calcTransformMatrix()), matrixOf(flipped.transform), 1e-9, '화면과 저장값'
+    );
+
+    // 상하로 한 번 더. 가로선에 대한 거울상이다.
+    realClick(harness, flipVertical);
+    await settle();
+    const both = records()[0];
+    assert.equal(both.transform.flipX, true);
+    assert.equal(both.transform.flipY, true);
+    assertMatrixClose(
+      sceneDeltaOf(matrixOf, both.transform, flipped.transform),
+      [1, 0, 0, -1, 0, 2 * center.y],
+      1e-6,
+      '상하 거울상'
+    );
+    assert.equal(undoDepth(), depth + 2);
+
+    // 실제로 그려진 그림이 거울상인지 픽셀로 본다(선택 상자가 섞이지 않게 브러시로 바꾼다).
+    selectTool('brush');
+    const drawnBoth = inkMapOf(harness);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'flip-undo-vertical', action: 'undo'
+    }).applied, true);
+    const drawnFlipped = inkMapOf(harness);
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'flip-undo-horizontal', action: 'undo'
+    }).applied, true);
+    const drawnBefore = inkMapOf(harness);
+    assert.deepEqual(records()[0].transform, before.transform);
+    const horizontal = countUnmatchedInk(
+      drawnBefore, drawnFlipped, point => ({ x: 2 * center.x - point.x, y: point.y })
+    );
+    assert.ok(horizontal.solid > 100, `견줄 획 픽셀이 충분해야 한다: ${horizontal.solid}`);
+    assert.equal(horizontal.unmatched, 0, '좌우로 뒤집힌 그림이 그려진다');
+    const vertical = countUnmatchedInk(
+      drawnFlipped, drawnBoth, point => ({ x: point.x, y: 2 * center.y - point.y })
+    );
+    assert.equal(vertical.unmatched, 0, '상하로 뒤집힌 그림이 그려진다');
+    // 거울상이 아닌 그림과는 맞지 않는다(검사가 헛돌지 않는지 본다).
+    const unflipped = countUnmatchedInk(drawnBefore, drawnFlipped, point => point);
+    assert.ok(unflipped.unmatched > horizontal.solid * 0.2, '뒤집기 전과는 다른 그림이다');
+
+    // 선택을 풀면 버튼이 다시 꺼진다.
+    assert.equal(flipHorizontal.disabled, true);
+    assert.notDeepEqual(original.transform, null);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('여러 획을 함께 뒤집으면 묶음의 한가운데를 축으로 뒤집히고, 이어서 변형해도 뒤집힘이 남는다', async () => {
+  const {
+    harness, events, selectTool, records, active, activeIds, settle, click, handle, dragHandle, matrixOf,
+    undoDepth
+  } = createTransformBoxHarness();
+  // 고른 획을 한가운데를 축으로 주어진 각도만큼 돌린다(회전 손잡이를 원을 따라 끈다).
+  const rotateBy = async degrees => {
+    const center = active().getCenterPoint();
+    const top = handle('mtr');
+    const radius = Math.hypot(top.x - center.x, top.y - center.y);
+    const toward = Math.atan2(top.y - center.y, top.x - center.x) + degrees * Math.PI / 180;
+    await dragHandle(
+      'mtr',
+      center.x + radius * Math.cos(toward) - top.x,
+      center.y + radius * Math.sin(toward) - top.y
+    );
+  };
+  try {
+    harness.drawStroke([{ x: 40, y: 50 }, { x: 80, y: 65 }], 8461);
+    harness.drawStroke([{ x: 120, y: 45 }, { x: 165, y: 65 }], 8462);
+    harness.drawStroke([{ x: 60, y: 140 }, { x: 140, y: 160 }], 8463);
+    selectTool();
+    // 조금 돌린 획, 많이(90° 넘게) 돌린 획, 돌리지 않은 획이 섞인 묶음을 본다. 묶음의
+    // 획은 행렬에서 다시 풀어 적으므로 각도에 따라 표기가 갈릴 수 있다.
+    await click(0, 8464);
+    await rotateBy(25);
+    await click(1, 8465);
+    await rotateBy(130);
+    assert.ok(Math.abs(records()[0].transform.angle - 25) < 1e-6);
+    assert.ok(Math.abs(records()[1].transform.angle - 130) < 1e-6);
+    harness.dragMarquee({ x: 3, y: 3 }, { x: 197, y: 197 }, 8466);
+    await settle();
+    const before = records();
+    assert.equal(activeIds().length, 3);
+    const center = active().getCenterPoint();
+    const flipHorizontal = paletteButton(harness.root, 'flip-horizontal');
+    assert.equal(flipHorizontal.disabled, false, '여러 개를 골라도 켜진다');
+
+    events.length = 0;
+    const depth = undoDepth();
+    realClick(harness, flipHorizontal);
+    await settle();
+    const flipped = records();
+    assert.equal(events.length, 1, '한 번의 전이로 나간다');
+    assert.equal(events[0].unsupportedReason, null);
+    assert.equal(undoDepth(), depth + 1);
+    for (const record of flipped) {
+      const was = before.find(candidate => candidate.id === record.id);
+      assertMatrixClose(
+        sceneDeltaOf(matrixOf, record.transform, was.transform),
+        [-1, 0, 0, 1, 2 * center.x, 0],
+        1e-6,
+        `${record.id} 는 묶음의 한가운데를 지나는 세로선에 대해 뒤집힌다`
+      );
+      // 배율은 양수로, 뒤집힘은 flipX·flipY 로 적는다. 음수 배율로 적으면 다시 그릴 때
+      // 뒤집히지 않은 모양이 된다.
+      assert.ok(record.transform.scaleX > 0 && record.transform.scaleY > 0, '배율은 양수다');
+      // 하나만 골라 뒤집었을 때와 같은 표기다: 가로 뒤집힘이 켜지고 각도는 반대 방향이 된다.
+      assert.equal(record.transform.flipX, true);
+      assert.equal(record.transform.flipY, false);
+      const expectedAngle = (360 - was.transform.angle) % 360;
+      assert.ok(
+        Math.abs(record.transform.angle - expectedAngle) < 1e-6,
+        `${record.id} 각도: ${record.transform.angle} != ${expectedAngle}`
+      );
+    }
+    assert.deepEqual(activeIds().sort(), before.map(record => record.id).sort(), '고른 채로 남는다');
+    // 다시 세운 화면이 저장된 값과 같다 — 레코드를 그대로 그렸을 때 뒤집힌 모양이 나온다.
+    for (const object of harness.canvas.getObjects()) {
+      const record = flipped.find(candidate => candidate.id === object.__baeframeObjectId);
+      assertMatrixClose(
+        Array.from(object.calcTransformMatrix()), matrixOf(record.transform), 1e-6, '화면과 저장값'
+      );
+    }
+
+    // 뒤집힌 묶음을 이어서 키운다. 끄는 동안 보인 모양 그대로 저장되고 뒤집힘이 남는다.
+    const observed = new Map();
+    const capture = () => {
+      for (const object of harness.canvas.getActiveObjects()) {
+        observed.set(object.__baeframeObjectId, Array.from(object.calcTransformMatrix()));
+      }
+    };
+    harness.canvas.on('object:scaling', capture);
+    await dragHandle('br', 25, 15);
+    harness.canvas.off('object:scaling', capture);
+    const scaled = records();
+    for (const record of scaled) {
+      assertMatrixClose(matrixOf(record.transform), observed.get(record.id), 1e-6, `${record.id} 저장값과 화면`);
+      assert.equal(record.transform.flipX, true, '뒤집힘이 남는다');
+      assert.equal(record.transform.flipY, false);
+      assert.ok(record.transform.scaleX > 0 && record.transform.scaleY > 0);
+    }
+
+    // 다시 뒤집으면 뒤집힘이 풀린다. 각도는 다시 반대 방향이 된다.
+    realClick(harness, flipHorizontal);
+    await settle();
+    const unflipped = records();
+    for (const record of unflipped) {
+      const was = scaled.find(candidate => candidate.id === record.id);
+      assert.equal(record.transform.flipX, false);
+      assert.equal(record.transform.flipY, false);
+      assert.ok(record.transform.scaleX > 0 && record.transform.scaleY > 0);
+      const expectedAngle = (360 - was.transform.angle) % 360;
+      assert.ok(
+        Math.abs(record.transform.angle - expectedAngle) < 1e-6,
+        `${record.id} 각도: ${record.transform.angle} != ${expectedAngle}`
+      );
+    }
+
+    // 상하로 뒤집으면 세로 뒤집힘만 켜진다 — 이것도 하나만 골라 뒤집었을 때와 같은 표기다.
+    realClick(harness, paletteButton(harness.root, 'flip-vertical'));
+    await settle();
+    for (const record of records()) {
+      const was = unflipped.find(candidate => candidate.id === record.id);
+      assert.equal(record.transform.flipX, false);
+      assert.equal(record.transform.flipY, true);
+      const expectedAngle = (360 - was.transform.angle) % 360;
+      assert.ok(
+        Math.abs(record.transform.angle - expectedAngle) < 1e-6,
+        `${record.id} 상하 뒤집기 각도: ${record.transform.angle} != ${expectedAngle}`
+      );
+    }
+    for (const object of harness.canvas.getObjects()) {
+      const record = records().find(candidate => candidate.id === object.__baeframeObjectId);
+      assertMatrixClose(
+        Array.from(object.calcTransformMatrix()), matrixOf(record.transform), 1e-6, '화면과 저장값'
+      );
+    }
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('외곽선은 기울이는 동안에도 본체를 따라가고, 취소하면 함께 돌아온다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, pressHandle, matrixOf, undoDepth } =
+    createTransformBoxHarness();
+  const realFabric = require('fabric/node');
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 60, y: 70 }, { x: 140, y: 130 }], 8475);
+    const before = records();
+    const body = before.find(record => !record.id.endsWith('~outline'));
+    const outline = before.find(record => record.id.endsWith('~outline'));
+    assert.ok(body && outline, '외곽선 + 본체');
+    selectTool();
+    harness.dragMarquee({ x: 30, y: 40 }, { x: 170, y: 160 }, 8476);
+    await settle();
+    assert.deepEqual(activeIds(), [body.id]);
+    const outlineObject = harness.canvas.getObjects()
+      .find(object => object.__baeframeObjectId === outline.id);
+    const bodyObject = active();
+    const depth = undoDepth();
+
+    const { from, id } = pressHandle('mt', { ctrlKey: true });
+    harness.dispatchPointer(
+      harness.element, 'pointermove', from.x + 20, from.y, id, 1, { ctrlKey: true }
+    );
+    // 끄는 동안의 화면: 외곽선이 본체와 같은 만큼(행렬) 변해 있어야 한다.
+    const deltaOf = (object, record) => realFabric.util.multiplyTransformMatrices(
+      Array.from(object.calcTransformMatrix()),
+      realFabric.util.invertTransform(matrixOf(record.transform))
+    );
+    assert.notEqual(bodyObject.skewX, 0, '끄는 동안 본체가 기운다');
+    assertMatrixClose(
+      deltaOf(outlineObject, outline), deltaOf(bodyObject, body), 1e-6, '끄는 동안 외곽선이 본체를 따라간다'
+    );
+
+    harness.dispatchPointer(harness.element, 'pointercancel', from.x + 20, from.y, id, 0);
+    await settle();
+    assert.deepEqual(records(), before, '취소하면 저장된 값은 그대로다');
+    assert.equal(undoDepth(), depth);
+    assertMatrixClose(
+      Array.from(bodyObject.calcTransformMatrix()), matrixOf(body.transform), 1e-9, '본체가 돌아온다'
+    );
+    assertMatrixClose(
+      Array.from(outlineObject.calcTransformMatrix()), matrixOf(outline.transform), 1e-9, '외곽선이 돌아온다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('외곽선이 있는 획을 뒤집으면 외곽선도 같은 축으로 뒤집힌다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  try {
+    enableOutline(harness);
+    harness.drawStroke([{ x: 70, y: 60 }, { x: 70, y: 130 }, { x: 140, y: 130 }], 8471);
+    assert.equal(records().length, 2, '외곽선 + 본체');
+    const body = records().find(record => !record.id.endsWith('~outline'));
+    selectTool();
+    // 사각 영역으로 고른다(외곽선은 따로 잡히지 않으므로 본체 하나만 골라진다).
+    harness.dragMarquee({ x: 40, y: 40 }, { x: 170, y: 160 }, 8472);
+    await settle();
+    assert.deepEqual(activeIds(), [body.id]);
+    await dragHandle('mtr', 30, 20);
+    const before = records();
+    const center = active().getCenterPoint();
+
+    realClick(harness, paletteButton(harness.root, 'flip-horizontal'));
+    await settle();
+    const after = records();
+    assert.equal(after.length, 2);
+    for (const record of after) {
+      const was = before.find(candidate => candidate.id === record.id);
+      assertMatrixClose(
+        sceneDeltaOf(matrixOf, record.transform, was.transform),
+        [-1, 0, 0, 1, 2 * center.x, 0],
+        1e-6,
+        `${record.id} 는 본체의 상자 한가운데를 축으로 뒤집힌다`
+      );
+      assert.ok(record.transform.scaleX > 0 && record.transform.scaleY > 0, '배율은 양수다');
+    }
+    for (const object of harness.canvas.getObjects()) {
+      const record = after.find(candidate => candidate.id === object.__baeframeObjectId);
+      assertMatrixClose(
+        Array.from(object.calcTransformMatrix()), matrixOf(record.transform), 1e-6, '화면과 저장값'
+      );
+    }
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('잘라 고른 조각을 뒤집으면 획이 갈라지고 그 조각만 뒤집힌다', async () => {
+  const { harness, events, selectTool, records, active, activeIds, settle, matrixOf, undoDepth } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 20, y: 60 }, { x: 180, y: 140 }], 8481);
+    const original = records()[0];
+    selectTool();
+    selectPartialRectangle(harness.root);
+    harness.dragMarquee({ x: 70, y: 40 }, { x: 130, y: 160 }, 8482);
+    await settle();
+    const pending = active();
+    assert.ok(pending, '조각이 골라져 있다');
+    assert.deepEqual(records(), [original], '고르기만 해서는 문서가 바뀌지 않는다');
+    const flipHorizontal = paletteButton(harness.root, 'flip-horizontal');
+    assert.equal(flipHorizontal.disabled, false, '세워 둔 조각도 뒤집을 수 있다');
+    const center = pending.getCenterPoint();
+    const pendingMatrix = Array.from(pending.calcTransformMatrix());
+
+    events.length = 0;
+    const depth = undoDepth();
+    realClick(harness, flipHorizontal);
+    await settle();
+
+    const after = records();
+    assert.equal(after.length, 3, '왼쪽·가운데·오른쪽 세 조각으로 갈린다');
+    assert.equal(undoDepth(), depth + 1, '가르기와 뒤집기가 실행취소 한 단계다');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'split-stroke');
+    assert.equal(events[0].unsupportedReason, null);
+    const selected = activeIds();
+    assert.equal(selected.length, 1, '뒤집은 조각이 고른 채로 남는다');
+    const middle = after.find(record => record.id === selected[0]);
+    assert.equal(middle.transform.flipX, true);
+    assert.equal(middle.transform.flipY, false);
+    // 조각이 있던 자리(상자의 한가운데)에서 뒤집힌다.
+    const mirror = [-1, 0, 0, 1, 2 * center.x, 0];
+    const { util } = require('fabric/node');
+    assertMatrixClose(
+      matrixOf(middle.transform),
+      util.multiplyTransformMatrices(mirror, pendingMatrix),
+      1e-6,
+      '조각이 제자리에서 뒤집힌다'
+    );
+    for (const record of after.filter(candidate => candidate !== middle)) {
+      assert.equal(record.transform.flipX, false, '고르지 않은 조각은 그대로다');
+      assert.equal(record.transform.angle, 0);
+    }
+    assert.equal(active().__baeframePendingLasso, undefined, '이제 문서에 있는 획이다');
+
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'pending-flip-undo', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(records(), [original], '실행취소 한 번에 자르기 전의 획으로 돌아온다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Ctrl+클릭한 자리가 회전 중심점이 되고 그 자리를 축으로 돈다', async () => {
+  const {
+    harness, events, selectTool, records, active, activeIds, settle, click, dragHandle, matrixOf, undoDepth
+  } = createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  const ctrlClick = async (point, id) => {
+    harness.dispatchPointer(harness.element, 'pointerdown', point.x, point.y, id, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(point.x, point.y, id);
+    await settle();
+  };
+  try {
+    harness.drawStroke([{ x: 60, y: 100 }, { x: 150, y: 100 }], 8491);
+    const before = records()[0];
+    selectTool();
+    assert.deepEqual(state(), { transformable: false, pivot: null, pivotGestureActive: false });
+    await click(0, 8492);
+    assert.equal(state().transformable, true);
+    assert.equal(state().pivot, null, '처음에는 상자의 한가운데가 축이다');
+    assert.equal(active().isControlVisible('pivot'), false);
+
+    // 획의 왼쪽 끝을 Ctrl+클릭한다. 문서는 그대로이고 그 자리에 표시가 뜬다.
+    const joint = { x: 62, y: 100 };
+    events.length = 0;
+    const depth = undoDepth();
+    await ctrlClick(joint, 8493);
+    assertPointClose(state().pivot, joint, 1e-6, '누른 자리가 중심점이 된다');
+    assert.equal(state().pivotGestureActive, false);
+    assert.equal(active().isControlVisible('pivot'), true, '표시가 뜬다');
+    active().setCoords();
+    assertPointClose(active().oCoords.pivot, joint, 1e-6, '표시는 그 자리에 그려진다');
+    assert.deepEqual(records(), [before], '문서는 바뀌지 않는다');
+    assert.equal(events.length, 0);
+    assert.equal(undoDepth(), depth, '실행취소 단계가 생기지 않는다');
+    assert.deepEqual(activeIds(), [before.id], '선택은 그대로다');
+
+    // 돌리면 그 자리는 제자리에 있고 획이 그 둘레를 돈다.
+    await dragHandle('mtr', 40, 25);
+    const turned = records()[0];
+    assert.ok(turned.transform.angle > 5, `돈다: ${turned.transform.angle}`);
+    assertPointClose(
+      applyMatrix(sceneDeltaOf(matrixOf, turned.transform, before.transform), joint),
+      joint,
+      1e-6,
+      '중심점은 제자리다'
+    );
+    assert.ok(
+      Math.hypot(turned.transform.left - before.transform.left, turned.transform.top - before.transform.top) > 5,
+      '획의 한가운데는 움직인다(한가운데를 축으로 돈 것이 아니다)'
+    );
+    assert.equal(undoDepth(), depth + 1);
+
+    // 저장한 뒤에도 중심점이 남아, 같은 축으로 이어서 돌릴 수 있다.
+    assertPointClose(state().pivot, joint, 1e-6, '저장한 뒤에도 중심점이 남는다');
+    assert.equal(active().isControlVisible('pivot'), true);
+    await dragHandle('mtr', -20, 30);
+    const turnedAgain = records()[0];
+    assert.notEqual(turnedAgain.transform.angle, turned.transform.angle);
+    assertPointClose(
+      applyMatrix(sceneDeltaOf(matrixOf, turnedAgain.transform, turned.transform), joint),
+      joint,
+      1e-6,
+      '두 번째 회전도 같은 축이다'
+    );
+
+    // 획을 옮기면 중심점도 따라간다.
+    harness.dragActiveSelectionBy(15, -10, 8494);
+    await settle();
+    assertPointClose(state().pivot, { x: joint.x + 15, y: joint.y - 10 }, 1e-6, '옮기면 함께 간다');
+
+    // 상자 한가운데 가까이를 Ctrl+클릭하면 한가운데로 돌아가고 표시가 사라진다.
+    const center = active().getCenterPoint();
+    await ctrlClick({ x: center.x + 2, y: center.y - 1 }, 8495);
+    assert.equal(state().pivot, null, '한가운데로 붙는다');
+    assert.equal(active().isControlVisible('pivot'), false);
+
+    // 선택을 풀면 중심점은 사라진다. 다시 골라도 한가운데가 축이다.
+    await ctrlClick({ x: center.x + 30, y: center.y + 12 }, 8496);
+    assert.ok(state().pivot, '다시 놓는다');
+    harness.dispatchPointer(harness.element, 'pointerdown', 190, 12, 8497, 1);
+    harness.dispatchCapturedPointerUp(190, 12, 8497);
+    await settle();
+    assert.deepEqual(activeIds(), [], '빈 곳을 누르면 선택이 풀린다');
+    assert.equal(state().pivot, null);
+    await click(0, 8498);
+    assert.equal(state().pivot, null, '다시 고르면 한가운데가 축이다');
+    assert.equal(active().isControlVisible('pivot'), false);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('회전 중심점의 표시는 끌어서 옮길 수 있고 문서를 바꾸지 않는다', async () => {
+  const { harness, events, selectTool, records, active, activeIds, settle, click, dragHandle, undoDepth } =
+    createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  try {
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 140, y: 120 }], 8501);
+    selectTool();
+    await click(0, 8502);
+    const before = records();
+    const depth = undoDepth();
+
+    // Ctrl 을 누른 채 끌면 끄는 동안 중심점이 포인터를 따라온다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 70, 85, 8503, 1, { ctrlKey: true });
+    assert.equal(state().pivotGestureActive, true);
+    assertPointClose(state().pivot, { x: 70, y: 85 }, 1e-6, '누르는 순간 놓인다');
+    harness.dispatchPointer(harness.element, 'pointermove', 80, 95, 8503, 1, { ctrlKey: true });
+    assertPointClose(state().pivot, { x: 80, y: 95 }, 1e-6, '끄는 동안 따라온다');
+    harness.dispatchCapturedPointerUp(84, 99, 8503);
+    await settle();
+    assert.equal(state().pivotGestureActive, false);
+    assertPointClose(state().pivot, { x: 84, y: 99 }, 1e-6, '놓은 자리에 남는다');
+
+    // Ctrl 을 누른 채 가리키면 커서가 "여기에 놓는다"로 바뀐다 — 상자 안에서도, 모서리
+    // 바깥의 회전 영역에서도. 보이는 손잡이 위에서는 그 손잡이의 커서다.
+    const cursorAt = (point, modifiers = {}) => {
+      harness.dispatchPointer(harness.element, 'pointermove', point.x, point.y, 0, 0, modifiers);
+      return harness.canvas.upperCanvasEl.style.cursor;
+    };
+    const boxCenter = active().getCenterPoint();
+    active().setCoords();
+    const rotateZone = { ...active().oCoords.rotateBr };
+    const corner = { ...active().oCoords.br };
+    assert.equal(cursorAt(boxCenter), 'move');
+    assert.equal(cursorAt(boxCenter, { ctrlKey: true }), 'crosshair');
+    assert.notEqual(cursorAt({ x: rotateZone.x + 8, y: rotateZone.y + 8 }), 'crosshair');
+    assert.equal(cursorAt({ x: rotateZone.x + 8, y: rotateZone.y + 8 }, { ctrlKey: true }), 'crosshair');
+    assert.equal(cursorAt(corner, { ctrlKey: true }), 'se-resize', '모서리 손잡이는 Ctrl 을 눌러도 크기다');
+    // 모서리 바깥(회전 영역)을 Ctrl+클릭해도 중심점이 놓인다. Ctrl 없이는 회전이다.
+    const beside = { x: rotateZone.x + 8, y: rotateZone.y + 8 };
+    harness.dispatchPointer(harness.element, 'pointerdown', beside.x, beside.y, 8504, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(beside.x, beside.y, 8504);
+    await settle();
+    assertPointClose(state().pivot, beside, 1e-6, '모서리 바깥에도 놓을 수 있다');
+    harness.dispatchPointer(harness.element, 'pointerdown', 84, 99, 8505, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(84, 99, 8505);
+    await settle();
+    assertPointClose(state().pivot, { x: 84, y: 99 }, 1e-6, '다시 옮긴다');
+
+    // 표시를 Ctrl 없이 끌어도 옮겨진다.
+    events.length = 0;
+    await dragHandle('pivot', 20, 10);
+    assertPointClose(state().pivot, { x: 104, y: 109 }, 1e-6, '표시를 끌어 옮긴다');
+    // 그림 영역 밖으로는 나가지 않는다(밖으로 나가면 다시 잡을 수 없다).
+    await dragHandle('pivot', 1000, -1000);
+    assertPointClose(state().pivot, { x: 200, y: 0 }, 1e-6, '그림 영역 안에 머문다');
+
+    assert.deepEqual(records(), before, '문서는 바뀌지 않는다');
+    assert.equal(events.length, 0);
+    assert.equal(undoDepth(), depth);
+    assert.deepEqual(activeIds(), [before[0].id]);
+    assert.equal(active().hasControls, true);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('여러 획을 고른 묶음도 옮겨 둔 회전 중심점을 축으로 돌고, 뒤집으면 중심점이 그림을 따라간다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  try {
+    harness.drawStroke([{ x: 50, y: 60 }, { x: 100, y: 80 }], 8511);
+    harness.drawStroke([{ x: 90, y: 120 }, { x: 150, y: 140 }], 8512);
+    selectTool();
+    harness.dragMarquee({ x: 20, y: 30 }, { x: 180, y: 170 }, 8513);
+    await settle();
+    assert.equal(activeIds().length, 2);
+    const before = records();
+
+    // 묶음의 상자 밖(왼쪽 위)에 중심점을 놓는다.
+    const joint = { x: 30, y: 40 };
+    harness.dispatchPointer(harness.element, 'pointerdown', joint.x, joint.y, 8514, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(joint.x, joint.y, 8514);
+    await settle();
+    assertPointClose(state().pivot, joint, 1e-6, '상자 밖에도 놓을 수 있다');
+    assert.equal(activeIds().length, 2, '선택은 그대로다');
+
+    await dragHandle('mtr', 35, 20);
+    const turned = records();
+    for (const record of turned) {
+      const was = before.find(candidate => candidate.id === record.id);
+      assert.ok(record.transform.angle > 2, `${record.id} 가 돈다`);
+      assertPointClose(
+        applyMatrix(sceneDeltaOf(matrixOf, record.transform, was.transform), joint),
+        joint,
+        1e-6,
+        `${record.id} 는 중심점을 축으로 돈다`
+      );
+    }
+    assert.equal(activeIds().length, 2);
+    assertPointClose(state().pivot, joint, 1e-6, '묶음을 다시 세운 뒤에도 중심점이 남는다');
+
+    // 뒤집으면 중심점도 거울상의 자리로 간다.
+    const center = active().getCenterPoint();
+    realClick(harness, paletteButton(harness.root, 'flip-horizontal'));
+    await settle();
+    assertPointClose(
+      state().pivot, { x: 2 * center.x - joint.x, y: joint.y }, 1e-6, '중심점이 그림을 따라 뒤집힌다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Ctrl 을 누른 채 손잡이를 누르면 그 손잡이의 일을 하고, 선택 도구 밖에서는 중심점을 놓지 않는다', async () => {
+  const { harness, selectTool, records, active, click, dragHandle } = createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  try {
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 140, y: 120 }], 8521);
+    selectTool();
+    await click(0, 8522);
+
+    // 모서리 손잡이는 Ctrl 을 눌러도 크기 조절이다.
+    await dragHandle('br', 20, 15, { ctrlKey: true });
+    assert.ok(records()[0].transform.scaleX > 1.05, 'Ctrl + 모서리는 크기 조절이다');
+    assert.equal(state().pivot, null, '중심점은 놓이지 않는다');
+    // 회전 손잡이도 마찬가지다.
+    await dragHandle('mtr', 30, 20, { ctrlKey: true });
+    assert.ok(records()[0].transform.angle > 2, 'Ctrl + 회전 손잡이는 회전이다');
+    assert.equal(state().pivot, null);
+
+    // 브러시에서 Ctrl 은 임시 지우개다. 중심점과 무관하다.
+    selectTool('brush');
+    harness.dispatchPointer(harness.element, 'pointerdown', 20, 20, 8523, 1, { ctrlKey: true });
+    harness.dispatchPointer(harness.element, 'pointerup', 20, 20, 8523, 0);
+    assert.deepEqual(state(), { transformable: false, pivot: null, pivotGestureActive: false });
+    assert.equal(records().length, 1, '빈 곳을 지웠을 뿐이다');
+    assert.equal(active(), undefined);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('기울이고 키우고 돌리고 뒤집고 옮겨도 회전 중심점은 그림의 같은 자리에 붙어 다닌다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, click, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  try {
+    harness.drawStroke([{ x: 60, y: 70 }, { x: 140, y: 130 }], 8601);
+    const id = records()[0].id;
+    selectTool();
+    await click(0, 8602);
+    // 획의 시작 쪽(상자의 왼쪽 위 가까이)에 중심점을 놓는다.
+    const joint = { x: 68, y: 78 };
+    harness.dispatchPointer(harness.element, 'pointerdown', joint.x, joint.y, 8603, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(joint.x, joint.y, 8603);
+    await settle();
+    assertPointClose(state().pivot, joint, 1e-6, '중심점을 놓는다');
+
+    // 조작 전후의 레코드에서 화면의 변화(뒤 × 앞⁻¹)를 구해, 중심점이 그 변화를 그대로
+    // 따라갔는지 본다. 상자의 비율로 들고 있으면 기울일 때 그림에서 어긋난다.
+    const follows = async (label, operate) => {
+      const before = records()[0];
+      const pivotBefore = state().pivot;
+      await operate();
+      const after = records()[0];
+      assert.notDeepEqual(after.transform, before.transform, `${label}: 변형이 저장됐다`);
+      assertPointClose(
+        state().pivot,
+        applyMatrix(sceneDeltaOf(matrixOf, after.transform, before.transform), pivotBefore),
+        1e-6,
+        `${label} 중심점이 그림을 따라간다`
+      );
+      assert.deepEqual(activeIds(), [id], `${label}에도 고른 채다`);
+      assert.equal(active().isControlVisible('pivot'), true);
+    };
+    await follows('가로로 기울인 뒤', () => dragHandle('mt', 24, 0, { ctrlKey: true }));
+    assert.ok(
+      Math.hypot(state().pivot.x - joint.x, state().pivot.y - joint.y) > 5,
+      '위쪽 변 가까이의 중심점은 변과 함께 밀린다'
+    );
+    await follows('세로로 기울인 뒤', () => dragHandle('mr', 0, 14, { ctrlKey: true }));
+    await follows('크기를 바꾼 뒤', () => dragHandle('br', 18, 12));
+    await follows('돌린 뒤', () => dragHandle('mtr', 30, 20));
+    await follows('좌우로 뒤집은 뒤', async () => {
+      realClick(harness, paletteButton(harness.root, 'flip-horizontal'));
+      await settle();
+    });
+    await follows('상하로 뒤집은 뒤', async () => {
+      realClick(harness, paletteButton(harness.root, 'flip-vertical'));
+      await settle();
+    });
+    await follows('옮긴 뒤', async () => {
+      harness.dragActiveSelectionBy(12, -8, 8604);
+      await settle();
+    });
+
+    // 캔버스의 보기 변환(확대·이동)이 걸려 있어도 표시는 중심점의 자리에 그려진다.
+    // 런타임은 보통 보기 변환을 캔버스 밖(CSS)에서 걸지만, 표시의 자리 계산이 그 가정에
+    // 기대지 않는지 직접 걸어 본다.
+    const pivot = state().pivot;
+    const realFabric = require('fabric/node');
+    const viewport = [2, 0, 0, 2, 12, -7];
+    harness.canvas.setViewportTransform(viewport);
+    active().setCoords();
+    assertPointClose(
+      active().oCoords.pivot,
+      realFabric.util.transformPoint(new realFabric.Point(pivot.x, pivot.y), viewport),
+      1e-6,
+      '확대한 화면에서도 표시가 중심점 자리에 있다'
+    );
+    assertPointClose(state().pivot, pivot, 1e-6, '보기 변환은 중심점(그림 좌표)을 옮기지 않는다');
+    harness.canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('Shift+클릭으로 선택에 획을 더하거나 빼면 회전 중심점은 사라진다', async () => {
+  const { harness, selectTool, activeIds, settle } = createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  const tap = async (point, id, modifiers = {}) => {
+    harness.dispatchPointer(harness.element, 'pointerdown', point.x, point.y, id, 1, modifiers);
+    harness.dispatchCapturedPointerUp(point.x, point.y, id);
+    await settle();
+  };
+  try {
+    harness.drawStroke([{ x: 40, y: 50 }, { x: 90, y: 60 }], 8611);
+    harness.drawStroke([{ x: 50, y: 100 }, { x: 110, y: 112 }], 8612);
+    harness.drawStroke([{ x: 130, y: 150 }, { x: 180, y: 162 }], 8613);
+    selectTool();
+    harness.dragMarquee({ x: 20, y: 30 }, { x: 125, y: 130 }, 8614);
+    await settle();
+    assert.equal(activeIds().length, 2);
+    const group = harness.canvas.getActiveObject();
+
+    await tap({ x: 30, y: 40 }, 8615, { ctrlKey: true });
+    assert.ok(state().pivot, '묶음에 중심점을 놓는다');
+
+    // fabric 은 Shift+클릭을 같은 묶음 오브젝트에 획을 더하는 것으로 처리한다. 묶음의
+    // 상자가 달라지므로 중심점을 그대로 두면 엉뚱한 자리를 가리킨다.
+    const third = harness.canvas.getObjects()[2].getCenterPoint();
+    await tap(third, 8616, { shiftKey: true });
+    assert.equal(activeIds().length, 3, 'Shift+클릭으로 셋째 획이 더해진다');
+    assert.equal(harness.canvas.getActiveObject(), group, '같은 묶음 오브젝트를 고쳐 쓴다');
+    assert.equal(state().pivot, null, '선택이 달라졌으므로 중심점은 사라진다');
+    assert.equal(harness.canvas.getActiveObject().isControlVisible('pivot'), false);
+
+    // 다시 놓은 뒤 Shift+클릭으로 하나를 빼도 같다.
+    await tap({ x: 30, y: 40 }, 8617, { ctrlKey: true });
+    assert.ok(state().pivot);
+    await tap(third, 8618, { shiftKey: true });
+    assert.equal(activeIds().length, 2, 'Shift+클릭으로 셋째 획이 빠진다');
+    assert.equal(state().pivot, null);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('여러 획이나 잘라 고른 조각을 옮긴 뒤에도 회전 중심점이 함께 가고, 표시를 끌어도 조각은 갈라지지 않는다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, dragHandle } =
+    createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  const ctrlClick = async (point, id) => {
+    harness.dispatchPointer(harness.element, 'pointerdown', point.x, point.y, id, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(point.x, point.y, id);
+    await settle();
+  };
+  try {
+    // 여러 획의 묶음.
+    harness.drawStroke([{ x: 40, y: 40 }, { x: 90, y: 55 }], 8621);
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 120, y: 95 }], 8622);
+    selectTool();
+    harness.dragMarquee({ x: 20, y: 20 }, { x: 140, y: 110 }, 8623);
+    await settle();
+    assert.equal(activeIds().length, 2);
+    const joint = { x: 100, y: 45 };
+    await ctrlClick(joint, 8624);
+    assertPointClose(state().pivot, joint, 1e-6, '묶음에 중심점을 놓는다');
+    harness.dragActiveSelectionBy(15, 10, 8625);
+    await settle();
+    assert.equal(activeIds().length, 2, '옮긴 뒤에도 고른 채다');
+    assertPointClose(state().pivot, { x: joint.x + 15, y: joint.y + 10 }, 1e-6, '묶음과 함께 간다');
+
+    // 잘라 고른 조각(아직 문서에 없는 프록시). 도구를 바꾸면 선택과 중심점이 걷힌다.
+    selectTool('brush');
+    assert.deepEqual(state(), { transformable: false, pivot: null, pivotGestureActive: false });
+    harness.drawStroke([{ x: 20, y: 150 }, { x: 180, y: 150 }], 8627);
+    selectTool();
+    selectPartialRectangle(harness.root);
+    harness.dragMarquee({ x: 70, y: 135 }, { x: 130, y: 165 }, 8628);
+    await settle();
+    const pending = active();
+    assert.ok(pending, '조각이 골라져 있다');
+    const count = records().length;
+    const spot = { x: 75, y: 150 };
+    await ctrlClick(spot, 8629);
+    assertPointClose(state().pivot, spot, 1e-6, '조각에 중심점을 놓는다');
+    // 표시를 끄는 것은 변형이 아니다. 획은 갈라지지 않는다. (표시는 조각의 한가운데에서
+    // 떨어진 곳에 둔다 — 한가운데에 겹치면 조각을 잡으려 할 때 표시가 잡힌다.)
+    await dragHandle('pivot', 8, 4);
+    assertPointClose(state().pivot, { x: 83, y: 154 }, 1e-6, '표시를 끌어 옮긴다');
+    assert.equal(records().length, count, '표시를 끌어도 획이 갈라지지 않는다');
+    assert.equal(active(), pending, '조각이 고른 채로 남는다');
+    // 조각을 옮기면 갈라 넣으면서 중심점도 함께 간다.
+    harness.dragActiveSelectionBy(0, -30, 8630);
+    await settle();
+    assert.equal(records().length, count + 2, '옮기면 세 조각으로 갈린다');
+    assert.equal(activeIds().length, 1);
+    assertPointClose(state().pivot, { x: 83, y: 124 }, 1e-6, '조각과 함께 간다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('뒤집기를 저장하지 못하면 화면과 회전 중심점이 뒤집기 전으로 돌아온다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, click, matrixOf, undoDepth } =
+    createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  const flip = async () => {
+    realClick(harness, paletteButton(harness.root, 'flip-horizontal'));
+    await settle();
+  };
+  try {
+    harness.drawStroke([{ x: 60, y: 70 }, { x: 140, y: 130 }], 8631);
+    const before = records();
+    selectTool();
+    await click(0, 8632);
+    harness.dispatchPointer(harness.element, 'pointerdown', 70, 80, 8633, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(70, 80, 8633);
+    await settle();
+    const pivot = state().pivot;
+    assert.ok(pivot);
+    const depth = undoDepth();
+
+    // 스토어가 거절한다(동시 편집으로 문서가 바뀐 경우 등).
+    const transformSelection = harness.sceneStore.transformSelection;
+    harness.sceneStore.transformSelection = () => ({ applied: false, reason: 'rejected-for-test' });
+    await flip();
+    harness.sceneStore.transformSelection = transformSelection;
+    assert.deepEqual(records(), before, '문서는 그대로다');
+    assert.equal(undoDepth(), depth);
+    assert.deepEqual(activeIds(), [before[0].id], '고른 채로 남는다');
+    assert.equal(active().flipX, false, '화면의 것이 뒤집기 전으로 돌아온다');
+    assertMatrixClose(
+      Array.from(active().calcTransformMatrix()), matrixOf(before[0].transform), 1e-9, '화면과 저장값'
+    );
+    assertPointClose(state().pivot, pivot, 1e-9, '중심점도 제자리다');
+
+    // 거절이 풀리면 다시 뒤집을 수 있다.
+    await flip();
+    assert.equal(records()[0].transform.flipX, true);
+    assert.equal(undoDepth(), depth + 1);
+
+    // 세워 둔 조각: 저장하지 못하면 화면을 되돌리고 세워 둔 선택을 걷는다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 190, 10, 8634, 1);
+    harness.dispatchCapturedPointerUp(190, 10, 8634);
+    await settle();
+    selectPartialRectangle(harness.root);
+    harness.dragMarquee({ x: 85, y: 60 }, { x: 115, y: 140 }, 8635);
+    await settle();
+    assert.ok(active(), '조각이 골라져 있다');
+    const staged = records();
+    const replaceObjects = harness.sceneStore.replaceObjects;
+    harness.sceneStore.replaceObjects = () => ({ applied: false, reason: 'rejected-for-test' });
+    await flip();
+    harness.sceneStore.replaceObjects = replaceObjects;
+    assert.deepEqual(records(), staged, '획은 갈라지지 않는다');
+    assert.equal(undoDepth(), depth + 1);
+    assert.deepEqual(activeIds(), [], '세워 둔 선택은 걷힌다');
+    assertMatrixClose(
+      Array.from(harness.canvas.getObjects()[0].calcTransformMatrix()),
+      matrixOf(staged[0].transform),
+      1e-9,
+      '화면의 획은 그대로다'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('이미 뒤집은 획을 기울여도 맞은편 변이 제자리에 있고 뒤집힘이 남는다', async () => {
+  const { harness, selectTool, records, active, settle, click, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 60, y: 70 }, { x: 140, y: 130 }], 8641);
+    selectTool();
+    await click(0, 8642);
+    realClick(harness, paletteButton(harness.root, 'flip-horizontal'));
+    await settle();
+    assert.equal(records()[0].transform.flipX, true);
+
+    // 뒤집힌 획의 위쪽 변을 오른쪽으로 20 민다.
+    let target = active();
+    let before = records()[0];
+    let anchors = [boxPoint(target, -0.5, 0.5), boxPoint(target, 0.5, 0.5)];
+    let grabbed = boxPoint(target, 0, -0.5);
+    await dragHandle('mt', 20, 0, { ctrlKey: true });
+    let after = records()[0];
+    let delta = sceneDeltaOf(matrixOf, after.transform, before.transform);
+    for (const anchor of anchors) {
+      assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '맞은편(아래) 변은 제자리다');
+    }
+    assertPointClose(
+      applyMatrix(delta, grabbed), { x: grabbed.x + 20, y: grabbed.y }, 1e-6, '잡은 변은 끈 만큼 간다'
+    );
+    assert.equal(after.transform.flipX, true, '뒤집힘이 남는다');
+    assert.equal(after.transform.scaleX, before.transform.scaleX);
+
+    // 이어서 오른쪽 변을 아래로 14 민다. 가로 기울임이 있어 크기·기울임·뒤집힘을 부호에서
+    // 다시 정하는 길을 탄다.
+    target = active();
+    before = records()[0];
+    anchors = [boxPoint(target, -0.5, -0.5), boxPoint(target, -0.5, 0.5)];
+    grabbed = boxPoint(target, 0.5, 0);
+    await dragHandle('mr', 0, 14, { ctrlKey: true });
+    after = records()[0];
+    delta = sceneDeltaOf(matrixOf, after.transform, before.transform);
+    for (const anchor of anchors) {
+      assertPointClose(applyMatrix(delta, anchor), anchor, 1e-6, '맞은편(왼쪽) 변은 제자리다');
+    }
+    assertPointClose(
+      applyMatrix(delta, grabbed), { x: grabbed.x, y: grabbed.y + 14 }, 1e-6, '잡은 변은 끈 만큼 간다'
+    );
+    assert.equal(after.transform.flipX, true, '뒤집힘이 남는다');
+    assert.equal(after.transform.flipY, false);
+    assert.ok(after.transform.scaleX > 0 && after.transform.scaleY > 0, '배율은 양수다');
+    assert.equal(after.transform.angle, before.transform.angle, '각도는 그대로다');
+    assertMatrixClose(
+      Array.from(active().calcTransformMatrix()), matrixOf(after.transform), 1e-9, '화면과 저장값'
+    );
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('펜은 Ctrl 을 이벤트에 싣지 못해도 문서가 본 Ctrl 로 기울이고 중심점을 놓는다 — 방금 눌린 Ctrl 만 믿는다', async () => {
+  // 시각을 손으로 넘긴다(뗌을 놓쳐 남은 Ctrl 표시가 얼마나 오래됐는지를 본다).
+  let clock = 1000;
+  const { harness, selectTool, records, active, activeIds, click, pressHandle, settle } =
+    createTransformBoxHarness({ performance: { now: () => clock } });
+  const state = () => harness.runtime.getSelectionTransformState();
+  const pen = { pointerType: 'pen' };
+  try {
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 140, y: 120 }], 8541);
+    selectTool();
+    await click(0, 8542);
+
+    // 펜·터치의 포인터 이벤트는 Ctrl 을 싣지 않고 오는 환경이 있다. 오버레이 문서가 본
+    // 키 상태를 대신 쓴다(임시 지우개와 같은 판정이다).
+    dispatchOverlayKey(harness, 'keydown', 'Control');
+    let press = pressHandle('mt', pen);
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x + 20, press.from.y, press.id, 1, pen
+    );
+    harness.dispatchCapturedPointerUp(press.from.x + 20, press.from.y, press.id);
+    await settle();
+    assert.ok(Math.abs(records()[0].transform.skewX) > 1, `펜으로 기울인다: ${records()[0].transform.skewX}`);
+
+    const center = active().getCenterPoint();
+    const spot = { x: center.x + 25, y: center.y + 12 };
+    harness.dispatchPointer(harness.element, 'pointerdown', spot.x, spot.y, 8543, 1, pen);
+    harness.dispatchCapturedPointerUp(spot.x, spot.y, 8543);
+    await settle();
+    assertPointClose(state().pivot, spot, 1e-6, '펜으로 중심점을 놓는다');
+
+    // 키 뗌이 문서에 오지 않은 채 시간이 흐른다(뗌을 놓쳐 Ctrl 표시가 남았다). 오래된
+    // 표시는 믿지 않는다 — 믿으면 선택 도구의 탭이 통째로 중심점 놓기로 넘어가, 획을 옮길
+    // 수도 선택을 풀 수도 없다.
+    clock += 3000;
+    const leftover = state().pivot;
+    const movedFrom = records()[0].transform;
+    const body = active().getCenterPoint();
+    harness.dispatchPointer(harness.element, 'pointerdown', body.x, body.y, 8544, 1, pen);
+    harness.dispatchPointer(
+      harness.environment.document, 'pointermove', body.x + 10, body.y + 6, 8544, 1, pen
+    );
+    harness.dispatchCapturedPointerUp(body.x + 10, body.y + 6, 8544);
+    await settle();
+    assert.ok(
+      Math.abs(records()[0].transform.left - movedFrom.left - 10) < 1e-6 &&
+        Math.abs(records()[0].transform.top - movedFrom.top - 6) < 1e-6,
+      '펜으로 획을 잡아 끌면 옮겨진다'
+    );
+    assertPointClose(
+      state().pivot, { x: leftover.x + 10, y: leftover.y + 6 }, 1e-6,
+      '중심점은 새로 놓이지 않고 획을 따라갔을 뿐이다'
+    );
+    // 오래된 표시로는 변 손잡이도 기울이기가 되지 않는다.
+    const skewKept = records()[0].transform.skewX;
+    press = pressHandle('mb', pen);
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x + 15, press.from.y + 10, press.id, 1, pen
+    );
+    harness.dispatchCapturedPointerUp(press.from.x + 15, press.from.y + 10, press.id);
+    await settle();
+    assert.equal(records()[0].transform.skewX, skewKept, '오래된 Ctrl 표시로는 기울지 않는다');
+    // 빈 곳을 펜으로 누르면 선택이 풀린다.
+    harness.dispatchPointer(harness.element, 'pointerdown', 192, 8, 8545, 1, pen);
+    harness.dispatchCapturedPointerUp(192, 8, 8545);
+    await settle();
+    assert.deepEqual(activeIds(), [], '펜으로 빈 곳을 누르면 선택이 풀린다');
+
+    // 실제로 누르고 있으면 키 반복이 시각을 갱신한다. 다시 Ctrl 조작이 된다.
+    const reselect = harness.canvas.getObjects()[0].getCenterPoint();
+    harness.dispatchPointer(harness.element, 'pointerdown', reselect.x, reselect.y, 8546, 1, pen);
+    harness.dispatchCapturedPointerUp(reselect.x, reselect.y, 8546);
+    await settle();
+    assert.equal(activeIds().length, 1, '펜으로 다시 고른다');
+    assert.equal(state().pivot, null);
+    dispatchOverlayKey(harness, 'keydown', 'Control');
+    const again = { x: reselect.x - 18, y: reselect.y + 9 };
+    harness.dispatchPointer(harness.element, 'pointerdown', again.x, again.y, 8547, 1, pen);
+    harness.dispatchCapturedPointerUp(again.x, again.y, 8547);
+    await settle();
+    assertPointClose(state().pivot, again, 1e-6, '키 반복으로 갱신된 Ctrl 은 다시 믿는다');
+
+    // Ctrl 을 떼면 같은 손잡이는 다시 크기 조절이다.
+    dispatchOverlayKey(harness, 'keyup', 'Control');
+    const skewBefore = records()[0].transform.skewX;
+    const scaleBefore = records()[0].transform.scaleY;
+    press = pressHandle('mt', pen);
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x, press.from.y - 12, press.id, 1, pen
+    );
+    harness.dispatchCapturedPointerUp(press.from.x, press.from.y - 12, press.id);
+    await settle();
+    assert.equal(records()[0].transform.skewX, skewBefore, 'Ctrl 을 떼면 기울지 않는다');
+    assert.ok(records()[0].transform.scaleY > scaleBefore, '크기 조절로 돌아온다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('호스트가 누르기를 확정한 뒤 되살려 보내는 경로에서도 Ctrl 기울이기가 되고, 중심점 놓기는 확정을 기다리지 않는다', async () => {
+  const requests = [];
+  const { harness, selectTool, records, active, activeIds, settle, pressHandle, undoDepth } =
+    createTransformBoxHarness({
+      requestPointerdownFrame(request) {
+        requests.push(request);
+        return true;
+      }
+    });
+  const state = () => harness.runtime.getSelectionTransformState();
+  const confirm = () => {
+    const request = requests.shift();
+    assert.ok(request, '확정할 누르기가 있어야 한다');
+    const result = harness.runtime.confirmDrawingPointerdownFrame({ ...request, targetFrame: 0 });
+    assert.equal(result.accepted, true, JSON.stringify(result));
+  };
+  try {
+    harness.drawStroke([{ x: 60, y: 80 }, { x: 140, y: 120 }], 8551);
+    confirm();
+    const before = records()[0];
+    selectTool();
+    harness.clickStroke(0, 8552);
+    confirm();
+    await settle();
+    assert.deepEqual(activeIds(), [before.id]);
+
+    // 되살린 누르기에도 Ctrl 이 실려 있어야 기울이기로 시작한다.
+    const depth = undoDepth();
+    const press = pressHandle('mt', { ctrlKey: true });
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x + 10, press.from.y, press.id, 1, { ctrlKey: true }
+    );
+    assert.equal(active().skewX, 0, '확정 전에는 아무것도 변하지 않는다');
+    confirm();
+    assert.notEqual(active().skewX, 0, '확정되면 쌓인 이동까지 되살아난다');
+    harness.dispatchPointer(
+      harness.element, 'pointermove', press.from.x + 22, press.from.y, press.id, 1, { ctrlKey: true }
+    );
+    harness.dispatchCapturedPointerUp(press.from.x + 22, press.from.y, press.id);
+    await settle();
+    assert.ok(Math.abs(records()[0].transform.skewX) > 5, `기울임이 저장된다: ${records()[0].transform.skewX}`);
+    assert.equal(records()[0].transform.scaleY, before.transform.scaleY, '크기는 그대로다');
+    assert.equal(undoDepth(), depth + 1);
+
+    // 회전 중심점 놓기는 씬을 바꾸지 않는다. 호스트에 확정을 청하지 않고 바로 놓인다.
+    const center = active().getCenterPoint();
+    const spot = { x: center.x - 20, y: center.y + 10 };
+    harness.dispatchPointer(harness.element, 'pointerdown', spot.x, spot.y, 8553, 1, { ctrlKey: true });
+    assert.equal(requests.length, 0, '확정을 청하지 않는다');
+    assertPointClose(state().pivot, spot, 1e-6, '누르는 순간 놓인다');
+    harness.dispatchCapturedPointerUp(spot.x, spot.y, 8553);
+    await settle();
+    assert.equal(requests.length, 0);
+    assert.equal(undoDepth(), depth + 1);
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('잘라 고른 조각을 기울이면 획이 갈라지고 그 조각만 기운다', async () => {
+  const { harness, events, selectTool, records, active, activeIds, settle, dragHandle, undoDepth } =
+    createTransformBoxHarness();
+  try {
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 180, y: 100 }], 8561);
+    const original = records()[0];
+    selectTool();
+    selectPartialRectangle(harness.root);
+    harness.dragMarquee({ x: 70, y: 80 }, { x: 130, y: 120 }, 8562);
+    await settle();
+    assert.ok(active(), '조각이 골라져 있다');
+    assert.equal(active().lockSkewingX, false, '세워 둔 조각도 기울일 수 있다');
+
+    events.length = 0;
+    const depth = undoDepth();
+    await dragHandle('mt', 12, 0, { ctrlKey: true });
+
+    const after = records();
+    assert.equal(after.length, 3, '왼쪽·가운데·오른쪽 세 조각으로 갈린다');
+    assert.equal(undoDepth(), depth + 1, '가르기와 기울이기가 실행취소 한 단계다');
+    assert.equal(events.length, 1);
+    assert.equal(events[0].kind, 'split-stroke');
+    assert.equal(events[0].unsupportedReason, null);
+    const selected = activeIds();
+    assert.equal(selected.length, 1, '기울인 조각이 고른 채로 남는다');
+    const middle = after.find(record => record.id === selected[0]);
+    assert.ok(Math.abs(middle.transform.skewX) > 5, `가운데 조각이 기운다: ${middle.transform.skewX}`);
+    for (const record of after.filter(candidate => candidate !== middle)) {
+      assert.equal(record.transform.skewX, 0, '고르지 않은 조각은 그대로다');
+    }
+    assert.equal(harness.runtime.applyDrawingAction({
+      sessionId: 'real-fabric-session', actionId: 'pending-skew-undo', action: 'undo'
+    }).applied, true);
+    assert.deepEqual(records(), [original], '실행취소 한 번에 자르기 전의 획으로 돌아온다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('잘라 고른 조각도 Ctrl+클릭한 자리를 축으로 돌고, 중심점을 놓는 것만으로는 획이 갈라지지 않는다', async () => {
+  const { harness, selectTool, records, active, activeIds, settle, dragHandle, matrixOf, undoDepth } =
+    createTransformBoxHarness();
+  const state = () => harness.runtime.getSelectionTransformState();
+  try {
+    harness.drawStroke([{ x: 20, y: 100 }, { x: 180, y: 100 }], 8581);
+    const original = records()[0];
+    selectTool();
+    selectPartialRectangle(harness.root);
+    harness.dragMarquee({ x: 70, y: 80 }, { x: 130, y: 120 }, 8582);
+    await settle();
+    const pending = active();
+    assert.ok(pending, '조각이 골라져 있다');
+    const pendingMatrix = Array.from(pending.calcTransformMatrix());
+    const depth = undoDepth();
+
+    // 조각의 왼쪽 끝을 축으로 삼는다.
+    const joint = { x: 73, y: 100 };
+    harness.dispatchPointer(harness.element, 'pointerdown', joint.x, joint.y, 8583, 1, { ctrlKey: true });
+    harness.dispatchCapturedPointerUp(joint.x, joint.y, 8583);
+    await settle();
+    assertPointClose(state().pivot, joint, 1e-6, '세워 둔 조각에도 중심점을 놓을 수 있다');
+    assert.deepEqual(records(), [original], '중심점을 놓는 것만으로는 획이 갈라지지 않는다');
+    assert.equal(active(), pending, '조각이 고른 채로 남는다');
+    assert.equal(undoDepth(), depth);
+
+    await dragHandle('mtr', 30, 20);
+    const after = records();
+    assert.equal(after.length, 3, '돌리면 세 조각으로 갈린다');
+    assert.equal(undoDepth(), depth + 1);
+    const selected = activeIds();
+    assert.equal(selected.length, 1);
+    const middle = after.find(record => record.id === selected[0]);
+    assert.ok(middle.transform.angle > 2, `가운데 조각이 돈다: ${middle.transform.angle}`);
+    const { util } = require('fabric/node');
+    const delta = util.multiplyTransformMatrices(
+      matrixOf(middle.transform), util.invertTransform(pendingMatrix)
+    );
+    assertPointClose(applyMatrix(delta, joint), joint, 1e-6, '조각이 중심점을 축으로 돈다');
+    assertPointClose(state().pivot, joint, 1e-6, '갈라 넣은 뒤에도 중심점이 남는다');
+  } finally {
+    await harness.destroy();
+  }
+});
+
+test('뒤집고 기울인 획도 저장·재수화·보기 화면에서 같은 모양이고 지우개와 부분 자르기가 제자리를 짚는다', async () => {
+  const { harness, setInput, selectTool, records, active, activeIds, settle, click, dragHandle, matrixOf } =
+    createTransformBoxHarness();
+  const realFabric = require('fabric/node');
+  try {
+    harness.drawStroke([{ x: 40, y: 85 }, { x: 160, y: 115 }], 8571);
+    selectTool();
+    await click(0, 8572);
+    await dragHandle('mtr', 25, 15);
+    await dragHandle('mt', 14, 6, { ctrlKey: true });
+    realClick(harness, paletteButton(harness.root, 'flip-horizontal'));
+    await settle();
+    const record = records()[0];
+    assert.equal(record.transform.flipX, true);
+    assert.ok(Math.abs(record.transform.skewX) > 1, `기울어 있다: ${record.transform.skewX}`);
+    assert.ok(record.transform.angle > 180, `뒤집혀 각도가 반대다: ${record.transform.angle}`);
+
+    // 내보낸 스냅샷(저장으로 가는 원본)에 변형이 그대로 실린다.
+    const exported = harness.sceneStore.exportVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'transform-box-persistence',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240
+    });
+    assert.equal(exported.accepted, true, JSON.stringify(exported));
+    const scene = exported.snapshot.scenes[0];
+    assert.deepEqual(scene.objects[0].transform, record.transform);
+
+    // 보기 화면(그리기 패널을 닫은 상태)과 다시 수화한 뒤에도 같은 모양이다.
+    assert.equal(setInput(4, false).accepted, true);
+    assertMatrixClose(
+      Array.from(harness.canvas.getObjects()[0].calcTransformMatrix()),
+      matrixOf(record.transform),
+      1e-9,
+      '보기 화면'
+    );
+    const persistedObjects = structuredClone(scene.objects);
+    for (const persisted of persistedObjects) {
+      const baseTime = persisted.sourcePoints[0].time;
+      for (const point of persisted.sourcePoints) point.time -= baseTime;
+    }
+    const rehydrated = harness.runtime.hydrateDrawingVideo({
+      hostGeneration: 1,
+      videoGeneration: 1,
+      persistenceSessionId: 'transform-box-persistence-2',
+      stableVideoIdentity: 'real-fabric-video',
+      fps: 24,
+      totalFrames: 240,
+      keyframes: [{
+        id: 'keyframe-0',
+        frame: 0,
+        sourceWidth: scene.sourceWidth,
+        sourceHeight: scene.sourceHeight,
+        mutationSequence: scene.mutationSequence,
+        objects: persistedObjects
+      }]
+    });
+    assert.equal(rehydrated.accepted, true, `뒤집고 기울인 문서를 다시 읽을 수 있다: ${JSON.stringify(rehydrated)}`);
+    assertMatrixClose(
+      Array.from(harness.canvas.getObjects()[0].calcTransformMatrix()),
+      matrixOf(record.transform),
+      1e-9,
+      '재수화 뒤의 보기 화면'
+    );
+
+    // 획이 화면에서 뻗은 방향. 소스 좌표의 양 끝을 오브젝트의 행렬로 옮겨 구한다.
+    assert.equal(setInput(5, true).accepted, true);
+    const object = harness.canvas.getObjects()[0];
+    const matrix = object.calcTransformMatrix();
+    const onScreen = point => realFabric.util.transformPoint(
+      new realFabric.Point(point.x - object.pathOffset.x, point.y - object.pathOffset.y), matrix
+    );
+    const head = onScreen(record.sourcePoints[0]);
+    const tail = onScreen(record.sourcePoints.at(-1));
+    const middle = { x: (head.x + tail.x) / 2, y: (head.y + tail.y) / 2 };
+    const length = Math.hypot(tail.x - head.x, tail.y - head.y);
+    const along = { x: (tail.x - head.x) / length, y: (tail.y - head.y) / length };
+    const across = { x: -along.y, y: along.x };
+
+    // 부분 지우기: 한가운데를 가로질러 지우면 두 조각이 되고, 남은 조각은 제자리에 있다.
+    selectTool('eraser');
+    clickEraserMode(harness.root, 'pixel');
+    const beforeErase = inkMapOf(harness);
+    assert.ok(beforeErase.alpha(Math.round(middle.x), Math.round(middle.y)) > 0, '한가운데에 획이 있다');
+    harness.drawStroke([
+      { x: middle.x - across.x * 40, y: middle.y - across.y * 40 },
+      { x: middle.x, y: middle.y },
+      { x: middle.x + across.x * 40, y: middle.y + across.y * 40 }
+    ], 8573);
+    const pieces = records();
+    assert.equal(pieces.length, 2, '가운데가 지워져 두 조각이 된다');
+    for (const piece of pieces) {
+      assert.equal(piece.transform.flipX, true, '조각이 뒤집힘을 물려받는다');
+    }
+    const afterErase = inkMapOf(harness);
+    assert.equal(afterErase.alpha(Math.round(middle.x), Math.round(middle.y)), 0, '가운데는 지워졌다');
+    const farFromCut = point => Math.hypot(point.x - middle.x, point.y - middle.y) >= 24;
+    const kept = countUnmatchedInk(beforeErase, afterErase, point => point, farFromCut);
+    assert.ok(kept.solid > 100, `견줄 획 픽셀이 충분해야 한다: ${kept.solid}`);
+    assert.equal(kept.unmatched, 0, '남은 조각이 제자리에 있다');
+
+    // 부분 자르기: 한쪽 조각의 가운데 토막을 잘라 옮기면 그 토막만 그만큼 움직인다.
+    selectTool();
+    selectPartialRectangle(harness.root);
+    const spot = { x: middle.x + along.x * (length * 0.3), y: middle.y + along.y * (length * 0.3) };
+    assert.ok(afterErase.alpha(Math.round(spot.x), Math.round(spot.y)) > 0, '자를 자리에 획이 있다');
+    harness.dragMarquee(
+      { x: spot.x - 12, y: spot.y - 30 }, { x: spot.x + 12, y: spot.y + 30 }, 8574
+    );
+    await settle();
+    assert.equal(activeIds().length, 1, '토막이 골라진다');
+    const cut = active().getCenterPoint();
+    harness.dragActiveSelectionBy(0, 40, 8575);
+    await settle();
+    assert.ok(records().length >= 3, `획이 토막으로 갈린다: ${records().length}`);
+    selectTool('brush');
+    const afterMove = inkMapOf(harness);
+    assert.equal(afterMove.alpha(Math.round(cut.x), Math.round(cut.y)), 0, '토막이 있던 자리는 비었다');
+    assert.ok(afterMove.alpha(Math.round(cut.x), Math.round(cut.y + 40)) > 0, '토막이 옮긴 자리에 있다');
+    const awayFromCut = point => farFromCut(point) && Math.abs(point.x - spot.x) > 18;
+    const untouched = countUnmatchedInk(afterErase, afterMove, point => point, awayFromCut);
+    assert.ok(untouched.solid > 50, `견줄 획 픽셀이 충분해야 한다: ${untouched.solid}`);
+    assert.equal(untouched.unmatched, 0, '자르지 않은 부분은 제자리에 있다');
   } finally {
     await harness.destroy();
   }

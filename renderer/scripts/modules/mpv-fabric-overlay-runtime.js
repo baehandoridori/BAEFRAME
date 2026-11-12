@@ -91,8 +91,21 @@ const TRANSFORM_FIELDS = ['left', 'top', 'scaleX', 'scaleY', 'angle', 'skewX', '
 // 이동이 아닌 변형 필드. 끌어 옮기기는 이 값들을 건드리지 않고, 변형 상자(크기·회전)만 바꾼다.
 const NON_TRANSLATION_TRANSFORM_FIELDS = ['scaleX', 'scaleY', 'angle', 'skewX', 'skewY', 'flipX', 'flipY'];
 // ── 선택 도구의 변형 상자 ────────────────────────────────────────────────────
-// 끌어 옮기기 말고 fabric 이 알려 주는 변형 동작. 기울이기(skew)는 잠가 두었다.
-const SELECTION_TRANSFORM_ACTIONS = new Set(['scale', 'scaleX', 'scaleY', 'rotate']);
+// 끌어 옮기기 말고 변형 상자가 하는 동작. 크기·회전은 fabric 이 알려 주는 이름이고,
+// 기울이기(skewX·skewY)와 뒤집기(flip)는 런타임이 직접 한다.
+const SELECTION_TRANSFORM_ACTIONS = new Set([
+  'scale', 'scaleX', 'scaleY', 'rotate', 'skewX', 'skewY', 'flip'
+]);
+// 회전 중심점을 옮기는 동작. 문서를 바꾸지 않으므로 위 목록에 넣지 않는다.
+const SELECTION_PIVOT_ACTION = 'pivot';
+// 모서리 바깥의 회전 영역(그리지 않는 손잡이). 이름과 자리(상자 크기에 대한 비율)다.
+const SELECTION_ROTATE_ZONES = Object.freeze([
+  ['rotateTl', -0.5, -0.5],
+  ['rotateTr', 0.5, -0.5],
+  ['rotateBl', -0.5, 0.5],
+  ['rotateBr', 0.5, 0.5]
+]);
+const SELECTION_ROTATE_ZONE_KEYS = new Set(SELECTION_ROTATE_ZONES.map(([key]) => key));
 // 손잡이 치수는 **화면(CSS) 픽셀** 기준이다. 캔버스 격자는 영상 소스 해상도라, 그대로
 // 쓰면 4K 영상에서는 손잡이가 점처럼 작아지고 작은 영상에서는 그림을 덮는다.
 const TRANSFORM_HANDLE_CSS_PX = 9;
@@ -107,6 +120,19 @@ const TRANSFORM_ROTATE_SNAP_DEGREES = 15;
 const TRANSFORM_MIN_GESTURE_SCALE = 0.02;
 const TRANSFORM_MIN_RECORD_SCALE = 0.01;
 const TRANSFORM_MAX_RECORD_SCALE = 100;
+// 기울일 수 있는 한계. 90° 에 가까워지면 획이 선으로 눌려 다시 잡을 수 없다.
+const TRANSFORM_MAX_SKEW_DEGREES = 80;
+// 회전 중심점 표시. 판정 영역은 손잡이보다 조금 넓고, 그리는 원은 그보다 작다.
+const TRANSFORM_PIVOT_HANDLE_CSS_PX = 11;
+const TRANSFORM_PIVOT_RADIUS_CSS_PX = 4.5;
+// 중심점을 상자 한가운데 가까이에 놓으면 한가운데로 붙는다(원래 자리로 되돌리는 길).
+const TRANSFORM_PIVOT_SNAP_CSS_PX = 6;
+// 펜·터치가 Ctrl 을 이벤트에 싣지 못할 때, 오버레이 문서가 본 Ctrl 누름을 이 시간 안의
+// 것만 믿는다(누르고 있는 동안에는 키 반복이 시각을 갱신한다). 뗌을 놓쳐 남은 표시가
+// 변형 상자의 Ctrl 조작으로 이어지지 않게 한다.
+const TRANSFORM_CTRL_LATCH_FRESH_MS = 2500;
+// 손잡이 커서. 0 이 오른쪽(e)이고 45° 씩 시계 방향으로 돈다.
+const RESIZE_CURSOR_DIRECTIONS = ['e', 'se', 's', 'sw', 'w', 'nw', 'n', 'ne'];
 const BRUSH_COLORS = Object.freeze([
   '#ff4757',
   '#ffd000',
@@ -213,7 +239,14 @@ const DRAWING_ACTIONS = new Set([
   'delete-selection',
   'clear-session',
   'undo',
-  'redo'
+  'redo',
+  'flip-horizontal',
+  'flip-vertical'
+]);
+// 고른 것을 뒤집는 조작과 그 방향.
+const FLIP_ACTIONS = new Map([
+  ['flip-horizontal', 'horizontal'],
+  ['flip-vertical', 'vertical']
 ]);
 // 프레임·키프레임 구조 조작. 획을 건드리지 않고 키프레임 집합만 바꾸므로
 // 선택 해제·재도색 경로가 위와 다르다.
@@ -405,6 +438,66 @@ function transformOriginFraction(origin) {
   if (origin === 'left' || origin === 'top') return -0.5;
   if (origin === 'right' || origin === 'bottom') return 0.5;
   return 0;
+}
+
+// 손잡이가 움직이는 방향의 크기 조절 커서. 방향(dx, dy)은 오브젝트의 회전을 푼 축에서
+// 본 것이고, 오브젝트의 각도만큼 돌려 화면 방향으로 옮긴다.
+//
+// fabric 은 손잡이가 **오브젝트 한가운데에서 보이는 방향**으로 커서를 고른다. 길쭉한
+// 획은 모서리 손잡이가 한가운데에서 거의 옆으로 보여, 대각선이 아니라 가로 화살표가
+// 나온다. 손잡이가 실제로 하는 일(모서리 = 대각선, 변 = 한 방향)에 맞춘다.
+function resizeCursorForDirection(dx, dy, angleDegrees = 0) {
+  if (!Number.isFinite(dx) || !Number.isFinite(dy) || (!dx && !dy)) return null;
+  const degrees = Math.atan2(dy, dx) * 180 / Math.PI + finiteNumber(angleDegrees);
+  const index = ((Math.round(degrees / 45) % 8) + 8) % 8;
+  return `${RESIZE_CURSOR_DIRECTIONS[index]}-resize`;
+}
+
+// 행렬을 분해한 값(fabric 의 qrDecompose)을 레코드의 변형으로 옮긴다.
+//
+// 분해는 뒤집힘을 **음수 세로 배율**로 돌려준다. 레코드는 배율을 양수로 두고 뒤집힘을
+// flipX·flipY 에 적는다 — fabric 은 음수 배율을 받으면 뒤집힘을 스스로 토글하는데,
+// 레코드의 flipX·flipY(false)가 뒤이어 그것을 덮어 뒤집히지 않은 모양으로 그려진다.
+//
+// 같은 모양을 적는 길이 둘이다: (θ, flipX, flipY) 와 (θ + 180°, !flipX, !flipY).
+// 어느 쪽을 고르든 그림은 같지만, 그 획을 혼자 골랐을 때 상자의 위쪽(회전 손잡이)이
+// 어디로 가는지가 갈린다. 하나만 골라 변형했을 때와 같은 표기가 되게 고른다.
+// - 뒤집힘 여부가 그대로면 이전 레코드와 같은 flipX 를 고른다(각도가 180° 튀지 않는다).
+// - 방금 뒤집었으면(flippedField) 그 방향의 뒤집힘만 바꾼 쪽을 고른다.
+// - 이전 레코드를 모르면 상자가 덜 돌아간 쪽을 고른다.
+function storedTransformFromDecomposition(decomposed, preferred = null, flippedField = null) {
+  let angle = ((finiteNumber(decomposed?.angle) % 360) + 360) % 360;
+  let scaleY = finiteNumber(decomposed?.scaleY, 1);
+  const mirrored = scaleY < 0;
+  if (mirrored) scaleY = -scaleY;
+  let flipX = false;
+  let flipY = mirrored;
+  const preferredFlipX = preferred?.flipX === true;
+  const preferredMirrored = !!preferred && preferredFlipX !== (preferred.flipY === true);
+  let turnHalf;
+  if (preferred && preferredMirrored === mirrored) {
+    turnHalf = preferredFlipX;
+  } else if (preferred && (flippedField === 'flipX' || flippedField === 'flipY')) {
+    turnHalf = flippedField === 'flipX' ? !preferredFlipX : preferredFlipX;
+  } else {
+    turnHalf = mirrored && angle > 90 && angle < 270;
+  }
+  if (turnHalf) {
+    angle = (angle + 180) % 360;
+    flipX = true;
+    flipY = !mirrored;
+  }
+  return {
+    left: finiteNumber(decomposed?.translateX),
+    top: finiteNumber(decomposed?.translateY),
+    scaleX: finiteNumber(decomposed?.scaleX, 1),
+    scaleY,
+    angle,
+    skewX: finiteNumber(decomposed?.skewX),
+    skewY: finiteNumber(decomposed?.skewY),
+    flipX,
+    flipY
+  };
 }
 
 function boundedInteger(value, min, max, fallback) {
@@ -4101,6 +4194,9 @@ function createFabricOverlayRuntime(options = {}) {
   // 계속 잡고 있어야 하므로 제스처가 시작되면 이 타이머를 취소한다.
   let sizeAdjustHudTimer = null;
   const overlayModifierState = { alt: false, ctrl: false };
+  // 오버레이 문서가 Control 누름을 마지막으로 본 시각(키 반복 포함). 변형 상자의 Ctrl
+  // 조작만 본다(isTransformCtrlActive).
+  let overlayCtrlPressedAt = null;
   // Alt 제스처 실기 미동작(v2.4.3-beta) 원인 확정용 관측값.
   // "오버레이 문서가 Alt keydown을 받기는 하는가"와 "마우스 pointerdown이 altKey를
   // 싣고 오는가"를 분리해 재현 1회로 원인을 가른다. 씬·스키마와 무관한 진단 전용 상태다.
@@ -4195,6 +4291,22 @@ function createFabricOverlayRuntime(options = {}) {
   // 크기 손잡이를 한가운데에서 얼마나 벗어나 잡았는지. 조작(fabric 의 transform) 하나에
   // 하나씩이고, 조작이 끝나면 함께 사라진다.
   const scaleGrabOffsets = new WeakMap();
+  // 기울이기를 시작한 순간의 모양(조작 하나에 하나). 매 걸음을 출발 모양에서 다시
+  // 계산해, 걸음마다 쌓이는 오차 없이 끈 만큼만 기운다.
+  const skewStarts = new WeakMap();
+  // 옮겨 둔 회전 중심점. 고른 것(fabric 오브젝트) 하나에 하나이고, **그 오브젝트 자신의
+  // 좌표**로 든다 — 옮기고 키우고 돌리고 기울이고 뒤집어도 그림의 같은 자리에 붙어
+  // 다닌다(화면의 자리는 오브젝트의 행렬을 곱해 얻는다). 옮긴 적이 없으면 항목이 없고
+  // 한가운데가 축이다.
+  const selectionPivots = new WeakMap();
+  // 지금 중심점을 들고 있는 오브젝트. 선택이 바뀌면 그 중심점을 버린다.
+  let selectionPivotOwner = null;
+  // 중심점 표시를 한가운데에서 얼마나 벗어나 잡았는지(조작 하나에 하나).
+  const pivotGrabOffsets = new WeakMap();
+  // Ctrl 을 누른 채 누르고 있는 동안의 "회전 중심점 놓기". 씬을 바꾸지 않는다.
+  let pivotGesture = null;
+  // 뒤집기를 저장하는 동안에만 서 있는 표시: 방금 뒤집은 방향('flipX' | 'flipY').
+  let flipCommitField = null;
   let deferredViewport = null;
   let longTaskObserver = null;
   let localSequence = 0;
@@ -5042,6 +5154,68 @@ function createFabricOverlayRuntime(options = {}) {
       shapeGroup.appendChild(button);
     }
 
+    // 고른 것을 뒤집는 버튼. 고른 것이 없거나 변형할 수 없으면 꺼 둔다
+    // (syncSelectionFlipControls). 세로 팔레트는 줄 이름("뒤집기")이 있어 짧게 적고,
+    // 편집창의 가로 도크는 줄 이름을 감추므로 버튼에 다 적는다.
+    const flipGroup = documentRef.createElement('div');
+    flipGroup.dataset.fabricPilotGroup = 'selection-flip';
+    flipGroup.setAttribute?.('role', 'group');
+    flipGroup.setAttribute?.('aria-label', '뒤집기');
+    setStyles(flipGroup, {
+      display: 'flex',
+      flexFlow: 'row wrap',
+      alignItems: 'center',
+      gap: '4px'
+    });
+    const flipLabel = documentRef.createElement('span');
+    flipLabel.dataset.fabricPilotLabel = 'selection-flip';
+    flipLabel.textContent = '뒤집기';
+    setStyles(flipLabel, {
+      flex: '1 1 100%',
+      color: 'rgba(255, 255, 255, 0.64)',
+      fontSize: '11px',
+      fontWeight: '600',
+      whiteSpace: 'nowrap'
+    });
+    const flipButtons = new Map([
+      ['flip-horizontal', labelToolbarButton(
+        createButton(paletteDocked ? '좌우 뒤집기' : '좌우', 'flip-horizontal'),
+        '고른 그림을 좌우로 뒤집기'
+      )],
+      ['flip-vertical', labelToolbarButton(
+        createButton(paletteDocked ? '상하 뒤집기' : '상하', 'flip-vertical'),
+        '고른 그림을 상하로 뒤집기'
+      )]
+    ]);
+    flipGroup.appendChild(flipLabel);
+    for (const [action, button] of flipButtons) {
+      button.disabled = true;
+      flipGroup.appendChild(button);
+      // 누를 때마다 뒤집히므로 click 하나에만 건다(pointerdown 과 함께 걸면 두 번 뒤집힌다).
+      addDomListener(button, 'click', () => {
+        applyDrawingAction({
+          sessionId: currentSession?.sessionId,
+          actionId: createId('flip'),
+          action
+        });
+      });
+    }
+
+    // 손잡이만 봐서는 알 수 없는 조작 둘을 변형 상자가 뜬 동안 적어 둔다. 한 줄에 하나씩
+    // 두고, 좁은 팔레트에서 낱말 중간이 끊기지 않게 한다.
+    const transformHint = documentRef.createElement('span');
+    transformHint.dataset.fabricPilotOutput = 'selection-transform-hint';
+    transformHint.textContent = 'Ctrl+변 손잡이: 기울이기\nCtrl+클릭: 회전 중심점';
+    setStyles(transformHint, {
+      display: 'none',
+      minWidth: '0',
+      color: 'rgba(255, 255, 255, 0.64)',
+      fontSize: '10px',
+      lineHeight: '1.5',
+      whiteSpace: 'pre-line',
+      wordBreak: 'keep-all'
+    });
+
     const summary = documentRef.createElement('span');
     summary.dataset.fabricPilotOutput = 'selection-summary';
     summary.setAttribute?.('role', 'status');
@@ -5056,6 +5230,8 @@ function createFabricOverlayRuntime(options = {}) {
 
     group.appendChild(targetGroup);
     group.appendChild(shapeGroup);
+    group.appendChild(flipGroup);
+    group.appendChild(transformHint);
     group.appendChild(summary);
     const bindSelectionControl = (button, action) => {
       addDomListener(button, 'pointerdown', event => {
@@ -5072,10 +5248,24 @@ function createFabricOverlayRuntime(options = {}) {
       group,
       targetGroup,
       shapeGroup,
+      flipGroup,
       targetButtons,
       shapeButtons,
+      flipButtons,
+      transformHint,
       summary
     };
+  }
+
+  // 뒤집기 버튼은 변형 상자가 뜬 동안에만 누를 수 있다. 조작 안내도 그동안만 보인다.
+  function syncSelectionFlipControls() {
+    if (!selectionControls?.flipButtons) return;
+    const enabled = selectionAllowsTransform(fabricCanvas?.getActiveObject?.());
+    for (const button of selectionControls.flipButtons.values()) {
+      button.disabled = !enabled;
+      button.setAttribute?.('aria-disabled', String(!enabled));
+    }
+    setStyles(selectionControls.transformHint, { display: enabled ? 'block' : 'none' });
   }
 
   function setOutlineEnabled(enabled) {
@@ -5946,11 +6136,12 @@ function createFabricOverlayRuntime(options = {}) {
     object.setCoords?.();
   }
 
-  // ── 선택 도구의 변형 상자(크기·회전) ───────────────────────────────────────
+  // ── 선택 도구의 변형 상자(크기·회전·기울이기·뒤집기) ───────────────────────
   //
   // 고른 획에 손잡이가 달린 상자를 띄운다. 모서리는 크기(Shift 를 누르면 비율 유지),
-  // 변은 한 방향 크기, 위쪽 손잡이와 모서리 바로 바깥은 회전(Shift 를 누르면 15°
-  // 단위)이다. 기울이기는 잠가 둔다.
+  // 변은 한 방향 크기(Ctrl 을 누르면 기울이기), 위쪽 손잡이와 모서리 바로 바깥은
+  // 회전(Shift 를 누르면 15° 단위)이다. Ctrl 을 누른 채 클릭한 자리가 회전 중심점이
+  // 된다. 뒤집기는 팔레트의 버튼이다(flipSelection).
   //
   // 저장은 레코드의 transform 만 바꾼다. pathData·sourcePoints 는 그대로다 — 모든
   // 그리기 경로(투영·정지 화면·편집창 내보내기)가 `path.set(record.transform)` 으로
@@ -6069,14 +6260,341 @@ function createFabricOverlayRuntime(options = {}) {
     return { x: x + dx * cos - dy * sin, y: y + dx * sin + dy * cos };
   }
 
-  // Fabric 기본 손잡이(모서리·변·회전)에 **모서리 바깥의 회전 영역**을 더한다.
-  // 애니메이트의 자유 변형처럼 모서리 바로 바깥에서 끌면 돈다. 회전 영역은 그리지
-  // 않고 포인터 모양만 바꾼다.
+  // ── 회전 중심점 ──────────────────────────────────────────────────────────
+  //
+  // 평소에는 변형 상자의 한가운데가 회전의 축이다. Ctrl 을 누른 채 클릭하면 그 자리가
+  // 축이 되고(팔을 어깨에서 돌리는 식) 작은 표시가 뜬다. 표시는 끌어서 다시 옮길 수
+  // 있다. 문서에 저장하지 않는 화면 상태이고, 선택이 바뀌면 사라진다.
+  //
+  // 표시를 한가운데에 늘 띄워 두지는 않는다. 그러면 획의 한가운데를 잡아 옮기려 할 때
+  // 획 대신 표시가 끌려간다(가장 흔한 조작이 막힌다).
+
+  // 오브젝트의 회전을 푼 축에서 본 상자의 크기. fabric 의 기준점 계산이 쓰는 값이다.
+  function selectionBoxSize(object) {
+    try {
+      const size = object?._getTransformedDimensions?.();
+      return { x: finiteNumber(size?.x), y: finiteNumber(size?.y) };
+    } catch (_error) {
+      return { x: 0, y: 0 };
+    }
+  }
+
+  // 고른 것의 행렬(오브젝트 자신의 좌표 → 오브젝트가 놓인 평면). 못 구하면 null.
+  function selectionMatrix(object) {
+    if (typeof object?.calcTransformMatrix !== 'function') return null;
+    try {
+      const matrix = Array.from(object.calcTransformMatrix(), Number);
+      return matrix.length >= 6 && matrix.every(Number.isFinite) ? matrix : null;
+    } catch (_error) {
+      return null;
+    }
+  }
+
+  // 옮겨 둔 회전 중심점의 자리(오브젝트가 놓인 평면의 좌표). 옮긴 적이 없으면 null.
+  function selectionPivotPoint(object) {
+    const pivot = object ? selectionPivots.get(object) : null;
+    const matrix = pivot ? selectionMatrix(object) : null;
+    if (!matrix) return null;
+    return {
+      x: matrix[0] * pivot.x + matrix[2] * pivot.y + matrix[4],
+      y: matrix[1] * pivot.x + matrix[3] * pivot.y + matrix[5]
+    };
+  }
+
+  function clearSelectionPivot(object = selectionPivotOwner) {
+    if (!object) return;
+    selectionPivots.delete(object);
+    if (selectionPivotOwner === object) selectionPivotOwner = null;
+  }
+
+  // 회전 중심점을 주어진 자리로 옮긴다. 한가운데에서 snapDistance 안쪽이면 한가운데로
+  // 붙인다(옮기지 않은 상태로 돌아간다).
+  function setSelectionPivotPoint(object, point, snapDistance = 0) {
+    if (!object || typeof object.getRelativeCenterPoint !== 'function' ||
+        !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) {
+      return false;
+    }
+    const center = object.getRelativeCenterPoint();
+    if (Math.hypot(point.x - center.x, point.y - center.y) <= snapDistance) {
+      clearSelectionPivot(object);
+      return true;
+    }
+    // 오브젝트 자신의 좌표로 적는다(행렬을 거꾸로 적용한다). 그래야 어떤 변형을 해도
+    // 그림의 같은 자리를 가리킨다.
+    const matrix = selectionMatrix(object);
+    const determinant = matrix ? matrix[0] * matrix[3] - matrix[1] * matrix[2] : 0;
+    if (!matrix || !(Math.abs(determinant) > 1e-12)) {
+      clearSelectionPivot(object);
+      return true;
+    }
+    const dx = point.x - matrix[4];
+    const dy = point.y - matrix[5];
+    const pivot = {
+      x: (matrix[3] * dx - matrix[2] * dy) / determinant,
+      y: (matrix[0] * dy - matrix[1] * dx) / determinant
+    };
+    if (!Number.isFinite(pivot.x) || !Number.isFinite(pivot.y) || (!pivot.x && !pivot.y)) {
+      clearSelectionPivot(object);
+      return true;
+    }
+    if (selectionPivotOwner && selectionPivotOwner !== object) {
+      selectionPivots.delete(selectionPivotOwner);
+    }
+    selectionPivots.set(object, pivot);
+    selectionPivotOwner = object;
+    return true;
+  }
+
+  // 선택이 바뀌면 옮겨 둔 중심점을 버린다. 고른 것이 같은 오브젝트여도 버린다 — Shift+
+  // 클릭으로 묶음에 획을 더하거나 빼면 fabric 은 같은 묶음 오브젝트를 고쳐 쓰는데, 그
+  // 묶음의 좌표가 달라져 중심점이 엉뚱한 자리로 간다. 저장 뒤에 같은 것을 다시 고르는
+  // 경우는 keepSelectionPivot 이 이 알림들이 지나간 뒤에 다시 얹는다.
+  function dropSelectionPivot() {
+    clearSelectionPivot(selectionPivotOwner);
+  }
+
+  // 저장한 뒤에는 씬을 다시 그리고 같은 것을 다시 고른다(fabric 오브젝트가 새로 생긴다).
+  // 그동안 중심점을 지킨다 — 다시 세우기 전의 자리를 적어 두었다가 새로 고른 것에 얹는다.
+  function keepSelectionPivot(target, reselect) {
+    const kept = selectionPivotPoint(target);
+    reselect();
+    const active = fabricCanvas?.getActiveObject?.();
+    if (!kept || !active || active === target) return;
+    if (setSelectionPivotPoint(active, kept)) {
+      active.setCoords?.();
+      fabricCanvas?.requestRenderAll();
+    }
+  }
+
+  // 사용자가 가리킨 자리에 회전 중심점을 놓는다(Ctrl+클릭, 표시 끌기). 그림 영역 밖으로는
+  // 나가지 않고 — 나가면 다시 잡을 수 없다 — 상자 한가운데 가까이면 한가운데로 붙는다.
+  function placeSelectionPivot(target, point) {
+    if (!target || !Number.isFinite(point?.x) || !Number.isFinite(point?.y)) return false;
+    let x = point.x;
+    let y = point.y;
+    const width = finiteNumber(currentSession?.sourceWidth);
+    const height = finiteNumber(currentSession?.sourceHeight);
+    if (width > 0 && height > 0) {
+      x = Math.min(width, Math.max(0, x));
+      y = Math.min(height, Math.max(0, y));
+    }
+    const unit = resolveSourcePerCssPixel(currentSession || {});
+    if (!setSelectionPivotPoint(target, { x, y }, TRANSFORM_PIVOT_SNAP_CSS_PX * unit)) return false;
+    target.setCoords?.();
+    fabricCanvas?.requestRenderAll();
+    return true;
+  }
+
+  // 여기를 누르면 회전 중심점이 놓이는가: 선택 도구에서 변형 상자가 떠 있고, Ctrl 을 누른
+  // 채 **보이는 손잡이가 아닌 곳**을 가리킨다. 보이는 손잡이 위라면 그 손잡이의 일이다
+  // (Ctrl+변 손잡이는 기울이기, 이미 놓인 중심점 표시는 끌어 옮기기). 모서리 바깥의
+  // 보이지 않는 회전 영역은 양보한다 — 모서리 가까이에도 중심점을 놓을 수 있어야 한다.
+  function pivotPlacementTarget(event) {
+    if (!inputEnabled || !fabricCanvas || !isTransformCtrlActive(event)) return null;
+    const target = fabricCanvas.getActiveObject?.();
+    if (!target || target.lockRotation || target.hasControls !== true ||
+        !selectionAllowsTransform(target)) {
+      return null;
+    }
+    let handle = null;
+    try {
+      const point = fabricCanvas.getViewportPoint?.(event);
+      handle = point && typeof target.findControl === 'function'
+        ? target.findControl(point, event?.pointerType === 'touch')
+        : null;
+    } catch (_error) {
+      handle = null;
+    }
+    return handle && !SELECTION_ROTATE_ZONE_KEYS.has(handle.key) ? null : target;
+  }
+
+  function pivotGestureTarget(event) {
+    return event?.button === 0 ? pivotPlacementTarget(event) : null;
+  }
+
+  // Ctrl 을 누른 채 가리키고 있으면 "여기를 누르면 중심점이 놓인다"를 커서로 알린다.
+  // fabric 이 자기 커서를 정한 뒤에 불리므로 여기서 덮는다.
+  function onCanvasMouseMove(event) {
+    const pointerEvent = event?.e;
+    if (!pointerEvent || pointerEvent.buttons || pivotGesture) return;
+    if (pivotPlacementTarget(pointerEvent)) fabricCanvas?.setCursor?.('crosshair');
+  }
+
+  function updatePivotGesture(event) {
+    const gesture = pivotGesture;
+    if (!gesture) return false;
+    // 그 사이 선택이 바뀌었으면 놓을 곳이 없다.
+    if (fabricCanvas?.getActiveObject?.() !== gesture.target) {
+      endPivotGesture(event);
+      return false;
+    }
+    let point = null;
+    try {
+      point = fabricCanvas.getScenePoint?.(event) || null;
+    } catch (_error) { /* 좌표를 못 구하면 이 걸음은 건너뛴다 */ }
+    return placeSelectionPivot(gesture.target, point);
+  }
+
+  function beginPivotGesture(event, target) {
+    pivotGesture = { pointerId: event.pointerId, target };
+    try {
+      event.currentTarget?.setPointerCapture?.(event.pointerId);
+    } catch (_error) { /* pointer capture is best-effort */ }
+    updatePivotGesture(event);
+    // fabric 이 이 누르기를 보면 선택을 풀거나 끌어 옮기기를 시작한다.
+    event.preventDefault?.();
+    event.stopImmediatePropagation?.();
+  }
+
+  // 정상 종료와 취소가 같다 — 놓인 자리는 그대로 둔다(문서를 바꾸지 않는 화면 상태다).
+  function endPivotGesture(event) {
+    const gesture = pivotGesture;
+    pivotGesture = null;
+    if (!gesture) return false;
+    releasePointerCapture(
+      event?.currentTarget || fabricCanvas?.upperCanvasEl || canvasElement,
+      gesture.pointerId
+    );
+    // 누르고 있는 동안 미뤄 둔 프레임 그리기가 있으면 이제 그린다(그 사이 재생헤드가
+    // 옮겨졌을 수 있다).
+    settleArmedFramePreview();
+    return true;
+  }
+
+  // ── 기울이기 ─────────────────────────────────────────────────────────────
+  //
+  // 변 손잡이를 Ctrl 과 함께 끌면 기울인다. 위·아래 변은 가로로, 왼쪽·오른쪽 변은 세로로
+  // 밀고 맞은편 변은 제자리에 둔다.
+  //
+  // fabric 의 기울이기는 쓰지 않는다. 포인터가 움직인 양을 화면 축으로만 읽어, 돌려 둔
+  // 획에서는 변을 따라 끌어도 기울지 않는다. 여기서는 상자의 축으로 읽고, 출발 모양에
+  // 밀림(shear)을 얹은 결과를 fabric 의 필드로 다시 푼다. 각도는 건드리지 않으므로
+  // 상자가 돌지 않는다.
+  //
+  // 상자의 축에서 본 모양은 [a c; b d] = 크기·뒤집힘 × skewX × skewY 다(fabric 의
+  // calcDimensionsMatrix). 거꾸로 풀면 scaleY = d, tan(skewY) = b ÷ d,
+  // scaleX = 행렬식 ÷ d, tan(skewX) = c ÷ scaleX.
+
+  // 기울이기를 시작한 순간의 모양. axis 는 미는 방향이다('x' = 위·아래 변, 'y' = 왼쪽·오른쪽 변).
+  function captureSkewStart(transform, axis, control) {
+    const target = transform?.target;
+    const { util } = resolveFabric();
+    if (typeof util?.calcDimensionsMatrix !== 'function' ||
+        typeof target?.getRelativeCenterPoint !== 'function') {
+      return null;
+    }
+    const size = selectionBoxSize(target);
+    // 잡은 변이 한가운데의 어느 쪽인가, 그리고 맞은편 변에서 거기까지의 거리(부호 포함).
+    const side = Math.sign(finiteNumber(axis === 'x' ? control?.y : control?.x));
+    const reach = side * (axis === 'x' ? size.y : size.x);
+    if (!side || !(Math.abs(reach) > 1e-6)) return null;
+    let shape;
+    try {
+      shape = util.calcDimensionsMatrix({
+        scaleX: target.scaleX,
+        scaleY: target.scaleY,
+        flipX: target.flipX === true,
+        flipY: target.flipY === true,
+        skewX: finiteNumber(target.skewX),
+        skewY: finiteNumber(target.skewY)
+      });
+    } catch (_error) {
+      return null;
+    }
+    const [a, b, c, d] = Array.from(shape, Number);
+    const determinant = a * d - b * c;
+    if (![a, b, c, d].every(Number.isFinite) || !(Math.abs(determinant) > 1e-12) ||
+        !(Math.abs(d) > 1e-12)) {
+      return null;
+    }
+    const radians = finiteNumber(target.angle) * Math.PI / 180;
+    const center = target.getRelativeCenterPoint();
+    return {
+      reach,
+      cos: Math.cos(radians),
+      sin: Math.sin(radians),
+      a,
+      b,
+      c,
+      d,
+      determinant,
+      // 가로로만 밀면 가로 크기는 바뀌지 않는다. 걸음마다 다시 나누지 않고 여기서 정한다.
+      scaleX: determinant / d,
+      centerX: center.x,
+      centerY: center.y
+    };
+  }
+
+  function skewSelection(transform, x, y, axis, control) {
+    const target = transform?.target;
+    if (!target || target[axis === 'x' ? 'lockSkewingX' : 'lockSkewingY']) return false;
+    let start = skewStarts.get(transform);
+    if (start === undefined) {
+      start = captureSkewStart(transform, axis, control);
+      skewStarts.set(transform, start);
+    }
+    if (!start) return false;
+    const dx = x - finiteNumber(transform.ex);
+    const dy = y - finiteNumber(transform.ey);
+    // 잡은 변이 자기 방향으로 움직인 거리(상자의 축) ÷ 맞은편 변까지의 거리 = 밀림.
+    const along = axis === 'x'
+      ? dx * start.cos + dy * start.sin
+      : -dx * start.sin + dy * start.cos;
+    const shear = along / start.reach;
+    if (!Number.isFinite(shear)) return false;
+    const withinSkew = degrees =>
+      Number.isFinite(degrees) && Math.abs(degrees) <= TRANSFORM_MAX_SKEW_DEGREES;
+    const next = {};
+    if (axis === 'x') {
+      // 가로로 밀면 윗줄(a, c)에 아랫줄이 더해진다. 바뀌는 것은 skewX 뿐이다.
+      next.skewX = Math.atan((start.c + shear * start.d) / start.scaleX) * 180 / Math.PI;
+      if (!withinSkew(next.skewX)) return false;
+    } else if (start.c === 0) {
+      // 세로로 밀면 아랫줄(b, d)에 윗줄이 더해진다. skewX 가 없으면 skewY 만 바뀐다.
+      next.skewY = Math.atan((start.b + shear * start.a) / start.d) * 180 / Math.PI;
+      if (!withinSkew(next.skewY)) return false;
+    } else {
+      // 이미 가로로 기운 획을 세로로 민다. 크기와 기울임 둘이 함께 바뀐다.
+      const b = start.b + shear * start.a;
+      const d = start.d + shear * start.c;
+      if (!(Math.abs(d) > 1e-12)) return false;
+      const scaleX = start.determinant / d;
+      const withinScale = scale => Number.isFinite(scale) &&
+        Math.abs(scale) >= TRANSFORM_MIN_GESTURE_SCALE &&
+        Math.abs(scale) <= TRANSFORM_MAX_RECORD_SCALE;
+      next.skewX = Math.atan(start.c / scaleX) * 180 / Math.PI;
+      next.skewY = Math.atan(b / d) * 180 / Math.PI;
+      if (!withinScale(scaleX) || !withinScale(d) ||
+          !withinSkew(next.skewX) || !withinSkew(next.skewY)) {
+        return false;
+      }
+      next.flipX = scaleX < 0;
+      next.flipY = d < 0;
+      next.scaleX = Math.abs(scaleX);
+      next.scaleY = Math.abs(d);
+    }
+    const { Point } = resolveFabric();
+    if (typeof Point !== 'function' || typeof target.setPositionByOrigin !== 'function') return false;
+    const before = captureTransform(target);
+    target.set(next);
+    // 맞은편 변이 제자리에 있으려면 한가운데는 잡은 변이 움직인 거리의 절반만큼 간다.
+    const half = along / 2;
+    target.setPositionByOrigin(new Point(
+      start.centerX + (axis === 'x' ? half * start.cos : -half * start.sin),
+      start.centerY + (axis === 'x' ? half * start.sin : half * start.cos)
+    ), 'center', 'center');
+    return TRANSFORM_FIELDS.some(field => before[field] !== target[field]);
+  }
+
+  // Fabric 기본 손잡이(모서리·변·회전)에 **모서리 바깥의 회전 영역**과 **회전 중심점**을
+  // 더한다. 애니메이트의 자유 변형처럼 모서리 바로 바깥에서 끌면 돈다. 회전 영역은
+  // 그리지 않고 포인터 모양만 바꾼다.
   //
   // 순서가 판정 우선순위다. fabric 은 뒤에 넣은 손잡이부터 맞춰 보므로 회전 영역을
-  // **먼저** 넣어, 겹치는 자리에서는 크기 손잡이가 이긴다.
+  // **먼저** 넣어, 겹치는 자리에서는 크기 손잡이가 이긴다. 회전 중심점은 **맨 뒤**다 —
+  // 모서리에 올려 두어도 보이고 다시 잡을 수 있어야 한다.
   function createSelectionTransformControls(unit) {
-    const { Control, controlsUtils } = resolveFabric();
+    const { Control, Point, controlsUtils } = resolveFabric();
     if (typeof Control !== 'function' ||
         typeof controlsUtils?.createObjectDefaultControls !== 'function' ||
         typeof controlsUtils.rotationWithSnapping !== 'function') {
@@ -6086,10 +6604,28 @@ function createFabricOverlayRuntime(options = {}) {
     // 상태를 기억해 두지 않는다 — 호스트가 Shift 조합(Shift+2 등)의 누름을 삼키면
     // Chromium 이 Shift 뗌을 내보내지 않아, 기억해 둔 값이 눌린 채로 남는다.
     const rotate = (eventData, transform, x, y) => {
-      if (transform?.target) {
-        transform.target.snapAngle = eventData?.shiftKey === true
+      const target = transform?.target;
+      if (target) {
+        target.snapAngle = eventData?.shiftKey === true
           ? TRANSFORM_ROTATE_SNAP_DEGREES
           : undefined;
+        // 회전 중심점을 옮겨 두었으면 그 자리를 축으로 돈다. fabric 의 기준점은 상자
+        // 크기에 대한 비율(0 = 왼쪽·위, 1 = 오른쪽·아래)이고 상자 밖의 값도 받는다.
+        // 중심점의 화면 자리를 상자의 축으로 풀어 그 비율로 넘긴다. 그 자리를 축으로 도는
+        // 동안 중심점은 제자리이므로 걸음마다 같은 값이 나온다.
+        const pivot = selectionPivotPoint(target);
+        const size = pivot ? selectionBoxSize(target) : null;
+        if (pivot && size.x > 1e-6 && size.y > 1e-6 &&
+            typeof target.getRelativeCenterPoint === 'function') {
+          const center = target.getRelativeCenterPoint();
+          const radians = finiteNumber(target.angle) * Math.PI / 180;
+          const cos = Math.cos(radians);
+          const sin = Math.sin(radians);
+          const dx = pivot.x - center.x;
+          const dy = pivot.y - center.y;
+          transform.originX = 0.5 + (dx * cos + dy * sin) / size.x;
+          transform.originY = 0.5 + (-dx * sin + dy * cos) / size.y;
+        }
       }
       return controlsUtils.rotationWithSnapping(eventData, transform, x, y);
     };
@@ -6103,12 +6639,14 @@ function createFabricOverlayRuntime(options = {}) {
     const touchZone = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit + reach;
     const zoneOffset = reach / 2;
     const controls = {};
-    for (const [key, x, y] of [
-      ['rotateTl', -0.5, -0.5],
-      ['rotateTr', 0.5, -0.5],
-      ['rotateBl', -0.5, 0.5],
-      ['rotateBr', 0.5, 0.5]
-    ]) {
+    // Ctrl 을 누른 채로는 회전 영역이 회전 중심점 놓기에 자리를 내준다(pivotPlacementTarget).
+    // 그때의 커서도 중심점 놓기의 것이다.
+    const rotateZoneCursor = (eventData, control, fabricObject) => (
+      !fabricObject?.lockRotation && isTransformCtrlActive(eventData)
+        ? 'crosshair'
+        : rotateCursor(eventData, control, fabricObject)
+    );
+    for (const [key, x, y] of SELECTION_ROTATE_ZONES) {
       controls[key] = new Control({
         x,
         y,
@@ -6119,7 +6657,7 @@ function createFabricOverlayRuntime(options = {}) {
         touchSizeX: touchZone,
         touchSizeY: touchZone,
         actionHandler: rotate,
-        cursorStyleHandler: rotateCursor,
+        cursorStyleHandler: rotateZoneCursor,
         actionName: 'rotate',
         render: () => {}
       });
@@ -6128,13 +6666,62 @@ function createFabricOverlayRuntime(options = {}) {
     // 잡은 자리가 손잡이 한가운데에서 벗어날 수 있는 한도. 가장 넓은 판정 영역(터치)의
     // 너비로 넉넉히 둔다 — 실제로는 그 절반을 넘지 않는다.
     const grabLimit = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+    const totalAngle = fabricObject => finiteNumber(
+      typeof fabricObject?.getTotalAngle === 'function'
+        ? fabricObject.getTotalAngle()
+        : fabricObject?.angle
+    );
     for (const control of Object.values(scaleControls)) {
       const scale = control.actionHandler;
       if (typeof scale !== 'function') continue;
+      // 변 손잡이는 Ctrl 과 함께 끌면 기울인다. 위·아래 변은 가로('x')로, 왼쪽·오른쪽
+      // 변은 세로('y')로 민다. 모서리 손잡이에는 없다.
+      const skewAxis = control.x === 0 && control.y !== 0
+        ? 'x'
+        : control.x !== 0 && control.y === 0 ? 'y' : null;
+      const skewAction = skewAxis === 'x' ? 'skewX' : 'skewY';
+      const skewLock = skewAxis === 'x' ? 'lockSkewingX' : 'lockSkewingY';
+      const wantsSkew = (eventData, fabricObject) =>
+        !!skewAxis && fabricObject?.[skewLock] !== true && isTransformCtrlActive(eventData);
+      const skewStep = (_eventData, transform, x, y) =>
+        skewSelection(transform, x, y, skewAxis, control);
+      const skew = typeof controlsUtils.wrapWithFireEvent === 'function'
+        ? controlsUtils.wrapWithFireEvent('skewing', skewStep)
+        : skewStep;
+      // 무엇을 할지는 **누르는 순간에** 정한다(fabric 이 이 이름을 조작에 적어 둔다).
+      // 끄는 도중에 Ctrl 을 떼거나 눌러도 그 조작은 바뀌지 않는다.
+      const baseActionName = control.getActionName;
+      control.getActionName = (eventData, handle, fabricObject) => (
+        wantsSkew(eventData, fabricObject)
+          ? skewAction
+          : typeof baseActionName === 'function'
+            ? baseActionName.call(control, eventData, handle, fabricObject)
+            : control.actionName
+      );
+      // 커서는 손잡이가 움직이는 방향을 가리킨다. 모서리는 대각선, 변은 변에 수직,
+      // 기울일 때는 변을 따라서다.
+      const baseCursor = control.cursorStyleHandler;
+      control.cursorStyleHandler = (eventData, handle, fabricObject, coord) => {
+        const fallback = typeof baseCursor === 'function'
+          ? baseCursor.call(control, eventData, handle, fabricObject, coord)
+          : control.cursorStyle;
+        if (fallback === 'not-allowed') return fallback;
+        const cursor = wantsSkew(eventData, fabricObject)
+          ? resizeCursorForDirection(
+            skewAxis === 'x' ? 1 : 0, skewAxis === 'x' ? 0 : 1, totalAngle(fabricObject)
+          )
+          : resizeCursorForDirection(
+            Math.sign(control.x), Math.sign(control.y), totalAngle(fabricObject)
+          );
+        return cursor || fallback;
+      };
       // 포인터 좌표는 여기서 다듬어 넘긴다(resolveScalePointer). 여러 개를 고른 묶음에는
       // 여백이 없지만 잡은 자리의 어긋남은 똑같이 덜어 낸다.
       control.actionHandler = (eventData, transform, x, y) => {
         const target = transform?.target;
+        if (skewAxis && transform?.action === skewAction) {
+          return skew(eventData, transform, x, y);
+        }
         if (!target) return scale(eventData, transform, x, y);
         const pointer = resolveScalePointer(transform, control, x, y, grabLimit);
         if (!pointer) return scale(eventData, transform, x, y);
@@ -6159,6 +6746,80 @@ function createFabricOverlayRuntime(options = {}) {
       withConnection: true,
       actionName: 'rotate'
     });
+    if (typeof Point !== 'function') return controls;
+
+    // 회전 중심점의 표시. 옮겨 둔 중심점이 있을 때만 뜬다(Ctrl+클릭으로 놓는다 —
+    // beginPivotGesture). 끌면 자리만 바뀌고 문서는 그대로다 — false 를 돌려주므로
+    // fabric 이 object:modified 를 내지 않는다.
+    const movePivot = (_eventData, transform, x, y) => {
+      const target = transform?.target;
+      if (!target) return false;
+      let grab = pivotGrabOffsets.get(transform);
+      if (!grab) {
+        // 표시의 어디를 잡았는지. 그만큼 덜어 내야 누르는 순간에 표시가 튀지 않는다.
+        const held = selectionPivotPoint(target) || target.getRelativeCenterPoint?.();
+        grab = {
+          x: finiteNumber(transform.ex) - finiteNumber(held?.x),
+          y: finiteNumber(transform.ey) - finiteNumber(held?.y)
+        };
+        if (!held || !(Math.hypot(grab.x, grab.y) <= grabLimit)) grab = { x: 0, y: 0 };
+        pivotGrabOffsets.set(transform, grab);
+      }
+      placeSelectionPivot(target, { x: x - grab.x, y: y - grab.y });
+      return false;
+    };
+    const pivotSize = TRANSFORM_PIVOT_HANDLE_CSS_PX * unit;
+    const pivotTouchSize = TRANSFORM_TOUCH_HANDLE_CSS_PX * unit;
+    const pivotRadius = TRANSFORM_PIVOT_RADIUS_CSS_PX * unit;
+    controls.pivot = new Control({
+      x: 0,
+      y: 0,
+      sizeX: pivotSize,
+      sizeY: pivotSize,
+      touchSizeX: pivotTouchSize,
+      touchSizeY: pivotTouchSize,
+      actionHandler: movePivot,
+      actionName: SELECTION_PIVOT_ACTION,
+      cursorStyle: 'crosshair',
+      // 중심점의 자리(그림 좌표)를 화면 좌표로 옮긴다. 옮겨 둔 것이 없으면 상자의
+      // 한가운데다(그때는 보이지도 잡히지도 않는다).
+      positionHandler(_dim, finalMatrix, fabricObject) {
+        const pivot = selectionPivotPoint(fabricObject);
+        const viewport = pivot && typeof fabricObject?.getViewportTransform === 'function'
+          ? fabricObject.getViewportTransform()
+          : null;
+        return viewport
+          ? new Point(pivot.x, pivot.y).transform(viewport)
+          : new Point(0, 0).transform(finalMatrix);
+      },
+      // 옮겨 둔 중심점이 있을 때만 보이고 잡힌다. 한가운데가 축인 동안에는 아무것도
+      // 띄우지 않는다 — 획의 한가운데를 잡아 옮기는 것을 가로채면 안 된다.
+      getVisibility(fabricObject) {
+        return !!fabricObject && fabricObject.lockRotation !== true &&
+          selectionPivots.has(fabricObject);
+      },
+      render(ctx, left, top) {
+        if (!ctx) return;
+        ctx.save();
+        ctx.translate(left, top);
+        ctx.beginPath();
+        ctx.arc(0, 0, pivotRadius, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.lineWidth = Math.max(1, TRANSFORM_BORDER_CSS_PX * unit);
+        ctx.strokeStyle = '#1b1b1e';
+        ctx.stroke();
+        // 가운데 십자. 크기 손잡이(네모)와 구분된다.
+        const arm = pivotRadius * 0.55;
+        ctx.beginPath();
+        ctx.moveTo(-arm, 0);
+        ctx.lineTo(arm, 0);
+        ctx.moveTo(0, -arm);
+        ctx.lineTo(0, arm);
+        ctx.stroke();
+        ctx.restore();
+      }
+    });
     return controls;
   }
 
@@ -6177,11 +6838,12 @@ function createFabricOverlayRuntime(options = {}) {
       hasControls: true,
       lockScalingX: false,
       lockScalingY: false,
-      // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다.
+      // 손잡이를 반대편 너머로 끌어도 뒤집히지 않는다. 뒤집기는 팔레트의 버튼으로 한다.
       lockScalingFlip: true,
       lockRotation: false,
-      lockSkewingX: true,
-      lockSkewingY: true,
+      // 기울이기는 Ctrl + 변 손잡이다(skewSelection). fabric 의 기울이기 키는 꺼 두었다.
+      lockSkewingX: false,
+      lockSkewingY: false,
       minScaleLimit: TRANSFORM_MIN_GESTURE_SCALE,
       transparentCorners: false,
       cornerStyle: 'rect',
@@ -6199,7 +6861,8 @@ function createFabricOverlayRuntime(options = {}) {
 
   // 오브젝트가 화면에 놓인 변형. 여러 개를 고른 동안 fabric 의 묶음은 자식의
   // 값을 묶음 기준으로 들고 있으므로, 그때는 실제 행렬에서 다시 푼다.
-  function absoluteObjectTransform(object) {
+  // preferred 는 그 획의 이전 레코드다 — 같은 모양을 적는 두 표기 중 고를 때 쓴다.
+  function absoluteObjectTransform(object, preferred = null) {
     if (!object) return null;
     if (!object.group || typeof object.calcTransformMatrix !== 'function') {
       return captureTransform(object);
@@ -6214,19 +6877,8 @@ function createFabricOverlayRuntime(options = {}) {
     }
     // 분해는 각도를 (-180, 180] 로 돌려준다. 손잡이로 하나만 돌릴 때 fabric 이 쓰는
     // [0, 360) 에 맞춘다 — 같은 모양이 고른 개수에 따라 다른 값으로 저장되지 않게 한다.
-    const angle = ((finiteNumber(decomposed.angle) % 360) + 360) % 360;
-    return {
-      left: finiteNumber(decomposed.translateX),
-      top: finiteNumber(decomposed.translateY),
-      scaleX: finiteNumber(decomposed.scaleX, 1),
-      scaleY: finiteNumber(decomposed.scaleY, 1),
-      angle,
-      skewX: finiteNumber(decomposed.skewX),
-      skewY: finiteNumber(decomposed.skewY),
-      // 뒤집힘은 분해에서 음수 배율로 나온다.
-      flipX: false,
-      flipY: false
-    };
+    // 뒤집힘(음수 배율)은 flipX·flipY 로 옮겨 적는다.
+    return storedTransformFromDecomposition(decomposed, preferred, flipCommitField);
   }
 
   function selectionTransformIsStorable(transform) {
@@ -6325,7 +6977,7 @@ function createFabricOverlayRuntime(options = {}) {
       const stored = id ? storedTransforms.get(id) : null;
       const transform = objectMatchesStoredTransform(object, stored)
         ? clonePlain(stored)
-        : absoluteObjectTransform(object);
+        : absoluteObjectTransform(object, stored);
       if (!id || !transform || !selectionTransformIsStorable(transform)) {
         return { applied: false, reason: 'invalid-selection-transform' };
       }
@@ -6340,10 +6992,62 @@ function createFabricOverlayRuntime(options = {}) {
     // 새 변형으로 씬을 다시 세우고 같은 것을 다시 고른다. 여러 개를 골랐을 때
     // fabric 의 묶음은 자식 좌표를 묶음 기준으로 들고 있어, 그대로 두면 다음 조작이
     // 낡은 기준에서 시작한다. 다시 고르면 상자도 새 모양에 맞춰 반듯하게 선다.
-    renderActiveScene({ immediate: true });
-    activateObjectIds(ids);
+    // 옮겨 둔 회전 중심점은 그대로 둔다 — 같은 축으로 이어서 돌릴 수 있어야 한다.
+    keepSelectionPivot(target, () => {
+      renderActiveScene({ immediate: true });
+      activateObjectIds(ids);
+    });
     updateObjectMetric();
     return { applied: true, objectIds: result.objectIds };
+  }
+
+  // 고른 것을 좌우 또는 상하로 뒤집는다(팔레트의 뒤집기 버튼). 화면에서 본 방향으로
+  // 뒤집고, 축은 변형 상자의 한가운데다.
+  //
+  // 손잡이로 하는 변형과 같은 길로 저장한다: 출발점을 적고(외곽선 짝 포함), 화면의 것을
+  // 뒤집고, 크기·회전을 저장하는 그 함수로 넘긴다. 부분 선택으로 세워 둔 조각도 같은
+  // 길이다(획을 조각으로 갈라 넣으면서 한 번에 저장한다).
+  function flipSelection(direction) {
+    const target = fabricCanvas?.getActiveObject?.();
+    if (!target || !selectionAllowsTransform(target)) {
+      return { applied: false, reason: 'no-transformable-selection' };
+    }
+    // 끄는 중에는 받지 않는다. 진행 중인 조작이 자기 출발점을 들고 있다.
+    if (selectGesture || activeLasso || fabricCanvas._currentTransform) {
+      return { applied: false, reason: 'selection-busy' };
+    }
+    onBeforeTransform({ transform: { target, action: 'flip' } });
+    if (transformStart?.target !== target) {
+      return { applied: false, reason: 'selection-changed' };
+    }
+    const horizontal = direction !== 'vertical';
+    const flipField = horizontal ? 'flipX' : 'flipY';
+    const angle = ((finiteNumber(target.angle) % 360) + 360) % 360;
+    // 화면에서 본 좌우(상하)로 뒤집으면, 돌려 둔 각도는 반대 방향이 된다. 회전 중심점은
+    // 오브젝트 자신의 좌표로 들고 있으므로 그림과 함께 뒤집힌다.
+    target.set({ [flipField]: target[flipField] !== true, angle: angle ? 360 - angle : 0 });
+    target.setCoords?.();
+    let result;
+    // 묶음의 획은 행렬에서 다시 풀어 적는다. 어느 방향으로 뒤집었는지를 알려, 하나만
+    // 골라 뒤집었을 때와 같은 표기가 되게 한다(absoluteObjectTransform).
+    flipCommitField = flipField;
+    try {
+      if (pendingLassoSelection) {
+        // 저장하지 못하면 이 함수가 화면을 되돌리고 세워 둔 선택을 걷는다.
+        result = commitPendingLassoTransform(target);
+      } else {
+        const children = typeof target.getObjects === 'function' ? target.getObjects() : [target];
+        const ids = children.map(object => object.__baeframeObjectId).filter(Boolean);
+        sceneStore.selectObjects(ids);
+        result = commitSelectionTransform(target, children, ids);
+        if (!result.applied) rollbackSelectTransform(undefined, false);
+      }
+    } finally {
+      flipCommitField = null;
+    }
+    transformStart = null;
+    if (result.applied) updateObjectMetric();
+    return result;
   }
 
   function isLayerRestricted(objectId) {
@@ -6464,7 +7168,7 @@ function createFabricOverlayRuntime(options = {}) {
   function activeFrameInteractionInProgress() {
     // 제스처 중 renderArmedFramePreview()가 캔버스를 재구성하면 Ctrl 지우개의 은닉 표시가 사라진다.
     return !!(pendingPointerdownFrame || activeStroke || activeLasso || selectGesture ||
-      transformStart || sizeAdjustGesture || strokeEraseGesture || shapeGesture);
+      transformStart || sizeAdjustGesture || pivotGesture || strokeEraseGesture || shapeGesture);
   }
 
   function renderedCandidateMatches(candidate) {
@@ -8172,9 +8876,11 @@ function createFabricOverlayRuntime(options = {}) {
     // 아래에서 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를
     // 한 번 더 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
     ignoreLateModifiedEvents(activeTarget);
-    renderActiveScene();
     // 옮긴 조각은 몇 개든 고른 채로 둔다 — 이어서 크기를 바꾸거나 돌릴 수 있다.
-    activateObjectIds(selectedObjectIds);
+    keepSelectionPivot(activeTarget, () => {
+      renderActiveScene();
+      activateObjectIds(selectedObjectIds);
+    });
     updateObjectMetric();
     return { ...result, selectedObjectIds };
   }
@@ -8221,7 +8927,7 @@ function createFabricOverlayRuntime(options = {}) {
       const id = object?.__baeframeObjectId;
       const stored = id ? stagedTransforms.get(id) : null;
       const unchanged = objectMatchesStoredTransform(object, stored);
-      const transform = unchanged ? clonePlain(stored) : absoluteObjectTransform(object);
+      const transform = unchanged ? clonePlain(stored) : absoluteObjectTransform(object, stored);
       if (!id || !transform || !selectionTransformIsStorable(transform)) {
         abandonPendingLassoCommit(activeTarget);
         return { applied: false, reason: 'invalid-selection-transform' };
@@ -8249,8 +8955,10 @@ function createFabricOverlayRuntime(options = {}) {
     // 아래에서 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를
     // 한 번 더 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
     ignoreLateModifiedEvents(activeTarget);
-    renderActiveScene({ immediate: true });
-    activateObjectIds(selectedObjectIds);
+    keepSelectionPivot(activeTarget, () => {
+      renderActiveScene({ immediate: true });
+      activateObjectIds(selectedObjectIds);
+    });
     updateObjectMetric();
     return { ...result, selectedObjectIds };
   }
@@ -9012,6 +9720,19 @@ function createFabricOverlayRuntime(options = {}) {
     return overlayModifierState.ctrl === true;
   }
 
+  // 변형 상자의 Ctrl 조작(기울이기·회전 중심점 놓기)이 보는 Ctrl.
+  //
+  // 임시 지우개와 같이 펜·터치는 문서가 본 키 상태를 함께 보되, **방금 눌린 것만** 받는다.
+  // 뗌을 놓쳐 남은 표시가 여기까지 오면 선택 도구의 탭이 통째로 중심점 놓기로 넘어가
+  // 선택도, 선택 풀기도, 옮기기도 되지 않는다(임시 지우개는 팔레트와 커서로 드러나지만
+  // 이쪽은 원인을 알 길이 없다). 실제로 누르고 있는 동안에는 키 반복이 시각을 갱신한다.
+  function isTransformCtrlActive(event) {
+    if (event?.ctrlKey === true) return true;
+    if (event?.pointerType === 'mouse' || overlayModifierState.ctrl !== true) return false;
+    return Number.isFinite(overlayCtrlPressedAt) &&
+      now() - overlayCtrlPressedAt <= TRANSFORM_CTRL_LATCH_FRESH_MS;
+  }
+
 
   function recordPointerdownProbe(event) {
     gestureProbe.lastPointerdown = {
@@ -9033,12 +9754,16 @@ function createFabricOverlayRuntime(options = {}) {
   function syncOverlayModifierStateFromPointer(event) {
     if (event?.pointerType !== 'mouse') return;
     if (event.altKey !== true) overlayModifierState.alt = false;
-    if (event.ctrlKey !== true) overlayModifierState.ctrl = false;
+    if (event.ctrlKey !== true) {
+      overlayModifierState.ctrl = false;
+      overlayCtrlPressedAt = null;
+    }
   }
 
   function resetOverlayModifierState() {
     overlayModifierState.alt = false;
     overlayModifierState.ctrl = false;
+    overlayCtrlPressedAt = null;
   }
 
   function onOverlayKeyDown(event) {
@@ -9049,6 +9774,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     if (event?.key === 'Control') {
       overlayModifierState.ctrl = true;
+      overlayCtrlPressedAt = now();
       gestureProbe.overlayCtrlKeyDownCount += 1;
       syncTempErase();
     }
@@ -9073,6 +9799,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
     if (event?.key === 'Control') {
       overlayModifierState.ctrl = false;
+      overlayCtrlPressedAt = null;
       syncTempErase();
     }
   }
@@ -9090,6 +9817,7 @@ function createFabricOverlayRuntime(options = {}) {
     endTextEntry();
     syncTempErase();
     endSizeAdjustGesture(event);
+    endPivotGesture(event);
     cancelStrokeEraseGesture(event);
     cancelShapeGesture();
     onPointerCancel(event);
@@ -10144,7 +10872,17 @@ function createFabricOverlayRuntime(options = {}) {
       beginSizeAdjustGesture(event);
       return;
     }
-    if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame ||
+    // Ctrl+클릭은 회전 중심점을 놓는다. 씬을 바꾸지 않으므로 이것도 프레임 확정 왕복
+    // 이전에 가로챈다.
+    if (!pivotGesture && !sizeAdjustGesture && !strokeEraseGesture && !shapeGesture &&
+        !pendingPointerdownFrame && !activeStroke && !activeLasso && !selectGesture) {
+      const pivotTarget = pivotGestureTarget(event);
+      if (pivotTarget) {
+        beginPivotGesture(event, pivotTarget);
+        return;
+      }
+    }
+    if (!inputEnabled || event.button !== 0 || pendingPointerdownFrame || pivotGesture ||
         activeStroke || activeLasso || selectGesture || strokeEraseGesture || shapeGesture) {
       return;
     }
@@ -10277,6 +11015,12 @@ function createFabricOverlayRuntime(options = {}) {
       event.preventDefault?.();
       return;
     }
+    if (pivotGesture) {
+      if (event.pointerId !== pivotGesture.pointerId) return;
+      updatePivotGesture(event);
+      event.preventDefault?.();
+      return;
+    }
     if (consumePendingPointerEvent(event)) return;
     if (strokeEraseGesture) {
       if (event.pointerId !== strokeEraseGesture.pointerId) return;
@@ -10319,6 +11063,13 @@ function createFabricOverlayRuntime(options = {}) {
     if (sizeAdjustGesture) {
       if (event.pointerId !== sizeAdjustGesture.pointerId) return;
       endSizeAdjustGesture(event);
+      event.preventDefault?.();
+      return;
+    }
+    if (pivotGesture) {
+      if (event.pointerId !== pivotGesture.pointerId) return;
+      updatePivotGesture(event);
+      endPivotGesture(event);
       event.preventDefault?.();
       return;
     }
@@ -10382,6 +11133,11 @@ function createFabricOverlayRuntime(options = {}) {
       endSizeAdjustGesture(event);
       return;
     }
+    if (pivotGesture) {
+      if (event.pointerId !== undefined && event.pointerId !== pivotGesture.pointerId) return;
+      endPivotGesture(event);
+      return;
+    }
     if (strokeEraseGesture) {
       if (event.pointerId !== undefined && event.pointerId !== strokeEraseGesture.pointerId) return;
       cancelStrokeEraseGesture(event);
@@ -10435,6 +11191,10 @@ function createFabricOverlayRuntime(options = {}) {
       onPointerUp(event);
       return;
     }
+    if (pivotGesture && event.pointerId === pivotGesture.pointerId) {
+      onPointerUp(event);
+      return;
+    }
     if (strokeEraseGesture && event.pointerId === strokeEraseGesture.pointerId) {
       onPointerUp(event);
       return;
@@ -10458,6 +11218,10 @@ function createFabricOverlayRuntime(options = {}) {
   function onDocumentPointerCancel(event) {
     if (viewportPanInput?.cancel(event)) return;
     if (sizeAdjustGesture && event.pointerId === sizeAdjustGesture.pointerId) {
+      onPointerCancel(event);
+      return;
+    }
+    if (pivotGesture && event.pointerId === pivotGesture.pointerId) {
       onPointerCancel(event);
       return;
     }
@@ -10494,11 +11258,14 @@ function createFabricOverlayRuntime(options = {}) {
     // 씬을 다시 세우면 fabric 이 진행 중인 변형을 끝내면서 object:modified 를 한 번 더
     // 낸다. 이미 저장했으므로 그 알림은 받지 않는다.
     ignoreLateModifiedEvents(target);
-    renderActiveScene({ immediate: true });
-    activateObjectIds(selectedIds);
+    keepSelectionPivot(target, () => {
+      renderActiveScene({ immediate: true });
+      activateObjectIds(selectedIds);
+    });
   }
 
   function onSelectionChanged() {
+    dropSelectionPivot();
     if (preservingPendingLassoSelectionEvent) return;
     if (pendingLassoSelection &&
         !pendingTargetMatches(fabricCanvas?.getActiveObject?.(), pendingLassoSelection.selectedIds)) {
@@ -10510,6 +11277,7 @@ function createFabricOverlayRuntime(options = {}) {
   }
 
   function onSelectionCleared() {
+    dropSelectionPivot();
     if (preservingPendingLassoSelectionEvent) return;
     if (pendingLassoSelection) {
       abortPendingLassoSelection();
@@ -10815,6 +11583,7 @@ function createFabricOverlayRuntime(options = {}) {
     addDomListener(documentRef, 'keyup', onOverlayKeyUp, true);
     addDomListener(windowRef, 'blur', onOverlayWindowBlur);
     addFabricListener('mouse:down', onCanvasMouseDown);
+    addFabricListener('mouse:move', onCanvasMouseMove);
     addFabricListener('selection:created', onSelectionChanged);
     addFabricListener('selection:updated', onSelectionChanged);
     addFabricListener('selection:cleared', onSelectionCleared);
@@ -10822,6 +11591,7 @@ function createFabricOverlayRuntime(options = {}) {
     addFabricListener('object:moving', onObjectMoving);
     addFabricListener('object:scaling', onObjectTransforming);
     addFabricListener('object:rotating', onObjectTransforming);
+    addFabricListener('object:skewing', onObjectTransforming);
     addFabricListener('object:modified', onObjectModified);
     // 씬이 다시 그려질 때마다 이웃 그림이 달라졌는지 본다. 그리는 경로가 여럿이라
     // (프레임 미리보기·재도색·실행취소…) 한 곳에서 받는다.
@@ -10891,6 +11661,7 @@ function createFabricOverlayRuntime(options = {}) {
       activeObject.set?.({ selectable: true, evented: true });
       activeObject.setCoords?.();
     }
+    syncSelectionFlipControls();
   }
 
   function applyViewport(session) {
@@ -11041,6 +11812,7 @@ function createFabricOverlayRuntime(options = {}) {
 
   function releaseSurfaceResources() {
     endSizeAdjustGesture();
+    endPivotGesture();
     cancelStrokeEraseGesture();
     cancelShapeGesture();
     resetOverlayModifierState();
@@ -11280,7 +12052,8 @@ function createFabricOverlayRuntime(options = {}) {
         // 지킨다(애니메이트의 자유 변형과 같다).
         uniformScaling: false,
         uniScaleKey: 'shiftKey',
-        // Alt 는 브러시 크기 조절 제스처가 쓰고, Shift+변 손잡이의 기울이기는 잠가 뒀다.
+        // Alt 는 브러시 크기 조절 제스처가 쓴다. fabric 의 기울이기 키도 끈다 — 기울이기는
+        // 런타임이 Ctrl + 변 손잡이로 직접 한다(skewSelection).
         centeredKey: 'none',
         altActionKey: 'none'
       });
@@ -11364,6 +12137,7 @@ function createFabricOverlayRuntime(options = {}) {
     }
 
     endSizeAdjustGesture();
+    endPivotGesture();
     cancelStrokeEraseGesture();
     cancelShapeGesture();
     resetOverlayModifierState();
@@ -12035,6 +12809,12 @@ function createFabricOverlayRuntime(options = {}) {
       actionDeduper.release?.(command.actionId);
       return { applied: false, reason: retargeted?.reason || 'retarget-failed' };
     }
+    if (FLIP_ACTIONS.has(action)) {
+      // 뒤집기는 고른 것을 그대로 두고 그 변형만 바꾼다. 세워 둔 조각도 받는다.
+      const result = flipSelection(FLIP_ACTIONS.get(action));
+      settleArmedFramePreview();
+      return result.applied ? { ...result, repainted: true } : result;
+    }
     if (pendingLassoSelection) {
       if (action === 'delete-selection') {
         const result = commitPendingLassoDelete();
@@ -12129,6 +12909,19 @@ function createFabricOverlayRuntime(options = {}) {
     return emptyDrawingV3Diagnostics(
       drawingV3ShadowRequested && customSceneStore ? 'not-connected' : 'disabled'
     );
+  }
+
+  // 변형 상자의 화면 상태(검사·점검용). 회전 중심점은 문서에 없는 값이라 여기서만 보인다.
+  function getSelectionTransformState() {
+    const target = fabricCanvas?.getActiveObject?.() || null;
+    const transformable = selectionAllowsTransform(target);
+    const pivot = transformable ? selectionPivotPoint(target) : null;
+    return {
+      transformable,
+      // 옮겨 둔 회전 중심점의 자리(그림 좌표). 한가운데가 축이면 null.
+      pivot: pivot ? { x: pivot.x, y: pivot.y } : null,
+      pivotGestureActive: !!pivotGesture
+    };
   }
 
   function getDiagnostics() {
@@ -12249,6 +13042,7 @@ function createFabricOverlayRuntime(options = {}) {
     applyOnionSkinPrefs,
     updateOnionSkin,
     getOnionSkinState,
+    getSelectionTransformState,
     updateDrawingLayerView,
     updateViewport,
     applyDrawingAction,

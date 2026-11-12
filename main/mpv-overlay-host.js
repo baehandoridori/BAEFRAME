@@ -626,6 +626,17 @@ const OVERLAY_HTML = String.raw`
     .mpv-fabric-pilot-toolbar button:active {
       transform: scale(0.96);
     }
+    /* 지금 누를 수 없는 버튼(고른 것이 없을 때의 뒤집기). 흐리게 두고 반응하지 않는다. */
+    .mpv-fabric-pilot-toolbar button:disabled {
+      opacity: 0.4;
+      cursor: default;
+    }
+    .mpv-fabric-pilot-toolbar button:disabled:hover {
+      background: var(--fabric-palette-button);
+    }
+    .mpv-fabric-pilot-toolbar button:disabled:active {
+      transform: none;
+    }
     /* 편집 줄: 아이콘 셋 + 글자가 붙은 전체 지우기. */
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-section="actions"] button {
       display: inline-flex;
@@ -936,7 +947,8 @@ const OVERLAY_HTML = String.raw`
       background: var(--fabric-palette-inset) !important;
     }
     .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-target"],
-    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-shape"] {
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-shape"],
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-group="selection-flip"] {
       display: grid !important;
       grid-template-columns: 44px minmax(0, 1fr) minmax(0, 1fr);
       align-items: center;
@@ -960,6 +972,10 @@ const OVERLAY_HTML = String.raw`
       margin-top: 2px;
       font-size: 10px !important;
       line-height: 1.5;
+      color: var(--fabric-palette-muted) !important;
+    }
+    /* 변형 상자가 뜬 동안의 조작 안내(Ctrl 조합). 값이 아니라 설명이라 더 흐리게 둔다. */
+    .mpv-fabric-pilot-toolbar [data-fabric-pilot-output="selection-transform-hint"] {
       color: var(--fabric-palette-muted) !important;
     }
     .mpv-fabric-pilot-badge {

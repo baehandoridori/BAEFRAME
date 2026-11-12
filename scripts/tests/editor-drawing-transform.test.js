@@ -266,3 +266,38 @@ test('변형 상자로 바꾼 크기와 회전이 편집창 문서와 PNG 내보
     );
   } finally { await h.dispose(); }
 });
+
+test('뒤집고 돌린 획을 화면 비율이 다른 출력 크기에 맞춰 늘여도 뒤집힌 모양 그대로다', async () => {
+  const h = harness();
+  try {
+    await h.drawing.loadClip(clip, project);
+    await h.drawing.setTool('brush', { size: 24 });
+    await h.paint(240, 31);
+    const saved = h.drawing.snapshot();
+    const record = saved.drawingsV3.keyframes[0].objects[0];
+    // 오버레이에서 회전 손잡이와 뒤집기 버튼으로 만든 것과 같은 꼴의 변형.
+    Object.assign(record.transform, { angle: 30, flipX: true });
+    const original = fabric.util.composeMatrix({
+      translateX: record.transform.left, translateY: record.transform.top,
+      angle: record.transform.angle, scaleX: record.transform.scaleX, scaleY: record.transform.scaleY,
+      skewX: record.transform.skewX, skewY: record.transform.skewY,
+      flipX: record.transform.flipX, flipY: record.transform.flipY
+    });
+
+    // 가로만 줄인 출력 크기 — 화면 비율이 달라져 돌린 획은 행렬로 다시 풀어야 한다.
+    // 분해는 뒤집힘을 음수 배율로 돌려준다. 그대로 적으면 뒤집히지 않은 모양으로 그려진다.
+    const narrow = { width: 1280, height: 1080, fps: 24 };
+    const expected = fabric.util.multiplyTransformMatrices(
+      [narrow.width / project.width, 0, 0, narrow.height / project.height, 0, 0], original
+    );
+    await h.drawing.loadClip({ ...clip, ...saved }, narrow);
+    const shown = Array.from(h.canvas.getObjects()[0].calcTransformMatrix());
+    for (let index = 0; index < 6; index += 1) {
+      closeTo(shown[index], expected[index], `늘인 뒤의 행렬 [${index}]`);
+    }
+    assert.ok(expected[0] * expected[3] - expected[1] * expected[2] < 0, '뒤집힌 모양이다');
+    const rescaled = h.drawing.snapshot().drawingsV3.keyframes[0].objects[0].transform;
+    assert.ok(rescaled.scaleX > 0 && rescaled.scaleY > 0, '배율은 양수로 적는다');
+    assert.notEqual(rescaled.flipX, rescaled.flipY, '뒤집힘은 flipX·flipY 로 적는다');
+  } finally { await h.dispose(); }
+});
