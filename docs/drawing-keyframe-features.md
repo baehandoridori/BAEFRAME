@@ -6,6 +6,18 @@
 >
 > 작업 전 [드로잉 작업 규칙](drawing-work-guide.md)을 읽는다. 기능 변경 시 관련 상태·데이터 출처·검증 기준을 함께 갱신한다.
 
+## 타임라인 프레임 바의 펜 입력 (2026-11-12, v2.16.2-beta)
+
+| 항목 | 현재 구현 |
+|---|---|
+| 프레임 바·눈금자 끌기 | pointer 이벤트로 받는다(2026-07). 손잡이·눈금자·트랙 영역에 `touch-action: none`. 누르면 포인터를 묶고(`setPointerCapture`) 문서의 `pointermove`·`pointerup`·`pointercancel` 로 따라가며, 놓은 좌표를 정수 프레임으로 확정한다(v2.11) |
+| 마우스·손가락 | 엄격하다(v2.11 그대로). 누른 포인터(`pointerId`)의 이벤트만 받고, 주 포인터만 시작한다. 묶음이 풀리거나(`lostpointercapture`) 창이 포커스를 잃거나(`blur`) 취소되면(`pointercancel`) 끌기를 끝내고 **시작한 자리로 되돌린다** |
+| 펜 | 너그럽다(v2.16.2-beta, `_isPenScrub`). 펜이 보낸 이동·뗌이면 `pointerId` 가 달라도 받고, 주 포인터가 아니어도 시작하고, 묶음 풀림과 포커스 잃음은 무시하고, 취소되면 **마지막으로 끈 자리에 둔다**. 닿지 않은 채(눌린 버튼도 필압도 없이) 보낸 이동은 끌기로 치지 않는다. Windows 의 펜은 닿기 전에는 마우스와 같은 경로로, 닿은 뒤에는 터치와 같은 경로로 들어온다. v2.11 의 엄격한 규칙은 실제 펜으로 검증된 적이 없고, 그 뒤 "펜으로는 프레임 바를 끌 수 없다"는 보고가 왔다 |
+| 뗌을 받지 못한 끌기 | 끄는 도중에 새 누름이 오면 앞선 끌기를 마지막으로 끈 자리에서 끝내고 새로 시작한다(끄는 손가락이 있는 동안의 다른 손가락은 예외). 전에는 다음 창 포커스 변화까지 프레임 바를 끌 수 없었다 |
+| 진단 기록 | 펜에서, 엄격한 규칙이었다면 끌기가 끊겼을 입력을 받아들이면 종류마다 한 번 WARN 으로 남긴다(`%APPDATA%\baeframe\logs\baeframe-<날짜>.log` 의 "펜으로 프레임 바를 끄는 중"). 종류: `lostpointercapture`·`blur`·`pointercancel`·`hover-move`·`pointer-id`·`not-primary`·`superseded` |
+
+**실물 펜으로는 확인하지 못했다.** 주입할 수 있는 입력(마우스, 펜의 마우스 경로, 터치 경로)으로는 수정 전에도 프레임 바가 끌려 재현되지 않았고, 실물 펜의 입력 경로는 만들어 넣을 수 없었다. 어느 규칙이 실제로 걸리는지는 위 진단 기록으로 확인한다. 근거는 [작업 기록](../DEVLOG/2026-11-12-timeline-pen-scrub.md).
+
 ## 패널을 닫은 채 한 프레임 조작의 실행취소 순서 (2026-11-12, v2.16.1-beta)
 
 | 항목 | 현재 구현 |
@@ -118,7 +130,7 @@
 | 화면 이동 | primary mouse/pen/touch PointerEvent와 CSS 좌표 사용. 가운데 고정 ON·100% 이하의 기존 제한 유지 |
 | Space 임시 이동 | 실제 native overlay down을 메인 키 상태로 판정. 3 CSS px 이상 이동하면 재생 tap 소비. 프레임·레이어 확인 전에 pan 소유권 확정 |
 | Space 전달 | sender와 host/video/persistence session·gesture sequence 검증. keyup flush·timeout·blur·취소 시 정리. 재생 단축키 재지정과 별도로 물리 Space를 임시 이동에 사용. 오버레이 포커스에서 keyup이 오지 않던 결함은 v2.13.1-beta에서 수정(위 "그리기 중 Space") |
-| 프레임바 release | 최종 포인터 좌표를 정수 프레임으로 확정. 혼합 FPS·cutlist 정체 유지. native 테스트 영상 A의 burned-in 58, UI 58, 저장 그림 58 대조 완료 |
+| 프레임바 release | 최종 포인터 좌표를 정수 프레임으로 확정. 혼합 FPS·cutlist 정체 유지. native 테스트 영상 A의 burned-in 58, UI 58, 저장 그림 58 대조 완료. 펜으로 끌 때의 규칙은 맨 위 절(v2.16.2-beta) |
 | 현재 댓글 강조 | 양끝 포함 범위만 강조. DOM 전체 재생성·자동 스크롤·포커스 이동 없음 |
 
 실제 격리 앱에서 native mouse pan과 저장·재열기를 확인했다. 실물 태블릿, 실제 IME 장치 입력, OS 창 간 키 전달, 다른 PC 동시 편집은 미확인이다. 전체 작업·검사 근거는 [이번 구현 기록](../DEVLOG/2026-09-14-review-playback-input.md)에 구분한다. 아래 기존 기능의 검증 기준일은 각 항목 기록을 따른다.
