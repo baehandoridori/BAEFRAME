@@ -403,9 +403,9 @@ Liveblocks 는 한 Room 의 동시 접속 수를 요금제로 제한한다(Free�
 
 | 규칙 | 구현 |
 |------|------|
-| 원격 댓글이 이 인스턴스가 들고 있다가 지나온 상태와 똑같으면(수정 시각 포함) 옛 사본이다. 본문·해결 상태는 로컬을 지킨다 | `_createCommentMergeOptions().isSupersededMarker`, 상태 기록은 `_rememberMarkerRevision`(로드·변경 이벤트·저장·재로드 때) |
+| 원격 댓글이 이 인스턴스가 들고 있던 상태와 똑같고(수정 시각 포함) 지금 로컬보다 앞선 상태면 옛 사본이다. 본문·해결 상태는 로컬을 지킨다. 앞뒤는 수정 시각, 같으면 내용 순서로 정한다(`compareMarkerRevisions`) — 어느 PC 에서나 같은 답이어야 두 PC 가 서로를 옛 사본으로 보고 덮어쓰기를 되풀이하지 않는다 | `_createCommentMergeOptions().isSupersededMarker`, 상태 기록은 `_rememberMarkerRevision`(로드·변경 이벤트·저장·재로드 때. 모델이 내보내는 모양만 기억하고 파일에 적힌 모양은 기억하지 않는다) |
 | 파일에 댓글이 없으면 삭제가 아니라 그 댓글이 생기기 전의 사본이다(삭제는 `deleted` 표시로 남는다) | 마커 컬렉션의 `absentMeansStale` |
-| 본문·위치는 같고 해결 상태만 서로 다르게 바뀌었으면 나중 변경을 따른다. 충돌 사본을 만들지 않는다 | `selectMarkerMetadata` |
+| 본문·위치는 같고 해결 상태만 서로 다르게 바뀌었으면(또는 양쪽 다 삭제 표시이고 삭제 시각만 다르면) 나중 변경을 따른다. 충돌 사본을 만들지 않는다 | `selectMarkerMetadata` |
 | 본문 수정과 다른 변경이 겹치면 지금처럼 로컬 + `__remote-conflict` 사본으로 보존한다 | `selectMarkerMetadata` |
 | 답글은 이미지 칸의 유무(없음·null)를 맞춰 비교한다 | `normalizeReplyForMerge` |
 | 원격이 가진 답글이 로컬 목록의 앞부분뿐이고 "답글만 지운" 편집이 아니면, 빠진 답글은 원격이 아직 못 본 것이다. 지우지 않는다. 단 원격에 새 답글을 쓴 사람의 옛 답글이 빠졌으면 그 사람이 지우고 다시 쓴 것이므로 지운다 | `createUnseenReplyKeeper` |
