@@ -209,6 +209,7 @@ startFrame, endFrame?, fps, resolved, images, replies}`입니다. `sourceDocumen
 | `drawings` | object | 필수 | 그리기 데이터 (`{ layers: [] }`) |
 | `highlights` | array | 필수 | 하이라이트 구간 목록 |
 | `compositionLayers` | array | 선택 | 레이어 합성 목록 |
+| `compositionLayerSyncV1` | object | 선택 | 합성 레이어의 수정 횟수와 삭제 표시(3.6 참고). 고치거나 지운 레이어가 없고 순서를 바꾼 적도 없으면 키 자체가 없다 |
 
 ---
 
@@ -393,6 +394,45 @@ drawings
 | `sourceDuration` | number \| null | 영상 레이어의 원본 길이(초). 이미지 레이어는 `null` 가능 |
 | `sourceDataUrl` | string | 선택. 클립보드 캡처 임베드용 `data:image/` base64 데이터 URL. 값이 있으면 `filePath`가 비어 있어도 유효하며 렌더링 시 이 값을 우선 사용 |
 
+#### 합성 레이어 동기화 정보 (compositionLayerSyncV1)
+
+(v2.16.4-beta 부터) 여러 PC 가 같은 파일을 저장할 때 옛 사본과 삭제를 가리기 위한 정보입니다. 규칙은 [협업 문서 8.5](collaboration.md#85-합성-레이어의-파일-동기화), 구현은 `shared/composition-layer-sync.js` 입니다.
+
+`compositionLayers` 의 레코드에는 칸을 더하지 않고 **최상위의 형제 키**에 둡니다. 이전 버전은 레코드를 위 표의 칸만으로 다시 쓰므로 레코드에 모르는 칸이 있으면 손대지 않은 레이어까지 "내가 고쳤다" 로 읽지만, 최상위의 모르는 키는 읽은 그대로 다시 씁니다(6장의 호환성 envelope).
+
+```json
+"compositionLayerSyncV1": {
+  "version": 1,
+  "layers": {
+    "composition_1709123456789_mno345": { "rev": 3 },
+    "composition_1709123400000_abc123": {
+      "rev": 4,
+      "deleted": true,
+      "deletedAt": "2026-11-18T05:03:00.000Z"
+    }
+  },
+  "orderRev": 2
+}
+```
+
+| 필드 | 타입 | 설명 |
+|------|------|------|
+| `version` | number | 이 구조의 판 번호. 현재 `1`. 더 큰 판은 해석하지 않고 그대로 보존합니다 |
+| `layers` | object | 레이어 id → 동기화 정보. 한 번도 고치지 않은 레이어(수정 횟수 0)는 적지 않습니다 |
+| `layers[id].rev` | number | 그 레이어를 고친 횟수(0 이상의 안전한 정수). PC 시계가 아니라 횟수이므로 PC 사이의 시계 차이와 무관합니다. 큰 쪽이 나중 상태입니다 |
+| `layers[id].deleted` | boolean | `true` 면 삭제 표시입니다. 이 앱은 삭제 표시를 적을 때 그 id 의 레코드를 `compositionLayers` 에서 뺍니다 |
+| `layers[id].deletedAt` | string \| null | 지운 시각(ISO 8601). 삭제 표시를 최근 것부터 512개만 남길 때의 순서와, 같은 레이어의 삭제 표시 둘(수정 횟수가 같을 때) 가운데 하나를 고를 때만 씁니다 |
+| `orderRev` | number | 레이어 순서를 바꾼 횟수 |
+
+읽는 규칙:
+
+- 파일에 레이어가 없을 때, 삭제 표시가 있으면 삭제이고 없으면 그 레이어가 생기기 전에 만들어진 사본입니다.
+- 삭제 표시가 있는 id 의 레코드가 `compositionLayers` 에 남아 있으면 **삭제 표시를 따릅니다**(지워진 것으로 읽고, 다음 저장에서 그 레코드를 치웁니다). 이 앱은 그렇게 쓰지 않습니다 — 이 키를 모르는 쪽(웹 뷰어)이 예전에 연 `compositionLayers` 에 최신 파일의 이 키를 붙여 저장했을 때 생깁니다. 되살린 레이어는 삭제 표시가 지워지고 더 큰 수정 횟수가 적힙니다.
+- 살아 있다고 적혀 있는데 `compositionLayers` 에 레코드가 없는 id 는 무시합니다(그 레이어를 모르는 사본).
+- 이 키가 없는 파일(이전 버전이 쓴 파일)은 모든 레이어의 수정 횟수를 0 으로 읽습니다. 마이그레이션은 없습니다.
+- `version` 이 이 앱이 아는 것보다 크면 이 키를 읽지도 쓰지도 않습니다. 그 파일의 합성 레이어는 수정 횟수 없이 기준과의 비교만으로 합칩니다(옛 사본을 가리지 못합니다 — [협업 문서 8.5](collaboration.md#85-합성-레이어의-파일-동기화)).
+- `id` 가 없거나 `0`·`false`·빈 글자인 레코드는 이 정보와 이어지지 않습니다. 앱은 그런 레코드를 만들지 않으며, 읽을 때마다 새 id 를 붙입니다.
+
 ---
 
 ## 4. ER 다이어그램
@@ -569,7 +609,7 @@ DrawingObject의 좌표는 영상 해상도에 독립적인 **정규화 좌표�
 v1/레거시 파일을 v2.0으로 마이그레이션하거나 v2.0 파일을 다시 저장할 때 다음 규칙을 적용합니다.
 
 - 현재 앱이 모르는 최상위 필드는 해석하거나 재구성하지 않고 그대로 보존합니다.
-- `drawingsV3`는 아직 v2.0의 known 필드가 아니므로 opaque 필드로 통과시킵니다.
+- `drawingsV3`는 아직 v2.0의 known 필드가 아니므로 opaque 필드로 통과시킵니다. `compositionLayerSyncV1`(3.6)도 같은 방식으로 살아남습니다.
 - canonical known 필드와 opaque 필드의 이름이 충돌하면 canonical known 값이 우선합니다.
 - 레거시 `version`, `versions` 필드는 각각 `bframeVersion`, `manualVersions`로 정규화한 뒤 되살리지 않습니다.
 - 기존 `reviewDocumentId`는 교체하지 않습니다. ID가 없다는 이유만으로 파일을 만들거나 dirty 상태로 바꾸지 않으며, 실제 저장이 필요한 순간에만 생성합니다.
