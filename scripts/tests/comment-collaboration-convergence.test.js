@@ -976,6 +976,38 @@ test('실시간 방이 가득 차면 접속 대기를 바로 끝내고 이유를
   assert.equal(statuses.at(-1).reason, 'room-full');
 });
 
+test('서비스가 이번 달 접속을 막으면 그 사유로 접속 실패를 알린다', async () => {
+  const { LiveblocksManager } = await import('../../renderer/scripts/modules/liveblocks-manager.js');
+  const fake = createFakeLiveblocksClient({
+    storage: () => new Promise(() => {}),
+    onEnter: state => setTimeout(() => state.emit('error', {
+      message: 'Access suspended for the remainder of the month. Please check your dashboard for more details.',
+      context: { type: 'ROOM_CONNECTION_ERROR', code: 4001 }
+    }), 5)
+  });
+  const manager = new LiveblocksManager({ createClient: fake.createClient, joinTimeoutMs: 5000 });
+  const failure = await rejectAfter(
+    manager.start('C:/pc/review.bframe', '가', '#fff', 'bframe_room').then(() => null, error => error),
+    1000,
+    '접속 대기가 끝나지 않는다'
+  );
+  assert.equal(failure.joinFailureReason, 'service-suspended');
+  assert.equal(failure.joinFailureCode, 4001);
+  assert.equal(manager.isConnected, false);
+
+  // 권한 없음(같은 4001)은 다른 사유다.
+  const denied = createFakeLiveblocksClient({
+    storage: () => new Promise(() => {}),
+    onEnter: state => setTimeout(() => state.emit('error', {
+      message: 'Not allowed to connect to the room',
+      context: { type: 'ROOM_CONNECTION_ERROR', code: 4001 }
+    }), 5)
+  });
+  const other = new LiveblocksManager({ createClient: denied.createClient, joinTimeoutMs: 5000 });
+  const deniedFailure = await other.start('C:/pc/review.bframe', '가', '#fff', 'bframe_room').then(() => null, error => error);
+  assert.equal(deniedFailure.joinFailureReason, 'connection-error');
+});
+
 test('응답이 없는 실시간 방 접속은 정해진 시간 뒤에 실패로 끝난다', async () => {
   const { LiveblocksManager } = await import('../../renderer/scripts/modules/liveblocks-manager.js');
   const fake = createFakeLiveblocksClient({ storage: () => new Promise(() => {}) });

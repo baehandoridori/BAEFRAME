@@ -423,6 +423,26 @@ test('an optimistic click is not applied twice, and is re-applied if the model w
   assert.deepEqual(replacedEvents, ['markerUpdated', 'markersChanged']);
 });
 
+test('a failed room join is announced once with its own reason and retried on a timer', () => {
+  for (const reason of ['room-full', 'service-suspended']) {
+    const toasts = []; const timers = [];
+    const context = vm.createContext({
+      COLLABORATION_REJOIN_DELAYS_MS: [60000, 180000], collaborationRejoin: null,
+      isSameFilePath: (a, b) => a === b, showToast: (text, type) => toasts.push({ text, type }),
+      setTimeout: (callback, delay) => { timers.push(delay); return timers.length; }, clearTimeout() {},
+      retryCollaborationJoin() {}
+    });
+    for (const name of ['describeCollaborationJoinFailure', 'scheduleCollaborationRejoin']) vm.runInContext(appFunction(name), context);
+    context.scheduleCollaborationRejoin(1, 'A.bframe', reason);
+    context.scheduleCollaborationRejoin(1, 'A.bframe', reason);
+    assert.equal(toasts.length, 1, `${reason}: the same reason is announced once per file`);
+    assert.equal(toasts[0].type, 'warning');
+    assert.match(toasts[0].text, reason === 'service-suspended' ? /사용 한도/ : /10명/);
+    // 월 한도 거절도 같은 간격으로 다시 시도한다(실제로 받은 거절은 몇 분 뒤 풀렸다).
+    assert.deepEqual(timers, [60000, 60000], reason);
+  }
+});
+
 test('connected file changes also merge comments, and a failed room join falls back with a notice and a rejoin', () => {
   const throttleStart = appSource.indexOf('const connectedDrawingsV3ReloadThrottle = createLeadingTrailingThrottle({');
   const throttle = appSource.slice(throttleStart, appSource.indexOf('async function syncReviewFileFromDisk', throttleStart));
@@ -439,5 +459,6 @@ test('connected file changes also merge comments, and a failed room join falls b
   assert.ok(start.indexOf('watchFileStart(bframePath)') > start.indexOf('scheduleCollaborationRejoin('),
     'the file watch must start after a failed join too');
   assert.ok(appFunction('describeCollaborationJoinFailure').includes('room-full'));
+  assert.ok(appFunction('describeCollaborationJoinFailure').includes('service-suspended'));
   assert.ok(appFunction('showCollaborationSyncStatus').includes('retryCollaborationJoin({ manual: true })'));
 });

@@ -7126,9 +7126,13 @@ async function initApp() {
   }
 
   function describeCollaborationJoinFailure(reason) {
-    return reason === 'room-full'
-      ? '실시간 협업 인원(10명)이 가득 찼습니다. 다른 사람의 변경은 파일 동기화로 조금 늦게 반영됩니다.'
-      : '실시간 협업에 연결하지 못했습니다. 파일 동기화로 계속하며 다른 사람의 변경은 조금 늦게 반영됩니다.';
+    if (reason === 'room-full') {
+      return '실시간 협업 인원(10명)이 가득 찼습니다. 다른 사람의 변경은 파일 동기화로 조금 늦게 반영됩니다.';
+    }
+    if (reason === 'service-suspended') {
+      return '실시간 협업 서비스가 이번 달 사용 한도로 접속을 막았습니다. 다른 사람의 변경은 파일 동기화로 조금 늦게 반영됩니다.';
+    }
+    return '실시간 협업에 연결하지 못했습니다. 파일 동기화로 계속하며 다른 사람의 변경은 조금 늦게 반영됩니다.';
   }
 
   function scheduleCollaborationRejoin(loadToken, bframePath, reason) {
@@ -7144,6 +7148,8 @@ async function initApp() {
       showToast(describeCollaborationJoinFailure(reason), 'warning', 6000, true);
     }
     collaborationRejoin = { loadToken, bframePath, reason, attempt, timer: null };
+    // 월 사용 한도 거절('service-suspended')도 같은 간격으로 다시 시도한다. 실제로 받은 거절은
+    // 몇 분 뒤 풀렸고, 정말 그 달 내내 막힌 경우에도 정해진 횟수만 시도하고 멈춘다.
     const delay = COLLABORATION_REJOIN_DELAYS_MS[attempt];
     if (delay === undefined) return;
     collaborationRejoin.timer = setTimeout(() => {

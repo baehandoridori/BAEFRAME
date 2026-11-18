@@ -30,9 +30,15 @@ const ROOM_JOIN_TIMEOUT_MS = 10000;
 // 이 경우 클라이언트는 재시도 없이 끊고, 예외도 던지지 않는다 — 'error' 구독으로만 알 수 있다.
 const ROOM_FULL_ERROR_CODE = 4005;
 
+// 월 사용 한도가 소진되면 Liveblocks 는 접속을 code 4001 과 함께 이 문구로 거절한다
+// ("Access suspended for the remainder of the month. ..." — 2026-11-18 에 실제로 받았다).
+// 4001 은 권한 없음에도 쓰이므로 문구로 가린다.
+const SERVICE_SUSPENDED_PATTERN = /suspended/i;
+
 /**
  * 접속 실패 사유를 실은 오류. app.js 가 사유(joinFailureReason)에 따라 안내와 재접속을 정한다.
  * - 'room-full': 방 정원 초과
+ * - 'service-suspended': 서비스가 이번 달 사용 한도 소진으로 접속을 막음
  * - 'timeout': 정해진 시간 안에 접속되지 않음
  * - 'connection-error': 그 밖의 접속 거절(권한 등)
  * - 'superseded': 기다리는 사이 다른 접속(영상 전환 등)에 자리를 내줌. 실패가 아니다
@@ -294,11 +300,14 @@ export class LiveblocksManager extends EventTarget {
 
       cleanups.push(room.subscribe('error', (error) => {
         const code = error?.context?.code ?? error?.code ?? null;
-        settle(reject, createJoinFailure(
-          code === ROOM_FULL_ERROR_CODE ? 'room-full' : 'connection-error',
-          error?.message || 'Room 접속이 거절되었습니다',
-          code
-        ));
+        const message = error?.message || 'Room 접속이 거절되었습니다';
+        let reason = 'connection-error';
+        if (code === ROOM_FULL_ERROR_CODE) {
+          reason = 'room-full';
+        } else if (SERVICE_SUSPENDED_PATTERN.test(message)) {
+          reason = 'service-suspended';
+        }
+        settle(reject, createJoinFailure(reason, message, code));
       }));
 
       Promise.resolve()
