@@ -390,6 +390,7 @@ Liveblocks 는 한 Room 의 동시 접속 수를 요금제로 제한한다(Free�
 |------|------|-----------|
 | 정원 초과·접속 불가 | 접속 대기를 끝내고 사유를 알린다. 파일 감시는 접속 성패와 무관하게 시작한다 | `liveblocks-manager.js` — `_waitForRoomJoin()`, `app.js` — `startCollaborationForVideoLoad()` 의 `catch` |
 | 접속하지 못한 채 작업 | 파일 동기화(`syncReviewFileFromDisk` → `reloadAndMerge`). 다른 사람의 변경은 드라이브가 파일을 옮기는 시간만큼 늦다 | `app.js` |
+| 접속을 기다리는 중에 영상 전환 등으로 방을 떠남 | 그 접속 시도를 바로 끝낸다(`joinFailureReason: 'superseded'`, 실패로 알리지 않는다). 버려진 시도는 공유 상태를 건드리지 않고 자기 방만 떠난다 — 제한 시간 뒤의 실패 처리가 그 사이 들어간 새 방을 끊지 않게 | `liveblocks-manager.js` — `start()` 의 `catch`, `stop()` 의 `_abortPendingJoin` |
 | 빈자리 | 1·3·5·10·10·10분 뒤 다시 접속해 본다. 그 뒤에는 동기화 상태 표시(`#syncStatus`)를 누르면 다시 시도한다. 거절된 접속도 사용량으로 잡힐 수 있어 자주 시도하지 않는다 | `app.js` — `scheduleCollaborationRejoin()`, `retryCollaborationJoin()` |
 
 ### 8.2 연결 중에도 댓글을 파일에서 받아들인다
@@ -409,6 +410,10 @@ Liveblocks 는 한 Room 의 동시 접속 수를 요금제로 제한한다(Free�
 | 답글은 이미지 칸의 유무(없음·null)를 맞춰 비교한다 | `normalizeReplyForMerge` |
 | 원격이 가진 답글이 로컬 목록의 앞부분뿐이고 "답글만 지운" 편집이 아니면, 빠진 답글은 원격이 아직 못 본 것이다. 지우지 않는다. 단 원격에 새 답글을 쓴 사람의 옛 답글이 빠졌으면 그 사람이 지우고 다시 쓴 것이므로 지운다 | `createUnseenReplyKeeper` |
 | 이 인스턴스에 있다가 사라진 답글이 원격에만 있으면 되살리지 않는다 | `hasSeenReply` |
+| 파일이 옛 사본으로 돌아가 있으면(파일에 없는 댓글이 있거나 파일의 댓글이 지나온 상태) 받아들이는 쪽이 다시 저장해 파일을 바로잡는다. 파일로만 동기화하는 사람은 그 파일만 본다 | `hasCommentStateAheadOfRemote` → `_markDirty` |
+| 받아들인 뒤의 병합 기준은 방금 읽은 원격으로 옮긴다. 옛 사본이라 받아들이지 않은 댓글만 예전 기준을 둔다 | `advanceCommentMergeBase` |
+
+**예전 상태를 그대로 되살리는 편집은 새 수정으로 찍는다.** 위 첫 규칙은 "지나온 상태와 똑같은 원격은 옛 사본" 이라고 보므로, 삭제 되돌리기(Ctrl+Z)·생성 다시하기처럼 예전 스냅샷을 그대로 되살리는 편집이 예전 수정 시각을 달고 있으면 다른 PC 가 받아들이지 않는다. `CommentManager.restoreMarker()` 와 `restoreMarkerResolution()` 은 되살리면서 수정 시각을 새로 찍는다. 댓글을 예전 값으로 돌려놓는 경로를 새로 만들 때도 같다.
 
 해결·수정 전송(`COMMENT_MARKER_UPDATED`)은 전송 시각이 아니라 모델의 수정 시각을 싣는다. 보낸 쪽과 받은 쪽이 같은 상태 지문을 가져야 위 첫 규칙이 서로의 저장분에도 맞는다.
 
