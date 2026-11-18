@@ -389,6 +389,7 @@ Liveblocks 는 한 Room 의 동시 접속 수를 요금제로 제한한다(Free�
 | 상황 | 동작 | 구현 위치 |
 |------|------|-----------|
 | 정원 초과·접속 불가 | 접속 대기를 끝내고 사유를 알린다. 파일 감시는 접속 성패와 무관하게 시작한다 | `liveblocks-manager.js` — `_waitForRoomJoin()`, `app.js` — `startCollaborationForVideoLoad()` 의 `catch` |
+| 서비스가 이번 달 접속을 막음 | 월 사용 한도가 소진되면 `code 4001` 과 "Access suspended for the remainder of the month" 로 거절한다(`joinFailureReason: 'service-suspended'`). 사유를 따로 알리고 파일 동기화로 일한다. 다시 접속해 보는 간격은 다른 접속 실패와 같다(2026-11-18 에 받은 거절은 몇 분 뒤 풀렸다. 정말 그 달 내내 막혀 있어도 정해진 횟수만 시도하고 멈춘다) | `liveblocks-manager.js` — `SERVICE_SUSPENDED_PATTERN`, `app.js` — `describeCollaborationJoinFailure()` |
 | 접속하지 못한 채 작업 | 파일 동기화(`syncReviewFileFromDisk` → `reloadAndMerge`). 다른 사람의 변경은 드라이브가 파일을 옮기는 시간만큼 늦다 | `app.js` |
 | 접속을 기다리는 중에 영상 전환 등으로 방을 떠남 | 그 접속 시도를 바로 끝낸다(`joinFailureReason: 'superseded'`, 실패로 알리지 않는다). 버려진 시도는 공유 상태를 건드리지 않고 자기 방만 떠난다 — 제한 시간 뒤의 실패 처리가 그 사이 들어간 새 방을 끊지 않게 | `liveblocks-manager.js` — `start()` 의 `catch`, `stop()` 의 `_abortPendingJoin` |
 | 빈자리 | 1·3·5·10·10·10분 뒤 다시 접속해 본다. 그 뒤에는 동기화 상태 표시(`#syncStatus`)를 누르면 다시 시도한다. 거절된 접속도 사용량으로 잡힐 수 있어 자주 시도하지 않는다 | `app.js` — `scheduleCollaborationRejoin()`, `retryCollaborationJoin()` |
