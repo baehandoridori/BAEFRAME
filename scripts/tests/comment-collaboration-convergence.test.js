@@ -537,6 +537,40 @@ test('지운 댓글을 되돌리면(Ctrl+Z) 다른 PC 에도 되살아난다', a
   second.manager.disconnect();
 });
 
+test('삭제를 전송으로 먼저 받은 PC 에서도 삭제 되돌리기가 사본 없이 되살아난다', async () => {
+  const first = await openClient('가', [markerRecord('x')]);
+  const second = await openClient('나', [markerRecord('x')]);
+  const beforeDelete = first.commentManager.getMarker('x').toJSON();
+
+  // 연결된 사람끼리는 삭제가 전송으로 먼저 온다. 받은 쪽의 삭제 시각은 자기 시계로 찍힌다.
+  first.commentManager.deleteMarker('x');
+  assert.equal(await first.manager.save(), true);
+  await wait(5);
+  second.commentManager.applyRemoteMarkerDelete('x');
+  deliver(first.bframePath, second.bframePath);
+  await second.manager.reloadCommentsFromDisk();
+  assert.equal(second.commentManager.getMarker('x').deleted, true);
+
+  // 나가 저장하기 전에 가가 삭제를 되돌린다.
+  await wait(5);
+  first.commentManager.restoreMarker(beforeDelete);
+  assert.equal(await first.manager.save(), true);
+  deliver(first.bframePath, second.bframePath);
+  await second.manager.reloadCommentsFromDisk();
+
+  const markers = second.commentManager.toJSON().layers[0].markers;
+  assert.deepEqual(markers.map(marker => marker.id), ['x'],
+    '되살린 댓글이 사본으로 따로 생기면 안 된다');
+  assert.equal(markers[0].deleted, false);
+
+  second.manager._markDirty();
+  assert.equal(await second.manager.save(), true);
+  assert.deepEqual(diskMarkers(second.bframePath).map(marker => marker.id), ['x']);
+  assert.equal(diskMarker(second.bframePath, 'x').deleted, false);
+  first.manager.disconnect();
+  second.manager.disconnect();
+});
+
 test('답글을 지키며 받아들인 뒤에 온 본문 수정은 충돌 사본 없이 받아들인다', async () => {
   const first = await openClient('가', [markerRecord('x')]);
   const second = await openClient('나', [markerRecord('x')]);
@@ -670,18 +704,62 @@ for (const tie of [false, true]) {
 
     assert.deepEqual(writesPerRound.slice(-4), [0, 0, 0, 0],
       `저장이 멈춰야 한다: ${JSON.stringify(writesPerRound)}`);
-    const firstState = first.commentManager.getMarker('x').toJSON();
-    const secondState = second.commentManager.getMarker('x').toJSON();
-    assert.equal(firstState.resolvedBy, secondState.resolvedBy, '두 PC 가 같은 상태로 모인다');
-    assert.equal(firstState.updatedAt, secondState.updatedAt);
-    assert.equal(diskMarker(first.bframePath, 'x').resolvedBy, firstState.resolvedBy);
-    assert.equal(diskMarker(second.bframePath, 'x').resolvedBy, firstState.resolvedBy);
-    if (!tie) assert.equal(firstState.resolvedBy, '나', '나중에 누른 쪽으로 모인다');
+    // 파일은 한 상태로 모인다(순서상 뒤인 쪽). 화면은 각자 마지막에 받은 상태를 그대로 둔다 —
+    // 화면은 이미 지나온 상태로 되돌아가지 않는다. 둘 다 해결 상태라 보이는 것은 같다.
+    const onFirstDisk = diskMarker(first.bframePath, 'x');
+    const onSecondDisk = diskMarker(second.bframePath, 'x');
+    assert.equal(onFirstDisk.resolvedBy, onSecondDisk.resolvedBy, '두 PC 의 파일이 같은 상태로 모인다');
+    assert.equal(onFirstDisk.updatedAt, onSecondDisk.updatedAt);
+    if (!tie) assert.equal(onFirstDisk.resolvedBy, '나', '나중에 누른 쪽으로 모인다');
+    assert.equal(first.commentManager.getMarker('x').resolved, true);
+    assert.equal(second.commentManager.getMarker('x').resolved, true);
     assert.deepEqual(diskMarkers(first.bframePath).map(marker => marker.id), ['x']);
+
+    // 파일을 새로 여는 사람은 모인 상태를 본다.
+    const late = await openClient('다', null);
+    disks.set(late.bframePath, structuredClone(disks.get(first.bframePath)));
+    await late.manager.setVideoFile(late.videoPath);
+    assert.equal(late.commentManager.getMarker('x').resolvedBy, onFirstDisk.resolvedBy);
+    late.manager.disconnect();
     first.manager.disconnect();
     second.manager.disconnect();
   });
 }
+
+test('시계가 앞선 PC 가 남긴 옛 사본이 늦게 내려와도 화면의 나중 변경을 되돌리지 않는다', async () => {
+  const fast = await openClient('시계가 빠른 사람', [markerRecord('x')]);
+  const other = await openClient('나', [markerRecord('x')]);
+
+  // 시계가 1분 빠른 PC 가 해결한다(05:01:01 로 찍힌다). 다른 PC 는 전송으로 받는다.
+  setResolved(fast, 'x', true, '2026-11-18T05:01:01.000Z');
+  other.commentManager.applyRemoteMarkerUpdate('x', broadcastFieldsOf(fast.commentManager.getMarker('x')));
+  assert.equal(await fast.manager.save(), true);
+  const resolvedCopy = readDisk(fast.bframePath);
+  deliver(fast.bframePath, other.bframePath);
+  await other.manager.reloadCommentsFromDisk();
+
+  // 5초 뒤 다른 사람이 해제한다(05:00:06 로 찍힌다 — 실제로는 나중이지만 시각은 앞선다).
+  setResolved(other, 'x', false, '2026-11-18T05:00:06.000Z');
+  fast.commentManager.applyRemoteMarkerUpdate('x', broadcastFieldsOf(other.commentManager.getMarker('x')));
+  assert.equal(await other.manager.save(), true);
+  deliver(other.bframePath, fast.bframePath);
+  await fast.manager.reloadCommentsFromDisk();
+  assert.equal(fast.commentManager.getMarker('x').resolved, false);
+
+  // 해결 상태가 든 옛 사본이 두 PC 에 늦게 내려온다. 수정 시각만 보면 이쪽이 "나중" 이다.
+  for (const client of [fast, other]) {
+    const stale = structuredClone(resolvedCopy);
+    stale.videoPath = client.videoPath;
+    stale.videoFile = client.videoPath.split('/').pop();
+    writeDisk(client.bframePath, stale);
+    const result = await client.manager.reloadCommentsFromDisk();
+    assert.equal(result.changed, false, client.name);
+    assert.equal(client.commentManager.getMarker('x').resolved, false,
+      `${client.name}: 화면은 이미 지나온 상태로 돌아가지 않는다`);
+  }
+  fast.manager.disconnect();
+  other.manager.disconnect();
+});
 
 test('같은 시각에 다르게 바뀐 댓글은 어느 PC 에서 합쳐도 같은 쪽으로 모인다', async () => {
   const first = await openClient('가', [markerRecord('x')]);

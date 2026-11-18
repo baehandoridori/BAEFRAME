@@ -155,7 +155,7 @@ test('first .bframe save is protected against another user creating the file fir
   );
   assert.match(
     reviewDataManagerSource,
-    /const mergedData = mergeReviewDataThreeWay\(\s*this\._reviewMergeBase,\s*localData,\s*remoteData,\s*\{ comments: this\._createCommentMergeOptions\(\) \}\s*\);/
+    /const mergedData = mergeReviewDataThreeWay\(\s*this\._reviewMergeBase,\s*localData,\s*remoteData,\s*\{ comments: this\._createCommentMergeOptions\(\{ ordered: true \}\) \}\s*\);/
   );
   assert.match(
     reviewDataManagerSource,

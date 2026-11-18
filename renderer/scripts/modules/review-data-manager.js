@@ -591,11 +591,14 @@ function getMarkerContentForMerge(marker) {
   // 답글 추가/수정도 parent.updatedAt을 올리므로 revision 시각 자체는
   // 부모 본문 충돌 판정에서 제외하고 실제 필드 변경만 비교한다.
   delete content.updatedAt;
+  // 삭제를 전송으로 받으면 받은 쪽 시계로 삭제 시각이 찍혀, 같은 삭제가 PC 마다 시각만
+  // 다르다. 삭제 표시끼리는 삭제 시각을 본문 차이로 보지 않는다. 차이로 보면 전송으로
+  // 삭제를 받은 PC 가 "내가 따로 고쳤다" 로 읽혀, 삭제 되돌리기가 충돌 사본으로 생긴다.
+  if (content.deleted === true) delete content.deletedAt;
   return content;
 }
 
-// 해결 상태(와 삭제 표시의 시각)를 뺀 본문. "상태 표시만 서로 다르게 바뀌었는가" 를 가릴 때 쓴다.
-// 삭제는 전송으로 받으면 받은 쪽 시계로 삭제 시각이 찍혀, 같은 삭제가 PC 마다 시각만 다르다.
+// 해결 상태를 뺀 본문. "해결 상태만 서로 다르게 바뀌었는가" 를 가릴 때 쓴다.
 function getMarkerContentWithoutResolution(content) {
   if (!content || typeof content !== 'object' || Array.isArray(content)) {
     return content;
@@ -604,7 +607,6 @@ function getMarkerContentWithoutResolution(content) {
   delete rest.resolved;
   delete rest.resolvedAt;
   delete rest.resolvedBy;
-  if (rest.deleted === true) delete rest.deletedAt;
   return rest;
 }
 
@@ -853,8 +855,7 @@ function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
   const remoteContent = getMarkerContentForMerge(remoteMarker);
 
   if (jsonEquals(localContent, remoteContent)) {
-    const selected = getCommentRevisionTime(remoteMetadata) >
-      getCommentRevisionTime(localMetadata)
+    const selected = compareMarkerRevisions(remoteMetadata, localMetadata) > 0
       ? remoteMetadata
       : localMetadata;
     return {
@@ -898,7 +899,7 @@ function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
 
   // 본문·위치·구간은 같고 해결 상태만 서로 다르게 바뀌었다(두 사람이 각자 해결하거나
   // 해제했다). 해결 상태는 값 하나짜리 표시라 댓글을 둘로 갈라 보존할 것이 없다.
-  // 양쪽 다 삭제 표시이고 삭제 시각만 다른 경우도 같다. 나중 변경을 따른다.
+  // 나중 변경을 따른다.
   if (jsonEquals(
     getMarkerContentWithoutResolution(localContent),
     getMarkerContentWithoutResolution(remoteContent)
@@ -2117,7 +2118,7 @@ export class ReviewDataManager extends EventTarget {
       this._reviewMergeBase,
       localData,
       remoteData,
-      { comments: this._createCommentMergeOptions() }
+      { comments: this._createCommentMergeOptions({ ordered: true }) }
     );
 
     mergedData.modifiedAt = new Date().toISOString();
@@ -2165,17 +2166,26 @@ export class ReviewDataManager extends EventTarget {
     }
   }
 
-  /** 댓글 병합에 넘길 판정 함수들. */
-  _createCommentMergeOptions() {
+  /**
+   * 댓글 병합에 넘길 판정 함수들.
+   *
+   * 원격 댓글이 이 인스턴스가 들고 있던 상태와 똑같으면(수정 시각 포함) 옛 사본 후보다.
+   * 어디에 쓰느냐에 따라 한 가지를 더 본다.
+   *
+   * - 화면으로 받아들일 때(ordered: false): 들고 있던 상태로는 되돌아가지 않는다. PC 사이의
+   *   시계 차이와 무관하게, 화면이 이미 지나온 상태로 돌아가는 일이 없다.
+   * - 파일에 쓸 때와 파일을 바로잡을 때(ordered: true): 그 상태가 지금 로컬보다 **앞선**
+   *   상태일 때만 옛 사본이다. 두 사람이 같은 댓글을 거의 동시에 고치면 서로의 전송이
+   *   엇갈려 도착해(받는 쪽은 수정 시각을 비교하지 않고 덮어쓴다) 각자 상대의 상태를 들게
+   *   되고, 둘 다 상대의 상태를 "들고 있던 상태" 로 갖는다. 순서를 보지 않고 파일을 쓰면
+   *   두 PC 가 서로의 저장분을 옛 사본으로 보고 끝없이 덮어쓴다. 순서는 어느 PC 에서나
+   *   같으므로(compareMarkerRevisions) 파일은 한쪽 상태로 모인다.
+   *
+   * @param {Object} [options]
+   * @param {boolean} [options.ordered] - 파일에 쓰는 경로면 true
+   */
+  _createCommentMergeOptions({ ordered = false } = {}) {
     return {
-      // 원격 댓글이 이 인스턴스가 들고 있던 상태와 똑같고(수정 시각 포함), 지금 로컬보다
-      // 앞선 상태면 옛 사본이다.
-      //
-      // "들고 있던 상태" 만으로는 모자란다. 두 사람이 같은 댓글을 거의 동시에 고치면 서로의
-      // 전송이 엇갈려 도착해(받는 쪽은 수정 시각을 비교하지 않고 덮어쓴다) 각자 상대의
-      // 상태를 들게 되고, 둘 다 상대의 상태를 "들고 있던 상태" 로 갖는다. 그때 순서를 보지
-      // 않으면 두 PC 가 서로의 저장분을 옛 사본으로 보고 끝없이 덮어쓴다. 순서는 어느
-      // PC 에서나 같으므로(compareMarkerRevisions) 한쪽은 지키고 한쪽은 받아들인다.
       isSupersededMarker: (remoteMarker, localMarker) => {
         const fingerprint = getMarkerRevisionFingerprint(remoteMarker);
         if (!fingerprint ||
@@ -2186,7 +2196,7 @@ export class ReviewDataManager extends EventTarget {
           .get(String(remoteMarker?.id))?.has(fingerprint) !== true) {
           return false;
         }
-        return compareMarkerRevisions(remoteMarker, localMarker) < 0;
+        return !ordered || compareMarkerRevisions(remoteMarker, localMarker) < 0;
       },
       hasSeenReply: replyId => this._seenReplyIds.has(String(replyId))
     };
@@ -2260,8 +2270,13 @@ export class ReviewDataManager extends EventTarget {
         mergeOptions
       );
       // 파일이 옛 사본으로 돌아가 있으면(내 댓글·해결이 파일에 없다) 다시 저장해 바로잡는다.
-      // 파일로만 동기화하는 사람은 이 파일만 본다.
-      if (hasCommentStateAheadOfRemote(localComments, remoteComments, mergeOptions)) {
+      // 파일로만 동기화하는 사람은 이 파일만 본다. 로컬이 순서상 뒤일 때만 한다 — 순서를
+      // 보지 않으면 서로 다른 상태를 든 두 PC 가 번갈아 파일을 덮어쓴다.
+      if (hasCommentStateAheadOfRemote(
+        localComments,
+        remoteComments,
+        this._createCommentMergeOptions({ ordered: true })
+      )) {
         this._markDirty({ scheduleAutoSave: true });
       }
 
@@ -2586,7 +2601,7 @@ export class ReviewDataManager extends EventTarget {
         const commentsAheadOfDisk = hasCommentStateAheadOfRemote(
           localReviewData.comments,
           remoteReviewData.comments,
-          commentMergeOptions
+          this._createCommentMergeOptions({ ordered: true })
         );
 
         this.commentManager?.fromJSON?.(mergedReviewData.comments);
