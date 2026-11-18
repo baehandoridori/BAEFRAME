@@ -646,8 +646,11 @@ test('manager ends the in-place edit when the panel value is committed', async (
     manager._handlePanelInput(panelEvent('input', 'opacity', '70'));
     assert.equal(manager.hasActiveGesture(), true);
     manager._handlePanelInput(panelEvent('change', 'opacity', '70'), { commit: true });
+    assert.equal(manager.hasActiveGesture(), false);
     manager._handlePanelInput(panelEvent('input', 'opacity', '90'));
+    assert.equal(manager.hasActiveGesture(), true, '확정한 값을 이어서 고치는 동안에도 조작 중이다');
     manager._handlePanelInput(panelEvent('change', 'opacity', '90'), { commit: true });
+    assert.equal(manager.hasActiveGesture(), false);
     assert.equal(manager.getLayer('a').opacity, 0.9);
     assert.equal(manager.undo(), true);
     assert.equal(manager.getLayer('a').opacity, 0.4, '70 과 90 은 한 번의 되돌리기로 함께 돌아간다');
