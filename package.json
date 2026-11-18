@@ -1,6 +1,6 @@
 {
   "name": "baeframe",
-  "version": "2.16.3-beta",
+  "version": "2.16.4-beta",
   "description": "애니메이션 스튜디오를 위한 비디오 리뷰/피드백 도구",
   "main": "main/index.js",
   "scripts": {
@@ -21,7 +21,7 @@
     "test:recent": "node --test scripts/tests/recent-files-store.test.js scripts/tests/recent-files-source.test.js",
     "test:frame-grid": "node --test scripts/tests/frame-grid-tiers.test.js scripts/tests/keyframe-drag-ghost-source.test.js scripts/tests/layer-visibility-hit-area.test.js scripts/tests/timeline-frame-ui-source.test.js scripts/tests/timeline-scrub-frame.test.js scripts/tests/playhead-frame-step-source.test.js",
     "test:cluster": "node --test scripts/tests/comment-cluster.test.js scripts/tests/comment-track-header-sync-source.test.js",
-    "test:composition": "node --test scripts/tests/composition-layer-manager.test.js scripts/tests/composition-layer-runtime-source.test.js scripts/tests/composition-layer-schema.test.js",
+    "test:composition": "node --test scripts/tests/composition-layer-manager.test.js scripts/tests/composition-layer-runtime-source.test.js scripts/tests/composition-layer-schema.test.js scripts/tests/composition-layer-sync.test.js",
     "test:playlist-ordering": "node --test scripts/tests/playlist-ordering.test.js",
     "test:playlist-continuous": "node --test scripts/tests/playlist-continuous-core.test.js",
     "test:playlist-comments": "node --test scripts/tests/playlist-comment-index.test.js",
@@ -38,7 +38,7 @@
     "test:playback-buffering": "node --test scripts/tests/mpv-manager.test.js scripts/tests/external-frame-interpolation.test.mjs scripts/tests/playback-buffering-runtime.test.js",
     "test:fps": "node --test scripts/tests/fps-accuracy-source.test.js",
     "test:audio-waveform": "node --test scripts/tests/audio-waveform-hit-area.test.js",
-    "test:collaboration": "node --test scripts/tests/collaboration-cursors-source.test.js scripts/tests/comment-collaboration-convergence.test.js",
+    "test:collaboration": "node --test scripts/tests/collaboration-cursors-source.test.js scripts/tests/comment-collaboration-convergence.test.js scripts/tests/composition-layer-collaboration-convergence.test.js",
     "test:comment-input": "node --test scripts/tests/comment-input-focus-source.test.js scripts/tests/mention-manager-editors.test.js scripts/tests/comment-edit-session.test.js scripts/tests/comment-playback-highlight.test.js scripts/tests/comment-shortcut.test.js scripts/tests/comment-placement.test.js scripts/tests/pending-comment-image.test.js",
     "test:comment-popout": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON --test scripts/tests/comment-author-colors.test.js scripts/tests/comment-panel-window.test.js scripts/tests/comment-panel-popout.test.js scripts/tests/comment-popout-integration.test.js scripts/tests/mention-manager-popout.test.js scripts/tests/image-utils-cross-window.test.js",
     "test:toast-stack": "node --test scripts/tests/toast-stack-core.test.js scripts/tests/toast-position-source.test.js",

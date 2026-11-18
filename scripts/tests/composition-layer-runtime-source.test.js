@@ -36,6 +36,20 @@ test('renderer exposes layer compositing controls and surfaces', () => {
   assert.match(mainStyles, /\.composition-layer-overflow-badge/);
 });
 
+test('app accepts composition layers from the file while connected and redraws what the manager does not', () => {
+  // 연결 중의 파일 변경: 드로잉·이어받기·댓글과 함께 합성 레이어도 받아들인다.
+  assert.match(
+    appSource,
+    /shouldRun: filePath => liveblocksManager\.isConnected[\s\S]*?await Promise\.all\(\[\s*reviewDataManager\.reloadDrawingsV3FromDisk\?\.\(\),\s*reviewDataManager\.reloadReviewCarryoverFromDisk\?\.\(\),\s*reviewDataManager\.reloadCommentsFromDisk\?\.\(\),\s*reviewDataManager\.reloadCompositionLayersFromDisk\?\.\(\)\s*\]\);/
+  );
+  // 매니저는 목록을 갈아 끼울 때 changed 를 내지 않는다. 타임라인과 mpv 오버레이는
+  // 저장 매니저의 이벤트로 맞춘다.
+  assert.match(
+    appSource,
+    /reviewDataManager\.addEventListener\('compositionLayersAccepted', \(\) => \{\s*renderCompositionLayerTimeline\(\);\s*scheduleMpvOverlayStateSync\(\{ force: true \}\);\s*\}\);/
+  );
+});
+
 test('app wires composition manager into video, timeline, save, drop, and mpv overlay state', () => {
   assert.match(appSource, /import \{ CompositionLayerManager \} from '\.\/modules\/composition-layer-manager\.js';/);
   assert.match(appSource, /const compositionLayerManager = new CompositionLayerManager\(\{/);
@@ -66,7 +80,11 @@ test('review data manager saves and restores compositionLayers', () => {
     /compositionLayers: collectManagerData\(\s*this\.compositionLayerManager,\s*'toJSON',\s*mergeBase\.compositionLayers\s*\)/
   );
   assert.match(reviewDataSource, /compositionLayers: reviewData\.compositionLayers/);
-  assert.match(reviewDataSource, /this\.compositionLayerManager\.fromJSON\(data\.compositionLayers \|\| \[\]\)/);
+  // 파일을 열 때: 삭제 표시가 있는 id 의 레코드는 화면에 올리지 않는다.
+  assert.match(
+    reviewDataSource,
+    /this\.compositionLayerManager\.fromJSON\(withoutTombstonedCompositionLayers\(\s*data\.compositionLayers \|\| \[\],\s*data\[COMPOSITION_LAYER_SYNC_ROOT_KEY\]\s*\)\)/
+  );
 });
 
 test('review data manager clears compositionLayers when a review has no bframe data', () => {

@@ -567,12 +567,49 @@ export class CompositionLayerManager extends EventTarget {
     return this.layers.find(layer => layer.id === layerId) || null;
   }
 
+  /**
+   * 레이어를 끌거나(영상 위·타임라인·패널의 순서 바꾸기) 패널에서 값을 고치는 중인가.
+   * 이때 fromJSON 으로 목록을 갈아 끼우면 그 조작이 끊기므로, 파일에서 받아들이는 쪽이
+   * 이 값을 보고 미룬다.
+   */
+  hasActiveGesture() {
+    return Boolean(
+      this.dragState ||
+      this.timelineDragState ||
+      this.panelReorderState ||
+      // 패널에서 값을 고치는 중. 확정된 뒤에는(되돌리기 묶음만 남아 있다) 조작 중이 아니다.
+      (this.panelContinuousEdit && this.panelContinuousEdit.committed !== true) ||
+      // 타임라인 머리글에서 레이어 순서를 끄는 중(그 상태는 타임라인이 들고 있다).
+      this.timeline?.compositionLayerReorderState
+    );
+  }
+
   fromJSON(layers = []) {
     const source = Array.isArray(layers) ? layers : [];
+    // 변환 확인이 끝난 영상 레이어. 같은 파일을 가리키는 레이어가 새 목록에도 있으면 확인
+    // 결과를 이어 쓴다 — 다른 사람의 레이어 변경을 받아들일 때마다 처음부터 다시 확인하면,
+    // 그동안 내 영상 레이어가 화면에서 빠진다(확인 중인 레이어는 보여 주지 않는다).
+    const prepared = new Map(this.layers
+      .filter(layer => layer.type === 'video' && layer.mediaStatus === 'ready' &&
+        !this.mediaPrepareTokens.has(layer.id))
+      .map(layer => [layer.id, layer]));
+    const carried = new Set();
     this.layers = source
       .map((layer, index) => normalizeCompositionLayer(layer, { index }))
       .sort((a, b) => a.order - b.order)
-      .map((layer, index) => ({ ...layer, order: index }));
+      .map((layer, index) => {
+        const previous = prepared.get(layer.id);
+        if (!previous || layer.type !== 'video' || previous.filePath !== layer.filePath) {
+          return { ...layer, order: index };
+        }
+        carried.add(layer.id);
+        return {
+          ...layer,
+          order: index,
+          displayFilePath: previous.displayFilePath,
+          mediaMessage: previous.mediaMessage
+        };
+      });
     this.selectedLayerId = this.layers.some(layer => layer.id === this.selectedLayerId)
       ? this.selectedLayerId
       : this.layers[0]?.id || null;
@@ -580,7 +617,7 @@ export class CompositionLayerManager extends EventTarget {
     this.redoSnapshot = null;
     this.render();
     this._checkMissingFiles();
-    this._prepareAllLayerMedia();
+    this._prepareAllLayerMedia(carried);
   }
 
   toJSON() {
@@ -766,7 +803,15 @@ export class CompositionLayerManager extends EventTarget {
     return updated;
   }
 
-  async prepareLayerMedia(layerId) {
+  /**
+   * 영상 레이어의 표시용 파일을 준비한다(변환 확인).
+   *
+   * @param {string} layerId
+   * @param {Object} [options]
+   * @param {boolean} [options.keepCurrent=false] - 확인하는 동안에도 지금의 표시 파일로 계속
+   *   보여 준다. 이미 확인이 끝난 같은 파일을 다시 확인할 때 쓴다(fromJSON).
+   */
+  async prepareLayerMedia(layerId, options = {}) {
     const layer = this.getLayer(layerId);
     if (!layer) return null;
 
@@ -783,11 +828,13 @@ export class CompositionLayerManager extends EventTarget {
 
     const token = Symbol(layerId);
     this.mediaPrepareTokens.set(layerId, token);
-    this.updateLayer(layerId, {
-      displayFilePath: '',
-      mediaStatus: 'converting',
-      mediaMessage: '변환 확인 중'
-    }, { recordUndo: false });
+    if (options.keepCurrent !== true) {
+      this.updateLayer(layerId, {
+        displayFilePath: '',
+        mediaStatus: 'converting',
+        mediaMessage: '변환 확인 중'
+      }, { recordUndo: false });
+    }
 
     try {
       const result = await this.prepareMedia(layer.filePath, { layer: { ...layer } });
@@ -1298,8 +1345,15 @@ export class CompositionLayerManager extends EventTarget {
     const action = event.target.dataset.action;
     const isLiveInput = event.type === 'input' && options.commit !== true;
 
+    // 값을 고치는 동안은 조작 중이다. 확정되면(change) 조작이 끝난 것으로 본다 — 창의
+    // pointerup 만 기다리면, 키보드로 고친 값은 다음 클릭 때까지 "조작 중" 으로 남는다.
+    // 변경 이벤트가 나가기 전에 표시해야, 그 이벤트를 받는 쪽이 조작이 끝난 것을 본다.
+    if (['opacity', 'menu-color', 'menu-name'].includes(action)) {
+      if (options.commit) this._commitPanelContinuousEdit();
+      else this._beginPanelContinuousEdit(layerId, action);
+    }
+
     if (action === 'opacity') {
-      if (!options.commit) this._beginPanelContinuousEdit(layerId, action);
       this.updateLayer(layerId, { opacity: toFiniteNumber(event.target.value, 100) / 100 }, {
         recordUndo: false,
         renderPanel: !isLiveInput,
@@ -1310,7 +1364,6 @@ export class CompositionLayerManager extends EventTarget {
     }
 
     if (action === 'menu-color') {
-      if (!options.commit) this._beginPanelContinuousEdit(layerId, action);
       this.updateLayer(layerId, { color: event.target.value }, {
         recordUndo: false,
         renderPanel: !isLiveInput,
@@ -1321,7 +1374,6 @@ export class CompositionLayerManager extends EventTarget {
     }
 
     if (action === 'menu-name') {
-      if (!options.commit) this._beginPanelContinuousEdit(layerId, action);
       this.updateLayer(layerId, { name: event.target.value || basename(this.getLayer(layerId)?.filePath) }, {
         recordUndo: false,
         renderPanel: !isLiveInput,
@@ -1440,11 +1492,21 @@ export class CompositionLayerManager extends EventTarget {
   _beginPanelContinuousEdit(layerId, action) {
     if (!layerId || !action) return;
     const key = `${layerId}:${action}`;
-    if (this.panelContinuousEdit?.key === key) return;
+    if (this.panelContinuousEdit?.key === key) {
+      // 같은 값을 이어서 고친다. 되돌리기는 한 단계로 묶인 채로, 다시 조작 중이다.
+      this.panelContinuousEdit.committed = false;
+      return;
+    }
     this._recordUndo();
-    this.panelContinuousEdit = { key };
+    this.panelContinuousEdit = { key, committed: false };
     window.addEventListener('pointerup', this._clearPanelContinuousEdit, { once: true });
     window.addEventListener('pointercancel', this._clearPanelContinuousEdit, { once: true });
+  }
+
+  // 값이 확정됐다. 되돌리기 묶음은 지금처럼 다음 pointerup 까지 이어 가고(같은 값을 키보드로
+  // 여러 번 고친 것이 한 단계다), 조작은 끝난 것으로 본다(hasActiveGesture).
+  _commitPanelContinuousEdit() {
+    if (this.panelContinuousEdit) this.panelContinuousEdit.committed = true;
   }
 
   _clearPanelContinuousEdit() {
@@ -1747,11 +1809,11 @@ export class CompositionLayerManager extends EventTarget {
     });
   }
 
-  _prepareAllLayerMedia() {
+  _prepareAllLayerMedia(keepCurrentIds = new Set()) {
     this.layers
       .filter(layer => layer.type === 'video')
       .forEach(layer => {
-        void this.prepareLayerMedia(layer.id);
+        void this.prepareLayerMedia(layer.id, { keepCurrent: keepCurrentIds.has(layer.id) });
       });
   }
 

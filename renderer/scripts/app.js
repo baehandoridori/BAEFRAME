@@ -2997,6 +2997,13 @@ async function initApp() {
     scheduleMpvOverlayStateSync({ force: true });
   });
 
+  // 파일에서 다른 사람의 합성 레이어 변경을 받아들였다. 매니저는 목록을 갈아 끼울 때
+  // changed 를 내지 않으므로(사용자 편집이 아니다) 타임라인과 mpv 오버레이를 여기서 맞춘다.
+  reviewDataManager.addEventListener('compositionLayersAccepted', () => {
+    renderCompositionLayerTimeline();
+    scheduleMpvOverlayStateSync({ force: true });
+  });
+
   timeline.addEventListener('compositionLayerSelect', (e) => {
     compositionLayerManager.selectLayer(e.detail.layerId);
   });
@@ -18881,10 +18888,16 @@ async function initApp() {
     run: async () => {
       // 실시간 방 정원(동시 10명) 밖의 사용자는 Broadcast 를 보낼 수 없어 그 사람의 댓글·해결
       // 변경은 파일로만 도착한다. 연결 중에도 댓글을 파일에서 받아들여야 그 변경이 보인다.
+      // 합성 레이어는 실시간 전송이 아예 없어 파일로만 오간다. 여기서 받아들이지 않으면
+      // 다른 사람의 레이어 변경이 파일을 다시 열 때까지 보이지 않고, 파일이 옛 사본으로
+      // 돌아가도(내 레이어가 파일에서 빠져도) 다음 저장 때까지 바로잡지 않는다.
+      // 받아들인 레이어를 타임라인·mpv 오버레이에 그리는 일은 compositionLayersAccepted
+      // 이벤트가 한다(파일 동기화 경로의 reloadAndMerge 도 같은 이벤트를 낸다).
       const [, , commentsReloaded] = await Promise.all([
         reviewDataManager.reloadDrawingsV3FromDisk?.(),
         reviewDataManager.reloadReviewCarryoverFromDisk?.(),
-        reviewDataManager.reloadCommentsFromDisk?.()
+        reviewDataManager.reloadCommentsFromDisk?.(),
+        reviewDataManager.reloadCompositionLayersFromDisk?.()
       ]);
       // 댓글 목록·영상 위 마커는 markersChanged 가 다시 그린다. 타임라인의 댓글 구간은
       // 개별 댓글 이벤트로만 갱신되므로 여기서 따로 부른다.

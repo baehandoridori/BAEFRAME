@@ -580,3 +580,120 @@ test('manager clears embedded data url on relink and keeps it on duplicate', asy
   assert.equal(relinked.filePath, 'C:/shot/replacement.png');
   assert.equal(relinked.sourceDataUrl, '');
 });
+
+test('manager reports an active gesture while a layer is dragged or edited in place', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const manager = new CompositionLayerManager();
+  manager.fromJSON([
+    { id: 'a', name: 'A.png', type: 'image', filePath: 'a.png', startTime: 0, endTime: 2, order: 0 }
+  ]);
+
+  assert.equal(manager.hasActiveGesture(), false);
+  // 파일에서 받아들이는 쪽이 이 값을 보고 목록 갈아 끼우기를 미룬다.
+  for (const field of ['dragState', 'timelineDragState', 'panelReorderState', 'panelContinuousEdit']) {
+    manager[field] = { layerId: 'a' };
+    assert.equal(manager.hasActiveGesture(), true, field);
+    manager[field] = null;
+    assert.equal(manager.hasActiveGesture(), false, field);
+  }
+  // 타임라인 머리글에서 레이어 순서를 끄는 중(그 상태는 타임라인이 들고 있다).
+  manager.timeline = { compositionLayerReorderState: { layerId: 'a' } };
+  assert.equal(manager.hasActiveGesture(), true);
+  manager.timeline.compositionLayerReorderState = null;
+  assert.equal(manager.hasActiveGesture(), false);
+});
+
+test('manager ends the in-place edit when the panel value is committed', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const manager = new CompositionLayerManager();
+  manager.fromJSON([
+    { id: 'a', name: 'A.png', type: 'image', filePath: 'a.png', startTime: 0, endTime: 2, order: 0 }
+  ]);
+  const panelEvent = (type, action, value) => ({
+    type,
+    target: {
+      closest: selector => (selector === '.composition-layer-item' ? { dataset: { layerId: 'a' } } : null),
+      dataset: { action },
+      value
+    }
+  });
+  const gestureAtChange = [];
+  manager.addEventListener('changed', () => gestureAtChange.push(manager.hasActiveGesture()));
+  // 조작 중 표시는 창의 pointerup 으로도 풀린다(그 등록·해제만 받아 주는 창).
+  const previousWindow = globalThis.window;
+  globalThis.window = { addEventListener() {}, removeEventListener() {} };
+  try {
+    // 키보드로 값을 고치는 동안에는 조작 중이다(포인터를 누르지 않았다).
+    manager._handlePanelInput(panelEvent('input', 'menu-name', '새 이름'));
+    assert.equal(manager.hasActiveGesture(), true);
+    // 확정(Enter·포커스 이동)하면 조작이 끝난다. 다음 클릭을 기다리지 않는다 — 기다리면
+    // 그때까지 파일에서 받아들이기가 계속 미뤄진다.
+    manager._handlePanelInput(panelEvent('change', 'menu-name', '새 이름'), { commit: true });
+    assert.equal(manager.hasActiveGesture(), false);
+    assert.equal(manager.getLayer('a').name, '새 이름');
+    assert.deepEqual(gestureAtChange, [false], '확정을 알리는 변경 이벤트가 나갈 때 이미 조작이 끝나 있다');
+
+    for (const [action, value] of [['opacity', '40'], ['menu-color', '#00ff00']]) {
+      manager._handlePanelInput(panelEvent('input', action, value));
+      assert.equal(manager.hasActiveGesture(), true, action);
+      manager._handlePanelInput(panelEvent('change', action, value), { commit: true });
+      assert.equal(manager.hasActiveGesture(), false, action);
+    }
+    assert.equal(manager.getLayer('a').opacity, 0.4);
+
+    // 같은 값을 키보드로 이어서 고치면 다시 조작 중이고, 되돌리기는 지금처럼 한 단계로 묶인다
+    // (다음 pointerup 까지).
+    manager._handlePanelInput(panelEvent('input', 'opacity', '70'));
+    assert.equal(manager.hasActiveGesture(), true);
+    manager._handlePanelInput(panelEvent('change', 'opacity', '70'), { commit: true });
+    manager._handlePanelInput(panelEvent('input', 'opacity', '90'));
+    manager._handlePanelInput(panelEvent('change', 'opacity', '90'), { commit: true });
+    assert.equal(manager.getLayer('a').opacity, 0.9);
+    assert.equal(manager.undo(), true);
+    assert.equal(manager.getLayer('a').opacity, 0.4, '70 과 90 은 한 번의 되돌리기로 함께 돌아간다');
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+});
+
+test('manager keeps a prepared video layer visible while the same file is re-checked after a refill', async () => {
+  const { CompositionLayerManager } = await loadModule();
+  const tick = () => new Promise(resolve => setImmediate(resolve));
+  const prepared = { status: 'ready', filePath: 'C:/cache/overlay.mp4', message: 'cached' };
+  let calls = 0;
+  let finishRecheck = null;
+  const manager = new CompositionLayerManager({
+    prepareMedia: () => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(prepared);
+      return new Promise((resolve) => { finishRecheck = () => resolve(prepared); });
+    }
+  });
+  const records = [
+    { id: 'video', name: 'Overlay', type: 'video', filePath: 'C:/shot/overlay.mov', startTime: 0, endTime: 2, order: 0 },
+    { id: 'image', name: 'Still', type: 'image', filePath: 'C:/shot/still.png', startTime: 0, endTime: 2, order: 1 }
+  ];
+  const visibleIds = () => manager.getMpvOverlayLayers({ currentTime: 1, isPlaying: false }).map(layer => layer.id);
+
+  manager.fromJSON(records);
+  assert.deepEqual(visibleIds(), ['image'], '처음에는 변환 확인이 끝날 때까지 보여 주지 않는다');
+  await tick();
+  assert.deepEqual(visibleIds(), ['video', 'image']);
+
+  // 다른 사람이 이미지 레이어를 옮긴 목록을 받아들인다. 내 영상 레이어는 같은 파일이므로
+  // 다시 확인하는 동안에도 화면에서 빠지지 않는다.
+  manager.fromJSON([records[0], { ...records[1], x: 0.6 }]);
+  assert.equal(calls, 2, '확인 자체는 다시 한다');
+  assert.deepEqual(visibleIds(), ['video', 'image']);
+  assert.match(manager.getMpvOverlayLayers({ currentTime: 1 })[0].fileUrl, /cache\/overlay\.mp4/);
+  finishRecheck();
+  await tick();
+  assert.equal(manager.getLayer('video').displayFilePath, 'C:/cache/overlay.mp4');
+  assert.equal(manager.getLayer('video').mediaStatus, 'ready');
+
+  // 다른 파일을 가리키게 된 레이어는 이어 쓰지 않는다.
+  manager.fromJSON([{ ...records[0], filePath: 'C:/shot/other.mov' }, records[1]]);
+  assert.deepEqual(visibleIds(), ['image']);
+  assert.equal(manager.getLayer('video').displayFilePath, '');
+});
