@@ -594,7 +594,8 @@ function getMarkerContentForMerge(marker) {
   return content;
 }
 
-// 해결 상태를 뺀 본문. "해결 상태만 서로 다르게 바뀌었는가" 를 가릴 때 쓴다.
+// 해결 상태(와 삭제 표시의 시각)를 뺀 본문. "상태 표시만 서로 다르게 바뀌었는가" 를 가릴 때 쓴다.
+// 삭제는 전송으로 받으면 받은 쪽 시계로 삭제 시각이 찍혀, 같은 삭제가 PC 마다 시각만 다르다.
 function getMarkerContentWithoutResolution(content) {
   if (!content || typeof content !== 'object' || Array.isArray(content)) {
     return content;
@@ -603,6 +604,7 @@ function getMarkerContentWithoutResolution(content) {
   delete rest.resolved;
   delete rest.resolvedAt;
   delete rest.resolvedBy;
+  if (rest.deleted === true) delete rest.deletedAt;
   return rest;
 }
 
@@ -625,16 +627,38 @@ function normalizeRepliesForMerge(replies) {
 
 // 댓글 하나의 "상태 지문"(답글 제외, 수정 시각 포함). 이 인스턴스가 이미 지나온 상태가
 // 파일로 다시 내려왔는지 알아보는 데 쓴다.
-function getMarkerRevisionFingerprint(marker) {
+function getMarkerRevisionKey(marker) {
   if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null;
   // 댓글이 바뀔 때마다 부르므로 답글(첨부 그림 포함)은 복제하지 않고 빼기만 한다.
   // eslint-disable-next-line no-unused-vars
   const { replies, ...metadata } = marker;
   try {
-    return compactDrawingsV3Fingerprint(JSON.stringify(canonicalizeJson(metadata)));
+    return JSON.stringify(canonicalizeJson(metadata));
   } catch (_error) {
     return null;
   }
+}
+
+function getMarkerRevisionFingerprint(marker) {
+  const key = getMarkerRevisionKey(marker);
+  return key === null ? null : compactDrawingsV3Fingerprint(key);
+}
+
+/**
+ * 댓글 상태 둘의 앞뒤(답글 제외). 음수면 left 가 앞선(더 옛) 상태다.
+ *
+ * 수정 시각이 다르면 그 순서를 따르고, 같으면 내용의 사전 순서로 가른다. 어느 PC 에서
+ * 계산해도 같은 답이 나와야 한다 — 두 PC 가 서로 상대의 상태를 "더 옛 것" 으로 보면
+ * 각자 자기 상태로 파일을 덮어쓰기를 끝없이 되풀이한다.
+ */
+function compareMarkerRevisions(left, right) {
+  const leftTime = getCommentRevisionTime({ ...left, replies: [] });
+  const rightTime = getCommentRevisionTime({ ...right, replies: [] });
+  if (leftTime !== rightTime) return leftTime < rightTime ? -1 : 1;
+  const leftKey = getMarkerRevisionKey(left) || '';
+  const rightKey = getMarkerRevisionKey(right) || '';
+  if (leftKey === rightKey) return 0;
+  return leftKey < rightKey ? -1 : 1;
 }
 
 // 화면을 다시 그릴 만한 차이가 있는지 가리는 서명. 수정 시각만 다른 것은 같다고 본다
@@ -874,13 +898,13 @@ function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
 
   // 본문·위치·구간은 같고 해결 상태만 서로 다르게 바뀌었다(두 사람이 각자 해결하거나
   // 해제했다). 해결 상태는 값 하나짜리 표시라 댓글을 둘로 갈라 보존할 것이 없다.
-  // 나중 변경을 따른다.
+  // 양쪽 다 삭제 표시이고 삭제 시각만 다른 경우도 같다. 나중 변경을 따른다.
   if (jsonEquals(
     getMarkerContentWithoutResolution(localContent),
     getMarkerContentWithoutResolution(remoteContent)
   )) {
-    const selected = getCommentRevisionTime(remoteMetadata) >
-      getCommentRevisionTime(localMetadata)
+    // 같은 시각이면 내용 순서로 가른다. "로컬 우선" 으로 두면 PC 마다 다른 쪽을 고른다.
+    const selected = compareMarkerRevisions(remoteMetadata, localMetadata) > 0
       ? remoteMetadata
       : localMetadata;
     return {
@@ -2144,16 +2168,25 @@ export class ReviewDataManager extends EventTarget {
   /** 댓글 병합에 넘길 판정 함수들. */
   _createCommentMergeOptions() {
     return {
-      // 원격 댓글이 이 인스턴스가 들고 있다가 이미 지나온 상태와 똑같으면 옛 사본이다.
-      // 수정 시각까지 같은 상태만 맞으므로 PC 사이의 시계 차이에 영향받지 않는다.
+      // 원격 댓글이 이 인스턴스가 들고 있던 상태와 똑같고(수정 시각 포함), 지금 로컬보다
+      // 앞선 상태면 옛 사본이다.
+      //
+      // "들고 있던 상태" 만으로는 모자란다. 두 사람이 같은 댓글을 거의 동시에 고치면 서로의
+      // 전송이 엇갈려 도착해(받는 쪽은 수정 시각을 비교하지 않고 덮어쓴다) 각자 상대의
+      // 상태를 들게 되고, 둘 다 상대의 상태를 "들고 있던 상태" 로 갖는다. 그때 순서를 보지
+      // 않으면 두 PC 가 서로의 저장분을 옛 사본으로 보고 끝없이 덮어쓴다. 순서는 어느
+      // PC 에서나 같으므로(compareMarkerRevisions) 한쪽은 지키고 한쪽은 받아들인다.
       isSupersededMarker: (remoteMarker, localMarker) => {
         const fingerprint = getMarkerRevisionFingerprint(remoteMarker);
         if (!fingerprint ||
             fingerprint === getMarkerRevisionFingerprint(localMarker)) {
           return false;
         }
-        return this._seenMarkerRevisions
-          .get(String(remoteMarker?.id))?.has(fingerprint) === true;
+        if (this._seenMarkerRevisions
+          .get(String(remoteMarker?.id))?.has(fingerprint) !== true) {
+          return false;
+        }
+        return compareMarkerRevisions(remoteMarker, localMarker) < 0;
       },
       hasSeenReply: replyId => this._seenReplyIds.has(String(replyId))
     };
@@ -2369,8 +2402,9 @@ export class ReviewDataManager extends EventTarget {
         loadedReviewMergeBase,
         this._collectReviewDataForMerge(loadedReviewMergeBase)
       );
-      // 파일에 적힌 모양과 모델이 다시 내보내는 모양을 둘 다 "들고 있던 상태" 로 기억한다.
-      this._rememberCommentRevisions(loadedReviewMergeBase.comments);
+      // 모델이 내보내는 모양만 "들고 있던 상태" 로 기억한다. 파일에 적힌 모양(오래된 버전이
+      // 쓴 파일은 시각 표기나 칸 구성이 다르다)까지 기억하면, 바뀐 것이 없는 파일을 옛
+      // 사본으로 오인해 열어 둔 사람마다 한 번씩 다시 저장한다.
       this._rememberCommentRevisions(this.commentManager?.toJSON?.());
 
       this.isDirty = false;

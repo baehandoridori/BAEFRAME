@@ -623,6 +623,144 @@ test('파일이 옛 사본으로 돌아간 것을 알아보면 스스로 다시 
   client.manager.disconnect();
 });
 
+// CommentSync 가 보내는 COMMENT_MARKER_UPDATED 의 fields 와 같은 모양.
+function broadcastFieldsOf(marker) {
+  const json = marker.toJSON();
+  return {
+    text: json.text, resolved: json.resolved, resolvedBy: json.resolved ? json.resolvedBy : null,
+    resolvedAt: json.resolved ? json.resolvedAt : null, x: json.x, y: json.y,
+    startFrame: json.startFrame, endFrame: json.endFrame, colorKey: json.colorKey, updatedAt: json.updatedAt
+  };
+}
+
+for (const tie of [false, true]) {
+  test(`두 사람이 거의 동시에 같은 댓글을 해결해도 서로의 파일을 끝없이 덮어쓰지 않는다${tie ? ' (같은 시각)' : ''}`, async () => {
+    const first = await openClient('가', [markerRecord('x')]);
+    const second = await openClient('나', [markerRecord('x')]);
+
+    // 전송이 닿기 전에 둘 다 누른다. 그 뒤 서로의 전송이 도착해 상대의 상태로 덮인다
+    // (받는 쪽은 수정 시각을 비교하지 않는다). 가는 나의 상태를, 나는 가의 상태를 들게 된다.
+    setResolved(first, 'x', true, '2026-11-18T06:31:00.000Z');
+    setResolved(second, 'x', true, tie ? '2026-11-18T06:31:00.000Z' : '2026-11-18T06:31:00.080Z');
+    const fromFirst = broadcastFieldsOf(first.commentManager.getMarker('x'));
+    const fromSecond = broadcastFieldsOf(second.commentManager.getMarker('x'));
+    first.commentManager.applyRemoteMarkerUpdate('x', fromSecond);
+    second.commentManager.applyRemoteMarkerUpdate('x', fromFirst);
+    assert.equal(first.commentManager.getMarker('x').resolvedBy, '나');
+    assert.equal(second.commentManager.getMarker('x').resolvedBy, '가');
+
+    // 각자 저장하고, 상대의 저장분이 내려오면 받아들이고, 필요하면 다시 저장한다 — 를 되풀이한다.
+    let writes = 0;
+    const saveIfDirty = async client => {
+      if (!client.manager.hasUnsavedChanges()) return;
+      assert.equal(await client.manager.save(), true);
+      writes += 1;
+    };
+    const writesPerRound = [];
+    for (let round = 0; round < 8; round += 1) {
+      const before = writes;
+      await saveIfDirty(first);
+      deliver(first.bframePath, second.bframePath);
+      await second.manager.reloadCommentsFromDisk();
+      await saveIfDirty(second);
+      deliver(second.bframePath, first.bframePath);
+      await first.manager.reloadCommentsFromDisk();
+      writesPerRound.push(writes - before);
+    }
+
+    assert.deepEqual(writesPerRound.slice(-4), [0, 0, 0, 0],
+      `저장이 멈춰야 한다: ${JSON.stringify(writesPerRound)}`);
+    const firstState = first.commentManager.getMarker('x').toJSON();
+    const secondState = second.commentManager.getMarker('x').toJSON();
+    assert.equal(firstState.resolvedBy, secondState.resolvedBy, '두 PC 가 같은 상태로 모인다');
+    assert.equal(firstState.updatedAt, secondState.updatedAt);
+    assert.equal(diskMarker(first.bframePath, 'x').resolvedBy, firstState.resolvedBy);
+    assert.equal(diskMarker(second.bframePath, 'x').resolvedBy, firstState.resolvedBy);
+    if (!tie) assert.equal(firstState.resolvedBy, '나', '나중에 누른 쪽으로 모인다');
+    assert.deepEqual(diskMarkers(first.bframePath).map(marker => marker.id), ['x']);
+    first.manager.disconnect();
+    second.manager.disconnect();
+  });
+}
+
+test('같은 시각에 다르게 바뀐 댓글은 어느 PC 에서 합쳐도 같은 쪽으로 모인다', async () => {
+  const first = await openClient('가', [markerRecord('x')]);
+  const second = await openClient('나', [markerRecord('x')]);
+  setResolved(first, 'x', true, '2026-11-18T06:31:00.000Z');
+  setResolved(second, 'x', true, '2026-11-18T06:31:00.000Z');
+  const fromFirst = first.commentManager.getMarker('x').toJSON();
+  const fromSecond = second.commentManager.getMarker('x').toJSON();
+
+  // 둘 다 저장 전이다. 각자의 파일에 상대의 상태가 내려와 있다.
+  const putOnDisk = (client, state) => {
+    const data = readDisk(client.bframePath);
+    data.comments.layers[0].markers = [state];
+    writeDisk(client.bframePath, data);
+  };
+  putOnDisk(first, fromSecond);
+  putOnDisk(second, fromFirst);
+  await first.manager.reloadCommentsFromDisk();
+  await second.manager.reloadCommentsFromDisk();
+
+  // "같은 시각이면 로컬 우선" 이면 가는 가를, 나는 나를 고른다.
+  assert.equal(
+    first.commentManager.getMarker('x').resolvedBy,
+    second.commentManager.getMarker('x').resolvedBy
+  );
+  first.manager.disconnect();
+  second.manager.disconnect();
+});
+
+test('예전 모양으로 저장된 파일은 바뀐 것이 없으면 다시 저장하지 않는다', async () => {
+  // 오래된 버전이 쓴 댓글: 밀리초 없는 시각, 빠진 칸(deletedAt·colorKey·resolvedAt·resolvedBy),
+  // 지금 모델이 쓰지 않는 칸. 모델이 다시 내보내는 모양과 어느 쪽으로든 다르다.
+  const legacyFields = {
+    x: 0.5, y: 0.5, startFrame: 10, endFrame: 106, fps: 24,
+    text: '예전 댓글', author: '작성자',
+    createdAt: '2026-01-05T04:00:00Z', updatedAt: '2026-01-05T04:00:00Z',
+    resolved: false, deleted: false, layerId: LAYER_ID, replies: []
+  };
+  const client = await openClient('가', [
+    { id: 'legacy', ...legacyFields },
+    { id: 'legacy-extra', aLegacyOnlyField: 1, ...legacyFields }
+  ], { autoSave: true });
+  const token = disks.get(client.bframePath).token;
+
+  // 열어 둔 사람마다 파일을 한 번씩 고쳐 쓰면, 여럿이 함께 열 때 저장이 한꺼번에 몰린다.
+  const result = await client.manager.reloadCommentsFromDisk();
+  assert.equal(result.success, true);
+  assert.equal(result.changed, false);
+  assert.equal(client.manager.hasUnsavedChanges(), false);
+  await wait(40);
+  assert.equal(disks.get(client.bframePath).token, token, '파일을 다시 쓰지 않았다');
+  client.manager.disconnect();
+});
+
+test('전송으로 받은 삭제와 파일로 온 같은 삭제는 삭제 표시 사본을 만들지 않는다', async () => {
+  const sender = await openClient('가', [markerRecord('x')]);
+  const receiver = await openClient('나', [markerRecord('x')]);
+
+  sender.commentManager.deleteMarker('x');
+  assert.equal(await sender.manager.save(), true);
+
+  // 받는 쪽은 전송으로 먼저 삭제를 받는다(삭제 시각은 받은 쪽 시계로 찍힌다).
+  await wait(5);
+  receiver.commentManager.applyRemoteMarkerDelete('x');
+  deliver(sender.bframePath, receiver.bframePath);
+  await receiver.manager.reloadCommentsFromDisk();
+  receiver.manager._markDirty();
+  assert.equal(await receiver.manager.save(), true);
+
+  assert.deepEqual(diskMarkers(receiver.bframePath).map(marker => marker.id), ['x']);
+  assert.equal(diskMarker(receiver.bframePath, 'x').deleted, true);
+  assert.deepEqual(
+    receiver.commentManager.toJSON().layers[0].markers.map(marker => marker.id),
+    ['x']
+  );
+  sender.manager.disconnect();
+  receiver.manager.disconnect();
+});
+
 test('파일에서 받아들여도 고정해 둔 말풍선은 풀리지 않는다', async () => {
   const inside = await openClient('방 안', [markerRecord('x'), markerRecord('pinned')]);
   const outside = await openClient('방 밖', [markerRecord('x'), markerRecord('pinned')]);
