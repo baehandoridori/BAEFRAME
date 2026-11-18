@@ -630,6 +630,10 @@ export class CommentManager extends EventTarget {
    */
   restoreMarker(markerData) {
     const marker = CommentMarker.fromJSON(markerData);
+    // 이미 있는 댓글(삭제 표시가 된 것)을 되살리는 것은 예전 상태로 돌아가는 것이 아니라
+    // 새 수정이다. 예전 수정 시각 그대로 두면 다른 PC 의 파일 병합이 "이미 지나온 옛 사본"
+    // 으로 보고 받아들이지 않아, 되살린 댓글이 다른 사람에게는 지워진 채로 남는다.
+    if (this.getMarker(marker.id)) marker.updatedAt = new Date();
     const layer = this.layers.find(l => l.id === marker.layerId) || this.getActiveLayer();
     if (layer) {
       layer.addMarker(marker);

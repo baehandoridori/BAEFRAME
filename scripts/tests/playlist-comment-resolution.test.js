@@ -329,7 +329,7 @@ test('a locked or mid-navigation comment is not changed at the click', async () 
   }
 });
 
-function createCurrentFileResolutionContext({ saveResults, marker, events, notices }) {
+function createCurrentFileResolutionContext({ saveResults, marker, events, notices, navigationLocked = false }) {
   const layer = { id: 'l', locked: false, markers: new Map([[marker.id, marker]]) };
   const saves = [];
   const context = vm.createContext({
@@ -339,7 +339,8 @@ function createCurrentFileResolutionContext({ saveResults, marker, events, notic
     isSameFilePath: (a, b) => a === b, userName: 'tester', suppressCommentRangeRefreshOnce: false,
     commentManager: { getMarker: () => marker, layers: [layer], _emit: name => events.push(name) },
     liveblocksManager: { checkEditLock: () => null }, showToast: (text, type) => notices.push({ text, type }),
-    RESOLUTION_SAVE_RETRY_DELAYS_MS: [0, 0, 0], setTimeout
+    playlistResolutionQueue: { isLocked: () => navigationLocked === true },
+    RESOLUTION_SAVE_RETRY_DELAYS_MS: [0, 1, 1], setTimeout
   });
   for (const name of ['snapshotMarkerResolution', 'applyMarkerResolutionToggle', 'restoreMarkerResolution',
     'saveResolutionThroughCheckpoint', 'togglePlaylistAggregateResolvedWithoutNavigation']) vm.runInContext(appFunction(name), context);
@@ -380,6 +381,30 @@ test('a deferred save that succeeds on retry needs no notice, and a playlist res
   assert.deepEqual(otherEvents, ['markerUpdated', 'markersChanged', 'markerUpdated', 'markersChanged']);
 });
 
+test('a resolution save does not keep retrying while a video switch waits for this file', async () => {
+  const marker = createUnresolvedMarker(); const notices = [];
+  // 영상 전환은 이 파일의 저장이 끝나기를 기다린다. 재시도로 붙잡지 않고 전환 직전 저장에 맡긴다.
+  const { context, saves } = createCurrentFileResolutionContext({ saveResults: [false, true], marker, events: [], notices, navigationLocked: true });
+  const result = await context.togglePlaylistAggregateResolvedWithoutNavigation({ ...CURRENT_FILE_RANGE },
+    { videoPath: 'A.mp4', bframePath: 'A.bframe', desiredResolved: true, scope: 'current-resolution' });
+  assert.equal(result, marker);
+  assert.equal(saves.length, 1, 'only the first round runs');
+  assert.equal(marker.resolved, true);
+});
+
+test('a reverted playlist resolution is a new revision, not a return to the old timestamp', () => {
+  const context = vm.createContext({ Date, Math });
+  vm.runInContext(appFunction('restoreMarkerResolution'), context);
+  const before = new Date(1000);
+  const marker = { resolved: true, resolvedBy: 'tester', resolvedAt: new Date(5000), updatedAt: new Date(Date.now() + 60000) };
+  context.restoreMarkerResolution(marker, { resolved: false, resolvedBy: null, resolvedAt: null, updatedAt: before });
+  assert.equal(marker.resolved, false);
+  assert.equal(marker.resolvedAt, null);
+  // 다른 PC 가 이 되돌림을 "이미 지나온 옛 사본" 으로 보지 않도록 수정 시각은 앞으로만 간다.
+  assert.ok(marker.updatedAt.getTime() > Date.now() + 59000);
+  assert.notEqual(marker.updatedAt.getTime(), before.getTime());
+});
+
 test('an optimistic click is not applied twice, and is re-applied if the model was replaced meanwhile', async () => {
   const marker = { id: 'm', resolved: true, resolvedBy: 'tester', resolvedAt: new Date(5), updatedAt: new Date(5) };
   const events = []; const checkpoint = { revision: 9 };
@@ -408,6 +433,9 @@ test('connected file changes also merge comments, and a failed room join falls b
   const failure = start.slice(start.indexOf('} catch (error) {'));
   assert.ok(failure.includes('error?.joinFailureReason'));
   assert.ok(failure.includes('scheduleCollaborationRejoin(loadToken, bframePath, reason)'));
+  // 다른 접속에 자리를 내준 시도는 실패로 알리지 않고, 방에 들어간 뒤의 실패도 "연결 실패" 가 아니다.
+  assert.ok(failure.includes("if (reason === 'superseded') {"));
+  assert.ok(failure.includes('if (!liveblocksManager.isConnected &&'));
   assert.ok(start.indexOf('watchFileStart(bframePath)') > start.indexOf('scheduleCollaborationRejoin('),
     'the file watch must start after a failed join too');
   assert.ok(appFunction('describeCollaborationJoinFailure').includes('room-full'));

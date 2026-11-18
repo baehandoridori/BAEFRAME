@@ -295,10 +295,6 @@ test('실시간 방 밖 사용자가 파일로 남긴 해결을 방 안 사용�
   const inside = await openClient('방 안', [markerRecord('x'), markerRecord('mine')]);
   const outside = await openClient('방 밖', [markerRecord('x'), markerRecord('mine')]);
 
-  // 방 안 사용자는 아직 저장하지 않은 자기 해결을 들고 있다.
-  setResolved(inside, 'mine', true, '2026-11-18T06:00:00.000Z');
-  inside.manager.isDirty = false; // 아래에서 받아들이기가 dirty 를 건드리는지 보려고 기준을 내린다
-
   setResolved(outside, 'x', true, '2026-11-18T06:31:00.000Z');
   assert.equal(await outside.manager.save(), true);
   deliver(outside.bframePath, inside.bframePath);
@@ -310,13 +306,24 @@ test('실시간 방 밖 사용자가 파일로 남긴 해결을 방 안 사용�
   assert.equal(result.changed, true);
   assert.equal(inside.commentManager.getMarker('x').resolved, true);
   assert.equal(inside.commentManager.getMarker('x').resolvedBy, '방 밖');
-  assert.equal(inside.commentManager.getMarker('mine').resolved, true,
-    '저장 전인 내 해결은 그대로다');
-  assert.equal(inside.manager.isDirty, false,
+  assert.equal(inside.manager.hasUnsavedChanges(), false,
     '파일에서 받아들인 것만으로 다시 저장을 걸지 않는다');
 
+  // 방 안 사용자가 저장 전인 자기 해결을 들고 있을 때 또 다른 변경이 파일로 온다.
+  setResolved(inside, 'mine', true, '2026-11-18T06:32:00.000Z');
+  const other = outside.commentManager.getMarker('x');
+  other.text = '방 밖에서 고친 본문';
+  other.updatedAt = new Date('2026-11-18T06:33:00.000Z');
+  outside.commentManager._emit('markerUpdated', { marker: other });
+  assert.equal(await outside.manager.save(), true);
+  deliver(outside.bframePath, inside.bframePath);
+  assert.equal((await inside.manager.reloadCommentsFromDisk()).changed, true);
+  assert.equal(inside.commentManager.getMarker('x').text, '방 밖에서 고친 본문');
+  assert.equal(inside.commentManager.getMarker('mine').resolved, true,
+    '저장 전인 내 해결은 그대로다');
+  assert.equal(inside.manager.hasUnsavedChanges(), true);
+
   // 받아들인 뒤 내 저장은 두 변경을 모두 담는다.
-  inside.manager._markDirty();
   assert.equal(await inside.manager.save(), true);
   assert.equal(diskMarker(inside.bframePath, 'x').resolved, true);
   assert.equal(diskMarker(inside.bframePath, 'mine').resolved, true);
@@ -500,6 +507,138 @@ test('자기 답글을 지우고 다시 쓴 사람의 저장분에서는 옛 답
   client.manager.disconnect();
 });
 
+test('지운 댓글을 되돌리면(Ctrl+Z) 다른 PC 에도 되살아난다', async () => {
+  const first = await openClient('가', [markerRecord('x')]);
+  const second = await openClient('나', [markerRecord('x')]);
+  const beforeDelete = first.commentManager.getMarker('x').toJSON();
+
+  first.commentManager.deleteMarker('x');
+  assert.equal(await first.manager.save(), true);
+  deliver(first.bframePath, second.bframePath);
+  assert.equal((await second.manager.reloadCommentsFromDisk()).changed, true);
+  assert.equal(second.commentManager.getMarker('x').deleted, true);
+
+  // 가가 삭제를 되돌린다. 되돌린 댓글은 예전 상태 그대로가 아니라 새 수정이어야
+  // 다른 PC 가 "이미 지나온 옛 사본" 으로 오인하지 않는다.
+  await wait(5);
+  first.commentManager.restoreMarker(beforeDelete);
+  assert.equal(await first.manager.save(), true);
+  assert.equal(diskMarker(first.bframePath, 'x').deleted, false);
+  deliver(first.bframePath, second.bframePath);
+
+  assert.equal((await second.manager.reloadCommentsFromDisk()).changed, true);
+  assert.equal(second.commentManager.getMarker('x').deleted, false);
+
+  // 나의 저장도 되살린 댓글을 지우지 않는다.
+  second.manager._markDirty();
+  assert.equal(await second.manager.save(), true);
+  assert.equal(diskMarker(second.bframePath, 'x').deleted, false);
+  first.manager.disconnect();
+  second.manager.disconnect();
+});
+
+test('답글을 지키며 받아들인 뒤에 온 본문 수정은 충돌 사본 없이 받아들인다', async () => {
+  const first = await openClient('가', [markerRecord('x')]);
+  const second = await openClient('나', [markerRecord('x')]);
+
+  const marker = first.commentManager.getMarker('x');
+  marker.replies.push({
+    id: 'mine', text: '내 답글', author: '가',
+    createdAt: new Date('2026-11-18T05:00:00.000Z'), updatedAt: new Date('2026-11-18T05:00:00.000Z')
+  });
+  marker.updatedAt = new Date('2026-11-18T05:00:00.000Z');
+  first.commentManager._emit('replyAdded', { marker, reply: marker.replies[0] });
+  assert.equal(await first.manager.save(), true);
+
+  // 나는 가의 답글을 못 본 채 해결하고, 이어서 본문을 고친다.
+  setResolved(second, 'x', true, '2026-11-18T05:00:20.000Z');
+  assert.equal(await second.manager.save(), true);
+  deliver(second.bframePath, first.bframePath);
+  assert.equal((await first.manager.reloadCommentsFromDisk()).changed, true);
+
+  const edited = second.commentManager.getMarker('x');
+  edited.text = '나가 고친 본문';
+  edited.updatedAt = new Date('2026-11-18T05:01:00.000Z');
+  second.commentManager._emit('markerUpdated', { marker: edited });
+  assert.equal(await second.manager.save(), true);
+  deliver(second.bframePath, first.bframePath);
+  assert.equal((await first.manager.reloadCommentsFromDisk()).changed, true);
+
+  const layer = first.commentManager.toJSON().layers[0];
+  assert.deepEqual(layer.markers.map(item => item.id), ['x']);
+  assert.equal(layer.markers[0].text, '나가 고친 본문');
+  assert.equal(layer.markers[0].resolved, true);
+  assert.deepEqual(layer.markers[0].replies.map(reply => reply.id), ['mine']);
+  first.manager.disconnect();
+  second.manager.disconnect();
+});
+
+test('충돌 사본을 만든 뒤 다시 저장해도 사본이 늘어나지 않는다', async () => {
+  const first = await openClient('가', [markerRecord('x')]);
+  const second = await openClient('나', [markerRecord('x')]);
+
+  setResolved(second, 'x', true, '2026-11-18T05:00:20.000Z');
+  assert.equal(await second.manager.save(), true);
+
+  // 가는 저장 전인 본문 수정을 들고 있다(본문 수정과 해결이 겹치면 두 사본으로 보존한다).
+  const edited = first.commentManager.getMarker('x');
+  edited.text = '가가 고친 본문';
+  edited.updatedAt = new Date('2026-11-18T05:00:30.000Z');
+  first.commentManager._emit('markerUpdated', { marker: edited });
+  deliver(second.bframePath, first.bframePath);
+  await first.manager.reloadCommentsFromDisk();
+  assert.deepEqual(
+    first.commentManager.toJSON().layers[0].markers.map(item => item.id),
+    ['x', 'x__remote-conflict']
+  );
+
+  assert.equal(await first.manager.save(), true);
+  first.manager._markDirty();
+  assert.equal(await first.manager.save(), true);
+  assert.deepEqual(
+    diskMarkers(first.bframePath).map(item => item.id),
+    ['x', 'x__remote-conflict']
+  );
+  first.manager.disconnect();
+  second.manager.disconnect();
+});
+
+test('파일이 옛 사본으로 돌아간 것을 알아보면 스스로 다시 저장해 파일을 바로잡는다', async () => {
+  const client = await openClient('가', [markerRecord('x')], { autoSave: true });
+  const beforeResolve = readDisk(client.bframePath);
+  setResolved(client, 'x', true, '2026-11-18T06:00:00.000Z');
+  assert.equal(await client.manager.save(), true);
+  assert.equal(client.manager.hasUnsavedChanges(), false);
+
+  // 파일로만 동기화하는 사람은 이 파일만 본다. 옛 사본인 채로 두면 그 사람에게 해결이 보이지 않는다.
+  writeDisk(client.bframePath, beforeResolve);
+  const result = await client.manager.reloadCommentsFromDisk();
+  assert.equal(result.changed, false);
+  assert.equal(client.manager.hasUnsavedChanges(), true);
+
+  for (let attempt = 0; attempt < 60 && diskMarker(client.bframePath, 'x').resolved !== true; attempt += 1) {
+    await wait(10);
+  }
+  assert.equal(diskMarker(client.bframePath, 'x').resolved, true);
+  client.manager.disconnect();
+});
+
+test('파일에서 받아들여도 고정해 둔 말풍선은 풀리지 않는다', async () => {
+  const inside = await openClient('방 안', [markerRecord('x'), markerRecord('pinned')]);
+  const outside = await openClient('방 밖', [markerRecord('x'), markerRecord('pinned')]);
+  inside.commentManager.getMarker('pinned').pinned = true;
+
+  setResolved(outside, 'x', true, '2026-11-18T06:31:00.000Z');
+  assert.equal(await outside.manager.save(), true);
+  deliver(outside.bframePath, inside.bframePath);
+  assert.equal((await inside.manager.reloadCommentsFromDisk()).changed, true);
+
+  assert.equal(inside.commentManager.getMarker('pinned').pinned, true);
+  assert.equal(inside.commentManager.getMarker('x').pinned, false);
+  inside.manager.disconnect();
+  outside.manager.disconnect();
+});
+
 test('저장이 버전 충돌로 거절되면 실패로 끝내지 않고 다시 저장한다', async () => {
   const client = await openClient('가', [markerRecord('x')], {
     autoSave: true,
@@ -638,6 +777,51 @@ test('응답이 없는 실시간 방 접속은 정해진 시간 뒤에 실패로
   assert.equal(failure.joinFailureReason, 'timeout');
   assert.equal(manager.isConnected, false);
   assert.equal(fake.state.left, 1);
+});
+
+test('버려진 접속 시도가 뒤늦게 끝나도 그 뒤에 들어간 방을 끊지 않는다', async () => {
+  const { LiveblocksManager } = await import('../../renderer/scripts/modules/liveblocks-manager.js');
+  // 첫 방은 응답이 없고(영상을 바꾸면 떠난 방의 Storage 대기는 끝나지 않는다), 둘째 방은 바로 들어간다.
+  const rooms = [];
+  const createClient = () => ({
+    enterRoom(roomId) {
+      const state = { roomId, left: 0, listeners: new Map() };
+      rooms.push(state);
+      const pending = rooms.length === 1;
+      return {
+        room: {
+          subscribe(type, listener) {
+            if (!state.listeners.has(type)) state.listeners.set(type, new Set());
+            state.listeners.get(type).add(listener);
+            return () => state.listeners.get(type).delete(listener);
+          },
+          getStorage: () => (pending ? new Promise(() => {}) : Promise.resolve({ root: {} })),
+          getOthers: () => [], getSelf: () => null, updatePresence() {}, broadcastEvent() {}
+        },
+        leave: () => { state.left += 1; }
+      };
+    }
+  });
+  const manager = new LiveblocksManager({ createClient, joinTimeoutMs: 60 });
+  const statuses = [];
+  manager.addEventListener('connectionStatusChanged', event => statuses.push(event.detail));
+
+  const abandoned = manager.start('C:/pc/a.bframe', '가', '#fff', 'room-a').then(() => null, error => error);
+  await wait(5);
+  // 영상을 바꾼다: 앞선 방을 떠나고 새 방에 들어간다.
+  await manager.stop();
+  const failure = await rejectAfter(abandoned, 40, '버려진 접속 시도는 떠나는 즉시 끝나야 한다');
+  assert.equal(failure.joinFailureReason, 'superseded');
+
+  await manager.start('C:/pc/b.bframe', '가', '#fff', 'room-b');
+  assert.equal(manager.isConnected, true);
+  await wait(120); // 첫 시도의 제한 시간이 지나도록 기다린다
+  assert.equal(manager.isConnected, true, '새 방의 연결이 유지돼야 한다');
+  assert.equal(manager.roomId, 'room-b');
+  assert.equal(rooms[1].left, 0, '새 방을 떠나면 안 된다');
+  assert.ok((rooms[1].listeners.get('event')?.size || 0) > 0, '새 방의 구독이 살아 있어야 한다');
+  assert.equal(statuses.at(-1).status, 'connected');
+  await manager.stop();
 });
 
 test('실시간 방 접속이 되면 지금처럼 연결 상태가 된다', async () => {

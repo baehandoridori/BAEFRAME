@@ -54,7 +54,7 @@ test('collaborator avatars are built with text-only DOM operations', () => {
 
 test('others 구독은 Storage 로드 대기보다 먼저 설치되고 접속 후 초기 스냅샷을 보상 발행한다', () => {
   const startBody = liveblocksManagerSource.match(
-    /this\._room = result\.room;([\s\S]*?)return \{ roomId: this\._roomId, isNewRoom \};/
+    /this\._room = room;([\s\S]*?)return \{ roomId: this\._roomId, isNewRoom \};/
   );
   assert.ok(startBody, 'start()의 Room 확보 이후 구간을 찾을 수 있어야 한다');
 

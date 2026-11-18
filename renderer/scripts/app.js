@@ -7258,11 +7258,18 @@ async function initApp() {
       if (!isRejoin) clearCollaborationRejoin();
     } catch (error) {
       const reason = error?.joinFailureReason || 'connection-error';
-      log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message, reason });
-      // 접속하지 못한 사용자는 파일 감시로 동기화한다(아래). 그 사실을 알리고, 빈자리가
-      // 나면 실시간으로 돌아오도록 재접속을 예약한다.
-      if (!isStaleVideoLoadToken(loadToken) && isCurrentReviewPath(bframePath)) {
-        scheduleCollaborationRejoin(loadToken, bframePath, reason);
+      if (reason === 'superseded') {
+        // 기다리는 사이 다른 접속(영상 전환, 첫 저장의 접속 등)이 자리를 가져갔다. 실패가 아니다.
+        log.info('Liveblocks 접속 시도가 다른 접속으로 대체됨');
+      } else {
+        log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message, reason });
+        // 접속하지 못한 사용자는 파일 감시로 동기화한다(아래). 그 사실을 알리고, 빈자리가
+        // 나면 실시간으로 돌아오도록 재접속을 예약한다. 방에는 들어갔는데 그 뒤 단계에서
+        // 실패한 경우에는 "연결하지 못했다" 고 알리지 않는다.
+        if (!liveblocksManager.isConnected &&
+            !isStaleVideoLoadToken(loadToken) && isCurrentReviewPath(bframePath)) {
+          scheduleCollaborationRejoin(loadToken, bframePath, reason);
+        }
       }
     }
 
@@ -12821,7 +12828,9 @@ async function initApp() {
     marker.resolved = previous.resolved;
     marker.resolvedBy = previous.resolvedBy;
     marker.resolvedAt = previous.resolvedAt;
-    marker.updatedAt = previous.updatedAt;
+    // 되돌림도 새 수정이다. 예전 수정 시각으로 돌아가면 이 변경을 이미 받은 다른 PC 가
+    // 되돌린 상태를 "이미 지나온 옛 사본" 으로 보고 받아들이지 않는다.
+    marker.updatedAt = new Date(Math.max(Date.now(), (new Date(marker.updatedAt).getTime() || 0) + 1));
   }
 
   // 저장이 충돌·지연으로 미뤄졌을 때 같은 변경을 다시 저장해 보는 간격(ms). 읽기와 쓰기
@@ -12830,7 +12839,12 @@ async function initApp() {
 
   async function saveResolutionThroughCheckpoint(checkpoint) {
     for (const delayMs of RESOLUTION_SAVE_RETRY_DELAYS_MS) {
-      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (delayMs > 0) {
+        // 영상 전환이 이 파일의 저장이 끝나기를 기다리는 중이면 더 붙잡지 않는다.
+        // 남은 변경은 전환 직전의 저장이 쓴다.
+        if (playlistResolutionQueue.isLocked(checkpoint.videoPath)) return false;
+        await new Promise(resolve => setTimeout(resolve, delayMs));
+      }
       if (!reviewDataManager._ownsSave(checkpoint)) return false;
       if (await reviewDataManager.saveThroughCheckpoint(checkpoint) === true) return true;
     }
@@ -18545,9 +18559,15 @@ async function initApp() {
   function showCollaborationSyncStatus() {
     // 실시간 방에 들어가지 못한 상태면 눌렀을 때 바로 다시 접속해 본다.
     if (!liveblocksManager.isConnected && collaborationRejoin) {
-      showToast('실시간 협업에 다시 연결해 봅니다.', 'info');
-      void retryCollaborationJoin({ manual: true });
-      return;
+      if (isStaleVideoLoadToken(collaborationRejoin.loadToken) ||
+          !isCurrentReviewPath(collaborationRejoin.bframePath)) {
+        // 다른 파일로 넘어온 뒤다. 지난 파일의 재접속 기록은 버린다.
+        clearCollaborationRejoin();
+      } else {
+        showToast('실시간 협업에 다시 연결해 봅니다.', 'info');
+        void retryCollaborationJoin({ manual: true });
+        return;
+      }
     }
     if (!liveblocksManager.hasOtherCollaborators()) {
       showToast('다른 협업자가 없습니다', 'info');

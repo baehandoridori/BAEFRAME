@@ -35,6 +35,7 @@ const ROOM_FULL_ERROR_CODE = 4005;
  * - 'room-full': 방 정원 초과
  * - 'timeout': 정해진 시간 안에 접속되지 않음
  * - 'connection-error': 그 밖의 접속 거절(권한 등)
+ * - 'superseded': 기다리는 사이 다른 접속(영상 전환 등)에 자리를 내줌. 실패가 아니다
  */
 function createJoinFailure(reason, message, code = null) {
   const error = new Error(message);
@@ -89,6 +90,9 @@ export class LiveblocksManager extends EventTarget {
     // 스로틀 타이머
     this._presenceThrottleTimer = null;
     this._pendingPresence = null;
+
+    // 진행 중인 접속 대기를 끝내는 함수. stop() 이 불러 버려진 시도를 바로 끝낸다.
+    this._abortPendingJoin = null;
 
     log.info('LiveblocksManager 초기화됨');
   }
@@ -154,6 +158,10 @@ export class LiveblocksManager extends EventTarget {
       isNewRoom
     });
 
+    // 이 접속 시도의 방. 기다리는 사이 stop() 이나 다른 start() 가 끼어들 수 있으므로
+    // 공유 상태(this._room)와 따로 들고 있는다.
+    let room = null;
+    let leave = null;
     try {
       // Room 접속
       const result = this._client.enterRoom(this._roomId, {
@@ -172,8 +180,10 @@ export class LiveblocksManager extends EventTarget {
         }
       });
 
-      this._room = result.room;
-      this._leave = result.leave;
+      room = result.room;
+      leave = result.leave;
+      this._room = room;
+      this._leave = leave;
 
       // 이벤트 구독 설정 — Storage 로드를 기다리기 전에 설치해야 접속 직후 도착하는
       // 초기 참여자 상태(ROOM_STATE)를 놓치지 않는다. room.subscribe('others')는
@@ -182,7 +192,11 @@ export class LiveblocksManager extends EventTarget {
       this._setupSubscriptions();
 
       // Storage 로드 대기
-      this._storage = await this._waitForRoomJoin(this._room);
+      const storage = await this._waitForRoomJoin(room);
+      if (this._room !== room) {
+        throw createJoinFailure('superseded', 'Room 접속 시도가 다른 접속으로 대체되었습니다');
+      }
+      this._storage = storage;
 
       this._isConnected = true;
       this._connectionStatus = 'connected';
@@ -208,6 +222,16 @@ export class LiveblocksManager extends EventTarget {
 
       return { roomId: this._roomId, isNewRoom };
     } catch (error) {
+      if (this._room !== room) {
+        // 버려진 시도다(영상을 바꿔 stop() 했거나 다른 start() 가 방을 갈아 끼웠다).
+        // 공유 상태는 이미 다음 접속의 것이므로 건드리지 않고 자기 방만 떠난다.
+        // 여기서 공유 상태를 정리하면 멀쩡히 연결된 다음 방이 끊긴다.
+        log.info('버려진 Room 접속 시도 정리', { reason: error?.joinFailureReason || null });
+        if (leave) {
+          try { leave(); } catch (e) { /* 무시 */ }
+        }
+        throw error;
+      }
       log.error('Room 접속 실패', error);
       // 구독을 Storage 대기보다 먼저 설치하므로, 접속이 실패하면 죽은 방의 구독이
       // collaboratorsChanged를 계속 발행하지 않도록 여기서 반드시 정리한다.
@@ -245,15 +269,22 @@ export class LiveblocksManager extends EventTarget {
     return new Promise((resolve, reject) => {
       let settled = false;
       const cleanups = [];
+      const abort = () => settle(reject, createJoinFailure(
+        'superseded',
+        'Room 접속 시도가 다른 접속으로 대체되었습니다'
+      ));
       const settle = (complete, value) => {
         if (settled) return;
         settled = true;
         clearTimeout(timer);
+        if (this._abortPendingJoin === abort) this._abortPendingJoin = null;
         cleanups.forEach(cleanup => {
           try { cleanup(); } catch (e) { /* 무시 */ }
         });
         complete(value);
       };
+      // 떠난 방의 getStorage() 는 끝나지 않는다. stop() 이 이 대기를 바로 끝낼 수 있게 한다.
+      this._abortPendingJoin = abort;
       const timer = setTimeout(() => {
         settle(reject, createJoinFailure(
           'timeout',
@@ -311,11 +342,17 @@ export class LiveblocksManager extends EventTarget {
       this._leave();
     }
 
+    const abortPendingJoin = this._abortPendingJoin;
+    this._abortPendingJoin = null;
     this._room = null;
     this._leave = null;
     this._storage = null;
     this._isConnected = false;
     this._connectionStatus = 'disconnected';
+
+    // 아직 접속을 기다리던 start() 가 있으면 여기서 끝낸다. 그냥 두면 제한 시간이 지난 뒤
+    // 실패 처리로 들어가 그 사이 새로 들어간 방을 정리해 버린다.
+    if (abortPendingJoin) abortPendingJoin();
 
     this._emit('connectionStatusChanged', { status: 'disconnected' });
     log.info('Room 퇴장 완료');
