@@ -152,7 +152,10 @@ export class CommentSync {
         startFrame: marker.startFrame ?? marker.frame,
         endFrame: marker.endFrame ?? marker.frame,
         colorKey: marker.colorKey || 'default',
-        updatedAt: new Date().toISOString()
+        // 보낸 쪽 모델에 찍힌 수정 시각을 그대로 보낸다. 전송 시각을 새로 찍으면 같은
+        // 변경이 보낸 쪽과 받은 쪽에서 서로 다른 수정 시각을 갖게 되어, 파일 병합이
+        // 늦게 도착한 옛 사본을 "이미 지나온 상태" 로 알아보지 못한다.
+        updatedAt: this._toISOString(marker.updatedAt) || new Date().toISOString()
       }
     });
   }

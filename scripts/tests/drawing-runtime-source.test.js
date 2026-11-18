@@ -372,7 +372,7 @@ test('저장 상태 칩은 재시도 소진 후에만 저장 실패를 알린다
   );
   assert.match(
     reviewDataManagerSource,
-    /const TRANSIENT_SAVE_FAILURE_REASONS = new Set\(\[\n  'review-file-write-failed',\n  'fabric-snapshot-unavailable'\n\]\);/
+    /const TRANSIENT_SAVE_FAILURE_REASONS = new Set\(\[\n  'review-file-write-failed',\n  'fabric-snapshot-unavailable',\n  REVIEW_FILE_VERSION_CONFLICT\n\]\);/
   );
   assert.match(reviewDataManagerSource, /this\._emitSaveState\('retrying', failure\.reason\);/);
   assert.match(

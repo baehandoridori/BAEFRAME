@@ -40,13 +40,22 @@ const SAVE_RETRY_DELAYS_MS = Object.freeze([2000, 5000, 10000]);
 // 이 Set은 _classifySaveFailure(= 예외 경로 전용)만 사용한다.
 // - review-file-write-failed: 디스크/IPC 쓰기 실패(구글 드라이브 동기화 잠금 등)
 // - fabric-snapshot-unavailable: Fabric 최신 스냅샷 회수 실패(IPC 지연·스냅샷 신선도)
+// - review-file-version-conflict: 읽기와 쓰기 사이에 파일이 바뀌어 덮어쓰지 않았다.
+//   여러 사람이 같은 파일을 열면 드라이브가 다른 PC 의 저장분을 수시로 내려보내므로
+//   흔한 일이고, 다시 읽어 합치면 풀린다. 실패로 끝내면 그 변경은 다음 편집이 있을
+//   때까지 파일에 닿지 않는다.
 // ※ 작업 7의 'malformed-target'·'review-snapshot-lock-timeout'은 예외가 아니라
 //   saveDeferred로 흐르므로 여기 넣지 않는다 (§7 C-9). 이들은 (j-2)의
 //   지연 분기에서 직접 _emitSaveState('retrying', reason)로 표시된다.
+const REVIEW_FILE_VERSION_CONFLICT = 'review-file-version-conflict';
 const TRANSIENT_SAVE_FAILURE_REASONS = new Set([
   'review-file-write-failed',
-  'fabric-snapshot-unavailable'
+  'fabric-snapshot-unavailable',
+  REVIEW_FILE_VERSION_CONFLICT
 ]);
+
+// 댓글 하나가 이 인스턴스에서 거쳐 온 상태를 몇 개까지 기억할지.
+const MAX_MARKER_REVISION_HISTORY = 32;
 
 // 사유 태그가 없는 훅 예외를 메시지로 식별한다(app.js의 최종 Fabric 스냅샷 훅).
 const TRANSIENT_SAVE_FAILURE_MESSAGES = Object.freeze([
@@ -407,7 +416,17 @@ function mergeEntityCollectionThreeWay(
     getKey = item => item?.id,
     createConflictCopy = (item, usedKeys, conflictKind) =>
       createDeterministicConflictCopy(item, usedKeys, { conflictKind }),
-    mergeConcurrent = null
+    mergeConcurrent = null,
+    // 양쪽에 모두 있고 서로 다를 때의 판정을 통째로 맡긴다. 기준과의 단순 비교
+    // ("로컬이 그대로면 원격을 따른다")만으로는 옛 사본을 원격 변경으로 오인한다.
+    mergePresent = null,
+    // 원소를 물리적으로 지우지 않는 컬렉션(댓글 마커 — 삭제는 deleted 표시로 남긴다)은
+    // 한쪽에 없다는 것이 삭제가 아니라 그 원소가 생기기 전의 사본이라는 뜻이다.
+    absentMeansStale = false,
+    // 기준과 로컬에는 있고 원격에만 없는 원소를, 삭제로 보지 않고 지킬지.
+    keepLocalWhenRemoteAbsent = null,
+    // 원격에만 있는 원소를 새 원소로 받아들일지(false 면 버린다).
+    acceptRemoteOnly = null
   } = {}
 ) {
   const normalizeKey = (item, index, source) => {
@@ -456,6 +475,13 @@ function mergeEntityCollectionThreeWay(
       if (hasLocal && hasRemote) {
         if (jsonEquals(local, remote)) {
           mergedByKey.set(key, [cloneJson(local)]);
+        } else if (typeof mergePresent === 'function') {
+          mergedByKey.set(key, mergePresent({
+            base: undefined,
+            local,
+            remote,
+            usedKeys
+          }));
         } else if (typeof mergeConcurrent === 'function') {
           mergedByKey.set(key, mergeConcurrent({
             base: undefined,
@@ -472,13 +498,28 @@ function mergeEntityCollectionThreeWay(
       } else if (hasLocal) {
         mergedByKey.set(key, [cloneJson(local)]);
       } else if (hasRemote) {
-        mergedByKey.set(key, [cloneJson(remote)]);
+        mergedByKey.set(
+          key,
+          typeof acceptRemoteOnly === 'function' && acceptRemoteOnly(remote) !== true
+            ? []
+            : [cloneJson(remote)]
+        );
       }
       continue;
     }
 
     if (!hasLocal && !hasRemote) {
       mergedByKey.set(key, []);
+      continue;
+    }
+    if (absentMeansStale && (!hasLocal || !hasRemote)) {
+      mergedByKey.set(key, [cloneJson(hasLocal ? local : remote)]);
+      continue;
+    }
+    if (!hasRemote &&
+        typeof keepLocalWhenRemoteAbsent === 'function' &&
+        keepLocalWhenRemoteAbsent(local) === true) {
+      mergedByKey.set(key, [cloneJson(local)]);
       continue;
     }
     if (!hasLocal) {
@@ -504,6 +545,13 @@ function mergeEntityCollectionThreeWay(
 
     if (jsonEquals(local, remote)) {
       mergedByKey.set(key, [cloneJson(local)]);
+    } else if (typeof mergePresent === 'function') {
+      mergedByKey.set(key, mergePresent({
+        base,
+        local,
+        remote,
+        usedKeys
+      }));
     } else if (jsonEquals(local, base)) {
       mergedByKey.set(key, [cloneJson(remote)]);
     } else if (jsonEquals(remote, base)) {
@@ -543,15 +591,195 @@ function getMarkerContentForMerge(marker) {
   // 답글 추가/수정도 parent.updatedAt을 올리므로 revision 시각 자체는
   // 부모 본문 충돌 판정에서 제외하고 실제 필드 변경만 비교한다.
   delete content.updatedAt;
+  // 삭제를 전송으로 받으면 받은 쪽 시계로 삭제 시각이 찍혀, 같은 삭제가 PC 마다 시각만
+  // 다르다. 삭제 표시끼리는 삭제 시각을 본문 차이로 보지 않는다. 차이로 보면 전송으로
+  // 삭제를 받은 PC 가 "내가 따로 고쳤다" 로 읽혀, 삭제 되돌리기가 충돌 사본으로 생긴다.
+  if (content.deleted === true) delete content.deletedAt;
   return content;
 }
 
-function mergeRepliesThreeWay(baseReplies, localReplies, remoteReplies) {
+// 해결 상태를 뺀 본문. "해결 상태만 서로 다르게 바뀌었는가" 를 가릴 때 쓴다.
+function getMarkerContentWithoutResolution(content) {
+  if (!content || typeof content !== 'object' || Array.isArray(content)) {
+    return content;
+  }
+  const rest = { ...content };
+  delete rest.resolved;
+  delete rest.resolvedAt;
+  delete rest.resolvedBy;
+  return rest;
+}
+
+// 같은 답글이 만든 쪽 모델(이미지 칸 없음)과 Broadcast 로 받은 쪽 모델(이미지 칸이 null)에서
+// 서로 다른 모양으로 저장된다. 모양만 다른 것을 다른 답글로 보면 충돌 사본이 생긴다.
+function normalizeReplyForMerge(reply) {
+  if (!reply || typeof reply !== 'object' || Array.isArray(reply)) return reply;
+  const normalized = cloneJson(reply);
+  for (const key of ['image', 'imageWidth', 'imageHeight']) {
+    if (normalized[key] === null || normalized[key] === undefined) {
+      delete normalized[key];
+    }
+  }
+  return canonicalizeJson(normalized);
+}
+
+function normalizeRepliesForMerge(replies) {
+  return Array.isArray(replies) ? replies.map(normalizeReplyForMerge) : replies;
+}
+
+// 댓글 하나의 "상태 지문"(답글 제외, 수정 시각 포함). 이 인스턴스가 이미 지나온 상태가
+// 파일로 다시 내려왔는지 알아보는 데 쓴다.
+function getMarkerRevisionKey(marker) {
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return null;
+  // 댓글이 바뀔 때마다 부르므로 답글(첨부 그림 포함)은 복제하지 않고 빼기만 한다.
+  // eslint-disable-next-line no-unused-vars
+  const { replies, ...metadata } = marker;
+  try {
+    return JSON.stringify(canonicalizeJson(metadata));
+  } catch (_error) {
+    return null;
+  }
+}
+
+function getMarkerRevisionFingerprint(marker) {
+  const key = getMarkerRevisionKey(marker);
+  return key === null ? null : compactDrawingsV3Fingerprint(key);
+}
+
+/**
+ * 댓글 상태 둘의 앞뒤(답글 제외). 음수면 left 가 앞선(더 옛) 상태다.
+ *
+ * 수정 시각이 다르면 그 순서를 따르고, 같으면 내용의 사전 순서로 가른다. 어느 PC 에서
+ * 계산해도 같은 답이 나와야 한다 — 두 PC 가 서로 상대의 상태를 "더 옛 것" 으로 보면
+ * 각자 자기 상태로 파일을 덮어쓰기를 끝없이 되풀이한다.
+ */
+function compareMarkerRevisions(left, right) {
+  const leftTime = getCommentRevisionTime({ ...left, replies: [] });
+  const rightTime = getCommentRevisionTime({ ...right, replies: [] });
+  if (leftTime !== rightTime) return leftTime < rightTime ? -1 : 1;
+  const leftKey = getMarkerRevisionKey(left) || '';
+  const rightKey = getMarkerRevisionKey(right) || '';
+  if (leftKey === rightKey) return 0;
+  return leftKey < rightKey ? -1 : 1;
+}
+
+// 화면을 다시 그릴 만한 차이가 있는지 가리는 서명. 수정 시각만 다른 것은 같다고 본다
+// (같은 변경도 보낸 쪽과 받은 쪽의 수정 시각이 다를 수 있다).
+function getCommentContentSignature(commentData) {
+  const layers = (Array.isArray(commentData?.layers) ? commentData.layers : [])
+    .map(layer => ({
+      ...layer,
+      markers: (Array.isArray(layer?.markers) ? layer.markers : []).map(marker => ({
+        ...getMarkerContentForMerge(marker),
+        replies: normalizeRepliesForMerge(marker?.replies || [])
+      }))
+    }));
+  return JSON.stringify(canonicalizeJson({ ...(commentData || {}), layers }));
+}
+
+/**
+ * 파일에서 댓글을 받아들인 뒤의 병합 기준을 만든다.
+ *
+ * 병합 결과는 방금 읽은 원격을 반영했으므로 기준은 그 원격으로 옮긴다. 그래야 로컬과
+ * 원격의 차이가 "내 변경" 으로, 다음 원격과 이 원격의 차이가 "원격의 새 변경" 으로 읽힌다.
+ * 단 옛 사본이라 받아들이지 않은 댓글과 원격에 없는 댓글은 예전 기준을 그대로 둔다 —
+ * 기준까지 옛 사본으로 내리면 뒤에 오는 진짜 변경이 "양쪽이 다 바꿨다" 로 읽혀 충돌
+ * 사본이 생긴다.
+ *
+ * @param {Object} baseComments - 지금까지의 기준
+ * @param {Object} localComments - 병합에 넣은 로컬 댓글(병합 결과가 아니다)
+ * @param {Object} remoteComments - 방금 읽은 원격 댓글
+ * @param {Object} [mergeOptions] - 병합에 쓴 것과 같은 판정 함수
+ */
+function advanceCommentMergeBase(baseComments, localComments, remoteComments, mergeOptions = {}) {
+  const byId = items => new Map(
+    (Array.isArray(items) ? items : []).map(item => [String(item?.id), item])
+  );
+  const isSuperseded = typeof mergeOptions.isSupersededMarker === 'function'
+    ? mergeOptions.isSupersededMarker
+    : () => false;
+  const baseLayers = byId(baseComments?.layers);
+  const localLayers = byId(localComments?.layers);
+  const remoteLayers = Array.isArray(remoteComments?.layers) ? remoteComments.layers : [];
+  const layers = remoteLayers.map(remoteLayer => {
+    const layerId = String(remoteLayer?.id);
+    const baseMarkers = byId(baseLayers.get(layerId)?.markers);
+    const localMarkers = byId(localLayers.get(layerId)?.markers);
+    const remoteMarkers = Array.isArray(remoteLayer?.markers) ? remoteLayer.markers : [];
+    const remoteMarkerIds = new Set(remoteMarkers.map(marker => String(marker?.id)));
+    const markers = remoteMarkers.map(remoteMarker => {
+      const markerId = String(remoteMarker?.id);
+      const rejectedAsStale = baseMarkers.has(markerId) &&
+        localMarkers.has(markerId) &&
+        isSuperseded(remoteMarker, localMarkers.get(markerId)) === true;
+      return cloneJson(rejectedAsStale ? baseMarkers.get(markerId) : remoteMarker);
+    });
+    for (const [markerId, baseMarker] of baseMarkers) {
+      if (!remoteMarkerIds.has(markerId)) markers.push(cloneJson(baseMarker));
+    }
+    return { ...cloneJson(remoteLayer), markers };
+  });
+  const remoteLayerIds = new Set(remoteLayers.map(layer => String(layer?.id)));
+  for (const [layerId, baseLayer] of baseLayers) {
+    if (!remoteLayerIds.has(layerId)) layers.push(cloneJson(baseLayer));
+  }
+  return {
+    ...(remoteComments && !Array.isArray(remoteComments) ? cloneJson(remoteComments) : {}),
+    layers
+  };
+}
+
+/**
+ * 로컬 댓글이 파일보다 앞서 있는가: 파일에 없는 댓글이 있거나, 파일의 댓글이 이미 지나온
+ * 옛 상태다. 이때는 파일이 옛 사본으로 돌아간 것이므로 다시 저장해 바로잡아야 한다 —
+ * 파일로만 동기화하는 사람은 이 파일만 본다.
+ */
+function hasCommentStateAheadOfRemote(localComments, remoteComments, mergeOptions = {}) {
+  if (typeof mergeOptions.isSupersededMarker !== 'function') return false;
+  const remoteLayers = new Map(
+    (Array.isArray(remoteComments?.layers) ? remoteComments.layers : [])
+      .map(layer => [String(layer?.id), layer])
+  );
+  for (const layer of Array.isArray(localComments?.layers) ? localComments.layers : []) {
+    const remoteLayer = remoteLayers.get(String(layer?.id));
+    if (!remoteLayer) continue;
+    const remoteMarkers = new Map(
+      (Array.isArray(remoteLayer.markers) ? remoteLayer.markers : [])
+        .map(marker => [String(marker?.id), marker])
+    );
+    for (const marker of Array.isArray(layer?.markers) ? layer.markers : []) {
+      const remoteMarker = remoteMarkers.get(String(marker?.id));
+      if (!remoteMarker) return true;
+      if (mergeOptions.isSupersededMarker(remoteMarker, marker) === true) return true;
+    }
+  }
+  return false;
+}
+
+function mergeRepliesThreeWay(
+  baseReplies,
+  localReplies,
+  remoteReplies,
+  { remoteRevisionTime = null, isUnseenByRemote = null, hasSeenReply = null } = {}
+) {
+  // 답글은 물리적으로 지워지므로 "원격에 없다" 가 삭제일 수도, 그 답글이 생기기 전의
+  // 사본일 수도 있다. 다음 둘 중 하나면 삭제가 아니다.
+  // - isUnseenByRemote: 원격이 그 답글을 아직 못 본 사본으로 판정됐다(createUnseenReplyKeeper).
+  // - 원격 댓글의 마지막 수정이 답글 작성보다 앞선다. 그 사본은 답글을 본 적이 없다.
+  const keepLocalWhenRemoteAbsent = reply =>
+    (typeof isUnseenByRemote === 'function' && isUnseenByRemote(reply) === true) ||
+    (Number.isFinite(remoteRevisionTime) && toTime(reply?.createdAt) > remoteRevisionTime);
   return mergeEntityCollectionThreeWay(
-    baseReplies,
-    localReplies,
-    remoteReplies,
+    normalizeRepliesForMerge(baseReplies),
+    normalizeRepliesForMerge(localReplies),
+    normalizeRepliesForMerge(remoteReplies),
     {
+      keepLocalWhenRemoteAbsent,
+      // 이 인스턴스에 있다가 사라진 답글이 원격에만 남아 있으면, 새 답글이 아니라
+      // 이미 지운 답글이다. 되살리지 않는다.
+      acceptRemoteOnly: typeof hasSeenReply === 'function'
+        ? reply => reply?.id === null || reply?.id === undefined || hasSeenReply(reply.id) !== true
+        : null,
       createConflictCopy: (reply, replyIds, conflictKind) =>
         createDeterministicConflictCopy(reply, replyIds, {
           conflictKind,
@@ -568,6 +796,57 @@ function mergeRepliesThreeWay(baseReplies, localReplies, remoteReplies) {
   );
 }
 
+/**
+ * 로컬에는 있는데 원격에 없는 답글 가운데 "원격이 아직 못 본 답글" 을 가려내는 판정 함수를 만든다.
+ * 지킬 답글이 없으면 null.
+ *
+ * 원격 사용자가 내 최근 답글을 보지 못한 채 같은 댓글을 고치면(방 밖 사용자는 변경을
+ * 몇 초~수십 초 늦게 받는다), 그 저장분에는 내 답글이 없다. 이를 삭제로 읽으면 내 답글이
+ * 파일에서 사라진다. 아래에 모두 해당하면 삭제가 아니라 옛 시야로 본다.
+ *   1. 원격이 가진 답글이 로컬 답글 목록의 앞부분뿐이다(빠진 것이 전부 뒤쪽이다).
+ *      가운데가 빠졌다면 원격이 그 답글을 본 뒤 지운 것이다.
+ *   2. 원격이 "답글만 지운" 편집이 아니다. 본문·해결 상태가 기준과 같고 남은 답글도 기준
+ *      그대로이며 새 답글이 없으면, 최근 답글을 지운 것으로 본다.
+ *   3. 빠진 답글의 작성자가 원격에 새 답글을 쓴 사람이 아니다. 자기 답글을 지우고 다시 쓴
+ *      사람의 저장분에는 옛 답글이 없는데, 자기가 쓴 답글을 못 봤을 수는 없으니 삭제다.
+ */
+function createUnseenReplyKeeper(baseMarker, localMarker, remoteMarker) {
+  const replyId = reply => String(reply?.id);
+  const localReplies = Array.isArray(localMarker?.replies) ? localMarker.replies : [];
+  const remoteReplies = Array.isArray(remoteMarker?.replies) ? remoteMarker.replies : [];
+  const localIds = localReplies.map(replyId);
+  const remoteIds = new Set(remoteReplies.map(replyId));
+  const firstMissing = localIds.findIndex(id => !remoteIds.has(id));
+  if (firstMissing === -1) return null;
+  if (!localIds.slice(firstMissing).every(id => !remoteIds.has(id))) return null;
+
+  const localIdSet = new Set(localIds);
+  const baseReplies = new Map(
+    (Array.isArray(baseMarker?.replies) ? baseMarker.replies : [])
+      .map(reply => [replyId(reply), normalizeReplyForMerge(reply)])
+  );
+  const newRemoteReplies = remoteReplies.filter(reply =>
+    !localIdSet.has(replyId(reply)) && !baseReplies.has(replyId(reply))
+  );
+  if (baseMarker) {
+    const remoteOnlyRemovedReplies =
+      newRemoteReplies.length === 0 &&
+      jsonEquals(
+        getMarkerContentForMerge(remoteMarker),
+        getMarkerContentForMerge(baseMarker)
+      ) &&
+      remoteReplies.every(reply =>
+        baseReplies.has(replyId(reply)) &&
+        jsonEquals(normalizeReplyForMerge(reply), baseReplies.get(replyId(reply)))
+      );
+    if (remoteOnlyRemovedReplies) return null;
+  }
+  const rewritingAuthors = new Set(
+    newRemoteReplies.map(reply => reply?.author).filter(Boolean)
+  );
+  return reply => !rewritingAuthors.has(reply?.author);
+}
+
 function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
   const localMetadata = withoutReplies(localMarker);
   const remoteMetadata = withoutReplies(remoteMarker);
@@ -576,8 +855,7 @@ function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
   const remoteContent = getMarkerContentForMerge(remoteMarker);
 
   if (jsonEquals(localContent, remoteContent)) {
-    const selected = getCommentRevisionTime(remoteMetadata) >
-      getCommentRevisionTime(localMetadata)
+    const selected = compareMarkerRevisions(remoteMetadata, localMetadata) > 0
       ? remoteMetadata
       : localMetadata;
     return {
@@ -619,6 +897,24 @@ function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
       };
   }
 
+  // 본문·위치·구간은 같고 해결 상태만 서로 다르게 바뀌었다(두 사람이 각자 해결하거나
+  // 해제했다). 해결 상태는 값 하나짜리 표시라 댓글을 둘로 갈라 보존할 것이 없다.
+  // 나중 변경을 따른다.
+  if (jsonEquals(
+    getMarkerContentWithoutResolution(localContent),
+    getMarkerContentWithoutResolution(remoteContent)
+  )) {
+    // 같은 시각이면 내용 순서로 가른다. "로컬 우선" 으로 두면 PC 마다 다른 쪽을 고른다.
+    const selected = compareMarkerRevisions(remoteMetadata, localMetadata) > 0
+      ? remoteMetadata
+      : localMetadata;
+    return {
+      selected: cloneJson(selected),
+      conflict: null,
+      conflictKind: null
+    };
+  }
+
   return {
     selected: cloneJson(localMetadata),
     conflict: cloneJson(remoteMetadata),
@@ -626,12 +922,34 @@ function selectMarkerMetadata(baseMarker, localMarker, remoteMarker) {
   };
 }
 
-function mergeMarkerThreeWay(baseMarker, localMarker, remoteMarker, usedKeys) {
+function mergeMarkerThreeWay(
+  baseMarker,
+  localMarker,
+  remoteMarker,
+  usedKeys,
+  mergeOptions = {}
+) {
+  // 원격 댓글이 이 인스턴스가 이미 지나온 옛 상태면(드라이브가 늦게 배달한 사본),
+  // 본문과 해결 상태는 로컬을 지킨다. 답글은 아래 규칙으로 따로 합친다.
+  const remoteIsSuperseded =
+    typeof mergeOptions.isSupersededMarker === 'function' &&
+    mergeOptions.isSupersededMarker(remoteMarker, localMarker) === true;
   const replies = mergeRepliesThreeWay(
     baseMarker?.replies,
     localMarker?.replies,
-    remoteMarker?.replies
+    remoteMarker?.replies,
+    {
+      remoteRevisionTime: getCommentRevisionTime(remoteMarker || {}),
+      // 옛 사본은 그 뒤에 생긴 답글을 지웠을 수 없다.
+      isUnseenByRemote: remoteIsSuperseded
+        ? () => true
+        : createUnseenReplyKeeper(baseMarker, localMarker, remoteMarker),
+      hasSeenReply: mergeOptions.hasSeenReply
+    }
   );
+  if (remoteIsSuperseded) {
+    return [{ ...cloneJson(withoutReplies(localMarker)), replies }];
+  }
   const { selected, conflict, conflictKind } = selectMarkerMetadata(
     baseMarker,
     localMarker,
@@ -650,7 +968,19 @@ function mergeMarkerThreeWay(baseMarker, localMarker, remoteMarker, usedKeys) {
   ];
 }
 
-function mergeCommentDataThreeWay(baseData, localData, remoteData) {
+/**
+ * 댓글 데이터를 세 갈래로 합친다.
+ *
+ * 같은 파일을 여러 PC 가 각자 저장하고 드라이브가 마지막 업로드를 남기므로, 원격(디스크)이
+ * 로컬보다 옛 사본인 일이 흔하다. 기준과의 단순 비교는 그 사본을 "원격이 바꿨다" 로 읽어
+ * 해결을 되돌리고 댓글을 지운다. 그래서 댓글 레이어와 마커는 양쪽이 다를 때마다 아래
+ * 규칙으로 직접 판정한다.
+ *
+ * @param {Object} [mergeOptions]
+ * @param {Function} [mergeOptions.isSupersededMarker] - (remote, local) => 원격이 이미 지나온 옛 상태인가
+ * @param {Function} [mergeOptions.hasSeenReply] - replyId => 이 인스턴스에 있던 답글인가
+ */
+function mergeCommentDataThreeWay(baseData, localData, remoteData, mergeOptions = {}) {
   const baseLayers = Array.isArray(baseData?.layers) ? baseData.layers : [];
   const localLayers = Array.isArray(localData?.layers) ? localData.layers : [];
   const remoteLayers = Array.isArray(remoteData?.layers) ? remoteData.layers : [];
@@ -664,7 +994,7 @@ function mergeCommentDataThreeWay(baseData, localData, remoteData) {
           conflictKind,
           labelKey: 'name'
         }),
-      mergeConcurrent: ({ base, local, remote, usedKeys }) => {
+      mergePresent: ({ base, local, remote, usedKeys }) => {
         const markers = mergeEntityCollectionThreeWay(
           base?.markers,
           local.markers,
@@ -675,7 +1005,10 @@ function mergeCommentDataThreeWay(baseData, localData, remoteData) {
                 conflictKind,
                 labelKey: null
               }),
-            mergeConcurrent: ({
+            // 댓글 삭제는 deleted 표시로 남는다. 파일에 댓글이 아예 없다면 그 댓글이
+            // 생기기 전의 사본이다.
+            absentMeansStale: true,
+            mergePresent: ({
               base: baseMarker,
               local: localMarker,
               remote: remoteMarker,
@@ -684,7 +1017,8 @@ function mergeCommentDataThreeWay(baseData, localData, remoteData) {
               baseMarker,
               localMarker,
               remoteMarker,
-              markerIds
+              markerIds,
+              mergeOptions
             )
           }
         );
@@ -819,7 +1153,7 @@ function mergeScalarThreeWay(baseValue, localValue, remoteValue) {
   return cloneJson(remoteValue);
 }
 
-function mergeReviewDataThreeWay(baseData, localData, remoteData) {
+function mergeReviewDataThreeWay(baseData, localData, remoteData, mergeOptions = {}) {
   const base = captureReviewMergeBase(baseData);
   const local = captureReviewMergeBase(localData);
   const remote = captureReviewMergeBase(remoteData);
@@ -829,7 +1163,8 @@ function mergeReviewDataThreeWay(baseData, localData, remoteData) {
     comments: mergeCommentDataThreeWay(
       base.comments,
       local.comments,
-      remote.comments
+      remote.comments,
+      mergeOptions.comments
     ),
     drawings: mergeDrawingDataThreeWay(
       base.drawings,
@@ -897,6 +1232,11 @@ export class ReviewDataManager extends EventTarget {
     // including callers that do not install the optional feature manager.
     this._reviewCarryoverFallback = undefined;
     this._reviewCarryoverDiskReloadEpoch = 0;
+    this._commentsDiskReloadEpoch = 0;
+    // 댓글이 이 인스턴스에서 거쳐 온 상태의 지문(댓글 id → 지문 집합)과, 한 번이라도
+    // 들고 있던 답글 id. 드라이브가 늦게 배달한 옛 사본을 "원격의 새 변경" 과 구별한다.
+    this._seenMarkerRevisions = new Map();
+    this._seenReplyIds = new Set();
     this.fabricDrawingPersistenceProvider =
       options.fabricDrawingPersistenceProvider || null;
 
@@ -1212,6 +1552,7 @@ export class ReviewDataManager extends EventTarget {
     this._drawingsV3ExternalStaleFingerprints.clear();
     this._drawingsV3LastObservedDiskFingerprint = null;
     this._reviewMergeBase = createEmptyReviewMergeBase();
+    this._resetCommentRevisionHistory();
     this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
     this._reviewCarryoverFallback = undefined;
@@ -1452,6 +1793,7 @@ export class ReviewDataManager extends EventTarget {
         this._assertRootEnvelopeWritable();
         const attemptFabricDrawingAuthorityEpoch = this._fabricDrawingAuthorityEpoch;
         const localData = this._collectData();
+        this._rememberCommentRevisions(localData.comments);
         const attemptReviewMergeBase = captureReviewMergeBase(localData);
         const data = this._mergeBeforeSave(localData, latestRoot);
         const attemptChangeRevision = this._changeRevision;
@@ -1489,7 +1831,10 @@ export class ReviewDataManager extends EventTarget {
 
         if (saveResult?.conflict === true) {
           this._writeBlockedReason = 'review-file-version-conflict';
-          throw new Error('저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.');
+          // 덮어쓰지 않았으니 잃은 것은 없다. 재시도가 최신 파일을 다시 읽어 합친다.
+          const conflictError = new Error('저장 직전 .bframe이 다시 변경되어 덮어쓰기를 중단했습니다.');
+          conflictError.saveFailureReason = REVIEW_FILE_VERSION_CONFLICT;
+          throw conflictError;
         }
         if (saveResult?.retryable === true) {
           const deferredReason = saveResult.reason || 'review-file-busy';
@@ -1523,7 +1868,9 @@ export class ReviewDataManager extends EventTarget {
           saveResult.versionToken === this._reviewFileVersionToken;
         if (observationChanged && !observationMatchesCompletedWrite) {
           this._writeBlockedReason = 'review-file-version-conflict';
-          throw new Error('저장 중 .bframe 상태가 바뀌어 저장 완료 처리를 중단했습니다.');
+          const observationError = new Error('저장 중 .bframe 상태가 바뀌어 저장 완료 처리를 중단했습니다.');
+          observationError.saveFailureReason = REVIEW_FILE_VERSION_CONFLICT;
+          throw observationError;
         }
 
         if (saveResult?.exists === true && wasInitialPersist) {
@@ -1770,11 +2117,209 @@ export class ReviewDataManager extends EventTarget {
     const mergedData = mergeReviewDataThreeWay(
       this._reviewMergeBase,
       localData,
-      remoteData
+      remoteData,
+      { comments: this._createCommentMergeOptions({ ordered: true }) }
     );
 
     mergedData.modifiedAt = new Date().toISOString();
     return mergedData;
+  }
+
+  _resetCommentRevisionHistory() {
+    this._seenMarkerRevisions.clear();
+    this._seenReplyIds.clear();
+  }
+
+  /**
+   * 댓글 하나의 현재 상태를 "이 인스턴스가 들고 있던 상태" 로 기억한다.
+   * @param {Object} marker - CommentMarker 또는 그 JSON
+   */
+  _rememberMarkerRevision(marker) {
+    const record = typeof marker?.toJSON === 'function' ? marker.toJSON() : marker;
+    if (!record || record.id === null || record.id === undefined) return;
+    for (const reply of Array.isArray(record.replies) ? record.replies : []) {
+      if (reply?.id !== null && reply?.id !== undefined) {
+        this._seenReplyIds.add(String(reply.id));
+      }
+    }
+    const fingerprint = getMarkerRevisionFingerprint(record);
+    if (!fingerprint) return;
+    const markerId = String(record.id);
+    let seen = this._seenMarkerRevisions.get(markerId);
+    if (!seen) {
+      seen = new Set();
+      this._seenMarkerRevisions.set(markerId, seen);
+    }
+    // 다시 본 상태는 최근 자리로 옮기고, 오래된 것부터 버린다.
+    seen.delete(fingerprint);
+    seen.add(fingerprint);
+    while (seen.size > MAX_MARKER_REVISION_HISTORY) {
+      seen.delete(seen.values().next().value);
+    }
+  }
+
+  _rememberCommentRevisions(commentData) {
+    for (const layer of Array.isArray(commentData?.layers) ? commentData.layers : []) {
+      for (const marker of Array.isArray(layer?.markers) ? layer.markers : []) {
+        this._rememberMarkerRevision(marker);
+      }
+    }
+  }
+
+  /**
+   * 댓글 병합에 넘길 판정 함수들.
+   *
+   * 원격 댓글이 이 인스턴스가 들고 있던 상태와 똑같으면(수정 시각 포함) 옛 사본 후보다.
+   * 어디에 쓰느냐에 따라 한 가지를 더 본다.
+   *
+   * - 화면으로 받아들일 때(ordered: false): 들고 있던 상태로는 되돌아가지 않는다. PC 사이의
+   *   시계 차이와 무관하게, 화면이 이미 지나온 상태로 돌아가는 일이 없다.
+   * - 파일에 쓸 때와 파일을 바로잡을 때(ordered: true): 그 상태가 지금 로컬보다 **앞선**
+   *   상태일 때만 옛 사본이다. 두 사람이 같은 댓글을 거의 동시에 고치면 서로의 전송이
+   *   엇갈려 도착해(받는 쪽은 수정 시각을 비교하지 않고 덮어쓴다) 각자 상대의 상태를 들게
+   *   되고, 둘 다 상대의 상태를 "들고 있던 상태" 로 갖는다. 순서를 보지 않고 파일을 쓰면
+   *   두 PC 가 서로의 저장분을 옛 사본으로 보고 끝없이 덮어쓴다. 순서는 어느 PC 에서나
+   *   같으므로(compareMarkerRevisions) 파일은 한쪽 상태로 모인다.
+   *
+   * @param {Object} [options]
+   * @param {boolean} [options.ordered] - 파일에 쓰는 경로면 true
+   */
+  _createCommentMergeOptions({ ordered = false } = {}) {
+    return {
+      isSupersededMarker: (remoteMarker, localMarker) => {
+        const fingerprint = getMarkerRevisionFingerprint(remoteMarker);
+        if (!fingerprint ||
+            fingerprint === getMarkerRevisionFingerprint(localMarker)) {
+          return false;
+        }
+        if (this._seenMarkerRevisions
+          .get(String(remoteMarker?.id))?.has(fingerprint) !== true) {
+          return false;
+        }
+        return !ordered || compareMarkerRevisions(remoteMarker, localMarker) < 0;
+      },
+      hasSeenReply: replyId => this._seenReplyIds.has(String(replyId))
+    };
+  }
+
+  /**
+   * .bframe 파일에서 댓글만 다시 읽어 화면의 댓글과 합친다.
+   *
+   * Liveblocks 연결 중에는 댓글을 Broadcast 로 주고받지만, 실시간 방 정원(동시 10명) 밖의
+   * 사용자는 Broadcast 를 보낼 수 없어 그 사람의 변경은 파일로만 도착한다. 연결 중인
+   * 사용자가 파일을 보지 않으면 그 변경을 파일을 다시 열 때까지 받지 못한다.
+   *
+   * 댓글만 다루고 dirty·자동 저장·CAS 관측값은 건드리지 않는다(reloadReviewCarryoverFromDisk
+   * 와 같은 원칙). 옛 사본은 받아들이지 않는다(_createCommentMergeOptions).
+   *
+   * @returns {Promise<{success: boolean, changed: boolean}>}
+   */
+  async reloadCommentsFromDisk() {
+    const skipped = { success: false, changed: false };
+    if (typeof this.commentManager?.toJSON !== 'function' ||
+        typeof this.commentManager?.fromJSON !== 'function' ||
+        this.isLoading || !this._hasPersistedFile) {
+      return skipped;
+    }
+    const request = ++this._commentsDiskReloadEpoch;
+    const owner = this._captureReviewContextOwner();
+    if (!owner.bframePath) return skipped;
+    try {
+      const { data } = await this._readReviewSnapshot(owner.bframePath);
+      if (request !== this._commentsDiskReloadEpoch ||
+          !this._ownsReviewContext(owner) || this.isLoading) {
+        return skipped;
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return skipped;
+      if (getUnsupportedBframeMajor(
+        getDataVersion(data),
+        BFRAME_VERSION,
+        !hasExplicitBframeVersion(data)
+      ) !== null) {
+        return skipped;
+      }
+      if ((Object.hasOwn(data, 'reviewDocumentId') &&
+           !isValidReviewDocumentId(data.reviewDocumentId)) ||
+          (this._reviewDocumentIdPersisted &&
+           data.reviewDocumentId !== this._reviewDocumentId)) {
+        return skipped;
+      }
+      const remoteComments = normalizeReviewRootForMerge(data)?.comments;
+      if (!Array.isArray(remoteComments?.layers)) return skipped;
+
+      // 읽기를 기다리는 사이의 편집까지 담도록 읽은 뒤에 현재 댓글을 모은다.
+      const localComments = this.commentManager.toJSON();
+      this._rememberCommentRevisions(localComments);
+      const mergeOptions = this._createCommentMergeOptions();
+      const merged = mergeCommentDataThreeWay(
+        this._reviewMergeBase.comments,
+        localComments,
+        remoteComments,
+        mergeOptions
+      );
+      // 댓글 레이어는 표시 없이 물리적으로 지워지므로, 파일에 없다는 것만으로 화면의
+      // 레이어를 내리지 않는다(레이어 삭제는 Broadcast 와 다음 열기에서 반영된다).
+      const mergedLayerIds = new Set(merged.layers.map(layer => String(layer?.id)));
+      for (const layer of Array.isArray(localComments?.layers) ? localComments.layers : []) {
+        if (!mergedLayerIds.has(String(layer?.id))) merged.layers.push(cloneJson(layer));
+      }
+      this._reviewMergeBase.comments = advanceCommentMergeBase(
+        this._reviewMergeBase.comments,
+        localComments,
+        remoteComments,
+        mergeOptions
+      );
+      // 파일이 옛 사본으로 돌아가 있으면(내 댓글·해결이 파일에 없다) 다시 저장해 바로잡는다.
+      // 파일로만 동기화하는 사람은 이 파일만 본다. 로컬이 순서상 뒤일 때만 한다 — 순서를
+      // 보지 않으면 서로 다른 상태를 든 두 PC 가 번갈아 파일을 덮어쓴다.
+      if (hasCommentStateAheadOfRemote(
+        localComments,
+        remoteComments,
+        this._createCommentMergeOptions({ ordered: true })
+      )) {
+        this._markDirty({ scheduleAutoSave: true });
+      }
+
+      if (getCommentContentSignature(merged) ===
+          getCommentContentSignature(localComments)) {
+        return { success: true, changed: false };
+      }
+
+      const activeLayerId = this.commentManager.activeLayerId;
+      // 말풍선 고정은 파일에 저장하지 않는 화면 상태다. 모델을 갈아 끼워도 유지한다.
+      const pinnedMarkerIds = new Set(
+        (typeof this.commentManager.getAllMarkers === 'function'
+          ? this.commentManager.getAllMarkers()
+          : [])
+          .filter(marker => marker?.pinned === true)
+          .map(marker => marker.id)
+      );
+      const wasLoading = this.isLoading;
+      // fromJSON 이 내는 이벤트가 "사용자 편집" 으로 잡혀 다시 저장을 걸지 않게 한다.
+      this.isLoading = true;
+      try {
+        this.commentManager.fromJSON(merged);
+      } finally {
+        this.isLoading = wasLoading;
+      }
+      if (activeLayerId && this.commentManager.activeLayerId !== activeLayerId &&
+          typeof this.commentManager.setActiveLayer === 'function') {
+        this.commentManager.setActiveLayer(activeLayerId);
+      }
+      if (pinnedMarkerIds.size > 0 && typeof this.commentManager.getMarker === 'function') {
+        for (const markerId of pinnedMarkerIds) {
+          const marker = this.commentManager.getMarker(markerId);
+          if (marker && !marker.deleted) marker.pinned = true;
+        }
+      }
+      this._rememberCommentRevisions(merged);
+      this._rememberCommentRevisions(this.commentManager.toJSON());
+      log.info('파일에서 댓글 변경을 받아들임', { path: owner.bframePath });
+      return { success: true, changed: true };
+    } catch (error) {
+      log.warn('댓글 파일 동기화 실패', { error: error.message });
+      return skipped;
+    }
   }
 
   /**
@@ -1872,6 +2417,10 @@ export class ReviewDataManager extends EventTarget {
         loadedReviewMergeBase,
         this._collectReviewDataForMerge(loadedReviewMergeBase)
       );
+      // 모델이 내보내는 모양만 "들고 있던 상태" 로 기억한다. 파일에 적힌 모양(오래된 버전이
+      // 쓴 파일은 시각 표기나 칸 구성이 다르다)까지 기억하면, 바뀐 것이 없는 파일을 옛
+      // 사본으로 오인해 열어 둔 사람마다 한 번씩 다시 저장한다.
+      this._rememberCommentRevisions(this.commentManager?.toJSON?.());
 
       this.isDirty = false;
       this.isLoading = false;
@@ -2033,13 +2582,31 @@ export class ReviewDataManager extends EventTarget {
           result.added = mergeResult.added;
           result.updated = mergeResult.updated;
         }
+        this._rememberCommentRevisions(localReviewData.comments);
+        const commentMergeOptions = this._createCommentMergeOptions();
         const mergedReviewData = mergeReviewDataThreeWay(
           this._reviewMergeBase,
           localReviewData,
-          remoteReviewData
+          remoteReviewData,
+          { comments: commentMergeOptions }
+        );
+        // 병합 결과를 "들고 있던 상태" 로 기억하기 전에 판정한다(기억한 뒤에는 방금
+        // 받아들인 원격 상태까지 옛 사본으로 보인다).
+        const nextCommentMergeBase = advanceCommentMergeBase(
+          this._reviewMergeBase.comments,
+          localReviewData.comments,
+          remoteReviewData.comments,
+          commentMergeOptions
+        );
+        const commentsAheadOfDisk = hasCommentStateAheadOfRemote(
+          localReviewData.comments,
+          remoteReviewData.comments,
+          this._createCommentMergeOptions({ ordered: true })
         );
 
         this.commentManager?.fromJSON?.(mergedReviewData.comments);
+        this._rememberCommentRevisions(mergedReviewData.comments);
+        this._rememberCommentRevisions(this.commentManager?.toJSON?.());
         this.reviewCarryoverManager?.fromJSON(mergedReviewData.reviewCarryoverV1);
         this._reviewCarryoverFallback = cloneJson(mergedReviewData.reviewCarryoverV1);
         this.drawingManager?.importData?.(mergedReviewData.drawings);
@@ -2053,6 +2620,14 @@ export class ReviewDataManager extends EventTarget {
         // reload merge의 공통 기준점은 ID가 conflict copy로 바뀐 적용 결과가
         // 아니라 저장 직전에 읽은 원격 원본이어야 삭제가 다시 살아나지 않는다.
         this._reviewMergeBase = captureReviewMergeBase(remoteReviewData);
+        // 옛 사본이라 받아들이지 않은 댓글은 예전 기준을 그대로 둔다(advanceCommentMergeBase).
+        this._reviewMergeBase.comments = nextCommentMergeBase;
+        // 파일이 옛 사본으로 돌아가 있으면 다시 저장해 바로잡는다. 자동 저장 예약은
+        // 아래 finally 가 한다.
+        if (commentsAheadOfDisk) {
+          this.isDirty = true;
+          this._changeRevision += 1;
+        }
 
         if (remoteReviewData.modifiedAt &&
             toTime(remoteReviewData.modifiedAt) > toTime(this._modifiedAt)) {
@@ -3217,6 +3792,14 @@ export class ReviewDataManager extends EventTarget {
    * 데이터 변경 이벤트 핸들러
    */
   _onDataChanged(e) {
+    // 댓글이 방금 된 상태를 기억해 둔다. 뒤늦게 내려온 파일 사본이 이 상태와 같으면
+    // 이미 지나온 옛 사본이다(_createCommentMergeOptions).
+    const changedMarker = e?.detail?.marker ||
+      (e?.detail?.markerId && typeof this.commentManager?.getMarker === 'function'
+        ? this.commentManager.getMarker(e.detail.markerId)
+        : null);
+    if (changedMarker) this._rememberMarkerRevision(changedMarker);
+
     // Carryover load/reset emits loaded, never changed. Do not drop real
     // clicks during an external reload's awaited disk read.
     if (this.isLoading && e.target !== this.reviewCarryoverManager) return;
