@@ -262,10 +262,12 @@ test('repeated current resolution clicks do not borrow a pending opposite intent
   const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
   const held = deferred(), marker = { id: 'm', resolved: false }; let calls = 0; const notices = [];
   const context = vm.createContext({ playlistResolutionQueue: createPlaylistResolutionQueue({ keyForPath: p => p }), normalizeComparableFilePath: p => p,
-    commentManager: { getMarker: () => marker, layers: [{ id: 'l', markers: new Map([['m', marker]]) }] },
-    reviewDataManager: { getVideoPath: () => 'A', getBframePath: () => 'A.bframe' }, showToast: text => notices.push(text),
+    commentManager: { getMarker: () => marker, layers: [{ id: 'l', markers: new Map([['m', marker]]) }], _emit() {} },
+    reviewDataManager: { getVideoPath: () => 'A', getBframePath: () => 'A.bframe', captureSaveCheckpoint: () => ({ revision: 1 }) },
+    liveblocksManager: { checkEditLock: () => null }, userName: 'tester', suppressCommentRangeRefreshOnce: false,
+    showToast: text => notices.push(text),
     togglePlaylistAggregateResolvedWithoutNavigation: async (_range, intent) => { calls++; marker.resolved = intent.desiredResolved; await held.promise; return marker; } });
-  vm.runInContext(appFunction('toggleCurrentMarkerResolved'), context);
+  for (const name of ['snapshotMarkerResolution', 'applyMarkerResolutionToggle', 'toggleCurrentMarkerResolved']) vm.runInContext(appFunction(name), context);
   const first = context.toggleCurrentMarkerResolved('m'); await Promise.resolve(); await Promise.resolve();
   let secondFinished = false; const second = context.toggleCurrentMarkerResolved('m').then(result => { secondFinished = true; return result; });
   await Promise.resolve(); await Promise.resolve();
@@ -273,4 +275,141 @@ test('repeated current resolution clicks do not borrow a pending opposite intent
   assert.equal(await second, false); assert.equal(calls, 1); assert.match(notices.at(-1), /저장/);
   held.resolve(true); assert.equal(await first, true); assert.equal(marker.resolved, true);
   assert.equal(await context.toggleCurrentMarkerResolved('m'), true); assert.equal(marker.resolved, false); assert.equal(calls, 2);
+});
+
+const CURRENT_TOGGLE_FUNCTIONS = ['snapshotMarkerResolution', 'applyMarkerResolutionToggle', 'toggleCurrentMarkerResolved'];
+
+test('a current-list resolution shows at the click even while an earlier save in the same file is pending', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  const queue = createPlaylistResolutionQueue({ keyForPath: p => p });
+  const earlier = deferred();
+  // 공유 드라이브에서는 저장 한 번이 수 초 걸린다. 그동안 같은 파일의 다른 작업은 줄을 선다.
+  const blocking = queue.enqueue({ key: 'earlier', videoPath: 'A' }, () => earlier.promise);
+  const marker = { id: 'm', resolved: false }; const events = []; const runs = [];
+  const context = vm.createContext({ playlistResolutionQueue: queue, normalizeComparableFilePath: p => p,
+    commentManager: { getMarker: () => marker, layers: [{ id: 'l', markers: new Map([['m', marker]]) }], _emit: name => events.push(name) },
+    reviewDataManager: { getVideoPath: () => 'A', getBframePath: () => 'A.bframe', captureSaveCheckpoint: () => ({ revision: 7 }) },
+    liveblocksManager: { checkEditLock: () => null }, userName: 'tester', suppressCommentRangeRefreshOnce: false, showToast() {},
+    togglePlaylistAggregateResolvedWithoutNavigation: async (range, intent) => { runs.push({ range, intent }); return marker; } });
+  for (const name of CURRENT_TOGGLE_FUNCTIONS) vm.runInContext(appFunction(name), context);
+
+  const toggling = context.toggleCurrentMarkerResolved('m');
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(marker.resolved, true, 'the click must not wait behind the earlier save');
+  assert.equal(marker.resolvedBy, 'tester');
+  assert.deepEqual(events, ['markerUpdated', 'markersChanged']);
+  assert.equal(runs.length, 0, 'persisting still waits its turn');
+
+  earlier.resolve(true); await blocking;
+  assert.equal(await toggling, true);
+  assert.equal(runs.length, 1);
+  assert.equal(runs[0].intent.desiredResolved, true);
+  assert.equal(runs[0].intent.optimistic.marker, marker);
+  assert.equal(runs[0].intent.optimistic.checkpoint.revision, 7);
+  assert.equal(runs[0].range.resolved, false, 'the range still describes the state before the click');
+});
+
+test('a locked or mid-navigation comment is not changed at the click', async () => {
+  const { createPlaylistResolutionQueue } = await import('../../renderer/scripts/modules/playlist-comment-resolution.js');
+  for (const blocker of ['edit-lock', 'layer-lock', 'navigation']) {
+    const queue = createPlaylistResolutionQueue({ keyForPath: p => p });
+    const marker = { id: 'm', resolved: false }; const events = [];
+    const release = blocker === 'navigation' ? queue.lockPaths(['A']) : () => {};
+    const context = vm.createContext({ playlistResolutionQueue: queue, normalizeComparableFilePath: p => p,
+      commentManager: { getMarker: () => marker, layers: [{ id: 'l', locked: blocker === 'layer-lock', markers: new Map([['m', marker]]) }], _emit: name => events.push(name) },
+      reviewDataManager: { getVideoPath: () => 'A', getBframePath: () => 'A.bframe', captureSaveCheckpoint: () => ({ revision: 1 }) },
+      liveblocksManager: { checkEditLock: () => ({ isLocked: blocker === 'edit-lock' }) }, userName: 'tester',
+      suppressCommentRangeRefreshOnce: false, showToast() {},
+      togglePlaylistAggregateResolvedWithoutNavigation: async () => { throw Object.assign(new Error('blocked'), { blocksNavigation: false }); } });
+    for (const name of CURRENT_TOGGLE_FUNCTIONS) vm.runInContext(appFunction(name), context);
+    assert.equal(await context.toggleCurrentMarkerResolved('m'), false, blocker);
+    assert.equal(marker.resolved, false, blocker);
+    assert.deepEqual(events, [], blocker);
+    release();
+  }
+});
+
+function createCurrentFileResolutionContext({ saveResults, marker, events, notices }) {
+  const layer = { id: 'l', locked: false, markers: new Map([[marker.id, marker]]) };
+  const saves = [];
+  const context = vm.createContext({
+    getPlaylistManager: () => ({ getItems: () => [], ensureItemBframePath: async item => item.bframePath }),
+    reviewDataManager: { getBframePath: () => 'A.bframe', captureSaveCheckpoint: () => ({ revision: 3 }), _ownsSave: () => true,
+      saveThroughCheckpoint: async checkpoint => { saves.push(checkpoint); return saveResults.shift() ?? false; } },
+    isSameFilePath: (a, b) => a === b, userName: 'tester', suppressCommentRangeRefreshOnce: false,
+    commentManager: { getMarker: () => marker, layers: [layer], _emit: name => events.push(name) },
+    liveblocksManager: { checkEditLock: () => null }, showToast: (text, type) => notices.push({ text, type }),
+    RESOLUTION_SAVE_RETRY_DELAYS_MS: [0, 0, 0], setTimeout
+  });
+  for (const name of ['snapshotMarkerResolution', 'applyMarkerResolutionToggle', 'restoreMarkerResolution',
+    'saveResolutionThroughCheckpoint', 'togglePlaylistAggregateResolvedWithoutNavigation']) vm.runInContext(appFunction(name), context);
+  return { context, saves };
+}
+
+const CURRENT_FILE_RANGE = { markerId: 'm', layerId: 'l', resolved: false };
+const createUnresolvedMarker = () => ({ id: 'm', resolved: false, resolvedBy: null, resolvedAt: null, updatedAt: new Date(1) });
+
+test('a current-list resolution stays on screen when the shared file save keeps being deferred', async () => {
+  const marker = createUnresolvedMarker(); const events = []; const notices = [];
+  // 여러 사람이 같은 파일을 저장하는 동안에는 저장이 충돌·사용 중으로 거듭 미뤄질 수 있다.
+  const { context, saves } = createCurrentFileResolutionContext({ saveResults: [false, false, false], marker, events, notices });
+  const result = await context.togglePlaylistAggregateResolvedWithoutNavigation({ ...CURRENT_FILE_RANGE },
+    { videoPath: 'A.mp4', bframePath: 'A.bframe', desiredResolved: true, scope: 'current-resolution' });
+  assert.equal(result, marker);
+  assert.equal(marker.resolved, true, 'the click must not be undone in front of the user');
+  assert.equal(marker.resolvedBy, 'tester');
+  assert.equal(saves.length, 3, 'the same change is retried before giving up on waiting');
+  assert.deepEqual(events, ['markerUpdated', 'markersChanged'], 'no revert is emitted, so none is broadcast');
+  assert.equal(notices.length, 1);
+  assert.equal(notices[0].type, 'info');
+  assert.match(notices[0].text, /자동으로 다시 저장/);
+});
+
+test('a deferred save that succeeds on retry needs no notice, and a playlist resolution still reverts on failure', async () => {
+  const marker = createUnresolvedMarker(); const notices = [];
+  const retried = createCurrentFileResolutionContext({ saveResults: [false, true], marker, events: [], notices });
+  await retried.context.togglePlaylistAggregateResolvedWithoutNavigation({ ...CURRENT_FILE_RANGE },
+    { videoPath: 'A.mp4', bframePath: 'A.bframe', desiredResolved: true, scope: 'current-resolution' });
+  assert.equal(marker.resolved, true); assert.equal(retried.saves.length, 2); assert.deepEqual(notices, []);
+
+  const other = createUnresolvedMarker(); const otherEvents = [];
+  const playlist = createCurrentFileResolutionContext({ saveResults: [false, false, false], marker: other, events: otherEvents, notices: [] });
+  await assert.rejects(playlist.context.togglePlaylistAggregateResolvedWithoutNavigation({ ...CURRENT_FILE_RANGE },
+    { videoPath: 'A.mp4', bframePath: 'A.bframe', desiredResolved: true, scope: 'playlist' }), /해결 상태 저장에 실패/);
+  assert.equal(other.resolved, false, 'the playlist row keeps its explicit failed-and-retry state');
+  assert.deepEqual(otherEvents, ['markerUpdated', 'markersChanged', 'markerUpdated', 'markersChanged']);
+});
+
+test('an optimistic click is not applied twice, and is re-applied if the model was replaced meanwhile', async () => {
+  const marker = { id: 'm', resolved: true, resolvedBy: 'tester', resolvedAt: new Date(5), updatedAt: new Date(5) };
+  const events = []; const checkpoint = { revision: 9 };
+  const optimisticIntent = () => ({ videoPath: 'A.mp4', bframePath: 'A.bframe', desiredResolved: true,
+    scope: 'current-resolution', optimistic: { marker, previous: { resolved: false }, checkpoint } });
+  const same = createCurrentFileResolutionContext({ saveResults: [true], marker, events, notices: [] });
+  await same.context.togglePlaylistAggregateResolvedWithoutNavigation({ ...CURRENT_FILE_RANGE }, optimisticIntent());
+  assert.deepEqual(events, [], 'already shown at the click');
+  assert.equal(same.saves[0], checkpoint, 'the save covers the revision captured at the click');
+
+  // 클릭 뒤에 파일 동기화가 모델을 통째로 갈아 끼웠다(같은 id 의 새 객체).
+  const replaced = createUnresolvedMarker(); const replacedEvents = [];
+  const swapped = createCurrentFileResolutionContext({ saveResults: [true], marker: replaced, events: replacedEvents, notices: [] });
+  await swapped.context.togglePlaylistAggregateResolvedWithoutNavigation({ ...CURRENT_FILE_RANGE }, optimisticIntent());
+  assert.equal(replaced.resolved, true);
+  assert.deepEqual(replacedEvents, ['markerUpdated', 'markersChanged']);
+});
+
+test('connected file changes also merge comments, and a failed room join falls back with a notice and a rejoin', () => {
+  const throttleStart = appSource.indexOf('const connectedDrawingsV3ReloadThrottle = createLeadingTrailingThrottle({');
+  const throttle = appSource.slice(throttleStart, appSource.indexOf('async function syncReviewFileFromDisk', throttleStart));
+  assert.ok(throttle.includes('reviewDataManager.reloadCommentsFromDisk?.()'));
+  assert.ok(throttle.includes('if (commentsReloaded?.changed === true) void refreshCommentRangesForCurrentMode();'));
+
+  const start = appFunction('startCollaborationForVideoLoad');
+  const failure = start.slice(start.indexOf('} catch (error) {'));
+  assert.ok(failure.includes('error?.joinFailureReason'));
+  assert.ok(failure.includes('scheduleCollaborationRejoin(loadToken, bframePath, reason)'));
+  assert.ok(start.indexOf('watchFileStart(bframePath)') > start.indexOf('scheduleCollaborationRejoin('),
+    'the file watch must start after a failed join too');
+  assert.ok(appFunction('describeCollaborationJoinFailure').includes('room-full'));
+  assert.ok(appFunction('showCollaborationSyncStatus').includes('retryCollaborationJoin({ manual: true })'));
 });

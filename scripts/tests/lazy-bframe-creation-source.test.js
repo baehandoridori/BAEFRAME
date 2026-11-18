@@ -132,7 +132,7 @@ test('first .bframe save is protected against another user creating the file fir
   assert.match(appSource, /persistNewRoom: false,\s*seedCurrentState: true/);
   assert.match(commentSyncSource, /broadcastCurrentState\(\) \{[\s\S]*type: 'COMMENT_MARKER_ADDED'/);
   assert.match(drawingSyncSource, /broadcastCurrentState\(\) \{[\s\S]*type: 'DRAWING_KEYFRAME_UPDATE'/);
-  assert.match(reviewDataManagerSource, /function mergeReviewDataThreeWay\(baseData, localData, remoteData\)/);
+  assert.match(reviewDataManagerSource, /function mergeReviewDataThreeWay\(baseData, localData, remoteData, mergeOptions = \{\}\)/);
   assert.match(
     reviewDataManagerSource,
     /constructor\(options = \{\}\) \{[\s\S]*?this\._reviewMergeBase = createEmptyReviewMergeBase\(\);/
@@ -155,7 +155,7 @@ test('first .bframe save is protected against another user creating the file fir
   );
   assert.match(
     reviewDataManagerSource,
-    /const mergedData = mergeReviewDataThreeWay\(\s*this\._reviewMergeBase,\s*localData,\s*remoteData\s*\);/
+    /const mergedData = mergeReviewDataThreeWay\(\s*this\._reviewMergeBase,\s*localData,\s*remoteData,\s*\{ comments: this\._createCommentMergeOptions\(\) \}\s*\);/
   );
   assert.match(
     reviewDataManagerSource,
@@ -331,5 +331,6 @@ test('connected drawingsV3 file notifications keep one latest trailing reload', 
     appSource,
     /if \(liveblocksManager\.isConnected\) \{[\s\S]*connectedDrawingsV3ReloadThrottle\.schedule\(filePath\);[\s\S]*return false;/
   );
-  assert.match(appSource, /run: \(\) => Promise\.all\(\[\s*reviewDataManager\.reloadDrawingsV3FromDisk\?\.\(\),\s*reviewDataManager\.reloadReviewCarryoverFromDisk\?\.\(\)/);
+  // 연결 중에는 드로잉·이어받기와 함께 댓글도 파일에서 받아들인다(실시간 방 밖 사용자의 변경).
+  assert.match(appSource, /await Promise\.all\(\[\s*reviewDataManager\.reloadDrawingsV3FromDisk\?\.\(\),\s*reviewDataManager\.reloadReviewCarryoverFromDisk\?\.\(\),\s*reviewDataManager\.reloadCommentsFromDisk\?\.\(\)\s*\]\)/);
 });

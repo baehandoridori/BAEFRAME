@@ -23,6 +23,26 @@ globalThis.__LiveMap = LiveMap;
 
 const log = createLogger('LiveblocksManager');
 
+// Room 접속(연결 + Storage 로드)을 기다리는 최대 시간.
+const ROOM_JOIN_TIMEOUT_MS = 10000;
+
+// Liveblocks 가 방 정원(요금제별 동시 접속 수, 현재 10명)을 넘긴 접속을 거절할 때의 코드.
+// 이 경우 클라이언트는 재시도 없이 끊고, 예외도 던지지 않는다 — 'error' 구독으로만 알 수 있다.
+const ROOM_FULL_ERROR_CODE = 4005;
+
+/**
+ * 접속 실패 사유를 실은 오류. app.js 가 사유(joinFailureReason)에 따라 안내와 재접속을 정한다.
+ * - 'room-full': 방 정원 초과
+ * - 'timeout': 정해진 시간 안에 접속되지 않음
+ * - 'connection-error': 그 밖의 접속 거절(권한 등)
+ */
+function createJoinFailure(reason, message, code = null) {
+  const error = new Error(message);
+  error.joinFailureReason = reason;
+  error.joinFailureCode = code;
+  return error;
+}
+
 /**
  * 간단한 UUID 생성
  */
@@ -37,8 +57,20 @@ function generateRoomId() {
  * 기존 CollaborationManager의 이벤트 인터페이스를 유지하여 app.js 호환성 보장
  */
 export class LiveblocksManager extends EventTarget {
-  constructor() {
+  /**
+   * @param {Object} [options]
+   * @param {Function} [options.createClient] - Liveblocks 클라이언트 생성기 (검사에서 바꿔 끼운다)
+   * @param {number} [options.joinTimeoutMs] - Room 접속을 기다리는 최대 시간
+   */
+  constructor(options = {}) {
     super();
+
+    this._createClient = typeof options.createClient === 'function'
+      ? options.createClient
+      : createClient;
+    this._joinTimeoutMs = Number.isFinite(options.joinTimeoutMs) && options.joinTimeoutMs > 0
+      ? options.joinTimeoutMs
+      : ROOM_JOIN_TIMEOUT_MS;
 
     this._client = null;
     this._room = null;
@@ -105,7 +137,7 @@ export class LiveblocksManager extends EventTarget {
 
     // 클라이언트 생성 (한 번만)
     if (!this._client) {
-      this._client = createClient({
+      this._client = this._createClient({
         publicApiKey: LIVEBLOCKS_PUBLIC_KEY,
         throttle: 50
       });
@@ -150,27 +182,7 @@ export class LiveblocksManager extends EventTarget {
       this._setupSubscriptions();
 
       // Storage 로드 대기
-      this._storage = await new Promise((resolve, reject) => {
-        const timeout = setTimeout(() => {
-          reject(new Error('Storage 로드 타임아웃 (10초)'));
-        }, 10000);
-
-        const unsub = this._room.subscribe('storage-status', (status) => {
-          if (status === 'synchronized') {
-            clearTimeout(timeout);
-            unsub();
-            resolve(this._room.getStorage());
-          }
-        });
-
-        // 이미 동기화된 경우
-        const currentStorage = this._room.getStorage();
-        if (currentStorage) {
-          clearTimeout(timeout);
-          unsub();
-          resolve(currentStorage);
-        }
-      });
+      this._storage = await this._waitForRoomJoin(this._room);
 
       this._isConnected = true;
       this._connectionStatus = 'connected';
@@ -211,9 +223,63 @@ export class LiveblocksManager extends EventTarget {
       this._storage = null;
       this._isConnected = false;
       this._connectionStatus = 'disconnected';
-      this._emit('connectionStatusChanged', { status: 'disconnected', error });
+      this._emit('connectionStatusChanged', {
+        status: 'disconnected',
+        error,
+        reason: error?.joinFailureReason || null
+      });
       throw error;
     }
+  }
+
+  /**
+   * Room 접속이 끝날 때까지 기다린다.
+   *
+   * room.getStorage() 는 접속에 성공해 Storage 를 받은 뒤에야 끝나는 Promise 다. 접속이
+   * 거절되면(방 정원 초과 등) 끝나지 않으므로, 거절 통지('error')와 시간 제한을 함께 건다.
+   * 예전 구현은 getStorage() 의 반환값(항상 Promise)을 "이미 동기화됨" 으로 오인해 시간
+   * 제한을 풀어 버렸고, 정원을 넘긴 사용자는 접속 대기에서 영원히 멈췄다 — 그 뒤에 있는
+   * 파일 감시(대체 동기화)도 시작되지 않았다.
+   */
+  _waitForRoomJoin(room) {
+    return new Promise((resolve, reject) => {
+      let settled = false;
+      const cleanups = [];
+      const settle = (complete, value) => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timer);
+        cleanups.forEach(cleanup => {
+          try { cleanup(); } catch (e) { /* 무시 */ }
+        });
+        complete(value);
+      };
+      const timer = setTimeout(() => {
+        settle(reject, createJoinFailure(
+          'timeout',
+          `Room 접속 시간 초과 (${Math.round(this._joinTimeoutMs / 1000)}초)`
+        ));
+      }, this._joinTimeoutMs);
+
+      cleanups.push(room.subscribe('error', (error) => {
+        const code = error?.context?.code ?? error?.code ?? null;
+        settle(reject, createJoinFailure(
+          code === ROOM_FULL_ERROR_CODE ? 'room-full' : 'connection-error',
+          error?.message || 'Room 접속이 거절되었습니다',
+          code
+        ));
+      }));
+
+      Promise.resolve()
+        .then(() => room.getStorage())
+        .then(
+          storage => settle(resolve, storage),
+          error => settle(reject, createJoinFailure(
+            'connection-error',
+            error?.message || 'Storage 로드 실패'
+          ))
+        );
+    });
   }
 
   /**

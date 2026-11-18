@@ -7114,12 +7114,88 @@ async function initApp() {
     }
   }
 
+  // 실시간 방에 들어가지 못한 뒤의 재접속 간격(ms). 방 정원(동시 10명)이 차 있으면 빈자리가
+  // 날 때까지 파일 동기화로 일한다. 거절된 접속도 Liveblocks 사용량으로 잡힐 수 있어 드물게만,
+  // 정해진 횟수만 다시 시도한다. 그 뒤에는 동기화 상태 표시를 눌러 직접 다시 시도할 수 있다.
+  const COLLABORATION_REJOIN_DELAYS_MS = Object.freeze([60000, 180000, 300000, 600000, 600000, 600000]);
+  let collaborationRejoin = null;
+
+  function clearCollaborationRejoin() {
+    if (collaborationRejoin?.timer) clearTimeout(collaborationRejoin.timer);
+    collaborationRejoin = null;
+  }
+
+  function describeCollaborationJoinFailure(reason) {
+    return reason === 'room-full'
+      ? '실시간 협업 인원(10명)이 가득 찼습니다. 다른 사람의 변경은 파일 동기화로 조금 늦게 반영됩니다.'
+      : '실시간 협업에 연결하지 못했습니다. 파일 동기화로 계속하며 다른 사람의 변경은 조금 늦게 반영됩니다.';
+  }
+
+  function scheduleCollaborationRejoin(loadToken, bframePath, reason) {
+    const previous = collaborationRejoin &&
+      collaborationRejoin.loadToken === loadToken &&
+      isSameFilePath(collaborationRejoin.bframePath, bframePath)
+      ? collaborationRejoin
+      : null;
+    if (collaborationRejoin?.timer) clearTimeout(collaborationRejoin.timer);
+    const attempt = previous ? previous.attempt : 0;
+    if (!previous || previous.reason !== reason) {
+      // 같은 파일을 여는 동안 같은 사유는 한 번만 알린다.
+      showToast(describeCollaborationJoinFailure(reason), 'warning', 6000, true);
+    }
+    collaborationRejoin = { loadToken, bframePath, reason, attempt, timer: null };
+    const delay = COLLABORATION_REJOIN_DELAYS_MS[attempt];
+    if (delay === undefined) return;
+    collaborationRejoin.timer = setTimeout(() => {
+      if (collaborationRejoin) collaborationRejoin.timer = null;
+      void retryCollaborationJoin();
+    }, delay);
+  }
+
+  async function retryCollaborationJoin({ manual = false } = {}) {
+    const pending = collaborationRejoin;
+    if (!pending || pending.joining) return false;
+    if (isStaleVideoLoadToken(pending.loadToken) || !isCurrentReviewPath(pending.bframePath)) {
+      clearCollaborationRejoin();
+      return false;
+    }
+    if (liveblocksManager.isConnected) {
+      clearCollaborationRejoin();
+      return true;
+    }
+    if (pending.timer) {
+      clearTimeout(pending.timer);
+      pending.timer = null;
+    }
+    pending.joining = true;
+    pending.attempt += manual ? 0 : 1;
+    try {
+      await startCollaborationForVideoLoad(pending.loadToken, pending.bframePath, { isRejoin: true });
+    } finally {
+      pending.joining = false;
+    }
+    if (liveblocksManager.isConnected) {
+      clearCollaborationRejoin();
+      showToast('실시간 협업에 연결되었습니다.', 'success');
+      // 방 밖에 있는 동안의 변경은 파일에 있다. 연결 직후 한 번 맞춘다.
+      void reviewDataManager.reloadCommentsFromDisk?.().then(result => {
+        if (result?.changed === true) void refreshCommentRangesForCurrentMode();
+      });
+      return true;
+    }
+    if (manual) showToast(describeCollaborationJoinFailure(collaborationRejoin?.reason), 'warning');
+    return false;
+  }
+
   async function startCollaborationForVideoLoad(loadToken, bframePath, options = {}) {
     const {
       persistNewRoom = true,
-      seedCurrentState = false
+      seedCurrentState = false,
+      isRejoin = false
     } = options;
     if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+    // 새로 여는 접속은 앞선 재접속 예약을 대신한다.
+    if (!isRejoin) clearCollaborationRejoin();
 
     const userName = userSettings.getUserName();
     const userColor = userSettings.getColorForName(userName) || '#4a9eff';
@@ -7179,8 +7255,15 @@ async function initApp() {
         fabricDrawingSync.broadcastCurrentState?.();
       }
       log.info('Liveblocks 협업 세션 시작됨', { roomId, isNewRoom });
+      if (!isRejoin) clearCollaborationRejoin();
     } catch (error) {
-      log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message });
+      const reason = error?.joinFailureReason || 'connection-error';
+      log.warn('Liveblocks 연결 실패, 로컬 모드로 계속', { error: error.message, reason });
+      // 접속하지 못한 사용자는 파일 감시로 동기화한다(아래). 그 사실을 알리고, 빈자리가
+      // 나면 실시간으로 돌아오도록 재접속을 예약한다.
+      if (!isStaleVideoLoadToken(loadToken) && isCurrentReviewPath(bframePath)) {
+        scheduleCollaborationRejoin(loadToken, bframePath, reason);
+      }
     }
 
     if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) {
@@ -12741,6 +12824,19 @@ async function initApp() {
     marker.updatedAt = previous.updatedAt;
   }
 
+  // 저장이 충돌·지연으로 미뤄졌을 때 같은 변경을 다시 저장해 보는 간격(ms). 읽기와 쓰기
+  // 사이에 다른 PC 의 저장분이 내려오면 저장이 거절되는데, 다시 읽어 합치면 대개 바로 풀린다.
+  const RESOLUTION_SAVE_RETRY_DELAYS_MS = Object.freeze([0, 600, 1500]);
+
+  async function saveResolutionThroughCheckpoint(checkpoint) {
+    for (const delayMs of RESOLUTION_SAVE_RETRY_DELAYS_MS) {
+      if (delayMs > 0) await new Promise(resolve => setTimeout(resolve, delayMs));
+      if (!reviewDataManager._ownsSave(checkpoint)) return false;
+      if (await reviewDataManager.saveThroughCheckpoint(checkpoint) === true) return true;
+    }
+    return false;
+  }
+
   async function togglePlaylistAggregateResolvedWithoutNavigation(range, intent = {}) {
     const playlistManager = getPlaylistManager();
     const item = intent.videoPath
@@ -12756,13 +12852,29 @@ async function initApp() {
       const marker = commentManager.getMarker(range.markerId);
       const layer = commentManager.layers.find(layer => layer.id === range.layerId);
       if (!marker || marker.deleted || !layer?.markers?.has(marker.id)) throw Object.assign(new Error('원본 댓글을 찾을 수 없습니다.'), { blocksNavigation: false });
-      if (layer.locked || liveblocksManager.checkEditLock(marker.id)?.isLocked) throw Object.assign(new Error('다른 편집이 진행 중인 댓글입니다.'), { blocksNavigation: false });
-      const previous = applyMarkerResolutionToggle(marker, desiredResolved);
-      suppressCommentRangeRefreshOnce = true;
-      commentManager._emit('markerUpdated', { marker });
-      commentManager._emit('markersChanged');
-      const checkpoint = reviewDataManager.captureSaveCheckpoint();
-      if (await reviewDataManager.saveThroughCheckpoint(checkpoint) !== true) {
+      // 현재 영상의 댓글 목록에서 누른 해결은 클릭한 순간 이미 화면에 반영돼 있다
+      // (toggleCurrentMarkerResolved). 그 사이 모델이 통째로 바뀌었으면 여기서 다시 적용한다.
+      const optimistic = intent.optimistic?.marker === marker ? intent.optimistic : null;
+      if (!optimistic && (layer.locked || liveblocksManager.checkEditLock(marker.id)?.isLocked)) throw Object.assign(new Error('다른 편집이 진행 중인 댓글입니다.'), { blocksNavigation: false });
+      let previous = optimistic?.previous;
+      if (!optimistic) {
+        previous = applyMarkerResolutionToggle(marker, desiredResolved);
+        suppressCommentRangeRefreshOnce = true;
+        commentManager._emit('markerUpdated', { marker });
+        commentManager._emit('markersChanged');
+      }
+      const checkpoint = optimistic?.checkpoint || reviewDataManager.captureSaveCheckpoint();
+      if (await saveResolutionThroughCheckpoint(checkpoint) !== true) {
+        if (intent.scope === 'current-resolution') {
+          // 되돌리지 않는다. 여러 사람이 같은 파일을 저장하는 동안에는 저장이 충돌·지연으로
+          // 미뤄지는 일이 흔하고, 변경은 모델에 남아 자동 저장과 재시도가 이어서 파일에 쓴다
+          // (다른 댓글 편집과 같은 방식). 여기서 되돌리면 누른 해결이 눈앞에서 풀리고,
+          // 그 되돌림까지 다른 사람에게 전송된다.
+          if (reviewDataManager._ownsSave(checkpoint)) {
+            showToast('해결 상태 저장이 지연되고 있습니다. 표시는 유지되며 자동으로 다시 저장합니다.', 'info');
+          }
+          return marker;
+        }
         if (reviewDataManager._ownsSave(checkpoint) && commentManager.getMarker(marker.id) === marker &&
             marker.resolved === desiredResolved) {
           restoreMarkerResolution(marker, previous);
@@ -12973,9 +13085,20 @@ async function initApp() {
     const intent = { key: `${normalizeComparableFilePath(videoPath)}:current:${layer.id}:${markerId}`,
       videoPath, markerId, scope: 'current-resolution', bframePath: reviewDataManager.getBframePath(), desiredResolved: !marker.resolved };
     if (playlistResolutionQueue.hasPending(intent.key)) { showToast('댓글 완료 상태를 저장하고 있습니다.', 'info'); return false; }
+    // 화면에는 클릭한 순간 반영한다. 대기열은 같은 파일의 저장을 차례로 처리하는데, 공유
+    // 드라이브에서는 저장 한 번이 수 초 걸릴 수 있다. 반영까지 그 뒤로 미루면 다른 댓글의
+    // 해결을 누르는 동안 클릭이 먹지 않은 것처럼 보인다.
+    if (!playlistResolutionQueue.isLocked(videoPath) && !marker.deleted && !layer.locked &&
+        !liveblocksManager.checkEditLock(marker.id)?.isLocked) {
+      const previous = applyMarkerResolutionToggle(marker, intent.desiredResolved);
+      suppressCommentRangeRefreshOnce = true;
+      commentManager._emit('markerUpdated', { marker });
+      commentManager._emit('markersChanged');
+      intent.optimistic = { marker, previous, checkpoint: reviewDataManager.captureSaveCheckpoint() };
+    }
     try {
       await playlistResolutionQueue.enqueue(intent, () => togglePlaylistAggregateResolvedWithoutNavigation(
-        { markerId, layerId: layer.id, resolved: marker.resolved }, intent));
+        { markerId, layerId: layer.id, resolved: !intent.desiredResolved }, intent));
       return true;
     } catch (error) { showToast(error.message || '저장 실패 · 다시 시도', 'warning'); return false; }
   }
@@ -18420,6 +18543,12 @@ async function initApp() {
 
   // 수동 동기화 버튼 → Liveblocks에서는 항상 실시간이므로 상태 표시만
   function showCollaborationSyncStatus() {
+    // 실시간 방에 들어가지 못한 상태면 눌렀을 때 바로 다시 접속해 본다.
+    if (!liveblocksManager.isConnected && collaborationRejoin) {
+      showToast('실시간 협업에 다시 연결해 봅니다.', 'info');
+      void retryCollaborationJoin({ manual: true });
+      return;
+    }
     if (!liveblocksManager.hasOtherCollaborators()) {
       showToast('다른 협업자가 없습니다', 'info');
       return;
@@ -18723,10 +18852,18 @@ async function initApp() {
     intervalMs: MIN_SYNC_INTERVAL,
     shouldRun: filePath => liveblocksManager.isConnected &&
       isSameFilePath(filePath, reviewDataManager.currentBframePath),
-    run: () => Promise.all([
-      reviewDataManager.reloadDrawingsV3FromDisk?.(),
-      reviewDataManager.reloadReviewCarryoverFromDisk?.()
-    ]),
+    run: async () => {
+      // 실시간 방 정원(동시 10명) 밖의 사용자는 Broadcast 를 보낼 수 없어 그 사람의 댓글·해결
+      // 변경은 파일로만 도착한다. 연결 중에도 댓글을 파일에서 받아들여야 그 변경이 보인다.
+      const [, , commentsReloaded] = await Promise.all([
+        reviewDataManager.reloadDrawingsV3FromDisk?.(),
+        reviewDataManager.reloadReviewCarryoverFromDisk?.(),
+        reviewDataManager.reloadCommentsFromDisk?.()
+      ]);
+      // 댓글 목록·영상 위 마커는 markersChanged 가 다시 그린다. 타임라인의 댓글 구간은
+      // 개별 댓글 이벤트로만 갱신되므로 여기서 따로 부른다.
+      if (commentsReloaded?.changed === true) void refreshCommentRangesForCurrentMode();
+    },
     onError: error => log.warn('drawingsV3 파일 동기화 실패', {
       error: error?.message || String(error)
     })
