@@ -345,7 +345,8 @@ Liveblocks가 실어 나르는 presence/broadcast 데이터를 화면에 그리�
 
 | 표시 요소 | 파일 · 앵커 |
 |-----------|-------------|
-| 협업 아바타 지표(호버 패널) | `renderer/scripts/app.js` — `handleCollaborationIndicatorEnter()`, `handleCollaborationIndicatorLeave()` |
+| 협업 아바타 지표(호버 패널) | `renderer/scripts/app.js` — `handleCollaborationIndicatorEnter()`, `handleCollaborationIndicatorLeave()`. 참여자가 있을 때(연결된 동안)만 보인다 |
+| 실시간 연결 실패 표시(누르면 다시 연결) | `renderer/scripts/app.js` — `renderCollaborationStatusChip()`, `requestManualCollaborationRejoin()`. `index.html` 의 `#collabStatusChip`. 상단 오른쪽, 협업 아바타 지표 밖에 있다. 영상 영역 밖이라 mpv 미러가 필요 없다(8.1) |
 | 접속 리플 애니메이션 | `renderer/scripts/app.js` — `_triggerCollabRipple()`, 내부 `animateRipple()` |
 | 플렉서스 패널 | `renderer/scripts/modules/plexus.js` — `PlexusEffect`. 마운트 지점은 `app.js`의 `elements.collabPlexusPanel` / `elements.collabPlexusCanvas`, 설정 토글은 `togglePlexusPanel`(`userSettings.settings.showPlexusPanel`), 해제는 `_hideCollabPlexusPanel()` |
 | 원격 커서 | `renderer/scripts/app.js` — `renderRemoteCursors()`, `createRemoteCursorElement()`, `clearRemoteCursors()`. 표시 토글 버튼은 `updateRemoteCursorToggleButton()` |
@@ -382,7 +383,7 @@ mpv 재생 중 위 표시 요소를 오버레이 창에 복제하는 경로입�
 
 ## 8. Room 정원과 파일 동기화
 
-(2026-11-18, v2.16.3-beta. 조사 기록: `DEVLOG/2026-11-18-comment-resolve-realtime.md`)
+(2026-11-18, v2.16.3-beta. 조사 기록: `DEVLOG/2026-11-18-comment-resolve-realtime.md`. 8.1 의 재접속 입구는 2026-11-20, v2.16.5-beta 에서 고쳤다: `DEVLOG/2026-11-20-collab-rejoin-chip.md`)
 
 ### 8.1 정원
 
@@ -394,7 +395,10 @@ Liveblocks 는 한 Room 의 동시 접속 수를 요금제로 제한한다(Free�
 | 서비스가 이번 달 접속을 막음 | 월 사용 한도가 소진되면 `code 4001` 과 "Access suspended for the remainder of the month" 로 거절한다(`joinFailureReason: 'service-suspended'`). 사유를 따로 알리고 파일 동기화로 일한다. 다시 접속해 보는 간격은 다른 접속 실패와 같다(2026-11-18 에 받은 거절은 몇 분 뒤 풀렸다. 정말 그 달 내내 막혀 있어도 정해진 횟수만 시도하고 멈춘다) | `liveblocks-manager.js` — `SERVICE_SUSPENDED_PATTERN`, `app.js` — `describeCollaborationJoinFailure()` |
 | 접속하지 못한 채 작업 | 파일 동기화(`syncReviewFileFromDisk` → `reloadAndMerge`). 다른 사람의 변경은 드라이브가 파일을 옮기는 시간만큼 늦다 | `app.js` |
 | 접속을 기다리는 중에 영상 전환 등으로 방을 떠남 | 그 접속 시도를 바로 끝낸다(`joinFailureReason: 'superseded'`, 실패로 알리지 않는다). 버려진 시도는 공유 상태를 건드리지 않고 자기 방만 떠난다 — 제한 시간 뒤의 실패 처리가 그 사이 들어간 새 방을 끊지 않게 | `liveblocks-manager.js` — `start()` 의 `catch`, `stop()` 의 `_abortPendingJoin` |
-| 빈자리 | 1·3·5·10·10·10분 뒤 다시 접속해 본다. 그 뒤에는 동기화 상태 표시(`#syncStatus`)를 누르면 다시 시도한다. 거절된 접속도 사용량으로 잡힐 수 있어 자주 시도하지 않는다 | `app.js` — `scheduleCollaborationRejoin()`, `retryCollaborationJoin()` |
+| 빈자리 | 1·3·5·10·10·10분 뒤 다시 접속해 본다. 거절된 접속도 사용량으로 잡힐 수 있어 자주 시도하지 않는다. 접속하지 못한 동안에는 상단에 연결 상태 표시(`#collabStatusChip`, 예: "실시간 인원 가득 · 다시 연결")가 보이고, 누르면 바로 한 번 시도한다(시도하는 동안 "실시간 연결 중…"). 자동 시도가 끝난 뒤에도 표시는 남는다. 접속을 시도했거나 접속에 실패한 지 30초 안에는 눌러도 다시 열지 않고 안내만 한다 — 직접 누른 시도든 저절로 한 시도든, 파일을 열 때의 첫 시도든 같다 | `app.js` — `scheduleCollaborationRejoin()`, `armCollaborationRejoinTimer()`, `retryCollaborationJoin()`, `renderCollaborationStatusChip()`, `requestManualCollaborationRejoin()` |
+| 재접속 입구의 자리 | 직접 다시 연결하는 입구는 협업자 표시(`#collaboratorsIndicator`) **밖**에 둔다. 협업자 표시는 연결된 사람에게만 보인다(참여자가 없으면 `display: none`). v2.16.3-beta 는 입구를 그 안의 동기화 아이콘(`#syncStatus`)에만 둬서, 정작 접속하지 못한 사람은 볼 수도 누를 수도 없었다(v2.16.5-beta 에서 고침). 동기화 아이콘은 연결된 사람의 상태 안내로 남아 있다. 표시는 상단(header)에 있으므로 상단이 보이지 않는 동안에는 함께 보이지 않는다: 앱 전체화면(`body.app-fullscreen` 이 상단을 숨긴다), 버전 비교 화면과 모달이 창을 덮는 동안. 그때는 접속에 실패한 순간의 안내(토스트)만 보이고, 그 화면에서 나오면 표시가 보인다 | `index.html` — `#collabStatusChip`, `app.js` — `updateCollaboratorsUI()` |
+| 직접 누른 결과의 안내 | 누른 것에 대한 반응은 알림(토스트)을 꺼 둔 사람에게도 보인다: 여전히 못 들어감(사유), 방금 실패해서 아직 다시 열지 않음, 영상을 여는 중이라 지금은 열지 않음. 사유가 바뀐 실패는 한 번만 알린다. 시도하는 사이 다른 파일로 넘어갔으면 지난 파일의 결과는 알리지 않는다 | `app.js` — `requestManualCollaborationRejoin()`, `retryCollaborationJoin()` |
+| 재접속 기록의 수명 | 기록은 열려 있는 파일에 묶인다. 협업 세션을 끊는 곳에서 함께 지운다: 다른 파일을 열 때(표시도 사라진다), 앱을 끄며 저장할 때. 영상 전환이 취소되거나 같은 파일의 재생 엔진만 바뀌면 로드 토큰만 올라가고 파일과 협업 세션은 그대로이므로, 기록을 버리지 않고 지금 토큰으로 이어서 시도한다. **영상을 여는 중에는 접속을 열지 않는다** — 저절로 올 차례면 15초 뒤 다시 보고, 직접 누르면 안내한다. "여는 중" 은 `loadVideo()` 가 로드 토큰을 올린 때부터 끝날 때까지다(`videoLoadInFlightToken`). `activeVideoLoadToken` 은 저장과 그리기 정리를 기다린 뒤에야 잡혀서, 그것으로 판정하면 그 앞의 몇 초 사이에 지금 떠나려는 파일의 방에 접속을 하나 더 연다. 시도가 결과 없이 끝나면(기다리는 사이 영상을 열기 시작했거나 다른 접속에 자리를 내줌) 실패로 알리지 않고 다음 차례를 다시 잡는다. 그런 시도도 자동 시도 횟수에는 넣는다(되풀이돼도 정해진 횟수에서 멈춘다). 재접속이 리뷰 파일을 읽는 사이 그 기록이 지워지거나 다른 기록으로 바뀌었으면(앱을 끄며 저장하기 시작함, 새로 여는 접속이 대신함) 접속을 열지 않는다 | `app.js` — `retryCollaborationJoin()`, `startCollaborationForVideoLoad()` 의 `isStillWanted`, `loadVideo()` 의 들머리와 "이전 파일 감시 및 협업 세션 정리", `onRequestSaveBeforeQuit` 처리기 |
 
 ### 8.2 연결 중에도 댓글을 파일에서 받아들인다
 
@@ -479,5 +483,5 @@ Liveblocks 는 한 Room 의 동시 접속 수를 요금제로 제한한다(Free�
 
 ### 8.6 관련 테스트
 
-`npm run test:collaboration` 의 `scripts/tests/comment-collaboration-convergence.test.js`(정원 초과 접속, 파일로 온 해결, 옛 사본, 충돌 사본, 저장 충돌 재시도)와 `scripts/tests/composition-layer-collaboration-convergence.test.js`(합성 레이어: 옛 사본, 삭제 표시, 순서 번호, 연결 중 받아들이기와 조작 중 미루기, 저장하는 사이의 편집, 영상 레이어의 저장 반복, 웹 뷰어의 저장분, 이전 버전과의 혼합, 다룰 수 없는 판, 여러 PC 의 무작위 순서 150가지). `npm run test:composition` 의 `scripts/tests/composition-layer-sync.test.js`(합성 레이어 병합 규칙의 단위 검사)와 `scripts/tests/composition-layer-manager.test.js`(조작 중 표시, 다시 채울 때의 영상 레이어). `npm run test:playlist` 의 `scripts/tests/playlist-comment-resolution.test.js`(해결 클릭의 즉시 반영·되돌리지 않음·재접속 연결).
+`npm run test:collaboration` 의 `scripts/tests/comment-collaboration-convergence.test.js`(정원 초과 접속, 파일로 온 해결, 옛 사본, 충돌 사본, 저장 충돌 재시도), `scripts/tests/collaboration-rejoin-chip.test.js`(접속 실패 뒤 상단의 연결 상태 표시: 실제 `index.html` 과 그것이 올리는 스타일시트에서 표시와 조상이 숨겨져 있지 않은지, 누르면 한 번 시도하는지, 방금 실패한 접속을 바로 다시 열지 않는지, 다른 파일·영상 전환 취소·영상을 여는 중·결과 없이 끝난 시도의 재접속 기록, 두 테마의 글자 대비. 실제 `startCollaborationForVideoLoad` 를 가짜 매니저와 함께 돌린다. jsdom 은 배치를 계산하지 않으므로 창이 좁아 잘리는지, 다른 요소에 덮이는지, 실제 마우스로 눌리는지는 릴리스 때의 실제 앱 점검이 본다)와 `scripts/tests/composition-layer-collaboration-convergence.test.js`(합성 레이어: 옛 사본, 삭제 표시, 순서 번호, 연결 중 받아들이기와 조작 중 미루기, 저장하는 사이의 편집, 영상 레이어의 저장 반복, 웹 뷰어의 저장분, 이전 버전과의 혼합, 다룰 수 없는 판, 여러 PC 의 무작위 순서 150가지). `npm run test:composition` 의 `scripts/tests/composition-layer-sync.test.js`(합성 레이어 병합 규칙의 단위 검사)와 `scripts/tests/composition-layer-manager.test.js`(조작 중 표시, 다시 채울 때의 영상 레이어). `npm run test:playlist` 의 `scripts/tests/playlist-comment-resolution.test.js`(해결 클릭의 즉시 반영·되돌리지 않음·재접속 연결)와 `scripts/tests/playlist-continuous-runtime.test.js`(실제 `loadVideo` 로: 로드 토큰을 올린 때부터 "여는 중" 인지, 다른 파일을 열면 재접속 기록을 치우는지).
 
