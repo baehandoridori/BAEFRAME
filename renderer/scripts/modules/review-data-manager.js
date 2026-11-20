@@ -31,10 +31,38 @@ import {
   serializeDrawingLayers
 } from '../../../shared/drawing-layers.js';
 import { isSupportedReviewCarryover, mergeReviewCarryover } from '../../../shared/review-carryover.js';
+import {
+  COMPOSITION_LAYER_SYNC_ROOT_KEY,
+  adoptCompositionLayerRevisions,
+  advanceCompositionLayerBase,
+  applyLocalCompositionLayers,
+  compositionLayerStateToLayers,
+  createCompositionLayerSeen,
+  createCompositionLayerState,
+  createEmptyCompositionLayerState,
+  hasUnsyncedCompositionLayerChanges,
+  isSupportedCompositionLayerSync,
+  mergeCompositionLayerStates,
+  noteSeenCompositionLayerState,
+  serializeCompositionLayerSync,
+  withoutCompositionLayerRevisions,
+  withoutTombstonedCompositionLayers
+} from '../../../shared/composition-layer-sync.js';
+import {
+  normalizeCompositionLayer,
+  serializeCompositionLayer
+} from './composition-layer-manager.js';
 // 오프라인 머지 유틸리티 (Liveblocks 비활성 시 폴백)
 
 // 저장 재시도 백오프(ms). 2s → 5s → 10s, 최대 3회.
 const SAVE_RETRY_DELAYS_MS = Object.freeze([2000, 5000, 10000]);
+
+// 합성 레이어를 조작하는 중이라 미뤄 둔 "파일에서 받아들이기": 조작이 끝났는지 다시 보는
+// 간격과, 조작이 끝나지 않아도 그대로 받아들이기까지 기다리는 시간(ms). 뒤의 것은 조작 표시가
+// 풀리지 않고 남은 경우를 위한 것이다 — 실제로 그만큼 긴 조작이면 그 조작에 끼어든다(끌던
+// 위치와 입력하던 값은 남지만 입력 칸의 포커스와 되돌리기 기록을 잃는다). 그래서 길게 잡는다.
+const COMPOSITION_LAYER_RELOAD_RETRY_MS = 250;
+const COMPOSITION_LAYER_RELOAD_MAX_DEFERRAL_MS = 30000;
 
 // 재시도로 회복 가능한 실패 사유. 그 외는 즉시 사용자에게 통보한다.
 // 이 Set은 _classifySaveFailure(= 예외 경로 전용)만 사용한다.
@@ -426,7 +454,11 @@ function mergeEntityCollectionThreeWay(
     // 기준과 로컬에는 있고 원격에만 없는 원소를, 삭제로 보지 않고 지킬지.
     keepLocalWhenRemoteAbsent = null,
     // 원격에만 있는 원소를 새 원소로 받아들일지(false 면 버린다).
-    acceptRemoteOnly = null
+    acceptRemoteOnly = null,
+    // 원격에 없는데 내가 고친 원소를 충돌 사본(`…__local-conflict`)으로 남길지. 기본은 제 id
+    // 그대로 남긴다. 원격에만 남은 id 를 "이미 지운 것" 으로 거르는 컬렉션(답글 —
+    // acceptRemoteOnly)은 제 id 로 남기면 지운 쪽에서 버려져 고친 내용이 사라지므로 사본으로 남긴다.
+    copyEditedLocalWhenRemoteAbsent = false
   } = {}
 ) {
   const normalizeKey = (item, index, source) => {
@@ -533,12 +565,17 @@ function mergeEntityCollectionThreeWay(
       continue;
     }
     if (!hasRemote) {
-      if (!jsonEquals(local, base)) {
-        mergedByKey.set(key, [
-          createConflictCopy(local, usedKeys, 'local')
-        ]);
-      } else {
+      // 원격에 없는데 내가 고친 원소는 제 id 그대로 남긴다. 예전에는 `…__local-conflict`
+      // 사본으로 바꿔 넣었는데, 저장은 화면의 모델을 바꾸지 않으므로 화면에는 원래 id 가
+      // 그대로 남는다. 그러면 다음 저장에서도 "기준과 로컬에는 있고 원격에는 없는" 원소가 되어
+      // 고칠 때마다 사본이 하나씩 늘었다(2026-11-18, 합성 레이어의 "(로컬 충돌)" 사본 네 개).
+      // 원격에 없는 까닭이 삭제든 옛 사본이든, 내가 고친 것은 하나만 남으면 된다.
+      if (jsonEquals(local, base)) {
         mergedByKey.set(key, []);
+      } else if (copyEditedLocalWhenRemoteAbsent) {
+        mergedByKey.set(key, [createConflictCopy(local, usedKeys, 'local')]);
+      } else {
+        mergedByKey.set(key, [cloneJson(local)]);
       }
       continue;
     }
@@ -780,6 +817,9 @@ function mergeRepliesThreeWay(
       acceptRemoteOnly: typeof hasSeenReply === 'function'
         ? reply => reply?.id === null || reply?.id === undefined || hasSeenReply(reply.id) !== true
         : null,
+      // 내가 고친 답글을 다른 사람이 지웠으면 사본으로 남긴다. 제 id 로 남기면 지운 쪽은
+      // 바로 위의 판정으로 그 id 를 "이미 지운 답글" 로 버려, 고친 내용이 모두에게서 사라진다.
+      copyEditedLocalWhenRemoteAbsent: true,
       createConflictCopy: (reply, replyIds, conflictKind) =>
         createDeterministicConflictCopy(reply, replyIds, {
           conflictKind,
@@ -1095,19 +1135,15 @@ function mergeHighlightDataThreeWay(baseData, localData, remoteData) {
   };
 }
 
-function mergeCompositionLayersThreeWay(baseLayers, localLayers, remoteLayers) {
-  return mergeEntityCollectionThreeWay(
-    baseLayers,
-    localLayers,
-    remoteLayers,
-    {
-      createConflictCopy: (layer, usedIds, conflictKind) =>
-        createDeterministicConflictCopy(layer, usedIds, {
-          conflictKind,
-          labelKey: 'name'
-        })
-    }
-  ).map((layer, order) => ({ ...layer, order }));
+// 합성 레이어 레코드를 매니저가 내보내는 모양으로 맞춘다. 비교에만 쓰고 파일에 쓰는 레코드는
+// 받은 그대로 둔다.
+//
+// 매니저는 읽어 들일 때 한 번(fromJSON), 내보낼 때 한 번(toJSON) 정규화하고, 한 번으로는
+// 값이 자리 잡지 않는 칸이 있다(`sourceDuration` 이 없으면 null, 그 null 은 다음에 0 이 된다).
+// 같은 두 단계를 거쳐야 파일의 레코드와 화면의 레코드가 같은 것으로 읽힌다 — 한 단계만
+// 거치면 그런 레코드를 가진 파일을 여는 사람마다 "내가 고쳤다" 로 읽어 다시 저장한다.
+function normalizeCompositionLayerRecord(record, index = 0) {
+  return serializeCompositionLayer(normalizeCompositionLayer(record, { index }));
 }
 
 function getManualVersionMergeKey(version) {
@@ -1153,6 +1189,14 @@ function mergeScalarThreeWay(baseValue, localValue, remoteValue) {
   return cloneJson(remoteValue);
 }
 
+/**
+ * 리뷰 데이터를 세 갈래로 합친다.
+ *
+ * 합성 레이어는 여기서 합치지 않는다(결과에는 로컬의 것이 그대로 실린다). 합성 레이어는
+ * 기준과의 비교만으로는 옛 사본과 삭제를 가릴 수 없어 `shared/composition-layer-sync.js` 의
+ * 규칙으로 따로 합치고, 부른 쪽이 그 결과를 실어 넣는다(`_writeCompositionLayerMerge`,
+ * `_acceptCompositionLayerMerge`).
+ */
 function mergeReviewDataThreeWay(baseData, localData, remoteData, mergeOptions = {}) {
   const base = captureReviewMergeBase(baseData);
   const local = captureReviewMergeBase(localData);
@@ -1175,11 +1219,6 @@ function mergeReviewDataThreeWay(baseData, localData, remoteData, mergeOptions =
       base.highlights,
       local.highlights,
       remote.highlights
-    ),
-    compositionLayers: mergeCompositionLayersThreeWay(
-      base.compositionLayers,
-      local.compositionLayers,
-      remote.compositionLayers
     ),
     manualVersions: mergeManualVersionsThreeWay(
       base.manualVersions,
@@ -1237,6 +1276,28 @@ export class ReviewDataManager extends EventTarget {
     // 들고 있던 답글 id. 드라이브가 늦게 배달한 옛 사본을 "원격의 새 변경" 과 구별한다.
     this._seenMarkerRevisions = new Map();
     this._seenReplyIds = new Set();
+    // 합성 레이어의 파일 동기화 상태(shared/composition-layer-sync.js).
+    //   - State: 화면의 레이어와 그 수정 횟수, 내가 아는 삭제 표시
+    //   - Base: 그 가운데 파일과 맞춰 본 부분. 여기서 달라진 것이 "내가 방금 고친 것" 이다
+    //   - Seen: 이 인스턴스가 본 가장 큰 수정 횟수. 내 편집은 그것보다 나중으로 찍는다
+    this._compositionLayerState = createEmptyCompositionLayerState();
+    this._compositionLayerBase = createEmptyCompositionLayerState();
+    this._compositionLayerSeen = createCompositionLayerSeen();
+    this._compositionLayerSyncUnsupported = false;
+    this._compositionLayersDiskReloadEpoch = 0;
+    // 레이어를 끄는 중이라 미뤄 둔 "파일에서 받아들이기" 가 있는가. 조작이 끝났는지는
+    // 타이머로 다시 본다 — 조작은 변경 이벤트 없이 끝나기도 한다(끌다 제자리에 놓기 등).
+    this._compositionLayerReloadDeferred = false;
+    this._compositionLayerReloadDeferredAt = 0;
+    this._compositionLayerReloadTimer = null;
+    this._compositionLayerReloadRetryDelay = Number(options.compositionLayerReloadRetryDelay) > 0
+      ? Number(options.compositionLayerReloadRetryDelay)
+      : COMPOSITION_LAYER_RELOAD_RETRY_MS;
+    // 조작 표시가 풀리지 않고 남는 경우(끄는 도중 목록이 다시 그려져 끝났다는 신호를 받지
+    // 못한 경우)에도 받아들이기를 영영 미루지 않도록, 이만큼 기다렸으면 그대로 받아들인다.
+    this._compositionLayerReloadMaxDeferral = Number(options.compositionLayerReloadMaxDeferral) > 0
+      ? Number(options.compositionLayerReloadMaxDeferral)
+      : COMPOSITION_LAYER_RELOAD_MAX_DEFERRAL_MS;
     this.fabricDrawingPersistenceProvider =
       options.fabricDrawingPersistenceProvider || null;
 
@@ -1477,6 +1538,7 @@ export class ReviewDataManager extends EventTarget {
    */
   disconnect() {
     this._isConnected = false;
+    this._cancelDeferredCompositionLayerReload();
     this._disconnectFabricDrawingPersistenceProvider();
     this.reviewCarryoverManager?.removeEventListener('changed', this._onDataChanged);
 
@@ -1553,6 +1615,7 @@ export class ReviewDataManager extends EventTarget {
     this._drawingsV3LastObservedDiskFingerprint = null;
     this._reviewMergeBase = createEmptyReviewMergeBase();
     this._resetCommentRevisionHistory();
+    this._resetCompositionLayerSync();
     this._hasCompletedReviewLoad = false;
     this.currentVideoPath = videoPath;
     this._reviewCarryoverFallback = undefined;
@@ -1795,7 +1858,19 @@ export class ReviewDataManager extends EventTarget {
         const localData = this._collectData();
         this._rememberCommentRevisions(localData.comments);
         const attemptReviewMergeBase = captureReviewMergeBase(localData);
-        const data = this._mergeBeforeSave(localData, latestRoot);
+        // 합성 레이어는 따로 합친다. 이 시도가 파일에 쓰는 상태를 들고 있다가, 쓰기가
+        // 성공하면(IPC 가 성공을 보고한 그 순간) 병합 기준을 그 상태로 옮긴다.
+        const compositionLayerMerge = this._mergeCompositionLayersWithRoot(latestRoot);
+        const attemptCompositionLayers = {
+          state: compositionLayerMerge?.state || this._compositionLayerState,
+          // 이 시도의 재료(합칠 때의 내 상태). 쓰는 사이에 화면에서 또 고치더라도, 내 상태에서
+          // 나온 칸은 쓴 것이 곧 기준이다.
+          localState: this._compositionLayerState,
+          supported: compositionLayerMerge
+            ? compositionLayerMerge.supported
+            : this._compositionLayerSyncUnsupported !== true
+        };
+        const data = this._mergeBeforeSave(localData, latestRoot, compositionLayerMerge);
         const attemptChangeRevision = this._changeRevision;
         // 이 시도가 담아 간 레이어 상태. setDrawingLayers 는 항상 새 객체를
         // 만들므로 참조 비교로 "그 사이에 또 바뀌었는가" 를 알 수 있다.
@@ -1827,6 +1902,10 @@ export class ReviewDataManager extends EventTarget {
         // 쓴 payload 가 흡수한 원격 변경을 "내 편집" 으로 오인해 더 새 값을 덮는다.
         if (saveResult?.success === true) {
           this._drawingLayersBaseline = attemptDrawingLayers;
+          // 합성 레이어의 기준도 여기서 옮긴다. 쓰기가 끝난 뒤에 "저장 실패" 로 빠지면(저장
+          // 중 파일 상태가 바뀜) 파일에는 내 수정이 들어갔는데 기준은 그 전이다. 그러면 다음
+          // 병합이 방금 내가 쓴 것을 "남이 그 사이 고친 것" 으로 읽어, 지운 레이어를 되살린다.
+          this._acknowledgeCompositionLayerSave(attemptCompositionLayers);
         }
 
         if (saveResult?.conflict === true) {
@@ -2000,6 +2079,15 @@ export class ReviewDataManager extends EventTarget {
 
       return true;
     } catch (error) {
+      // 이 저장이 읽어 간 합성 레이어 편집이 파일에 닿지 못했다. 변경 이벤트가 아직 나가지
+      // 않은 편집(끄는 중의 위치)은 저장 시도가 이미 "내 편집" 으로 읽어 갔으므로, 뒤늦게 온
+      // 변경 이벤트에서는 달라진 것이 없다. 여기서 저장할 변경으로 남겨 둔다.
+      if (this._ownsSave(saveOwner) && hasUnsyncedCompositionLayerChanges(
+        this._compositionLayerBase,
+        this._compositionLayerState
+      )) {
+        this._markDirty();
+      }
       const failure = this._classifySaveFailure(error);
       this._saveStateSettled = true;
       log.error('.bframe 저장 실패', error);
@@ -2107,9 +2195,14 @@ export class ReviewDataManager extends EventTarget {
    * 다른 인스턴스의 변경을 다시 덮어쓰지 않는다.
    * @param {Object} localData - 로컬에서 수집한 데이터
    * @param {Object|null} remoteData - 저장 직전 읽은 최신 root
+   * @param {Object|null} [compositionLayerMerge] - 같은 root 로 미리 합친 합성 레이어
    * @returns {Object} 병합된 데이터
    */
-  _mergeBeforeSave(localData, remoteData) {
+  _mergeBeforeSave(
+    localData,
+    remoteData,
+    compositionLayerMerge = this._mergeCompositionLayersWithRoot(remoteData)
+  ) {
     if (!remoteData || typeof remoteData !== 'object' || Array.isArray(remoteData)) {
       return localData;
     }
@@ -2120,9 +2213,171 @@ export class ReviewDataManager extends EventTarget {
       remoteData,
       { comments: this._createCommentMergeOptions({ ordered: true }) }
     );
+    this._writeCompositionLayerMerge(mergedData, compositionLayerMerge);
 
     mergedData.modifiedAt = new Date().toISOString();
     return mergedData;
+  }
+
+  _resetCompositionLayerSync() {
+    this._compositionLayerState = createEmptyCompositionLayerState();
+    this._compositionLayerBase = createEmptyCompositionLayerState();
+    this._compositionLayerSeen = createCompositionLayerSeen();
+    this._cancelDeferredCompositionLayerReload();
+  }
+
+  /**
+   * 화면(매니저)의 합성 레이어를 직전 상태와 견주어 내 편집의 수정 횟수를 올린다.
+   * 저장·재로드 직전과 매니저의 변경 이벤트에서 부른다.
+   *
+   * @returns {boolean} 저장되는 내용(레이어 목록·내용·순서)이 달라졌는가. 변환 상태 같은
+   *   화면 전용 값만 바뀌었으면 false 다.
+   */
+  _syncLocalCompositionLayers() {
+    // 매니저가 없으면 화면에서 고칠 수단이 없다. 파일에서 읽은 상태가 곧 내 상태다.
+    if (typeof this.compositionLayerManager?.toJSON !== 'function') return false;
+    const { state, changed } = applyLocalCompositionLayers(
+      this._compositionLayerState,
+      this.compositionLayerManager.toJSON(),
+      {
+        normalizeLayer: normalizeCompositionLayerRecord,
+        seen: this._compositionLayerSeen
+      }
+    );
+    this._compositionLayerState = state;
+    return changed;
+  }
+
+  /**
+   * 파일을 열었거나 통째로 덮어쓴 직후: 화면의 레이어와 파일의 수정 횟수·삭제 표시로
+   * 상태를 새로 잡는다. 이때의 상태는 전부 파일과 맞춰 본 것이다.
+   */
+  _adoptCompositionLayerSyncFromRoot(root) {
+    const syncValue = isSupportedCompositionLayerSync(root?.[COMPOSITION_LAYER_SYNC_ROOT_KEY])
+      ? root?.[COMPOSITION_LAYER_SYNC_ROOT_KEY]
+      : undefined;
+    // 모델이 내보내는 모양으로 기억한다. 파일에 적힌 모양(오래된 버전이 쓴 레코드)으로
+    // 기억하면 바뀐 것이 없는데도 "내가 고쳤다" 로 읽혀 여는 사람마다 다시 저장한다.
+    const layers = typeof this.compositionLayerManager?.toJSON === 'function'
+      ? this.compositionLayerManager.toJSON()
+      : root?.compositionLayers;
+    const state = createCompositionLayerState(layers, syncValue, {
+      normalizeLayer: normalizeCompositionLayerRecord
+    });
+    this._compositionLayerState = state;
+    this._compositionLayerBase = state;
+    this._compositionLayerSeen = noteSeenCompositionLayerState(
+      createCompositionLayerSeen(),
+      state
+    );
+  }
+
+  /**
+   * 내 합성 레이어 상태와 방금 읽은 파일을 합친다. 화면도 파일도 바꾸지 않는다.
+   *
+   * @param {Object|null} remoteRoot - 방금 읽은 `.bframe` root
+   * @returns {{ state: Object, remoteState: Object, layers: Array, syncValue: (Object|undefined),
+   *   localAhead: boolean, changed: boolean, supported: boolean }|null}
+   */
+  _mergeCompositionLayersWithRoot(remoteRoot) {
+    if (!remoteRoot || typeof remoteRoot !== 'object' || Array.isArray(remoteRoot)) {
+      return null;
+    }
+    // 다룰 수 없는 판(앞으로 나올 판)이면 그 값을 읽지도 쓰지도 않는다.
+    const supported = this._compositionLayerSyncUnsupported !== true &&
+      isSupportedCompositionLayerSync(remoteRoot[COMPOSITION_LAYER_SYNC_ROOT_KEY]);
+    const remoteState = createCompositionLayerState(
+      remoteRoot.compositionLayers,
+      supported ? remoteRoot[COMPOSITION_LAYER_SYNC_ROOT_KEY] : undefined,
+      { normalizeLayer: normalizeCompositionLayerRecord }
+    );
+    // 수정 횟수를 파일에 적을 수 없으면 기준과의 비교만으로 합친다. 메모리에만 있는 수정
+    // 횟수·삭제 표시로 판정하면 같은 파일을 연 두 PC 가 서로의 저장분을 번갈아 덮어쓴다.
+    const merged = mergeCompositionLayerStates(
+      this._compositionLayerBase,
+      this._compositionLayerState,
+      remoteState,
+      { revisions: supported }
+    );
+    // 화면에 반영하지 못한 원격 상태(저장 직전에 읽은 파일)도 "본 것" 이다. 그 뒤의 내
+    // 편집은 그보다 나중 상태로 찍힌다.
+    noteSeenCompositionLayerState(this._compositionLayerSeen, remoteState);
+    noteSeenCompositionLayerState(this._compositionLayerSeen, merged.state);
+    return {
+      state: merged.state,
+      remoteState,
+      layers: compositionLayerStateToLayers(merged.state),
+      syncValue: serializeCompositionLayerSync(merged.state, {
+        pinnedTombstones: merged.pinnedTombstones
+      }),
+      localAhead: merged.localAhead,
+      changed: merged.changed,
+      supported
+    };
+  }
+
+  /** 합친 합성 레이어를 저장할 root 에 싣는다. */
+  _writeCompositionLayerMerge(root, merge) {
+    if (!merge) return;
+    root.compositionLayers = merge.layers;
+    // 다룰 수 없는 판은 읽은 그대로 둔다(_collectData 가 opaque 루트에서 실어 온다).
+    if (!merge.supported) return;
+    if (merge.syncValue === undefined) {
+      delete root[COMPOSITION_LAYER_SYNC_ROOT_KEY];
+    } else {
+      root[COMPOSITION_LAYER_SYNC_ROOT_KEY] = merge.syncValue;
+    }
+  }
+
+  /**
+   * 합친 합성 레이어를 화면으로 받아들인다(파일 재로드, 연결 중 받아들이기).
+   * 달라진 것이 없으면 매니저를 건드리지 않는다 — 다시 채우면 되돌리기 기록이 지워지고
+   * 영상 레이어의 변환 확인이 다시 돈다.
+   */
+  _acceptCompositionLayerMerge(merge) {
+    if (!merge) return false;
+    if (merge.changed) {
+      this.compositionLayerManager?.fromJSON?.(merge.layers);
+      // 매니저는 목록을 갈아 끼울 때 changed 를 내지 않는다(사용자 편집이 아니다).
+      // 타임라인의 합성 트랙·mpv 오버레이처럼 매니저 밖에서 그리는 곳은 이 이벤트로 맞춘다.
+      this._emit('compositionLayersAccepted', { path: this.currentBframePath });
+    }
+    this._compositionLayerState = merge.state;
+    this._compositionLayerBase = advanceCompositionLayerBase(
+      this._compositionLayerBase,
+      merge.state,
+      merge.remoteState
+    );
+    // 매니저 없이 저장할 때의 로컬 레이어는 병합 기준에서 온다(_collectReviewDataForMerge).
+    this._reviewMergeBase.compositionLayers = merge.layers;
+    return merge.changed;
+  }
+
+  /**
+   * 저장이 끝났다: 방금 파일에 쓴 상태를 기준으로 삼는다. 화면은 바꾸지 않는다.
+   *
+   * @param {{ state: Object, localState: Object, supported: boolean }|null} saved
+   *   - state: 파일에 쓴 상태
+   *   - localState: 그것을 만든 재료(합칠 때의 내 상태)
+   *   - supported: 수정 횟수를 파일에 적었는가. 적지 못했으면(다룰 수 없는 판) 내 상태도 수정
+   *     횟수 없이 둔다 — 파일의 것(수정 횟수 0)과 견줄 수 있어야 기준이 옮겨진다.
+   */
+  _acknowledgeCompositionLayerSave(saved) {
+    if (!saved?.state) return;
+    const comparable = state => (
+      saved.supported === false ? withoutCompositionLayerRevisions(state) : state
+    );
+    const written = comparable(saved.state);
+    this._compositionLayerState = adoptCompositionLayerRevisions(
+      comparable(this._compositionLayerState),
+      written
+    );
+    this._compositionLayerBase = advanceCompositionLayerBase(
+      this._compositionLayerBase,
+      this._compositionLayerState,
+      written,
+      { writtenFrom: saved.localState ? comparable(saved.localState) : undefined }
+    );
   }
 
   _resetCommentRevisionHistory() {
@@ -2323,6 +2578,137 @@ export class ReviewDataManager extends EventTarget {
   }
 
   /**
+   * .bframe 파일에서 합성 레이어만 다시 읽어 화면의 레이어와 합친다.
+   *
+   * 합성 레이어는 실시간 전송이 없어 파일로만 오간다. 연결 중에는 파일 전체를 다시 읽지
+   * 않으므로(reloadAndMerge 는 파일 동기화 전용), 이 경로가 없으면 연결 중인 사용자는 다른
+   * 사람의 레이어 변경을 파일을 다시 열 때까지 받지 못하고, 파일이 옛 사본으로 돌아가도
+   * 다음 저장 때까지 바로잡지 않는다.
+   *
+   * 합성 레이어만 다루고 CAS 관측값은 건드리지 않는다(reloadCommentsFromDisk 와 같은 원칙).
+   * 내용이 같으면 화면을 건드리지 않는다.
+   *
+   * @param {Object} [options]
+   * @param {boolean} [options.ignoreGesture=false] - 조작 중이어도 받아들인다(너무 오래 미룬 경우)
+   * @returns {Promise<{success: boolean, changed: boolean}>}
+   */
+  async reloadCompositionLayersFromDisk(options = {}) {
+    const skipped = { success: false, changed: false };
+    const layerManager = this.compositionLayerManager;
+    if (typeof layerManager?.toJSON !== 'function' ||
+        typeof layerManager?.fromJSON !== 'function' ||
+        this.isLoading || !this._hasPersistedFile) {
+      return skipped;
+    }
+    // 끌거나 값을 고치는 중에 목록을 갈아 끼우면 그 조작이 끊긴다. 미뤄 두었다가 조작이
+    // 끝난 뒤에 다시 받아들인다(_resumeDeferredCompositionLayerReload).
+    const gestureActive = () => options.ignoreGesture !== true &&
+      layerManager.hasActiveGesture?.() === true;
+    if (gestureActive()) {
+      this._deferCompositionLayerReload();
+      return skipped;
+    }
+    this._cancelDeferredCompositionLayerReload();
+    const request = ++this._compositionLayersDiskReloadEpoch;
+    const owner = this._captureReviewContextOwner();
+    if (!owner.bframePath) return skipped;
+    try {
+      const { data } = await this._readReviewSnapshot(owner.bframePath);
+      if (request !== this._compositionLayersDiskReloadEpoch ||
+          !this._ownsReviewContext(owner) || this.isLoading) {
+        return skipped;
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) return skipped;
+      if (getUnsupportedBframeMajor(
+        getDataVersion(data),
+        BFRAME_VERSION,
+        !hasExplicitBframeVersion(data)
+      ) !== null) {
+        return skipped;
+      }
+      if ((Object.hasOwn(data, 'reviewDocumentId') &&
+           !isValidReviewDocumentId(data.reviewDocumentId)) ||
+          (this._reviewDocumentIdPersisted &&
+           data.reviewDocumentId !== this._reviewDocumentId)) {
+        return skipped;
+      }
+      if (gestureActive()) {
+        this._deferCompositionLayerReload();
+        return skipped;
+      }
+
+      // 읽기를 기다리는 사이의 편집까지 담도록 읽은 뒤에 현재 레이어를 견준다.
+      this._syncLocalCompositionLayers();
+      const merge = this._mergeCompositionLayersWithRoot(normalizeReviewRootForMerge(data));
+      if (!merge) return skipped;
+
+      const wasLoading = this.isLoading;
+      // fromJSON 이 내는 이벤트가 "사용자 편집" 으로 잡혀 다시 저장을 걸지 않게 한다.
+      this.isLoading = true;
+      let changed = false;
+      try {
+        changed = this._acceptCompositionLayerMerge(merge);
+      } finally {
+        this.isLoading = wasLoading;
+      }
+      // 파일이 옛 사본으로 돌아가 있으면(내 레이어·수정·삭제가 파일에 없다) 다시 저장해
+      // 바로잡는다. 파일로만 동기화하는 사람은 이 파일만 본다.
+      if (merge.localAhead) this._markDirty({ scheduleAutoSave: true });
+      if (changed) {
+        log.info('파일에서 합성 레이어 변경을 받아들임', { path: owner.bframePath });
+      }
+      return { success: true, changed };
+    } catch (error) {
+      log.warn('합성 레이어 파일 동기화 실패', { error: error.message });
+      return skipped;
+    }
+  }
+
+  /**
+   * 조작 중이라 받아들이기를 미룬다. 조작이 끝났는지는 매니저의 변경 이벤트(_onDataChanged)와
+   * 타이머 양쪽에서 다시 본다 — 끌다 제자리에 놓기, 값을 바꾸지 않고 손 떼기, 이름을 입력한
+   * 뒤의 클릭처럼 변경 이벤트 없이 끝나는 조작이 있다.
+   */
+  _deferCompositionLayerReload() {
+    if (this._compositionLayerReloadDeferred !== true) {
+      this._compositionLayerReloadDeferred = true;
+      this._compositionLayerReloadDeferredAt = Date.now();
+    }
+    if (this._compositionLayerReloadTimer !== null) return;
+    this._compositionLayerReloadTimer = setTimeout(() => {
+      this._compositionLayerReloadTimer = null;
+      this._resumeDeferredCompositionLayerReload();
+    }, this._compositionLayerReloadRetryDelay);
+    // 검사(Node)에서 이 타이머가 프로세스를 붙잡지 않게 한다. 브라우저의 타이머 id 는 숫자다.
+    this._compositionLayerReloadTimer?.unref?.();
+  }
+
+  _cancelDeferredCompositionLayerReload() {
+    this._compositionLayerReloadDeferred = false;
+    if (this._compositionLayerReloadTimer !== null) {
+      clearTimeout(this._compositionLayerReloadTimer);
+      this._compositionLayerReloadTimer = null;
+    }
+  }
+
+  /**
+   * 미뤄 둔 받아들이기를 조작이 끝난 뒤에 다시 한다. 미뤄 둔 채 잊으면, 그 사이 온 다른
+   * 사람의 변경이 다음 파일 변경 때까지 화면에 없다.
+   */
+  _resumeDeferredCompositionLayerReload() {
+    if (this._compositionLayerReloadDeferred !== true) return;
+    const gestureActive = this.compositionLayerManager?.hasActiveGesture?.() === true;
+    const waited = Date.now() - this._compositionLayerReloadDeferredAt;
+    // 다른 읽기가 도는 중이면(그때는 받아들이기가 건너뛰어진다) 조금 뒤에 다시 본다.
+    if ((gestureActive || this.isLoading) && waited < this._compositionLayerReloadMaxDeferral) {
+      this._deferCompositionLayerReload();
+      return;
+    }
+    this._cancelDeferredCompositionLayerReload();
+    void this.reloadCompositionLayersFromDisk({ ignoreGesture: gestureActive });
+  }
+
+  /**
    * .bframe 파일에서 데이터 로드 (마이그레이션 포함)
    */
   async load(loadOwner = this._captureReviewContextOwner()) {
@@ -2350,6 +2736,7 @@ export class ReviewDataManager extends EventTarget {
         this._resetFabricDrawingPersistenceProvider();
         this._recordDrawingsV3DiskState({});
         this._reviewMergeBase = createEmptyReviewMergeBase();
+        this._resetCompositionLayerSync();
         this.isLoading = false;
         return false;
       }
@@ -2417,6 +2804,7 @@ export class ReviewDataManager extends EventTarget {
         loadedReviewMergeBase,
         this._collectReviewDataForMerge(loadedReviewMergeBase)
       );
+      this._adoptCompositionLayerSyncFromRoot(migratedData);
       // 모델이 내보내는 모양만 "들고 있던 상태" 로 기억한다. 파일에 적힌 모양(오래된 버전이
       // 쓴 파일은 시각 표기나 칸 구성이 다르다)까지 기억하면, 바뀐 것이 없는 파일을 옛
       // 사본으로 오인해 열어 둔 사람마다 한 번씩 다시 저장한다.
@@ -2455,6 +2843,7 @@ export class ReviewDataManager extends EventTarget {
       this._drawingsV3ExternalStaleFingerprints.clear();
       this._drawingsV3LastObservedDiskFingerprint = null;
       this._reviewMergeBase = createEmptyReviewMergeBase();
+      this._resetCompositionLayerSync();
       this._invalidateFabricDrawingPersistenceProvider('review-load-failed');
       this.isLoading = false;
       this._emit('loadError', { error });
@@ -2584,6 +2973,9 @@ export class ReviewDataManager extends EventTarget {
         }
         this._rememberCommentRevisions(localReviewData.comments);
         const commentMergeOptions = this._createCommentMergeOptions();
+        // 합성 레이어는 수정 횟수와 삭제 표시로 따로 합친다(옛 사본을 삭제·변경으로 읽지 않게).
+        this._syncLocalCompositionLayers();
+        const compositionLayerMerge = this._mergeCompositionLayersWithRoot(remoteReviewData);
         const mergedReviewData = mergeReviewDataThreeWay(
           this._reviewMergeBase,
           localReviewData,
@@ -2611,9 +3003,6 @@ export class ReviewDataManager extends EventTarget {
         this._reviewCarryoverFallback = cloneJson(mergedReviewData.reviewCarryoverV1);
         this.drawingManager?.importData?.(mergedReviewData.drawings);
         this.highlightManager?.fromJSON?.(mergedReviewData.highlights);
-        this.compositionLayerManager?.fromJSON?.(
-          mergedReviewData.compositionLayers
-        );
         this._manualVersions = mergedReviewData.manualVersions;
         this._liveblocksRoomId = mergedReviewData.liveblocksRoomId ?? null;
         this._versionInfo = cloneJson(mergedReviewData.versionInfo ?? null);
@@ -2622,9 +3011,11 @@ export class ReviewDataManager extends EventTarget {
         this._reviewMergeBase = captureReviewMergeBase(remoteReviewData);
         // 옛 사본이라 받아들이지 않은 댓글은 예전 기준을 그대로 둔다(advanceCommentMergeBase).
         this._reviewMergeBase.comments = nextCommentMergeBase;
+        // 기준을 옮긴 뒤에 받아들인다(합성 레이어의 기준은 합친 결과다).
+        this._acceptCompositionLayerMerge(compositionLayerMerge);
         // 파일이 옛 사본으로 돌아가 있으면 다시 저장해 바로잡는다. 자동 저장 예약은
         // 아래 finally 가 한다.
-        if (commentsAheadOfDisk) {
+        if (commentsAheadOfDisk || compositionLayerMerge?.localAhead === true) {
           this.isDirty = true;
           this._changeRevision += 1;
         }
@@ -2645,6 +3036,7 @@ export class ReviewDataManager extends EventTarget {
           overwrittenReviewMergeBase,
           this._collectReviewDataForMerge(overwrittenReviewMergeBase)
         );
+        this._adoptCompositionLayerSyncFromRoot(remoteReviewData);
         log.info('reloadAndMerge: 데이터 덮어쓰기 완료');
         overwriteCompleted = true;
       }
@@ -2752,6 +3144,7 @@ export class ReviewDataManager extends EventTarget {
 
   _resetRootEnvelopeState() {
     this._opaqueRootFields = {};
+    this._compositionLayerSyncUnsupported = false;
     this._drawingLayers = createDefaultDrawingLayers();
     this._drawingLayersDirty = false;
     // 기준선도 함께 되돌린다. 앞 리뷰의 기준선을 들고 있으면 새 리뷰의 첫 저장
@@ -3307,6 +3700,9 @@ export class ReviewDataManager extends EventTarget {
     }
 
     this._opaqueRootFields = extractOpaqueBframeRoot(data);
+    this._compositionLayerSyncUnsupported = !isSupportedCompositionLayerSync(
+      this._opaqueRootFields[COMPOSITION_LAYER_SYNC_ROOT_KEY]
+    );
     // 레이어는 drawingsV3 와 같은 자리(opaque 루트)에 산다.
     //
     // **로컬 변경이 없을 때만** 디스크 값을 채택한다. 이 메서드는 로드뿐 아니라
@@ -3516,6 +3912,8 @@ export class ReviewDataManager extends EventTarget {
     const now = new Date().toISOString();
     const videoFile = extractFileName(this.currentVideoPath);
     this._collectFabricDrawingPersistenceRoot();
+    // 변경 이벤트 없이 바뀐 것(끄는 중의 위치 등)까지 내 편집으로 잡는다.
+    this._syncLocalCompositionLayers();
     const reviewData = this._collectReviewDataForMerge();
 
     const knownRoot = {
@@ -3556,6 +3954,18 @@ export class ReviewDataManager extends EventTarget {
       const serializedLayers = serializeDrawingLayers(this._drawingLayers);
       if (serializedLayers === undefined) delete opaqueRoot[DRAWING_LAYERS_ROOT_KEY];
       else opaqueRoot[DRAWING_LAYERS_ROOT_KEY] = serializedLayers;
+    }
+    // 합성 레이어의 수정 횟수·삭제 표시도 같은 자리(opaque 루트)에 산다. 적을 것이 없으면
+    // 키를 만들지 않고, 다룰 수 없는 판이면 읽은 그대로 둔다.
+    if (this._compositionLayerSyncUnsupported !== true) {
+      const serializedCompositionSync = serializeCompositionLayerSync(
+        this._compositionLayerState
+      );
+      if (serializedCompositionSync === undefined) {
+        delete opaqueRoot[COMPOSITION_LAYER_SYNC_ROOT_KEY];
+      } else {
+        opaqueRoot[COMPOSITION_LAYER_SYNC_ROOT_KEY] = serializedCompositionSync;
+      }
     }
     this._opaqueRootFields = opaqueRoot;
 
@@ -3659,7 +4069,12 @@ export class ReviewDataManager extends EventTarget {
     }
 
     if (this.compositionLayerManager) {
-      this.compositionLayerManager.fromJSON(data.compositionLayers || []);
+      // 삭제 표시가 있는 id 의 레코드는 화면에 올리지 않는다(웹 뷰어가 예전 목록에 최신
+      // 삭제 표시를 붙여 저장한 파일). 다룰 수 없는 판의 값에서는 아무것도 읽지 않는다.
+      this.compositionLayerManager.fromJSON(withoutTombstonedCompositionLayers(
+        data.compositionLayers || [],
+        data[COMPOSITION_LAYER_SYNC_ROOT_KEY]
+      ));
     }
   }
 
@@ -3803,6 +4218,16 @@ export class ReviewDataManager extends EventTarget {
     // Carryover load/reset emits loaded, never changed. Do not drop real
     // clicks during an external reload's awaited disk read.
     if (this.isLoading && e.target !== this.reviewCarryoverManager) return;
+
+    // 합성 레이어 매니저는 저장되지 않는 화면 상태(영상 레이어의 변환 확인 결과, 파일
+    // 없음 표시)가 바뀔 때도 changed 를 낸다. 그것까지 문서 변경으로 치면 파일을 열거나
+    // 다시 읽을 때마다 저장이 걸리고, 파일 동기화로 일하는 PC 에서는 저장 → 다시 읽기 →
+    // 저장이 되풀이된다. 저장되는 내용이 실제로 달라졌을 때만 변경으로 본다.
+    if (this.compositionLayerManager && e?.target === this.compositionLayerManager) {
+      const documentChanged = this._syncLocalCompositionLayers();
+      this._resumeDeferredCompositionLayerReload();
+      if (documentChanged !== true) return;
+    }
 
     this._markDirty({
       eventType: e.type,

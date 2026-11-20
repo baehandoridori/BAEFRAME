@@ -332,5 +332,6 @@ test('connected drawingsV3 file notifications keep one latest trailing reload', 
     /if \(liveblocksManager\.isConnected\) \{[\s\S]*connectedDrawingsV3ReloadThrottle\.schedule\(filePath\);[\s\S]*return false;/
   );
   // 연결 중에는 드로잉·이어받기와 함께 댓글도 파일에서 받아들인다(실시간 방 밖 사용자의 변경).
-  assert.match(appSource, /await Promise\.all\(\[\s*reviewDataManager\.reloadDrawingsV3FromDisk\?\.\(\),\s*reviewDataManager\.reloadReviewCarryoverFromDisk\?\.\(\),\s*reviewDataManager\.reloadCommentsFromDisk\?\.\(\)\s*\]\)/);
+  // 합성 레이어는 실시간 전송이 없어 파일로만 오가므로 같은 때에 받아들인다.
+  assert.match(appSource, /await Promise\.all\(\[\s*reviewDataManager\.reloadDrawingsV3FromDisk\?\.\(\),\s*reviewDataManager\.reloadReviewCarryoverFromDisk\?\.\(\),\s*reviewDataManager\.reloadCommentsFromDisk\?\.\(\),\s*reviewDataManager\.reloadCompositionLayersFromDisk\?\.\(\)\s*\]\)/);
 });

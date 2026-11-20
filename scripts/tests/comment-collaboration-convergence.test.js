@@ -637,6 +637,43 @@ test('충돌 사본을 만든 뒤 다시 저장해도 사본이 늘어나지 않
   second.manager.disconnect();
 });
 
+test('한쪽이 답글을 지우고 다른 쪽이 그 답글을 고치면 고친 답글이 사라지지 않는다', async () => {
+  const reply = {
+    id: 'r2', text: '원래 답글', author: '나',
+    createdAt: '2026-11-18T05:00:00.000Z', updatedAt: '2026-11-18T05:00:00.000Z'
+  };
+  const markers = () => [markerRecord('x', { replies: [structuredClone(reply)], updatedAt: reply.updatedAt })];
+  const deleter = await openClient('가', markers());
+  const editor = await openClient('나', markers());
+
+  // 가는 답글을 지워 저장하고, 나는 그것을 못 본 채 같은 답글을 고쳐 저장한다.
+  deleter.commentManager.deleteReply('x', 'r2');
+  assert.equal(await deleter.manager.save(), true);
+  editor.commentManager.updateReply('x', 'r2', { text: '고친 답글' });
+  deliver(deleter.bframePath, editor.bframePath);
+  assert.equal(await editor.manager.save(), true);
+  assert.deepEqual(diskMarker(editor.bframePath, 'x').replies.map(item => item.text), ['고친 답글']);
+  await editor.manager.reloadCommentsFromDisk();
+
+  // 지운 쪽은 자기가 들고 있다 지운 답글 id 를 되살리지 않는다. 그래서 고친 답글은 제 id 가
+  // 아니라 사본 id 로 남겨야 지운 쪽에서도 받아들여진다(제 id 로 남기면 고친 내용이 사라진다).
+  deliver(editor.bframePath, deleter.bframePath);
+  await deleter.manager.reloadCommentsFromDisk();
+  if (deleter.manager.hasUnsavedChanges()) {
+    assert.equal(await deleter.manager.save(), true);
+    deliver(deleter.bframePath, editor.bframePath);
+    await editor.manager.reloadCommentsFromDisk();
+  }
+  for (const client of [deleter, editor]) {
+    assert.deepEqual(
+      client.commentManager.getMarker('x').replies.map(item => item.text),
+      ['고친 답글'],
+      client.name
+    );
+    client.manager.disconnect();
+  }
+});
+
 test('파일이 옛 사본으로 돌아간 것을 알아보면 스스로 다시 저장해 파일을 바로잡는다', async () => {
   const client = await openClient('가', [markerRecord('x')], { autoSave: true });
   const beforeResolve = readDisk(client.bframePath);

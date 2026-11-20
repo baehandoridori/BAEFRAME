@@ -53,7 +53,7 @@ v2.12.6-beta부터 현재 mpv/Fabric 기능은 프로필 누락 여부와 무관
 | 재생 이벤트(재생·정지·끝·버퍼 대기)와 mpv 오버레이에 싣는 상태 | `test:playback-buffering`, `test:playlist` |
 | 댓글·그리기 모드의 진입·종료와 준비중 표시 | `test:hybrid`(제거한 하이브리드 엔진이 되살아나지 않는지도 본다), `test:comment-input` |
 | 타임라인·키프레임 표시 | `test:frame-grid`, 드로잉 변경이면 위 드로잉 테스트 추가 |
-| 합성 레이어 | `test:composition` |
+| 합성 레이어 | `test:composition`, 저장·병합을 건드렸으면 `test:collaboration`(여러 PC 가 같은 파일을 저장하는 순서)도 |
 | 편집기·영상 출력 | `test:editor` (로컬 FFmpeg 필요) |
 | UX 회귀: 댓글 초안·공유 저장·붙여넣기·목록 저장 경합·편집 입력 | `test:ux`, 변경 영역의 기존 검사도 함께 실행 |
 | 댓글·협업 | `test:comment-input`, `test:cluster`, `test:collaboration` 중 관련 항목 |

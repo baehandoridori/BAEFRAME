@@ -1649,8 +1649,15 @@ test('three-way save preserves both sides of edit and delete conflicts without d
   };
   for (const [kind, ids] of Object.entries(firstConflictIds)) {
     assert.equal(ids.length, 1, kind);
-    assert.notEqual(ids[0], `${kind === 'comments' ? 'comment' : kind === 'drawings' ? 'drawing' : kind === 'highlights' ? 'highlight' : 'composition'}-shared`);
+    // 합성 레이어는 충돌 사본을 만들지 않는다(아래).
+    if (kind === 'composition') continue;
+    assert.notEqual(ids[0], `${kind === 'comments' ? 'comment' : kind === 'drawings' ? 'drawing' : 'highlight'}-shared`);
   }
+  // 합성 레이어: 내가 지운 레이어를 상대가 고쳤으면 고친 레이어가 제 id 로 남는다.
+  // 이름에 "(원격 충돌)" 이 붙은 사본으로 바꾸지 않는다.
+  assert.deepEqual(firstConflictIds.composition, ['composition-shared']);
+  assert.equal(diskRoot.compositionLayers[0].opacity, 0.5);
+  assert.equal(diskRoot.compositionLayers[0].name, '공유 합성');
 
   manager._markDirty();
   assert.equal(await manager.save(), true);
