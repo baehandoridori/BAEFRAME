@@ -7134,16 +7134,18 @@ async function initApp() {
   const COLLABORATION_REJOIN_DELAYS_MS = Object.freeze([60000, 180000, 300000, 600000, 600000, 600000]);
   // 재접속할 차례에 영상을 여는 중이면 이만큼 뒤에 다시 본다.
   const COLLABORATION_REJOIN_BUSY_RECHECK_MS = 15000;
-  // 접속에 실패한 뒤 직접 다시 누를 수 있을 때까지의 최소 간격. 거절된 접속도 서비스 사용량으로
-  // 잡힐 수 있어, 방금 실패한 접속을 연달아 다시 열지 않게 한다(저절로 한 시도의 실패도 센다).
+  // 접속을 시도했거나 접속에 실패한 뒤 직접 다시 누를 수 있을 때까지의 최소 간격. 거절된 접속도
+  // 서비스 사용량으로 잡힐 수 있어, 방금 연 접속을 연달아 다시 열지 않게 한다(직접 누른 것,
+  // 저절로 한 것, 파일을 열 때의 첫 시도를 모두 센다).
   const COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS = 30000;
   const COLLABORATION_STATUS_CHIP_LABELS = Object.freeze({
     'room-full': '실시간 인원 가득',
     'service-suspended': '실시간 서비스 한도'
   });
   let collaborationRejoin = null;
-  // 마지막으로 접속에 실패한 때(performance.now 기준. PC 시계를 바꿔도 영향받지 않는다).
-  let lastCollaborationJoinFailureAt = Number.NEGATIVE_INFINITY;
+  // 재접속을 마지막으로 시작했거나 접속에 마지막으로 실패한 때(performance.now 기준. PC 시계를
+  // 바꿔도 영향받지 않는다). 결과 없이 끝난 시도도 접속은 열었을 수 있어, 시작한 때도 적는다.
+  let lastCollaborationJoinAttemptAt = Number.NEGATIVE_INFINITY;
 
   // 실시간 방에 들어가지 못한 동안 상단에 보이는 표시. 누르면 다시 연결해 본다.
   // 협업자 표시(#collaboratorsIndicator)는 연결된 사람에게만 보이므로, 이 입구를 그 안에 두면
@@ -7196,7 +7198,7 @@ async function initApp() {
       showToast(describeCollaborationJoinFailure(reason), 'warning', 6000, true);
     }
     collaborationRejoin = { loadToken, bframePath, reason, attempt, timer: null };
-    lastCollaborationJoinFailureAt = performance.now();
+    lastCollaborationJoinAttemptAt = performance.now();
     renderCollaborationStatusChip();
     // 월 사용 한도 거절('service-suspended')도 같은 간격으로 다시 시도한다. 실제로 받은 거절은
     // 몇 분 뒤 풀렸고, 정말 그 달 내내 막힌 경우에도 정해진 횟수만 시도하고 멈춘다.
@@ -7245,10 +7247,18 @@ async function initApp() {
     // 세션은 그대로다. 토큰이 다르다고 재접속을 버리지 않고 지금 토큰으로 이어서 시도한다.
     pending.loadToken = latestVideoLoadToken;
     pending.joining = true;
+    // 결과 없이 끝난 시도도 횟수에 넣는다(그런 시도가 되풀이돼도 정해진 횟수에서 멈춘다).
     pending.attempt += manual ? 0 : 1;
+    lastCollaborationJoinAttemptAt = performance.now();
     renderCollaborationStatusChip();
+    // 끝까지 갔는지(접속에 성공했거나, 실패가 확인돼 다시 예약됐는지). 도중에 그만뒀으면 false.
+    let completed = false;
     try {
-      await startCollaborationForVideoLoad(pending.loadToken, pending.bframePath, { isRejoin: true });
+      completed = await startCollaborationForVideoLoad(pending.loadToken, pending.bframePath, {
+        isRejoin: true,
+        // 파일을 읽는 사이 이 예약이 지워지거나 다른 것으로 바뀌었으면 접속을 열지 않는다.
+        isStillWanted: () => collaborationRejoin === pending
+      }) === true;
     } finally {
       pending.joining = false;
       renderCollaborationStatusChip();
@@ -7277,7 +7287,7 @@ async function initApp() {
     // 실패가 확인됐다(scheduleCollaborationRejoin 이 새 기록으로 바꿨다). 사유가 달라졌으면 거기서
     // 이미 알렸다. 직접 누른 시도는 같은 사유여도 결과를 알린다 — 누른 것에 대한 반응이므로 알림을
     // 꺼 둔 사람에게도 보인다.
-    if (manual && collaborationRejoin && collaborationRejoin.reason === pending.reason) {
+    if (manual && completed && collaborationRejoin && collaborationRejoin.reason === pending.reason) {
       showToast(describeCollaborationJoinFailure(collaborationRejoin.reason), 'warning', null, true);
     }
     return false;
@@ -7299,7 +7309,7 @@ async function initApp() {
       showToast('영상을 여는 중입니다. 잠시 뒤에 다시 눌러 주세요.', 'info', null, true);
       return true;
     }
-    if (performance.now() - lastCollaborationJoinFailureAt < COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS) {
+    if (performance.now() - lastCollaborationJoinAttemptAt < COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS) {
       showToast('방금 연결해 봤습니다. 잠시 뒤에 다시 눌러 주세요.', 'info', null, true);
       return true;
     }
@@ -7312,7 +7322,8 @@ async function initApp() {
     const {
       persistNewRoom = true,
       seedCurrentState = false,
-      isRejoin = false
+      isRejoin = false,
+      isStillWanted = null
     } = options;
     if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
     // 새로 여는 접속은 앞선 재접속 예약을 대신한다.
@@ -7325,6 +7336,9 @@ async function initApp() {
     try {
       const bframeData = await window.electronAPI.loadReview(bframePath);
       if (isStaleVideoLoadToken(loadToken) || !isCurrentReviewPath(bframePath)) return false;
+      // 재접속이 파일을 읽는 사이 그 예약이 지워졌으면(앱을 끄며 저장하기 시작했거나, 새로 여는
+      // 접속이 대신했다) 접속을 열지 않는다. 파일과 로드 토큰은 그대로라 위 검사로는 가려지지 않는다.
+      if (typeof isStillWanted === 'function' && !isStillWanted()) return false;
       const existingRoomId = bframeData?.liveblocksRoomId || null;
 
       // 참여자 카운트 기준값만 Room 접속 이전에 잡는다 — LiveblocksManager.stop()은

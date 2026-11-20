@@ -14,9 +14,10 @@ const { JSDOM, VirtualConsole } = require('jsdom');
 //
 // 여기서 확인하는 것과 못 하는 것:
 // - 실제 index.html 과 그것이 올리는 스타일시트로, 표시 자신과 조상이 숨겨져 있지 않은지 본다
-//   (display·visibility·opacity·hidden). 누르기 전에는 늘 이것을 먼저 확인한다.
-// - jsdom 은 배치를 계산하지 않는다. 창이 좁아 잘리는지, 다른 요소에 덮이는지, 실제 마우스로
-//   눌리는지는 릴리스 때의 실제 앱 점검(app-smoke-rejoin-chip.cjs)이 본다.
+//   (display·visibility·opacity·hidden·pointer-events). 누르기 전에는 늘 이것을 먼저 확인한다.
+// - jsdom 은 배치를 계산하지 않고, 창 폭 조건이 붙은 @media·@supports·@layer 안의 규칙도 반영하지
+//   않는다. 창이 좁아 잘리는지, 다른 요소에 덮이는지, 실제 마우스로 눌리는지는 실제 앱 점검이 본다
+//   (app-smoke-rejoin-chip.cjs. 저장소 밖 output/audits/2026-11-20-collab-rejoin-chip/app-smoke/ 에 둔다).
 // - 접속은 실제 startCollaborationForVideoLoad 를 가짜 LiveblocksManager 와 함께 돌린다. 접속을
 //   몇 번 열었는지는 그 가짜의 start() 호출 수로 센다.
 
@@ -93,6 +94,7 @@ function hiddenBy(element) {
     if (style.display === 'none') return `${name} display:none`;
     if (style.visibility === 'hidden') return `${name} visibility:hidden`;
     if (style.opacity === '0') return `${name} opacity:0`;
+    if (style.pointerEvents === 'none') return `${name} pointer-events:none`;
   }
   return null;
 }
@@ -131,7 +133,8 @@ function createHarness({ fullPage = false } = {}) {
   assert.ok(chip && label, 'index.html 의 상단에 #collabStatusChip 과 #collabStatusChipLabel 이 있어야 한다');
 
   // joinResult: 'connected' 또는 접속 실패 사유. joinGate: 접속을 기다리게 붙잡아 둘 때.
-  const state = { now: 5000000, joinResult: 'room-full', joinGate: null };
+  // loadGate: 접속에 앞서 리뷰 파일을 읽는 것을 붙잡아 둘 때.
+  const state = { now: 5000000, joinResult: 'room-full', joinGate: null, loadGate: null };
   const toasts = [];
   const timers = [];
   const starts = [];
@@ -168,7 +171,7 @@ function createHarness({ fullPage = false } = {}) {
     COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS: appConstant('COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS'),
     COLLABORATION_STATUS_CHIP_LABELS: appConstant('COLLABORATION_STATUS_CHIP_LABELS'),
     collaborationRejoin: null,
-    lastCollaborationJoinFailureAt: Number.NEGATIVE_INFINITY,
+    lastCollaborationJoinAttemptAt: Number.NEGATIVE_INFINITY,
     latestVideoLoadToken: 1,
     videoLoadInFlightToken: null,
     _previousOthersCount: 0,
@@ -188,7 +191,10 @@ function createHarness({ fullPage = false } = {}) {
     },
     window: {
       electronAPI: {
-        loadReview: async () => ({ liveblocksRoomId: 'room-A' }),
+        loadReview: async () => {
+          if (state.loadGate) await state.loadGate.promise;
+          return { liveblocksRoomId: 'room-A' };
+        },
         watchFileStart: async () => { counts.watches += 1; return { success: true }; }
       }
     },
@@ -495,6 +501,7 @@ test('an attempt that ends without a result is not reported as a failure and kee
   for (const outcome of ['connected', 'room-full']) {
     const h = createHarness();
     await h.openFileAndFailToJoin();
+    h.state.now += h.cooldown * 2;
     h.state.joinGate = deferred();
     h.state.joinResult = outcome;
     const firing = h.fireTimer();
@@ -509,7 +516,69 @@ test('an attempt that ends without a result is not reported as a failure and kee
     assert.equal(h.pendingTimers().length, 1, `${outcome}: 다음 차례가 잡혀 있어야 한다`);
     assert.match(h.label.textContent, /다시 연결/, outcome);
     assert.equal(isShown(h.chip), true, outcome);
+
+    // 결과가 없었어도 접속은 방금 열었다. 바로 누른다고 또 열지 않는다.
+    h.toasts.length = 0;
+    h.state.now += 1000;
+    userClick(h.chip);
+    await flush();
+    assert.equal(h.counts.enters, 2, `${outcome}: 방금 연 접속은 결과가 없었어도 바로 다시 열지 않는다`);
+    assert.equal(h.notices(/잠시 뒤/).length, 1, outcome);
   }
+});
+
+test('a rejoin whose record is cleared while it is still reading the file opens no connection', async () => {
+  // 재접속이 리뷰 파일을 읽는 사이(공유 드라이브에서는 몇 초) 협업 세션을 끊는 일이 시작됐다.
+  // 예: 앱을 끄며 저장하기 시작했다. 파일도 로드 토큰도 그대로라, 기록이 지워진 것을 보지 않으면
+  // 끄는 도중에 접속을 새로 열고 "연결되었습니다" 까지 알린다.
+  const h = createHarness();
+  await h.openFileAndFailToJoin();
+  h.state.now += h.cooldown * 2;
+  h.toasts.length = 0;
+  h.state.loadGate = deferred();
+  h.state.joinResult = 'connected';
+  const firing = h.fireTimer();
+  await flush();
+  assert.equal(h.counts.enters, 1, '아직 파일을 읽는 중이다');
+
+  h.context.clearCollaborationRejoin();
+  await h.manager.stop();
+  h.state.loadGate.resolve();
+  await firing;
+  await flush();
+  assert.equal(h.counts.enters, 1, '기록이 지워진 재접속은 접속을 열지 않는다');
+  assert.equal(h.manager.isConnected, false);
+  assert.equal(h.toasts.length, 0);
+  assert.equal(h.context.collaborationRejoin, null);
+  assert.equal(h.pendingTimers().length, 0);
+  assert.equal(isShown(h.chip), false);
+});
+
+test('a manual attempt that gave way to a newer join does not repeat that join\'s failure notice', async () => {
+  const h = createHarness();
+  await h.openFileAndFailToJoin('room-full');
+  h.state.now += h.cooldown;
+  const reading = deferred();
+  h.state.loadGate = reading;
+  userClick(h.chip);
+  await flush();
+  assert.equal(h.counts.enters, 1, '직접 누른 재접속은 아직 파일을 읽는 중이다');
+  h.toasts.length = 0;
+
+  // 그 사이 새로 여는 접속(예: 첫 저장의 접속)이 이 예약을 대신했고, 같은 사유로 실패했다.
+  h.state.loadGate = null;
+  await h.context.startCollaborationForVideoLoad(h.context.latestVideoLoadToken, 'A.bframe');
+  await flush();
+  assert.equal(h.counts.enters, 2);
+  assert.equal(h.warnings().length, 1, '새 접속이 제 실패를 한 번 알린다');
+
+  reading.resolve();
+  await flush();
+  assert.equal(h.counts.enters, 2, '자리를 내준 재접속은 접속을 하나 더 열지 않는다');
+  assert.equal(h.warnings().length, 1, '같은 실패를 한 번 더 알리지 않는다');
+  assert.match(h.label.textContent, /다시 연결/);
+  assert.equal(h.chip.classList.contains('is-clickable'), true);
+  assert.equal(h.pendingTimers().length, 1);
 });
 
 test('a manual attempt never announces the same failure twice', async () => {
