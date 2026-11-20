@@ -700,6 +700,12 @@ body {
   background: var(--bg-hover);
 }
 
+/* 밝은 테마의 경고색(--warning)은 어두운 테마의 밝은 노랑 그대로라 밝은 바탕에서 읽히지 않는다 */
+.light-mode .collab-status-chip:not(.is-joining) {
+  color: #92400e;
+  border-color: #d97706;
+}
+
 /* ========================================
    Collaborators Indicator (협업자 표시)
    ======================================== */

@@ -1864,6 +1864,7 @@ function createActualLoadRaceHarness(dependencies, {
       let activeVideoLoadToken = null;
       let activeVideoLoadPath = null;
       let activeVideoLoadCompletion = null;
+      let videoLoadInFlightToken = null;
       let continuousTransitionFlight = null;
       let videoLoadIntentGeneration = 0;
       let pendingUserVideoLoadIntent = null;
@@ -1922,6 +1923,8 @@ function createActualLoadRaceHarness(dependencies, {
           activeVideoLoadPath = filePath;
         },
         getLatestVideoLoadToken: () => latestVideoLoadToken,
+        getVideoLoadInFlightToken: () => videoLoadInFlightToken,
+        getActiveVideoLoadToken: () => activeVideoLoadToken,
         getIntentGeneration: () => videoLoadIntentGeneration,
         getPendingUserVideoLoadIntent: () => pendingUserVideoLoadIntent
       };
@@ -2391,6 +2394,42 @@ test('opening another file drops the previous file\'s collaboration rejoin, a sa
 
   assert.equal(await scenario.runtime.loadVideo(scenario.items[1].videoPath, { allowMpvPilot: false }), true);
   assert.equal(scenario.effects.rejoinClears, 1, '다른 파일을 열면 지난 파일의 재접속 예약을 치운다');
+});
+
+test('a video load counts as in flight from the moment it takes its load token until it settles', async () => {
+  // 협업 재접속은 영상을 여는 동안 접속을 열지 않는다. activeVideoLoadToken 은 저장과 그리기 정리를
+  // 기다린 뒤에야 잡히므로, 토큰만 올라간 그 앞 구간도 "여는 중" 으로 보여야 한다 — 그 틈에
+  // 재접속이 끼어들면 지금 떠나려는 파일의 방에 접속을 하나 더 연다.
+  const scenario = createActualLoadRaceScenario({ holdFirstMediaLoad: true });
+  scenario.releaseOldTail();
+  const { runtime, items } = scenario;
+  assert.equal(runtime.getVideoLoadInFlightToken(), null);
+
+  const first = runtime.loadVideo(items[0].videoPath, { allowMpvPilot: false });
+  // 첫 대기(저장 대기열 비우기)보다 앞, 호출한 그 자리에서 이미 "여는 중" 이다.
+  assert.equal(runtime.getVideoLoadInFlightToken(), runtime.getLatestVideoLoadToken());
+  assert.equal(runtime.getActiveVideoLoadToken(), null, '이때는 아직 activeVideoLoadToken 이 잡히지 않았다');
+  const firstToken = runtime.getVideoLoadInFlightToken();
+  await scenario.firstMediaLoadStarted;
+  assert.equal(runtime.getVideoLoadInFlightToken(), firstToken);
+
+  // 더 나중에 시작한 로드가 표시를 가져간다. 앞선 로드가 끝나도 그 표시는 내려가지 않는다.
+  const second = runtime.loadVideo(items[1].videoPath, { allowMpvPilot: false });
+  const secondToken = runtime.getVideoLoadInFlightToken();
+  assert.equal(secondToken, runtime.getLatestVideoLoadToken());
+  assert.notEqual(secondToken, firstToken);
+  scenario.releaseFirstMediaLoad();
+  assert.equal(await first, false);
+  assert.equal(runtime.getVideoLoadInFlightToken(), secondToken);
+  assert.equal(await second, true);
+  assert.equal(runtime.getVideoLoadInFlightToken(), null, '끝나면 표시를 내린다');
+
+  // 들머리에서 그만둔 로드(전환 취소)도 표시를 남기지 않는다.
+  assert.equal(await runtime.loadVideo(items[0].videoPath, {
+    allowMpvPilot: false,
+    shouldContinue: () => false
+  }), false);
+  assert.equal(runtime.getVideoLoadInFlightToken(), null);
 });
 
 test('automatic playback waits for local Fabric readiness before collaboration startup', async () => {

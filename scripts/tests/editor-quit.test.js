@@ -137,6 +137,8 @@ function rendererHarness({ save, prepare = async () => true, hasChanges = true, 
     commentSync: { stop() { calls.push(['stop-comments']); } },
     drawingSync: { stop() {} }, fabricDrawingSync: { stop() {} },
     liveblocksManager: { async stop() { calls.push(['stop-collaboration']); } },
+    // 종료하며 협업 세션을 끊을 때 재접속 예약도 함께 치운다(v2.16.5-beta).
+    clearCollaborationRejoin() { calls.push(['clear-rejoin']); },
     latestVideoLoadToken: 5,
     async startCollaborationForVideoLoad(token, file, options) { calls.push(['resume-collaboration', token, file, options.seedCurrentState]); }
   };
@@ -158,6 +160,16 @@ test('an aborted in-flight review save settles before input and collaboration re
   assert.equal(h.calls.filter(([name]) => name === 'resume-auto').length, 1);
   assert.deepEqual(h.calls.filter(([name]) => name === 'resume-collaboration'), [['resume-collaboration', 5, 'C:/review.bframe', false]]);
   assert.equal(h.overlay.has('active'), false);
+});
+
+test('quitting drops the pending collaboration rejoin before leaving the room', async () => {
+  // 저장이 느린 사이 재접속 차례가 와서 접속을 새로 열면 안 된다. 방을 떠나기 전에 예약부터 치운다.
+  const h = rendererHarness();
+  await h.request(1);
+  const names = h.calls.map(([name]) => name);
+  assert.equal(names.filter(name => name === 'clear-rejoin').length, 1);
+  assert.ok(names.indexOf('clear-rejoin') < names.indexOf('stop-collaboration'));
+  assert.ok(names.indexOf('stop-collaboration') < names.indexOf('save'), '저장은 그 뒤에 한다');
 });
 
 test('an editor veto after review confirmation restores review and permits the next save attempt', async () => {

@@ -430,9 +430,10 @@ test('a failed room join is announced once with its own reason and retried on a 
       COLLABORATION_REJOIN_DELAYS_MS: [60000, 180000], collaborationRejoin: null,
       isSameFilePath: (a, b) => a === b, showToast: (text, type) => toasts.push({ text, type }),
       setTimeout: (callback, delay) => { timers.push(delay); return timers.length; }, clearTimeout() {},
-      retryCollaborationJoin() {}, renderCollaborationStatusChip() { chipRenders.push(context.collaborationRejoin?.reason); }
+      retryCollaborationJoin() {}, renderCollaborationStatusChip() { chipRenders.push(context.collaborationRejoin?.reason); },
+      performance: { now: () => 1234 }, lastCollaborationJoinFailureAt: Number.NEGATIVE_INFINITY
     });
-    for (const name of ['describeCollaborationJoinFailure', 'scheduleCollaborationRejoin']) vm.runInContext(appFunction(name), context);
+    for (const name of ['describeCollaborationJoinFailure', 'armCollaborationRejoinTimer', 'scheduleCollaborationRejoin']) vm.runInContext(appFunction(name), context);
     context.scheduleCollaborationRejoin(1, 'A.bframe', reason);
     context.scheduleCollaborationRejoin(1, 'A.bframe', reason);
     assert.equal(toasts.length, 1, `${reason}: the same reason is announced once per file`);
@@ -442,6 +443,8 @@ test('a failed room join is announced once with its own reason and retried on a 
     assert.deepEqual(timers, [60000, 60000], reason);
     // 알림은 한 번이어도 상단의 연결 상태 표시는 실패할 때마다 그 사유로 다시 그린다.
     assert.deepEqual(chipRenders, [reason, reason]);
+    // 실패한 때를 적어 둔다. 직접 누르는 재접속이 방금 실패한 접속을 바로 다시 열지 않게 하는 기준이다.
+    assert.equal(context.lastCollaborationJoinFailureAt, 1234);
   }
 });
 
