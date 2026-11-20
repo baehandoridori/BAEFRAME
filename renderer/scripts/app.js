@@ -618,6 +618,8 @@ async function initApp() {
     versionBadge: document.getElementById('versionBadge'),
     saveStatusChip: document.getElementById('saveStatusChip'),
     saveStatusChipLabel: document.getElementById('saveStatusChipLabel'),
+    collaborationStatusChip: document.getElementById('collabStatusChip'),
+    collaborationStatusChipLabel: document.getElementById('collabStatusChipLabel'),
     // btnVersionHistory 제거됨 - 버전 드롭다운으로 대체
     btnSave: document.getElementById('btnSave'),
     btnCopyLink: document.getElementById('btnCopyLink'),
@@ -7123,13 +7125,46 @@ async function initApp() {
 
   // 실시간 방에 들어가지 못한 뒤의 재접속 간격(ms). 방 정원(동시 10명)이 차 있으면 빈자리가
   // 날 때까지 파일 동기화로 일한다. 거절된 접속도 Liveblocks 사용량으로 잡힐 수 있어 드물게만,
-  // 정해진 횟수만 다시 시도한다. 그 뒤에는 동기화 상태 표시를 눌러 직접 다시 시도할 수 있다.
+  // 정해진 횟수만 다시 시도한다. 그 뒤에도 상단의 연결 상태 표시(#collabStatusChip)를 눌러
+  // 직접 다시 시도할 수 있다.
   const COLLABORATION_REJOIN_DELAYS_MS = Object.freeze([60000, 180000, 300000, 600000, 600000, 600000]);
+  // 재접속할 차례에 영상을 여는 중이면 이만큼 뒤에 다시 본다.
+  const COLLABORATION_REJOIN_BUSY_RECHECK_MS = 15000;
+  // 직접 누르는 재접속 사이의 최소 간격. 연달아 눌러 접속을 여러 번 열지 않게 한다.
+  const COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS = 30000;
+  const COLLABORATION_STATUS_CHIP_LABELS = Object.freeze({
+    'room-full': '실시간 인원 가득',
+    'service-suspended': '실시간 사용 한도'
+  });
   let collaborationRejoin = null;
+  let lastManualCollaborationRejoinAt = 0;
+
+  // 실시간 방에 들어가지 못한 동안 상단에 보이는 표시. 누르면 다시 연결해 본다.
+  // 협업자 표시(#collaboratorsIndicator)는 연결된 사람에게만 보이므로, 이 입구를 그 안에 두면
+  // 정작 접속하지 못한 사람이 누를 수 없다.
+  function renderCollaborationStatusChip() {
+    const chip = elements.collaborationStatusChip;
+    if (!chip) return;
+    const pending = liveblocksManager.isConnected ? null : collaborationRejoin;
+    const joining = pending?.joining === true;
+    chip.classList.toggle('is-hidden', !pending);
+    chip.classList.toggle('is-joining', joining);
+    chip.classList.toggle('is-clickable', !!pending && !joining);
+    if (!pending) return;
+    if (elements.collaborationStatusChipLabel) {
+      elements.collaborationStatusChipLabel.textContent = joining
+        ? '실시간 연결 중…'
+        : `${COLLABORATION_STATUS_CHIP_LABELS[pending.reason] || '실시간 연결 안 됨'} · 다시 연결`;
+    }
+    chip.title = joining
+      ? '실시간 협업에 다시 연결해 보는 중입니다.'
+      : `${describeCollaborationJoinFailure(pending.reason)} 누르면 다시 연결해 봅니다.`;
+  }
 
   function clearCollaborationRejoin() {
     if (collaborationRejoin?.timer) clearTimeout(collaborationRejoin.timer);
     collaborationRejoin = null;
+    renderCollaborationStatusChip();
   }
 
   function describeCollaborationJoinFailure(reason) {
@@ -7155,6 +7190,7 @@ async function initApp() {
       showToast(describeCollaborationJoinFailure(reason), 'warning', 6000, true);
     }
     collaborationRejoin = { loadToken, bframePath, reason, attempt, timer: null };
+    renderCollaborationStatusChip();
     // 월 사용 한도 거절('service-suspended')도 같은 간격으로 다시 시도한다. 실제로 받은 거절은
     // 몇 분 뒤 풀렸고, 정말 그 달 내내 막힌 경우에도 정해진 횟수만 시도하고 멈춘다.
     const delay = COLLABORATION_REJOIN_DELAYS_MS[attempt];
@@ -7168,7 +7204,8 @@ async function initApp() {
   async function retryCollaborationJoin({ manual = false } = {}) {
     const pending = collaborationRejoin;
     if (!pending || pending.joining) return false;
-    if (isStaleVideoLoadToken(pending.loadToken) || !isCurrentReviewPath(pending.bframePath)) {
+    if (!isCurrentReviewPath(pending.bframePath)) {
+      // 다른 파일로 넘어온 뒤다. 지난 파일의 재접속 기록은 버린다.
       clearCollaborationRejoin();
       return false;
     }
@@ -7180,12 +7217,28 @@ async function initApp() {
       clearTimeout(pending.timer);
       pending.timer = null;
     }
+    if (activeVideoLoadToken !== null) {
+      // 영상을 여는 중이다. 다른 파일을 열면 여는 쪽이 이 기록을 지우고, 같은 파일을 다시 열면
+      // 새 접속이 이 기록을 대신한다. 열기가 취소되면 파일은 그대로이므로 기록을 두고 잠시 뒤
+      // 다시 본다.
+      pending.timer = setTimeout(() => {
+        if (collaborationRejoin) collaborationRejoin.timer = null;
+        void retryCollaborationJoin();
+      }, COLLABORATION_REJOIN_BUSY_RECHECK_MS);
+      if (manual) showToast('영상을 여는 중입니다. 잠시 뒤에 다시 연결해 봅니다.', 'info');
+      return false;
+    }
+    // 영상 전환이 취소되거나 같은 파일의 재생 엔진만 바뀌면 로드 토큰은 올라가도 파일과 협업
+    // 세션은 그대로다. 토큰이 다르다고 재접속을 버리지 않고 지금 토큰으로 이어서 시도한다.
+    pending.loadToken = latestVideoLoadToken;
     pending.joining = true;
     pending.attempt += manual ? 0 : 1;
+    renderCollaborationStatusChip();
     try {
       await startCollaborationForVideoLoad(pending.loadToken, pending.bframePath, { isRejoin: true });
     } finally {
       pending.joining = false;
+      renderCollaborationStatusChip();
     }
     if (liveblocksManager.isConnected) {
       clearCollaborationRejoin();
@@ -7198,6 +7251,30 @@ async function initApp() {
     }
     if (manual) showToast(describeCollaborationJoinFailure(collaborationRejoin?.reason), 'warning');
     return false;
+  }
+
+  // 사용자가 직접 누른 재접속(상단의 연결 상태 표시, 협업자 표시의 동기화 아이콘).
+  // 재접속할 것이 있어 이 요청을 받았으면 true.
+  function requestManualCollaborationRejoin() {
+    const pending = collaborationRejoin;
+    if (!pending || liveblocksManager.isConnected) return false;
+    if (!isCurrentReviewPath(pending.bframePath)) {
+      // 다른 파일로 넘어온 뒤다. 지난 파일의 재접속 기록은 버린다.
+      clearCollaborationRejoin();
+      return false;
+    }
+    if (pending.joining) return true;
+    const now = Date.now();
+    if (now - lastManualCollaborationRejoinAt < COLLABORATION_MANUAL_REJOIN_COOLDOWN_MS) {
+      // 거절된 접속도 사용량으로 잡힐 수 있다. 눌렀는데 아무 반응이 없으면 안 되므로, 알림을
+      // 꺼 둔 사람에게도 보인다.
+      showToast('방금 다시 연결해 봤습니다. 잠시 뒤에 다시 눌러 주세요.', 'info', null, true);
+      return true;
+    }
+    lastManualCollaborationRejoinAt = now;
+    showToast('실시간 협업에 다시 연결해 봅니다.', 'info');
+    void retryCollaborationJoin({ manual: true });
+    return true;
   }
 
   async function startCollaborationForVideoLoad(loadToken, bframePath, options = {}) {
@@ -10418,6 +10495,8 @@ async function initApp() {
           }
           // 협업 UI 초기화 (이전 세션의 아바타/인원 표시 제거)
           updateCollaboratorsUI([]);
+          // 지난 파일의 재접속 예약과 그 표시도 함께 치운다. 새 파일의 접속은 따로 시작한다.
+          clearCollaborationRejoin();
           // 원격 커서 및 재생헤드 제거
           document.querySelectorAll('.remote-cursor').forEach(el => el.remove());
           document.querySelectorAll('.remote-playhead').forEach(el => el.remove());
@@ -18570,18 +18649,8 @@ async function initApp() {
 
   // 수동 동기화 버튼 → Liveblocks에서는 항상 실시간이므로 상태 표시만
   function showCollaborationSyncStatus() {
-    // 실시간 방에 들어가지 못한 상태면 눌렀을 때 바로 다시 접속해 본다.
-    if (!liveblocksManager.isConnected && collaborationRejoin) {
-      if (isStaleVideoLoadToken(collaborationRejoin.loadToken) ||
-          !isCurrentReviewPath(collaborationRejoin.bframePath)) {
-        // 다른 파일로 넘어온 뒤다. 지난 파일의 재접속 기록은 버린다.
-        clearCollaborationRejoin();
-      } else {
-        showToast('실시간 협업에 다시 연결해 봅니다.', 'info');
-        void retryCollaborationJoin({ manual: true });
-        return;
-      }
-    }
+    // 실시간 방에 들어가지 못한 상태면 상단의 연결 상태 표시와 같은 재접속을 한다.
+    if (requestManualCollaborationRejoin()) return;
     if (!liveblocksManager.hasOtherCollaborators()) {
       showToast('다른 협업자가 없습니다', 'info');
       return;
@@ -18589,6 +18658,9 @@ async function initApp() {
     showToast('실시간 동기화 중입니다', 'info');
   }
   syncStatus?.addEventListener('click', showCollaborationSyncStatus);
+  // 접속하지 못한 사람에게는 협업자 표시(와 그 안의 동기화 아이콘)가 보이지 않는다.
+  // 그 사람이 누르는 입구는 상단의 연결 상태 표시다.
+  elements.collaborationStatusChip?.addEventListener('click', requestManualCollaborationRejoin);
 
   // ====== 재생 동기화 UI 초기화 ======
   const syncPanel = document.getElementById('playbackSyncPanel');

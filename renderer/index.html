@@ -94,6 +94,12 @@
         <span class="save-status-chip-dot"></span>
         <span class="save-status-chip-label" id="saveStatusChipLabel"></span>
       </div>
+      <!-- 실시간 협업에 연결하지 못한 동안의 표시 (누르면 다시 연결).
+           아래 협업자 표시는 연결된 사람에게만 보이므로 그 안에 두지 않는다 -->
+      <div class="collab-status-chip is-hidden" id="collabStatusChip" role="status" aria-live="polite">
+        <span class="collab-status-chip-dot"></span>
+        <span class="collab-status-chip-label" id="collabStatusChipLabel"></span>
+      </div>
       <!-- 협업자 표시 -->
       <div class="collaborators-indicator" id="collaboratorsIndicator" style="display: none;">
         <div class="collaborators-avatars" id="collaboratorsAvatars">

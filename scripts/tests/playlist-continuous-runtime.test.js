@@ -1970,6 +1970,7 @@ function createActualLoadRaceScenario({
     toasts: [],
     fabricAfterVideoReady: 0,
     onionSkinPlaybackSyncs: 0,
+    rejoinClears: 0,
     loadReadinessEvents: []
   };
   const queuedFabricFlushResults = Array.isArray(fabricFlushResults)
@@ -2187,6 +2188,8 @@ function createActualLoadRaceScenario({
     liveblocksManager: { stop: async () => {} },
     commentSync: { stop: () => {} }, drawingSync: { stop: () => {} }, fabricDrawingSync: { stop: () => {} },
     updateCollaboratorsUI: () => {}, commentManager: { setCommentMode: () => {}, clear: () => {} },
+    // 다른 파일로 넘어갈 때 지난 파일의 협업 재접속 예약(과 상단의 표시)을 치운다(v2.16.5-beta).
+    clearCollaborationRejoin: () => { effects.rejoinClears += 1; },
     setCommentModeReadyState: () => {}, setCommentModePreparingState: () => {},
     preserveMpvReviewFreezeFrameForMediaChange: () => false,
     releaseMpvReviewFreezeFrame: async () => {}, resetCommentFilters: () => {},
@@ -2370,6 +2373,24 @@ test('local Fabric review becomes ready before awaited collaboration startup res
   scenario.releaseCollaborationStart();
   assert.equal(await load, true);
   assert.equal(scenario.effects.fabricAfterVideoReady, 1, 'local Fabric readiness must run exactly once');
+});
+
+test('opening another file drops the previous file\'s collaboration rejoin, a same-file engine swap keeps it', async () => {
+  const scenario = createActualLoadRaceScenario({ hasExistingReviewData: true });
+  scenario.releaseOldTail();
+
+  assert.equal(await scenario.runtime.loadVideo(scenario.items[0].videoPath, { allowMpvPilot: false }), true);
+  assert.equal(scenario.effects.rejoinClears, 0, '처음 여는 파일에는 치울 재접속 예약이 없다');
+
+  // 같은 파일의 재생 엔진만 바꾸면 협업 세션을 끊지 않는다. 재접속 예약과 그 표시도 그대로 둔다.
+  assert.equal(await scenario.runtime.loadVideo(scenario.items[0].videoPath, {
+    allowMpvPilot: false,
+    engineSwap: true
+  }), true);
+  assert.equal(scenario.effects.rejoinClears, 0);
+
+  assert.equal(await scenario.runtime.loadVideo(scenario.items[1].videoPath, { allowMpvPilot: false }), true);
+  assert.equal(scenario.effects.rejoinClears, 1, '다른 파일을 열면 지난 파일의 재접속 예약을 치운다');
 });
 
 test('automatic playback waits for local Fabric readiness before collaboration startup', async () => {

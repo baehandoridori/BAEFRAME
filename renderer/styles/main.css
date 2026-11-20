@@ -656,6 +656,51 @@ body {
 }
 
 /* ========================================
+   Collaboration Status Chip (실시간 연결 실패 표시 · 누르면 다시 연결)
+   ======================================== */
+.collab-status-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 10px;
+  border-radius: 12px;
+  border: 1px solid var(--warning);
+  background: var(--bg-elevated);
+  color: var(--warning);
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.4;
+  white-space: nowrap;
+  user-select: none;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.collab-status-chip.is-hidden {
+  display: none;
+}
+
+.collab-status-chip-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.collab-status-chip.is-joining {
+  color: var(--text-secondary);
+  border-color: var(--border-subtle);
+}
+
+.collab-status-chip.is-clickable {
+  cursor: pointer;
+}
+
+.collab-status-chip.is-clickable:hover {
+  background: var(--bg-hover);
+}
+
+/* ========================================
    Collaborators Indicator (협업자 표시)
    ======================================== */
 .collaborators-indicator {
