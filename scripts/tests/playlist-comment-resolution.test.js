@@ -425,14 +425,15 @@ test('an optimistic click is not applied twice, and is re-applied if the model w
 
 test('a failed room join is announced once with its own reason and retried on a timer', () => {
   for (const reason of ['room-full', 'service-suspended']) {
-    const toasts = []; const timers = [];
+    const toasts = []; const timers = []; const chipRenders = [];
     const context = vm.createContext({
       COLLABORATION_REJOIN_DELAYS_MS: [60000, 180000], collaborationRejoin: null,
       isSameFilePath: (a, b) => a === b, showToast: (text, type) => toasts.push({ text, type }),
       setTimeout: (callback, delay) => { timers.push(delay); return timers.length; }, clearTimeout() {},
-      retryCollaborationJoin() {}
+      retryCollaborationJoin() {}, renderCollaborationStatusChip() { chipRenders.push(context.collaborationRejoin?.reason); },
+      performance: { now: () => 1234 }, lastCollaborationJoinAttemptAt: Number.NEGATIVE_INFINITY
     });
-    for (const name of ['describeCollaborationJoinFailure', 'scheduleCollaborationRejoin']) vm.runInContext(appFunction(name), context);
+    for (const name of ['describeCollaborationJoinFailure', 'armCollaborationRejoinTimer', 'scheduleCollaborationRejoin']) vm.runInContext(appFunction(name), context);
     context.scheduleCollaborationRejoin(1, 'A.bframe', reason);
     context.scheduleCollaborationRejoin(1, 'A.bframe', reason);
     assert.equal(toasts.length, 1, `${reason}: the same reason is announced once per file`);
@@ -440,6 +441,10 @@ test('a failed room join is announced once with its own reason and retried on a 
     assert.match(toasts[0].text, reason === 'service-suspended' ? /사용 한도/ : /10명/);
     // 월 한도 거절도 같은 간격으로 다시 시도한다(실제로 받은 거절은 몇 분 뒤 풀렸다).
     assert.deepEqual(timers, [60000, 60000], reason);
+    // 알림은 한 번이어도 상단의 연결 상태 표시는 실패할 때마다 그 사유로 다시 그린다.
+    assert.deepEqual(chipRenders, [reason, reason]);
+    // 실패한 때를 적어 둔다. 직접 누르는 재접속이 방금 실패한 접속을 바로 다시 열지 않게 하는 기준이다.
+    assert.equal(context.lastCollaborationJoinAttemptAt, 1234);
   }
 });
 
@@ -460,5 +465,8 @@ test('connected file changes also merge comments, and a failed room join falls b
     'the file watch must start after a failed join too');
   assert.ok(appFunction('describeCollaborationJoinFailure').includes('room-full'));
   assert.ok(appFunction('describeCollaborationJoinFailure').includes('service-suspended'));
-  assert.ok(appFunction('showCollaborationSyncStatus').includes('retryCollaborationJoin({ manual: true })'));
+  // 직접 누르는 재접속은 한 함수로 모인다(상단의 연결 상태 표시와 협업자 표시의 동기화 아이콘).
+  // 화면에 보이고 눌리는지는 collaboration-rejoin-chip.test.js 가 본다.
+  assert.ok(appFunction('showCollaborationSyncStatus').includes('requestManualCollaborationRejoin()'));
+  assert.ok(appFunction('requestManualCollaborationRejoin').includes('retryCollaborationJoin({ manual: true })'));
 });
